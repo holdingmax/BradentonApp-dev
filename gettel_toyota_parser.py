@@ -506,13 +506,16 @@ def generate_fuel_coupon_workbook_from_pdfs(pdf_paths, output_path=None, launch=
 
 
 _SOURCE_FIRST_DATA_ROW = 3
-_SOURCE_LAST_DATA_ROW = 50
-_GETTEL_SOURCE_SHEET = "Sheet2"
-_TOYOTA_SOURCE_SHEET = "Sheet1"
 _GETTEL_TOYOTA_DEST_SHEET_PATTERN = re.compile(
     r"^Gettel-Toyota\s+\d{2}\.\d{4}$",
     re.IGNORECASE,
 )
+_DAILY_SHEET_HEADER_SCAN_ROWS = 5
+_DAILY_SHEET_COLUMN_TOKENS = {
+    "date": ("date",),
+    "amount": ("amount",),
+    "gallons": ("gallon",),
+}
 
 
 def _parse_excel_date(value):
@@ -540,87 +543,125 @@ def _date_dict_key(value):
     return parsed.date()
 
 
-def _parse_excel_number(value, *, amount=False, gallons=False):
+def _identify_vendor_sheets(workbook):
+    """
+    Find the Gettel and Toyota daily fuel-log sheets by name.
+
+    The real source file (copy/pasted by hand from the station manager's
+    reports) names its tabs "GETTLE"/"GETTEL"/"Gettel..." and "Toyota...",
+    not the Excel-default "Sheet1"/"Sheet2" — so this matches by substring,
+    tolerant of the "GETTLE" typo, instead of requiring exact default names.
+    """
+    gettel_sheet = None
+    toyota_sheet = None
+    for worksheet in workbook.worksheets:
+        title = worksheet.title.strip().upper()
+        if gettel_sheet is None and any(token in title for token in GETTEL_TOKENS):
+            gettel_sheet = worksheet
+        elif toyota_sheet is None and any(token in title for token in TOYOTA_TOKENS):
+            toyota_sheet = worksheet
+
+    if gettel_sheet is None or toyota_sheet is None:
+        available = ", ".join(workbook.sheetnames) or "(none)"
+        raise ValueError(
+            "Could not find both a Gettel and a Toyota sheet in the source "
+            f"workbook. Available sheets: {available}"
+        )
+    if gettel_sheet.title == toyota_sheet.title:
+        raise ValueError("Gettel and Toyota resolved to the same worksheet.")
+    return gettel_sheet, toyota_sheet
+
+
+def _find_daily_sheet_header_row(worksheet):
+    """Locate the header row carrying Date/Amount/Gallons labels."""
+    max_col = max(worksheet.max_column, 4)
+    for row in range(1, _DAILY_SHEET_HEADER_SCAN_ROWS + 1):
+        labels = [
+            str(worksheet.cell(row=row, column=col).value or "").strip().lower()
+            for col in range(1, max_col + 1)
+        ]
+        if any("date" in label for label in labels) and any(
+            "amount" in label for label in labels
+        ):
+            return row
+    raise ValueError(
+        f"Could not find a Date/Amount header row in sheet '{worksheet.title}'."
+    )
+
+
+def _map_daily_sheet_columns(worksheet, header_row):
+    """Map Date/Amount/Gallons to column indices (Tracking is dropped)."""
+    columns = {}
+    max_col = max(worksheet.max_column, 4)
+    for col in range(1, max_col + 1):
+        label = str(worksheet.cell(row=header_row, column=col).value or "").strip().lower()
+        for key, tokens in _DAILY_SHEET_COLUMN_TOKENS.items():
+            if key in columns:
+                continue
+            if any(token in label for token in tokens):
+                columns[key] = col
+                break
+    missing = [key for key in ("date", "amount", "gallons") if key not in columns]
+    if missing:
+        raise ValueError(
+            f"Sheet '{worksheet.title}' is missing column(s): {', '.join(missing)}."
+        )
+    return columns
+
+
+def _parse_daily_sheet_number(value):
+    """
+    Parse an Amount/Gallons cell from the daily fuel-log sheet.
+
+    Amounts are pasted as Latin-formatted text like "$42,52" (comma is the
+    decimal separator); Gallons are plain native numbers. Neither needs the
+    PDF-OCR lost-decimal correction used elsewhere in this module — this
+    data comes from a direct copy/paste into Excel, not text extraction.
+    """
     if value is None:
         return None
     if isinstance(value, (int, float)):
-        number = float(value)
-    else:
-        number = _coerce_float(_clean_number_token(str(value)))
-    if number is None:
+        return float(value)
+    text = str(value).strip().replace("$", "").replace(" ", "")
+    if not text:
         return None
-    if amount:
-        number = _correct_amount(number)
-    if gallons:
-        number = _correct_gallons(number)
-    return number
+    if "," in text:
+        text = text.replace(".", "").replace(",", ".")
+    try:
+        return float(text)
+    except ValueError:
+        return None
 
 
-def _get_required_source_sheet(workbook, exact_name):
-    """
-    Return a source worksheet by exact tab name (e.g. Sheet1 / Sheet2).
-
-    Never uses the active sheet or positional fallbacks — both named sheets
-    must exist so GETTEL and TOYOTA are summarized independently.
-    """
-    if exact_name in workbook.sheetnames:
-        return workbook[exact_name]
-
-    normalized = exact_name.strip().lower()
-    for sheet_name in workbook.sheetnames:
-        if sheet_name.strip().lower() == normalized:
-            return workbook[sheet_name]
-
-    available = ", ".join(workbook.sheetnames) or "(none)"
-    raise ValueError(
-        f"Source worksheet '{exact_name}' not found. Available sheets: {available}"
-    )
-
-
-def _accumulate_coupon_block(worksheet, totals_by_date, row, date_col, amount_col, gallons_col):
-    day = _date_dict_key(worksheet.cell(row=row, column=date_col).value)
-    if day is None:
-        return
-    amount = _parse_excel_number(
-        worksheet.cell(row=row, column=amount_col).value, amount=True
-    )
-    gallons = _parse_excel_number(
-        worksheet.cell(row=row, column=gallons_col).value, gallons=True
-    )
-    if amount is None and gallons is None:
-        return
-    if day not in totals_by_date:
-        totals_by_date[day] = {"amount": 0.0, "gallons": 0.0}
-    totals_by_date[day]["amount"] += amount or 0.0
-    totals_by_date[day]["gallons"] += gallons or 0.0
-
-
-def _summarize_standard_source_sheet(worksheet, totals_by_date):
-    """Read GETTEL/TOYOTA standard layout rows 3-50 (A/B/D and E/F/H blocks)."""
-    for row in range(_SOURCE_FIRST_DATA_ROW, _SOURCE_LAST_DATA_ROW + 1):
-        _accumulate_coupon_block(worksheet, totals_by_date, row, 1, 2, 4)
-        _accumulate_coupon_block(worksheet, totals_by_date, row, 5, 6, 8)
+def _summarize_daily_sheet(worksheet):
+    """Sum Amount/Gallons per calendar day from a Gettel/Toyota daily-entry sheet."""
+    header_row = _find_daily_sheet_header_row(worksheet)
+    columns = _map_daily_sheet_columns(worksheet, header_row)
+    totals_by_date = {}
+    max_row = worksheet.max_row or header_row
+    for row in range(header_row + 1, max_row + 1):
+        day = _date_dict_key(worksheet.cell(row=row, column=columns["date"]).value)
+        if day is None:
+            continue
+        amount = _parse_daily_sheet_number(
+            worksheet.cell(row=row, column=columns["amount"]).value
+        )
+        gallons = _parse_daily_sheet_number(
+            worksheet.cell(row=row, column=columns["gallons"]).value
+        )
+        if amount is None and gallons is None:
+            continue
+        bucket = totals_by_date.setdefault(day, {"amount": 0.0, "gallons": 0.0})
+        bucket["amount"] += amount or 0.0
+        bucket["gallons"] += gallons or 0.0
+    return totals_by_date
 
 
 def _summarize_origin_workbook(source_workbook):
-    """
-    Summarize GETTEL from Sheet2 and TOYOTA from Sheet1 independently.
-
-    Each sheet runs the same rows 3-50 / left-right block extraction loop.
-    """
-    gettel_totals = {}
-    toyota_totals = {}
-
-    gettel_sheet = _get_required_source_sheet(source_workbook, _GETTEL_SOURCE_SHEET)
-    toyota_sheet = _get_required_source_sheet(source_workbook, _TOYOTA_SOURCE_SHEET)
-
-    if gettel_sheet.title == toyota_sheet.title:
-        raise ValueError(
-            "GETTEL (Sheet2) and TOYOTA (Sheet1) resolved to the same worksheet."
-        )
-
-    _summarize_standard_source_sheet(gettel_sheet, gettel_totals)
-    _summarize_standard_source_sheet(toyota_sheet, toyota_totals)
+    """Summarize the Gettel and Toyota daily fuel-log sheets independently."""
+    gettel_sheet, toyota_sheet = _identify_vendor_sheets(source_workbook)
+    gettel_totals = _summarize_daily_sheet(gettel_sheet)
+    toyota_totals = _summarize_daily_sheet(toyota_sheet)
     return gettel_totals, toyota_totals
 
 
@@ -638,28 +679,39 @@ def _find_gettel_toyota_destination_sheet(workbook):
 
 
 def _write_summary_number_cell(worksheet, row, column, value):
-    cell = worksheet.cell(row=row, column=column, value=float(value))
-    cell.number_format = DECIMAL_NUMBER_FORMAT
-    if RIGHT_ALIGNMENT is not None:
-        cell.alignment = RIGHT_ALIGNMENT
+    """
+    Write only the numeric value — the master template already carries the
+    correct number format and alignment for this cell, and must not be
+    overridden.
+    """
+    worksheet.cell(row=row, column=column).value = float(value)
 
 
 def _populate_gettel_toyota_destination_sheet(worksheet, gettel_totals, toyota_totals):
+    """
+    Match both Gettel and Toyota daily totals against Column A's date.
+
+    The DIF formula on this sheet (=C{row}-E{row}-G{row}) compares Local
+    Account, Gettel, and Toyota all on the same row, so both vendors must
+    land on the row identified by Column A — Column B is a separate,
+    unrelated date and is never used for matching.
+    """
     rows_matched = 0
     max_row = worksheet.max_row or _SOURCE_FIRST_DATA_ROW
     for row in range(_SOURCE_FIRST_DATA_ROW, max_row + 1):
-        date_in_a = _date_dict_key(worksheet.cell(row=row, column=1).value)
-        date_in_b = _date_dict_key(worksheet.cell(row=row, column=2).value)
+        day = _date_dict_key(worksheet.cell(row=row, column=1).value)
+        if day is None:
+            continue
         row_matched = False
 
-        if date_in_a is not None and date_in_a in gettel_totals:
-            totals = gettel_totals[date_in_a]
+        if day in gettel_totals:
+            totals = gettel_totals[day]
             _write_summary_number_cell(worksheet, row, 5, totals["amount"])
             _write_summary_number_cell(worksheet, row, 6, totals["gallons"])
             row_matched = True
 
-        if date_in_b is not None and date_in_b in toyota_totals:
-            totals = toyota_totals[date_in_b]
+        if day in toyota_totals:
+            totals = toyota_totals[day]
             _write_summary_number_cell(worksheet, row, 7, totals["amount"])
             _write_summary_number_cell(worksheet, row, 8, totals["gallons"])
             row_matched = True
@@ -672,8 +724,9 @@ def _populate_gettel_toyota_destination_sheet(worksheet, gettel_totals, toyota_t
 
 def merge_gettel_toyota_into_master(source_path, destination_path, launch=True):
     """
-    Summarize origin Excel (Sheet2=GETTEL, Sheet1=TOYOTA) and merge into the
-    4th destination sheet (Gettel-Toyota MM.YYYY). Opens a temp preview copy.
+    Summarize the origin Excel's Gettel and Toyota daily fuel-log sheets and
+    merge the daily totals into the destination sheet (Gettel-Toyota
+    MM.YYYY). Opens a temp preview copy.
 
     Returns:
         tuple[str, int, int, int]: (preview path, rows matched, gettel days, toyota days)

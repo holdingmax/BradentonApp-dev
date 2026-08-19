@@ -1747,7 +1747,7 @@ class EFTExtractorApp:
         create_compact_section_header(
             header,
             "Módulo Gettel / Toyota",
-            "Resume cupones del Excel origen (Sheet1/2) y los fusiona en la hoja Gettel-Toyota del master.",
+            "Resume el Excel diario de Gettel/Toyota (hoja de Rick) por día y lo fusiona en la hoja Gettel-Toyota del master.",
             EFT_THEME,
         )
 
@@ -1768,7 +1768,7 @@ class EFTExtractorApp:
         )
         self.gettel_destination_excel_entry = create_file_row(
             gettel_card,
-            "Seleccionar Excel de Destino (Master de 7 Hojas):",
+            "Seleccionar Excel de Destino (Master Cierre):",
             self.gettel_destination_excel_path,
             self.select_gettel_destination_excel,
             section_theme=EFT_THEME,
@@ -1793,10 +1793,10 @@ class EFTExtractorApp:
             right,
             "Workflow",
             [
-                "• Origen: Sheet2 (GETTEL) y Sheet1 (TOYOTA), filas 3-50, bloques A-D y E-H",
-                "• Suma montos y galones por fecha (GETTEL y TOYOTA por separado)",
-                "• Destino: hoja 4 «Gettel-Toyota MM.YYYY» — columnas E-H",
-                "• Col A → totales GETTEL (E/F); Col B → totales TOYOTA (G/H)",
+                "• Origen: hojas GETTEL/GETTLE y TOYOTA (Date/Amount/Gallons; Tracking se ignora)",
+                "• Suma montos y galones por día calendario (GETTEL y TOYOTA por separado)",
+                "• Destino: hoja «Gettel-Toyota MM.YYYY» — columnas E-H",
+                "• Ambos proveedores se emparejan por la Columna A (misma fila que Local Account)",
                 "• Abre copia temp del master — guarde manualmente con Guardar como",
             ],
             section_theme=EFT_THEME,
@@ -2691,12 +2691,12 @@ class EFTExtractorApp:
         self.gettel_source_excel_path.set(abs_path)
         if hasattr(self, "gettel_source_excel_entry"):
             self.gettel_source_excel_entry.delete(0, tk.END)
-            self.gettel_source_excel_entry.insert(0, os.path.basename(abs_path))
+            self.gettel_source_excel_entry.insert(0, abs_path)
         self._set_gettel_status(f"Origen: {os.path.basename(abs_path)}")
 
     def select_gettel_destination_excel(self):
         path = filedialog.askopenfilename(
-            title="Seleccionar Excel de Destino (Master de 7 Hojas)",
+            title="Seleccionar Excel de Destino (Master Cierre)",
             filetypes=[("Excel Files", "*.xlsx")],
         )
         if not path:
@@ -2705,7 +2705,7 @@ class EFTExtractorApp:
         self.gettel_destination_excel_path.set(abs_path)
         if hasattr(self, "gettel_destination_excel_entry"):
             self.gettel_destination_excel_entry.delete(0, tk.END)
-            self.gettel_destination_excel_entry.insert(0, os.path.basename(abs_path))
+            self.gettel_destination_excel_entry.insert(0, abs_path)
         self._set_gettel_status(f"Destino: {os.path.basename(abs_path)}")
 
     def process_gettel_toyota_report(self):
