@@ -1,0 +1,16 @@
+{
+  "rules": [
+    {
+      "keyword": "Deposit",
+      "detail": "DEPOSITO"
+    },
+    {
+      "keyword": "KOOLER",
+      "detail": "PROVEEDORES"
+    },
+    {
+      "keyword": "FACEBK",
+      "detail": "ADMINISTRATION FEE"
+    }
+  ]
+}
