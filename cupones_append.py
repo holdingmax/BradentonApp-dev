@@ -26,7 +26,6 @@ except ImportError:
     get_column_letter = None  # type: ignore[assignment,misc]
     OPENPYXL_AVAILABLE = False
 
-EFT_MASTER_FILENAME = "01.12.2022 al 31.05.2026 Aplicacion TC y EFT PRUEBA.xlsx"
 MONTHLY_HEADER_ROW = 2
 MONTHLY_DATA_START_ROW = 3
 
@@ -112,19 +111,6 @@ def _ensure_openpyxl():
         raise ImportError(
             "Cupones append requires openpyxl. Install with: pip install openpyxl"
         )
-
-
-def resolve_eft_master_workbook_path():
-    """Resolve the fixed EFT/Cupones master workbook path on disk."""
-    app_dir = os.path.dirname(os.path.abspath(__file__))
-    candidates = [
-        os.path.join(app_dir, EFT_MASTER_FILENAME),
-        os.path.join(os.getcwd(), EFT_MASTER_FILENAME),
-    ]
-    for path in candidates:
-        if os.path.isfile(path):
-            return os.path.abspath(path)
-    return os.path.abspath(candidates[0])
 
 
 def _cell_for_write(worksheet, row, column):
@@ -325,19 +311,6 @@ def _read_cta_financial_breakdown(worksheet, row):
     )
 
 
-def _eft_cell_is_blank(cell):
-    value = cell.value
-    if value is None:
-        return True
-    if isinstance(value, str) and not _strip_cell(value):
-        return True
-    return False
-
-
-def _cupones_row_has_coupon(worksheet, row):
-    return bool(_strip_cell(worksheet.cell(row=row, column=CUPONES_COL_COUPON).value))
-
-
 def _resolve_single_coupon_id(coupon_text):
     """Return the one Coupon ID for the current Cupones row (Column B)."""
     coupon_ids = _split_coupon_ids(coupon_text)
@@ -345,35 +318,6 @@ def _resolve_single_coupon_id(coupon_text):
         return coupon_ids[0]
     text = _strip_cell(coupon_text).upper()
     return text if text else None
-
-
-def _resolve_coupon_id_for_sync(coupon_text, preferred_ids=None):
-    """
-    Resolve which coupon ID to sync for a Cupones row.
-
-    If the cell contains multiple DDC IDs (historical fused rows), prefer one that
-    exists in preferred_ids; otherwise return the first parsed ID.
-    """
-    preferred_ids = preferred_ids or set()
-    coupon_ids = _split_coupon_ids(coupon_text)
-    for coupon_id in coupon_ids:
-        if coupon_id in preferred_ids:
-            return coupon_id
-    return coupon_ids[0] if coupon_ids else _resolve_single_coupon_id(coupon_text)
-
-
-def _find_single_cta_row(coupon_text, coupon_index):
-    """Locate the single Cta Cte row whose Column C matches any coupon ID on this row."""
-    coupon_ids = _split_coupon_ids(coupon_text)
-    if not coupon_ids:
-        single = _resolve_single_coupon_id(coupon_text)
-        if single:
-            coupon_ids = [single]
-    for coupon_id in coupon_ids:
-        rows = coupon_index.get(coupon_id, [])
-        if rows:
-            return rows[0]
-    return None
 
 
 def _write_cupones_date_cell(worksheet, row, record):
@@ -394,11 +338,6 @@ def _write_cupones_date_cell(worksheet, row, record):
         else:
             cell_a.value = formatted
         cell_a.number_format = "mm/dd/yyyy"
-
-
-def _cupones_append_start_row(worksheet):
-    """First append row strictly after the sheet's absolute max_row."""
-    return max(worksheet.max_row, 0) + 1
 
 
 def _write_cupones_base_columns(worksheet, row, record):
@@ -752,7 +691,7 @@ def _resync_pending_cupones_rows(cupones_sheet, cta_sheet, coupon_index):
             _read_float_cell(cupones_sheet, row, CUPONES_COL_FEES),
             _read_float_cell(cupones_sheet, row, CUPONES_COL_NET),
         )
-        if _apply_control_columns(cupones_sheet, cta_sheet, row, coupon_text, coupon_index, cta_eft_boxes):
+        if _apply_cta_truth_to_cupones_row(cupones_sheet, cta_sheet, row, coupon_text, coupon_index, cta_eft_boxes):
             resynced += 1
         _apply_cupones_row_alignment(cupones_sheet, row)
 
@@ -814,82 +753,6 @@ def _apply_cta_truth_to_cupones_row(
     return True
 
 
-def _apply_control_columns(cupones_sheet, cta_sheet, row, coupon_text, coupon_index, cta_eft_boxes):
-    """Backward-compatible alias for full Cta Cte row synchronization."""
-    return _apply_cta_truth_to_cupones_row(
-        cupones_sheet, cta_sheet, row, coupon_text, coupon_index, cta_eft_boxes
-    )
-
-
-def sync_cupones_for_cta_coupon_ids(workbook, coupon_ids):
-    """
-    Re-sync Cupones F-I by coupon IDs using dynamic Cta Cte matches.
-    """
-    cupones_sheet = _get_sheet(workbook, CUPONES_SHEET)
-    cta_sheet = _get_sheet(workbook, CTA_CTE_SHEET)
-    coupon_index = build_cta_coupon_index(cta_sheet)
-    cta_eft_boxes = build_cta_eft_boxes(cta_sheet)
-    touched = 0
-
-    for row in range(CUPONES_SCAN_START_ROW, cupones_sheet.max_row + 1):
-        coupon_text = _strip_cell(
-            cupones_sheet.cell(row=row, column=CUPONES_COL_COUPON).value
-        )
-        if not coupon_text:
-            continue
-        row_ids = _split_coupon_ids(coupon_text)
-        if coupon_ids and not any(coupon_id in coupon_ids for coupon_id in row_ids):
-            continue
-        if _apply_control_columns(cupones_sheet, cta_sheet, row, coupon_text, coupon_index, cta_eft_boxes):
-            touched += 1
-        _apply_cupones_row_alignment(cupones_sheet, row)
-
-    return touched
-
-
-def _sort_cupones_sheet_by_date(worksheet, start_row=CUPONES_SCAN_START_ROW):
-    """
-    Sort Cupones rows chronologically by Column A (date) in ascending order.
-
-    Preserves values/formulas in A–I by rewriting the row blocks.
-    """
-    max_row = max(worksheet.max_row, start_row)
-    rows = []
-    for row in range(start_row, max_row + 1):
-        coupon = _strip_cell(worksheet.cell(row=row, column=CUPONES_COL_COUPON).value)
-        if not coupon:
-            continue
-        date_value = worksheet.cell(row=row, column=CUPONES_COL_DATE).value
-        sort_key = _parse_date_to_datetime(date_value) or datetime.max
-        payload = []
-        for col in range(1, CUPONES_COL_MES_EFT + 1):
-            payload.append(worksheet.cell(row=row, column=col).value)
-        rows.append((sort_key, payload))
-
-    rows.sort(key=lambda item: item[0])
-    for idx, (_key, payload) in enumerate(rows):
-        dest_row = start_row + idx
-        for col, value in enumerate(payload, start=1):
-            cell = _cell_for_write(worksheet, dest_row, col)
-            cell.value = value
-            if col in (CUPONES_COL_GROSS, CUPONES_COL_FEES, CUPONES_COL_NET) and isinstance(
-                value, (int, float)
-            ):
-                cell.number_format = DECIMAL_NUMBER_FORMAT
-            if col == CUPONES_COL_MES_EFT and isinstance(value, datetime):
-                cell.number_format = EFT_DATE_NUMBER_FORMAT
-        _apply_cupones_row_alignment(worksheet, dest_row)
-
-
-def _scan_max_column_b_length(worksheet, start_row=CUPONES_SCAN_START_ROW):
-    max_len = 0
-    for row in range(start_row, max(worksheet.max_row, start_row) + 1):
-        text = _strip_cell(worksheet.cell(row=row, column=CUPONES_COL_COUPON).value)
-        if text:
-            max_len = max(max_len, len(text))
-    return max_len
-
-
 def _apply_cupones_row_alignment(worksheet, row):
     if Alignment is None:
         return
@@ -907,14 +770,6 @@ def _stretch_column_b_width(worksheet, max_text_length):
     current = worksheet.column_dimensions[letter].width
     if current is None or target_width > current:
         worksheet.column_dimensions[letter].width = target_width
-
-
-def _row_has_content(worksheet, row, columns=(1, 2, 3, 4, 5)):
-    for col in columns:
-        value = worksheet.cell(row=row, column=col).value
-        if value is not None and _strip_cell(value) != "":
-            return True
-    return False
 
 
 def find_last_cupones_row(worksheet, start_row=CUPONES_SCAN_START_ROW):
@@ -1326,7 +1181,7 @@ def append_monthly_cupones(master_path, monthly_path):
             coupon_text = _write_cupones_base_columns(cupones_sheet, row, record)
             max_coupon_text_len = max(max_coupon_text_len, len(coupon_text or ""))
             _clear_cupones_control_columns(cupones_sheet, row)
-            if _apply_control_columns(
+            if _apply_cta_truth_to_cupones_row(
                 cupones_sheet, cta_sheet, row, coupon_text, coupon_index, cta_eft_boxes
             ):
                 rows_matched += 1

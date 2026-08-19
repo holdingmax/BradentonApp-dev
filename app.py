@@ -70,14 +70,20 @@ else:
     _CHASE_RULES_IMPORT_ERROR = None
 
 try:
-    from monthly_sales import join_paths, process_monthly_sales, split_paths
+    from monthly_sales import process_monthly_sales
+    from monthly_sales import join_paths as _monthly_sales_join_paths
+    from monthly_sales import split_paths as _monthly_sales_split_paths
 except ImportError as _sales_exc:
-    join_paths = None
-    split_paths = None
     process_monthly_sales = None
     _SALES_IMPORT_ERROR = _sales_exc
 else:
     _SALES_IMPORT_ERROR = None
+    # join_paths/split_paths are identical in cmv_costo and monthly_sales; keep
+    # whichever import already succeeded instead of letting this one clobber it.
+    if join_paths is None:
+        join_paths = _monthly_sales_join_paths
+    if split_paths is None:
+        split_paths = _monthly_sales_split_paths
 
 try:
     from reporte_diario import process_reporte_diario
@@ -280,11 +286,6 @@ def format_eft_date_us(date_str):
     return date_str
 
 
-def format_eft_date_ddmmyyyy(date_str):
-    """Backward-compatible alias — EFT dates are stored US-style (MM/DD/YYYY)."""
-    return format_eft_date_us(date_str)
-
-
 def parse_date_cell(cell):
     """Extract date from a PDF cell; returns MM/DD/YYYY for coupon rows."""
     if not cell:
@@ -421,18 +422,6 @@ def row_contains_credit_coupon(cells):
         has_si = any(SI_INVOICE_PATTERN.search(c) for c in cells)
         has_ddc = any(DDC_COUPON_PATTERN.search(c) for c in cells)
         return has_si and has_ddc
-    except Exception:
-        return False
-
-
-def row_contains_paid_invoice(cells):
-    """True when the row is a paid-invoice row (SI- without coupon combo)."""
-    try:
-        if row_contains_credit_coupon(cells):
-            return False
-        row_text = " ".join(cells)
-        match = SI_INVOICE_PATTERN.search(row_text)
-        return bool(match and "/" not in match.group(1))
     except Exception:
         return False
 
@@ -587,12 +576,6 @@ def extract_paid_invoice_entries(cells):
         ]
     except Exception:
         return []
-
-
-def extract_paid_invoice_row(cells):
-    """Parse the first paid-invoice entry from a header row (backward compatible)."""
-    entries = extract_paid_invoice_entries(cells)
-    return entries[0] if entries else None
 
 
 def collect_pdf_rows(pdf_path):
@@ -1922,9 +1905,6 @@ class EFTExtractorApp:
 
         self._reload_chase_rules_from_storage()
         self._refresh_chase_rules_listbox()
-
-    def _format_chase_rule_list_entry(self, rule):
-        return f"{rule['keyword']}  →  {rule['detail']}"
 
     def _builtin_chase_display_rules(self):
         """Hardcoded Alfonso master rules mirrored from categorization logic."""

@@ -47,7 +47,6 @@ if OPENPYXL_AVAILABLE and Side is not None and Border is not None:
     )
 else:
     COSTO_GRID_BORDER = None
-DEFAULT_UPC_LENGTHS = (13, 12, 14, 8)
 
 RAW_COLUMN_NAMES = [
     "UPC",
@@ -123,38 +122,6 @@ def clean_upc(value):
             text = whole
 
     return text.strip()
-
-
-def collect_upc_padding_lengths(price_map):
-    lengths = {len(key) for key in price_map if key.isdigit()}
-    for fallback in DEFAULT_UPC_LENGTHS:
-        lengths.add(fallback)
-    return sorted(lengths, reverse=True)
-
-
-def upc_match_candidates(value, padding_lengths):
-    base = clean_upc(value)
-    if not base:
-        return []
-    if not base.isdigit():
-        return [base]
-
-    candidates = []
-    seen = set()
-    for candidate in [base] + [
-        base.zfill(length) for length in padding_lengths if len(base) <= length
-    ]:
-        if candidate not in seen:
-            seen.add(candidate)
-            candidates.append(candidate)
-    return candidates
-
-
-def resolve_upc_key(raw_value, price_map, padding_lengths):
-    for candidate in upc_match_candidates(raw_value, padding_lengths):
-        if candidate in price_map:
-            return candidate
-    return None
 
 
 def _strip_cell(value):
@@ -566,10 +533,6 @@ def _openpyxl_merge_and_save(master_path, department_paths, temp_xlsx_path):
     finally:
         if workbook is not None:
             workbook.close()
-
-
-def update_master_costo_todos(master_path, department_path):
-    return update_master_costo_todos_bulk(master_path, [department_path])
 
 
 def _launch_temp_workbook(temp_path):

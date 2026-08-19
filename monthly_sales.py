@@ -1459,11 +1459,6 @@ def parse_monthly_sales_file(file_path):
     return frame
 
 
-def parse_monthly_sales_csv(file_path):
-    """Backward-compatible alias for single CSV parsing."""
-    return parse_monthly_sales_file(file_path)
-
-
 def process_monthly_sales(file_paths, master_path=None):
     """
     Parse one or more POS sales files and inject rows into Master CMV sheets.

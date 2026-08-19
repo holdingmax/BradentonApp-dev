@@ -158,7 +158,6 @@ NET_SALES_REVERSE_INDEX = -2
 MIN_ROW_SPLIT_PARTS = 5
 
 SALES_ALERT_FONT_COLOR = "FF0000"
-GETTEL_TOYOTA_LABEL = "gettel/toyota"
 GROUP_500_DEPARTMENTS = frozenset(
     {
         "AUTO",
@@ -592,29 +591,6 @@ def _is_protected_department(label):
     return key in PROTECTED_DEPARTMENT_LABELS
 
 
-def _is_valid_date(value):
-    if value is None:
-        return False
-    if isinstance(value, datetime):
-        return True
-    if isinstance(value, (int, float)):
-        return value > 0
-    text = _strip_cell(value)
-    if not text:
-        return False
-    for fmt in ("%m/%d/%Y", "%d/%m/%Y", "%m-%d-%Y", "%d-%m-%Y", "%Y-%m-%d"):
-        try:
-            datetime.strptime(text, fmt)
-            return True
-        except ValueError:
-            continue
-    if re.match(r"^\d{1,2}[-/]\d{1,2}[-/]\d{2,4}$", text):
-        return True
-    if re.match(r"^\d{1,2}-[a-zA-Z]{3}(-\d{2,4})?$", text):
-        return True
-    return False
-
-
 def _cell_has_formula(cell):
     if getattr(cell, "data_type", None) == "f":
         return True
@@ -667,19 +643,6 @@ def _is_pdf_department_header_row(cells):
         and _header_cell_matches(padded[PDF_NET_COUNT_COL], PDF_HEADER_NET_COUNT_TOKENS)
         and _header_cell_matches(padded[PDF_NET_SALES_COL], PDF_HEADER_NET_SALES_TOKENS)
     )
-
-
-def _extract_page_triplet(cells):
-    """Extract Dept.Name, Net Count, and Net Sales $ via reverse-index whitespace split."""
-    line = _row_cells_to_line(cells)
-    parsed = _parse_row_by_reverse_index(line)
-    if parsed is not None:
-        return parsed
-    return {
-        "department": "",
-        "count": 0,
-        "amount": 0.0,
-    }
 
 
 def _extract_tables_from_page(page):
@@ -963,11 +926,6 @@ def _parse_tables_with_line_anchor(page):
     return records
 
 
-def _extract_page_tables(page):
-    """Backward-compatible alias for table extraction."""
-    return _extract_tables_from_page(page)
-
-
 def parse_elistar_daily_pdf_page(pdf_path, page_index=DEFAULT_PDF_PAGE_INDEX):
     """
     Extract department records from the selected PDF page (0-based index).
@@ -1087,35 +1045,6 @@ def _resolve_department_columns(dept_name, column_map):
     return None
 
 
-def find_operational_row(sheet, column_map, start_row=DATA_START_ROW):
-    """
-    Locate the first row from start_row with a valid date in column A and empty tracking cells.
-    Defaults to row 5 when the sheet is fresh for a new month.
-    """
-    max_row = max(sheet.max_row, start_row)
-    for row in range(start_row, max_row + 1):
-        date_found = _cell_calendar_day(
-            sheet.cell(row=row, column=DATE_SCAN_COLUMN).value
-        ) is not None
-        if not date_found:
-            continue
-
-        tracking_empty = True
-        for count_col, amount_col in column_map.values():
-            for col in (count_col, amount_col):
-                value = sheet.cell(row=row, column=col).value
-                if value is not None and _strip_cell(value) != "":
-                    tracking_empty = False
-                    break
-            if not tracking_empty:
-                break
-
-        if tracking_empty:
-            return row
-
-    return start_row
-
-
 def _department_label_keys(dept_name):
     """Normalized keys used to match worksheet / PDF department labels."""
     keys = set()
@@ -1126,10 +1055,6 @@ def _department_label_keys(dept_name):
     if canon:
         keys.add(canon)
     return keys
-
-
-def _is_gettel_toyota_department(dept_name):
-    return GETTEL_TOYOTA_LABEL in _department_label_keys(dept_name)
 
 
 def _apply_sales_font_alert(cell):

@@ -447,40 +447,6 @@ def create_compact_entry(parent, textvariable, section_theme=None, label=None):
     return entry
 
 
-def create_scrolled_listbox(parent, section_theme=None, height=8):
-    """Bounded vertical list with scrollbar for rule managers."""
-    section_theme = section_theme or CHASE_THEME
-    container = tk.Frame(
-        parent,
-        bg=THEME.SURFACE_ALT,
-        highlightbackground=section_theme.accent_soft,
-        highlightthickness=1,
-    )
-    container.pack(fill=tk.BOTH, expand=True, pady=(0, 4))
-    container.grid_columnconfigure(0, weight=1)
-    container.grid_rowconfigure(0, weight=1)
-
-    scrollbar = tk.Scrollbar(container, orient=tk.VERTICAL)
-    scrollbar.grid(row=0, column=1, sticky="ns")
-
-    listbox = tk.Listbox(
-        container,
-        font=(FONT, 9),
-        fg=THEME.TEXT,
-        bg=THEME.SURFACE_ALT,
-        selectbackground=section_theme.accent,
-        selectforeground="#FFFFFF",
-        activestyle="none",
-        relief=tk.FLAT,
-        highlightthickness=0,
-        yscrollcommand=scrollbar.set,
-        height=height,
-    )
-    listbox.grid(row=0, column=0, sticky="nsew")
-    scrollbar.config(command=listbox.yview)
-    return listbox, container
-
-
 def create_status_bar(parent, textvariable, section_theme=None, wraplength=420):
     section_theme = section_theme or EFT_THEME
     bar = tk.Frame(
@@ -606,12 +572,6 @@ def bind_hover(button, normal_color, hover_color):
     )
 
 
-EXCEL_FILETYPES = [
-    ("Excel Files", "*.xlsx"),
-    ("Excel Files", "*.xls"),
-    ("All Files", "*.*"),
-]
-
 EXCEL_FILETYPES_MASTER = [
     ("Excel Files", "*.xlsx"),
     ("Excel Files", "*.xls"),
@@ -632,8 +592,6 @@ SALES_FILETYPES = [
     ("Sales Reports", "*.xlsm"),
     ("All Files", "*.*"),
 ]
-
-SALES_CSV_FILETYPES = SALES_FILETYPES
 
 PDF_DAILY_FILETYPES = [
     ("Elistar Daily PDF", "*.pdf"),

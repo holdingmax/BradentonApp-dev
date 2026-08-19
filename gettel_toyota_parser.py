@@ -431,19 +431,6 @@ def _write_pages_to_worksheet(worksheet, pages):
     return record_count
 
 
-def write_fuel_coupon_workbook(sheet_name, pages, output_path):
-    """Write a single-PDF workbook with one worksheet (backward compatible)."""
-    _ensure_openpyxl()
-    workbook = Workbook()
-    worksheet = workbook.active
-    worksheet.title = _sanitize_excel_sheet_name(sheet_name)
-    _write_sheet_headers(worksheet)
-    _write_pages_to_worksheet(worksheet, pages)
-    workbook.save(output_path)
-    workbook.close()
-    return output_path
-
-
 def write_multi_sheet_fuel_coupon_workbook(pdf_paths, output_path):
     """
     Parse each PDF into its own worksheet (hoja por archivo).
@@ -516,14 +503,6 @@ def generate_fuel_coupon_workbook_from_pdfs(pdf_paths, output_path=None, launch=
     if launch:
         _launch_workbook(output_path)
     return output_path, record_count, sheet_count
-
-
-def generate_fuel_coupon_workbook(pdf_path, output_path=None, launch=True):
-    """Single-PDF entry point (one sheet named from the filename date range)."""
-    saved_path, record_count, _sheet_count = generate_fuel_coupon_workbook_from_pdfs(
-        [pdf_path], output_path=output_path, launch=launch
-    )
-    return saved_path, record_count
 
 
 _SOURCE_FIRST_DATA_ROW = 3
