@@ -90,11 +90,15 @@ else:
 try:
     from cupones_append import (
         MonthlyReportFullyDuplicateError,
+        NoPendingCouponsError,
         append_monthly_cupones,
+        resync_cupones_only,
     )
 except ImportError as _cupones_append_exc:
     append_monthly_cupones = None
+    resync_cupones_only = None  # type: ignore[assignment,misc]
     MonthlyReportFullyDuplicateError = None  # type: ignore[assignment,misc]
+    NoPendingCouponsError = None  # type: ignore[assignment,misc]
     _CUPONES_APPEND_IMPORT_ERROR = _cupones_append_exc
 else:
     _CUPONES_APPEND_IMPORT_ERROR = None
@@ -1725,10 +1729,18 @@ class EFTExtractorApp:
         actions.pack(fill=tk.X, pady=(4, 0))
         create_primary_button(
             actions,
-            "Cargar Reporte Mensual (Procesar Excel J.H.)",
+            "Cargar Reporte Mensual / Actualizar Cupones",
             self.process_monthly_coupon_append,
             section_theme=EFT_THEME,
         ).pack(anchor=tk.W)
+        tk.Label(
+            actions,
+            text='Deja "Monthly Report" vacío para solo actualizar pendientes.',
+            font=(FONT, 8),
+            fg=THEME.TEXT_MUTED_ON_DARK,
+            bg=EFT_THEME.card_tint,
+            anchor=tk.W,
+        ).pack(fill=tk.X, pady=(2, 0))
 
         self.status_label, self.status_dot = create_status_bar(
             left, self.status_text, section_theme=EFT_THEME
@@ -1742,6 +1754,7 @@ class EFTExtractorApp:
                 "• Pipeline 1 keeps original PDF EFT updater unchanged",
                 "• Pipeline 2 skips row 1, drops Batch No(s), appends cleaned A:E",
                 "• F:I cross-reference formulas link dynamically to Cta Cte",
+                "• Sin Monthly Report: solo actualiza cupones pendientes/$0",
             ],
             section_theme=EFT_THEME,
         )
@@ -2619,10 +2632,9 @@ class EFTExtractorApp:
                 "Please select an Excel ledger file in Paso 2.",
             )
             return
+
         if not monthly_report_path:
-            messagebox.showwarning(
-                "Missing File", "Please select a monthly coupon report file."
-            )
+            self._process_resync_cupones_only(excel_path)
             return
 
         self._set_status("Appending monthly Cupones report...")
@@ -2652,6 +2664,39 @@ class EFTExtractorApp:
             ):
                 messagebox.showwarning("Alerta", str(exc))
                 self._set_status(str(exc), is_error=True)
+                return
+            self._set_status(f"Error: {exc}", is_error=True)
+
+    def _process_resync_cupones_only(self, excel_path):
+        """
+        No monthly report selected: just refresh pending/$0 Cupones rows
+        against the current Cta Cte data (e.g. after loading a new EFT with
+        no new J.H. Williams coupons to add this time).
+        """
+        if resync_cupones_only is None:
+            self._set_status(
+                f"Cupones append module unavailable: {_CUPONES_APPEND_IMPORT_ERROR}",
+                is_error=True,
+            )
+            return
+
+        self._set_status("Actualizando cupones pendientes...")
+        self.root.update_idletasks()
+
+        try:
+            _saved_path, summary = resync_cupones_only(excel_path)
+            resynced = summary.get("rows_resynced_pending", 0)
+            self._set_status(
+                f"Cupones actualizados ({resynced} pendiente(s) resincronizado(s)).",
+                completed=True,
+            )
+        except Exception as exc:
+            if (
+                NoPendingCouponsError is not None
+                and isinstance(exc, NoPendingCouponsError)
+            ):
+                messagebox.showinfo("Sin pendientes", str(exc))
+                self._set_status(str(exc), completed=True)
                 return
             self._set_status(f"Error: {exc}", is_error=True)
 

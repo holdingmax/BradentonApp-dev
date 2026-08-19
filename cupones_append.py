@@ -92,11 +92,19 @@ CUPONES_RIGHT_COLUMNS = (
 MONTHLY_REPORT_FULL_DUPLICATE_ALERT = (
     "Alerta: Este reporte mensual ya fue cargado en su totalidad anteriormente."
 )
+NO_PENDING_COUPONS_ALERT = (
+    "No hay cupones pendientes para actualizar: todo lo que hay en Cupones ya "
+    "está completamente reconciliado."
+)
 AMOUNT_MATCH_TOLERANCE = 0.01
 
 
 class MonthlyReportFullyDuplicateError(Exception):
     """Raised when every incoming coupon row already exists on Cupones."""
+
+
+class NoPendingCouponsError(Exception):
+    """Raised by resync_cupones_only when there's nothing left to update."""
 
 
 def _ensure_openpyxl():
@@ -1206,6 +1214,55 @@ def _read_monthly_coupon_rows(monthly_path):
     raise ValueError(
         f"Unsupported monthly report type '{extension}'. Use CSV or Excel."
     )
+
+
+def resync_cupones_only(master_path):
+    """
+    Re-run the Cta Cte cross-reference over the whole Cupones sheet without
+    appending any new coupons. For when the user has just loaded a new EFT
+    (Pipeline 1) and wants pending or $0 split coupons refreshed, but has no
+    new monthly J.H. Williams report to add this time.
+
+    Returns:
+        tuple: (saved preview path, summary dict)
+    """
+    _ensure_openpyxl()
+    master_path = os.path.abspath(str(master_path).strip())
+    if not os.path.isfile(master_path):
+        raise FileNotFoundError(f"Master workbook not found: {master_path}")
+
+    extension = os.path.splitext(master_path)[1].lower()
+    if extension not in {".xlsx", ".xlsm"}:
+        raise ValueError("Master workbook must be .xlsx or .xlsm.")
+
+    keep_vba = extension == ".xlsm"
+    workbook = None
+    rows_resynced_pending = 0
+    try:
+        workbook = load_workbook(master_path, data_only=False, keep_vba=keep_vba)
+        cupones_sheet = _get_sheet(workbook, CUPONES_SHEET)
+        cta_sheet = _get_sheet(workbook, CTA_CTE_SHEET)
+        coupon_index = build_cta_coupon_index(cta_sheet)
+
+        rows_resynced_pending = _resync_pending_cupones_rows(
+            cupones_sheet, cta_sheet, coupon_index
+        )
+        if not rows_resynced_pending:
+            raise NoPendingCouponsError(NO_PENDING_COUPONS_ALERT)
+
+        save_path = _create_temp_workbook_path(suffix=extension or ".xlsx")
+        workbook.save(save_path)
+    except PermissionError as exc:
+        raise PermissionError("ERROR: Cierra el archivo Excel antes de continuar") from exc
+    finally:
+        if workbook is not None:
+            workbook.close()
+        gc.collect()
+
+    _launch_temp_workbook(save_path)
+
+    summary = {"rows_resynced_pending": rows_resynced_pending}
+    return save_path, summary
 
 
 def append_monthly_cupones(master_path, monthly_path):
