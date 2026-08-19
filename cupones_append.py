@@ -13,7 +13,7 @@ import pandas as pd
 try:
     from openpyxl import load_workbook
     from openpyxl.cell.cell import MergedCell
-    from openpyxl.styles import Alignment, Font
+    from openpyxl.styles import Alignment, Font, PatternFill
     from openpyxl.utils import get_column_letter
 
     OPENPYXL_AVAILABLE = True
@@ -22,6 +22,7 @@ except ImportError:
     MergedCell = None  # type: ignore[assignment,misc]
     Alignment = None  # type: ignore[assignment,misc]
     Font = None  # type: ignore[assignment,misc]
+    PatternFill = None  # type: ignore[assignment,misc]
     get_column_letter = None  # type: ignore[assignment,misc]
     OPENPYXL_AVAILABLE = False
 
@@ -30,7 +31,7 @@ MONTHLY_HEADER_ROW = 2
 MONTHLY_DATA_START_ROW = 3
 
 CUPONES_SHEET = "Cupones"
-CTA_CTE_SHEET = "Cta Cte J.H.Wiliams"
+CTA_CTE_SHEET = "Cta Cte J.H.Williams"
 
 CUPONES_COL_DATE = 1
 CUPONES_COL_COUPON = 2
@@ -60,6 +61,20 @@ RCV_PATTERN = re.compile(r"\b(RCV-\d+)\b", re.IGNORECASE)
 LEFT_ALIGNMENT = Alignment(horizontal="left") if Alignment is not None else None
 RIGHT_ALIGNMENT = Alignment(horizontal="right") if Alignment is not None else None
 PRIMARY_SPLIT_RED_FONT = Font(color="FF0000") if Font is not None else None
+SPLIT_GROUP_FILL_COLORS = (
+    "FFFDE9D9",  # peach
+    "FFDCE6F1",  # blue
+    "FFE2EFDA",  # green
+    "FFFFF2CC",  # yellow
+    "FFF2DCDB",  # rose
+    "FFD9D2E9",  # purple
+    "FFD8E4BC",  # olive
+    "FFFCE4D6",  # orange
+    "FFDDEBF7",  # pale blue
+    "FFEAD1DC",  # pale pink
+    "FFD0E0E3",  # pale teal
+    "FFFCE9DB",  # cream
+)
 CUPONES_LEFT_COLUMNS = (
     CUPONES_COL_DATE,
     CUPONES_COL_COUPON,
@@ -613,11 +628,157 @@ def _apply_parent_child_subtractions(cupones_sheet, split_group_rows):
         _highlight_primary_split_amounts_red(cupones_sheet, parent_row)
 
 
-def _apply_cta_truth_to_cupones_row(cupones_sheet, cta_sheet, row, coupon_text, coupon_index):
+def _apply_split_group_colors(cupones_sheet, split_group_rows):
+    """
+    Fill the Coupon/Reference cell (Column B) of every row in a split group
+    with a color unique to that group, cycling through a fixed palette so
+    consecutive batches never share the same color.
+    """
+    if PatternFill is None:
+        return
+    for color_index, rows in enumerate(split_group_rows.values()):
+        if len(rows) <= 1:
+            continue
+        color = SPLIT_GROUP_FILL_COLORS[color_index % len(SPLIT_GROUP_FILL_COLORS)]
+        fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
+        for row in rows:
+            _cell_for_write(cupones_sheet, row, CUPONES_COL_COUPON).fill = fill
+
+
+_PENDING_PLACEHOLDER_VALUES = {"RCV-MISSING", "MES-MISSING"}
+
+
+def _cupones_row_is_fully_reconciled(cupones_sheet, row):
+    """
+    True only when F (EFT formula), H (EFT No.) and I (Mes EFT) are all
+    already filled with a real value. These three are only ever written
+    together once a matching Cta Cte invoice is found, so this marks a row
+    as fully done and untouchable. "RCV-MISSING"/"MES-MISSING" placeholders
+    (written when the invoice exists but isn't inside any EFT box yet) do
+    NOT count as reconciled, so the row keeps getting retried until a real
+    EFT box shows up around it.
+    """
+    f_value = _strip_cell(cupones_sheet.cell(row=row, column=CUPONES_COL_EFT_FORMULA).value)
+    h_value = _strip_cell(cupones_sheet.cell(row=row, column=CUPONES_COL_EFT_NO).value)
+    i_value = _strip_cell(cupones_sheet.cell(row=row, column=CUPONES_COL_MES_EFT).value)
+    if h_value.upper() in _PENDING_PLACEHOLDER_VALUES or i_value.upper() in _PENDING_PLACEHOLDER_VALUES:
+        return False
+    return bool(f_value) and bool(h_value) and bool(i_value)
+
+
+def _cell_fill_color_key(cell):
+    fill = cell.fill
+    if fill is None or fill.fill_type != "solid":
+        return None
+    rgb = getattr(fill.start_color, "rgb", None)
+    return rgb if isinstance(rgb, str) else None
+
+
+def _reconstruct_split_groups_by_fill(cupones_sheet, start_row=CUPONES_SCAN_START_ROW):
+    """
+    Rebuild split-group row membership from the per-batch fill color applied
+    by _apply_split_group_colors, by collapsing consecutive rows that share
+    the exact same solid fill color into one group (first row = parent).
+
+    This lets a later resync find a split group's parent even for groups
+    written in a previous run, since the fill color is the only persisted
+    marker of "these rows came from the same J.H. Williams batch."
+    """
+    max_row = max(cupones_sheet.max_row, start_row)
+    groups = []
+    current_key = None
+    current_rows = []
+    for row in range(start_row, max_row + 1):
+        coupon_text = _strip_cell(cupones_sheet.cell(row=row, column=CUPONES_COL_COUPON).value)
+        key = (
+            _cell_fill_color_key(cupones_sheet.cell(row=row, column=CUPONES_COL_COUPON))
+            if coupon_text
+            else None
+        )
+        if key is not None and key == current_key:
+            current_rows.append(row)
+            continue
+        if current_key is not None and len(current_rows) > 1:
+            groups.append(current_rows)
+        current_key = key
+        current_rows = [row] if key is not None else []
+    if current_key is not None and len(current_rows) > 1:
+        groups.append(current_rows)
+    return groups
+
+
+def _resync_pending_cupones_rows(cupones_sheet, cta_sheet, coupon_index):
+    """
+    Revisit every Cupones row that is not fully reconciled (F/H/I incomplete)
+    and retry the Cta Cte cross-reference, so coupons that were pending when
+    first pasted (or split-children that started at $0.00) get filled in once
+    a matching Cta Cte entry shows up in a later EFT load. Rows already fully
+    reconciled (F, H and I all filled) are left completely untouched.
+
+    When a split-group child gets filled in this way, the exact amount just
+    discovered is subtracted from that group's parent row (identified via
+    its shared fill color), so the parent always ends up holding only the
+    portion of the original batch total that hasn't been individually
+    matched yet. This step runs even if the parent row itself already looks
+    "reconciled," since a parent's amount can still change as siblings
+    resolve later.
+    """
+    resynced = 0
+    row_to_parent = {}
+    for group in _reconstruct_split_groups_by_fill(cupones_sheet):
+        parent_row = group[0]
+        for child_row in group[1:]:
+            row_to_parent[child_row] = parent_row
+
+    cta_eft_boxes = build_cta_eft_boxes(cta_sheet)
+    max_row = max(cupones_sheet.max_row, CUPONES_SCAN_START_ROW)
+    for row in range(CUPONES_SCAN_START_ROW, max_row + 1):
+        coupon_text = _strip_cell(cupones_sheet.cell(row=row, column=CUPONES_COL_COUPON).value)
+        if not coupon_text:
+            continue
+        if _cupones_row_is_fully_reconciled(cupones_sheet, row):
+            continue
+
+        before = (
+            _read_float_cell(cupones_sheet, row, CUPONES_COL_GROSS),
+            _read_float_cell(cupones_sheet, row, CUPONES_COL_FEES),
+            _read_float_cell(cupones_sheet, row, CUPONES_COL_NET),
+        )
+        if _apply_control_columns(cupones_sheet, cta_sheet, row, coupon_text, coupon_index, cta_eft_boxes):
+            resynced += 1
+        _apply_cupones_row_alignment(cupones_sheet, row)
+
+        parent_row = row_to_parent.get(row)
+        if parent_row is None:
+            continue
+        after = (
+            _read_float_cell(cupones_sheet, row, CUPONES_COL_GROSS),
+            _read_float_cell(cupones_sheet, row, CUPONES_COL_FEES),
+            _read_float_cell(cupones_sheet, row, CUPONES_COL_NET),
+        )
+        delta_gross, delta_fees, delta_net = (a - b for a, b in zip(after, before))
+        if abs(delta_gross) < 1e-9 and abs(delta_fees) < 1e-9 and abs(delta_net) < 1e-9:
+            continue
+
+        parent_gross = _read_float_cell(cupones_sheet, parent_row, CUPONES_COL_GROSS)
+        parent_fees = _read_float_cell(cupones_sheet, parent_row, CUPONES_COL_FEES)
+        parent_net = _read_float_cell(cupones_sheet, parent_row, CUPONES_COL_NET)
+        _apply_decimal_format(cupones_sheet, parent_row, CUPONES_COL_GROSS, parent_gross - delta_gross)
+        _apply_decimal_format(cupones_sheet, parent_row, CUPONES_COL_FEES, parent_fees - delta_fees)
+        _apply_decimal_format(cupones_sheet, parent_row, CUPONES_COL_NET, parent_net - delta_net)
+        _highlight_primary_split_amounts_red(cupones_sheet, parent_row)
+
+    return resynced
+
+
+def _apply_cta_truth_to_cupones_row(
+    cupones_sheet, cta_sheet, row, coupon_text, coupon_index, cta_eft_boxes
+):
     """
     Apply cross-reference controls for one Cupones row from matched Cta Cte row.
 
-    F/G formulas; H <- Cta G (Nro.); I <- Cta N (MES EFT).
+    F/G formulas; H/I <- the RCV number and applied date found anywhere
+    inside the matched invoice's EFT box (see build_cta_eft_boxes).
     """
     matched_rows = _find_matching_cta_rows(coupon_text, coupon_index)
     if not matched_rows:
@@ -629,35 +790,26 @@ def _apply_cta_truth_to_cupones_row(cupones_sheet, cta_sheet, row, coupon_text, 
     matched_cta_row = matched_rows[0]
     _fill_zero_amounts_from_cta(cupones_sheet, cta_sheet, row, coupon_text)
 
-    nro_value = _strip_cell(
-        cta_sheet.cell(row=matched_cta_row, column=CTA_COL_NRO).value
-    )
-    if not nro_value:
-        nro_value = _find_rcv_in_column_g(cta_sheet, matched_cta_row)
+    box = _find_box_for_row(cta_eft_boxes, matched_cta_row)
+    nro_value, mes_eft = _find_eft_marker_in_box(cta_sheet, box)
     if not nro_value:
         nro_value = "RCV-MISSING"
     _cell_for_write(cupones_sheet, row, CUPONES_COL_EFT_NO).value = nro_value
 
-    mes_eft = _find_mes_eft_date(cta_sheet, matched_cta_row)
     if mes_eft:
         cell_i = _cell_for_write(cupones_sheet, row, CUPONES_COL_MES_EFT)
         cell_i.value = mes_eft
         cell_i.number_format = EFT_DATE_NUMBER_FORMAT
     else:
-        raw_mes = _strip_cell(
-            cta_sheet.cell(row=matched_cta_row, column=CTA_COL_NETO_FINAL).value
-        )
-        _cell_for_write(cupones_sheet, row, CUPONES_COL_MES_EFT).value = (
-            raw_mes or "MES-MISSING"
-        )
+        _cell_for_write(cupones_sheet, row, CUPONES_COL_MES_EFT).value = "MES-MISSING"
 
     return True
 
 
-def _apply_control_columns(cupones_sheet, cta_sheet, row, coupon_text, coupon_index):
+def _apply_control_columns(cupones_sheet, cta_sheet, row, coupon_text, coupon_index, cta_eft_boxes):
     """Backward-compatible alias for full Cta Cte row synchronization."""
     return _apply_cta_truth_to_cupones_row(
-        cupones_sheet, cta_sheet, row, coupon_text, coupon_index
+        cupones_sheet, cta_sheet, row, coupon_text, coupon_index, cta_eft_boxes
     )
 
 
@@ -668,6 +820,7 @@ def sync_cupones_for_cta_coupon_ids(workbook, coupon_ids):
     cupones_sheet = _get_sheet(workbook, CUPONES_SHEET)
     cta_sheet = _get_sheet(workbook, CTA_CTE_SHEET)
     coupon_index = build_cta_coupon_index(cta_sheet)
+    cta_eft_boxes = build_cta_eft_boxes(cta_sheet)
     touched = 0
 
     for row in range(CUPONES_SCAN_START_ROW, cupones_sheet.max_row + 1):
@@ -679,7 +832,7 @@ def sync_cupones_for_cta_coupon_ids(workbook, coupon_ids):
         row_ids = _split_coupon_ids(coupon_text)
         if coupon_ids and not any(coupon_id in coupon_ids for coupon_id in row_ids):
             continue
-        if _apply_control_columns(cupones_sheet, cta_sheet, row, coupon_text, coupon_index):
+        if _apply_control_columns(cupones_sheet, cta_sheet, row, coupon_text, coupon_index, cta_eft_boxes):
             touched += 1
         _apply_cupones_row_alignment(cupones_sheet, row)
 
@@ -809,34 +962,73 @@ def build_cta_coupon_index(worksheet, start_row=CTA_SCAN_START_ROW):
     return index
 
 
-def _find_rcv_in_column_g(worksheet, row, search_up=80):
-    cell = worksheet.cell(row=row, column=CTA_COL_NRO)
-    text = _strip_cell(cell.value)
-    match = RCV_PATTERN.search(text)
-    if match:
-        return match.group(1).upper()
-    for scan_row in range(row, max(CTA_SCAN_START_ROW, row - search_up) - 1, -1):
-        text = _strip_cell(worksheet.cell(row=scan_row, column=CTA_COL_NRO).value)
-        match = RCV_PATTERN.search(text)
-        if match:
-            return match.group(1).upper()
-    return text if text else None
+CTA_BOX_BORDER_COLUMN = 1  # Column A carries the hand-drawn EFT box border.
+_BOX_BORDER_STYLES = {"medium", "thick"}
 
 
-def _find_mes_eft_date(worksheet, row, search_up=80):
-    cell = worksheet.cell(row=row, column=CTA_COL_NETO_FINAL)
-    if isinstance(cell.value, datetime):
-        return cell.value
-    for scan_row in range(row, max(CTA_SCAN_START_ROW, row - search_up) - 1, -1):
-        value = worksheet.cell(row=scan_row, column=CTA_COL_NETO_FINAL).value
-        if value is None or _strip_cell(value) == "":
-            continue
-        if isinstance(value, datetime):
-            return value
-        parsed = _parse_date_to_datetime(value)
-        if parsed:
-            return parsed
+def _cta_border_style(cell, side):
+    edge = getattr(cell.border, side, None)
+    return edge.style if edge is not None else None
+
+
+def build_cta_eft_boxes(worksheet):
+    """
+    Reconstruct the EFT "boxes" drawn by hand in Cta Cte: a medium/thick
+    bordered rectangle enclosing every invoice row that one EFT payment
+    settled. The RCV number and applied date can be annotated on ANY row
+    inside that box (often the row a specific invoice was matched against),
+    not necessarily at the box's top or bottom edge — so the only reliable
+    way to attribute an invoice row to its EFT is to find the box it falls
+    inside (by border), then look for the annotation anywhere within that
+    same box. A plain "nearest annotated row" search in either direction
+    can cross into a neighboring EFT's box and misattribute the coupon.
+
+    Returns a sorted list of (start_row, end_row) tuples.
+    """
+    boxes = []
+    box_start = None
+    max_row = worksheet.max_row
+    for row in range(1, max_row + 1):
+        cell = worksheet.cell(row=row, column=CTA_BOX_BORDER_COLUMN)
+        if _cta_border_style(cell, "top") in _BOX_BORDER_STYLES and box_start is None:
+            box_start = row
+        if _cta_border_style(cell, "bottom") in _BOX_BORDER_STYLES and box_start is not None:
+            boxes.append((box_start, row))
+            box_start = None
+    return boxes
+
+
+def _find_box_for_row(cta_eft_boxes, row):
+    for start, end in cta_eft_boxes:
+        if start <= row <= end:
+            return start, end
     return None
+
+
+def _find_eft_marker_in_box(worksheet, box):
+    """Return (rcv_text, applied_date) found anywhere inside one EFT box."""
+    if box is None:
+        return None, None
+    start, end = box
+    rcv_value = None
+    date_value = None
+    for scan_row in range(start, end + 1):
+        if rcv_value is None:
+            text = _strip_cell(worksheet.cell(row=scan_row, column=CTA_COL_NRO).value)
+            match = RCV_PATTERN.search(text)
+            if match:
+                rcv_value = match.group(1).upper()
+        if date_value is None:
+            value = worksheet.cell(row=scan_row, column=CTA_COL_NETO_FINAL).value
+            if isinstance(value, datetime):
+                date_value = value
+            elif value not in (None, ""):
+                parsed = _parse_date_to_datetime(value)
+                if parsed:
+                    date_value = parsed
+        if rcv_value is not None and date_value is not None:
+            break
+    return rcv_value, date_value
 
 
 def _build_eft_formula(sheet_name, cta_rows):
@@ -1060,6 +1252,7 @@ def append_monthly_cupones(master_path, monthly_path):
 
         cta_sheet = _get_sheet(workbook, CTA_CTE_SHEET)
         coupon_index = build_cta_coupon_index(cta_sheet)
+        cta_eft_boxes = build_cta_eft_boxes(cta_sheet)
 
         last_row = find_last_cupones_row(cupones_sheet)
         start_row = last_row + 1
@@ -1077,7 +1270,7 @@ def append_monthly_cupones(master_path, monthly_path):
             max_coupon_text_len = max(max_coupon_text_len, len(coupon_text or ""))
             _clear_cupones_control_columns(cupones_sheet, row)
             if _apply_control_columns(
-                cupones_sheet, cta_sheet, row, coupon_text, coupon_index
+                cupones_sheet, cta_sheet, row, coupon_text, coupon_index, cta_eft_boxes
             ):
                 rows_matched += 1
             else:
@@ -1091,6 +1284,10 @@ def append_monthly_cupones(master_path, monthly_path):
             appended += 1
 
         _apply_parent_child_subtractions(cupones_sheet, split_group_rows)
+        _apply_split_group_colors(cupones_sheet, split_group_rows)
+        rows_resynced_pending = _resync_pending_cupones_rows(
+            cupones_sheet, cta_sheet, coupon_index
+        )
         for rows in split_group_rows.values():
             for r in rows:
                 _apply_cupones_row_alignment(cupones_sheet, r)
@@ -1113,7 +1310,7 @@ def append_monthly_cupones(master_path, monthly_path):
         "end_row": start_row + appended - 1 if appended else start_row - 1,
         "rows_matched": rows_matched,
         "rows_skipped_duplicates": rows_skipped_duplicates,
-        "historical_repaired": 0,
+        "rows_resynced_pending": rows_resynced_pending,
         "unmatched_coupons": unmatched_coupons,
     }
     return save_path, summary

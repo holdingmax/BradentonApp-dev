@@ -140,7 +140,7 @@ from ui_theme import (
     set_status_style,
 )
 
-SHEET_NAME = "Cta Cte J.H.Wiliams"
+SHEET_NAME = "Cta Cte J.H.Williams"
 LEDGER_START_ROW = 5
 BOTTOM_SCAN_START_ROW = 5000
 BLOCK_FIRST_COLUMN = 1
@@ -1738,7 +1738,7 @@ class EFTExtractorApp:
             right,
             "Workflow",
             [
-                "• PDF coupon extract → ledger sheet Cta Cte J.H.Wiliams",
+                "• PDF coupon extract → ledger sheet Cta Cte J.H.Williams",
                 "• Pipeline 1 keeps original PDF EFT updater unchanged",
                 "• Pipeline 2 skips row 1, drops Batch No(s), appends cleaned A:E",
                 "• F:I cross-reference formulas link dynamically to Cta Cte",
@@ -2632,11 +2632,14 @@ class EFTExtractorApp:
             _saved_path, summary = append_monthly_cupones(excel_path, monthly_report_path)
             self._clear_eft_inputs()
             skipped = summary.get("rows_skipped_duplicates", 0)
+            resynced = summary.get("rows_resynced_pending", 0)
             status_suffix = (
                 f"({summary['rows_appended']} appended, {summary['rows_matched']} matched"
             )
             if skipped:
                 status_suffix += f", {skipped} duplicado(s) omitido(s)"
+            if resynced:
+                status_suffix += f", {resynced} pendiente(s) resincronizado(s)"
             status_suffix += ")."
             self._set_status(
                 "Monthly Cupones update completed " + status_suffix,
