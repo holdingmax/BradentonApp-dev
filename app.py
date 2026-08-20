@@ -1605,10 +1605,10 @@ class EFTExtractorApp:
             value="Listo — seleccione el Excel maestro CMV y el CSV de ventas del POS."
         )
         self.reporte_status_text = tk.StringVar(
-            value="Listo — seleccione el master Bradenton Análisis C-Store y el PDF diario de Elistar."
+            value="Listo — seleccione el master Bradenton Análisis C-Store y el PDF diario."
         )
         self.store_info_status_text = tk.StringVar(
-            value="Listo — seleccione el Excel de Cierre (hoja Store Info) y el PDF diario de Elistar."
+            value="Listo — seleccione el Excel de Cierre (hoja Store Info) y el PDF diario."
         )
         self._cmv_dnd_card = None
         self._chase_display_rules_cache = []
@@ -2133,7 +2133,7 @@ class EFTExtractorApp:
         create_compact_section_header(
             header,
             "Reporte Diario",
-            "Carga el PDF de cierre diario de Elistar en el master Bradenton Análisis C-Store, "
+            "Carga el PDF de cierre diario en el master Bradenton Análisis C-Store, "
             "hoja CARGA AQUI, mapeando los departamentos automáticamente.",
             REPORTE_DIARIO_THEME,
         )
@@ -2150,7 +2150,7 @@ class EFTExtractorApp:
         )
         self.reporte_pdf_entry = create_file_row(
             card,
-            "Elistar PDF",
+            "PDF(s)",
             self.reporte_pdf_path,
             self.select_reporte_pdf_file,
             section_theme=REPORTE_DIARIO_THEME,
@@ -2183,7 +2183,7 @@ class EFTExtractorApp:
         )
         self.store_info_pdf_entry = create_file_row(
             store_info_card,
-            "Elistar PDF",
+            "PDF(s)",
             self.store_info_pdf_path,
             self.select_store_info_pdf_file,
             section_theme=REPORTE_DIARIO_THEME,
@@ -2209,7 +2209,9 @@ class EFTExtractorApp:
             "Cómo funciona",
             [
                 "Master: Bradenton Análisis C-Store (.xlsx / .xlsm)",
-                "PDF: cierre diario de Elistar — totales por departamento",
+                "PDF: cierre diario — totales por departamento",
+                "Podés elegir varios PDF a la vez (Ctrl/Shift + clic en el diálogo)",
+                "Cada PDF se ubica por su propia fecha — no hace falta que sean días seguidos",
                 "Detecta \"Department Sales Report\" automáticamente, sin indicar página",
                 "Si el PDF es una foto/escaneo, lee los datos por OCR (corrige giros de página)",
                 "Fila 3 de CARGA AQUI: detecta los encabezados desde la columna C",
@@ -2956,7 +2958,7 @@ class EFTExtractorApp:
 
     def select_reporte_pdf_file(self):
         filenames = filedialog.askopenfilenames(
-            title="Seleccionar Reportes PDF Diarios de Elistar",
+            title="Seleccionar Reportes PDF Diarios",
             filetypes=PDF_DAILY_FILETYPES,
         )
         if not filenames:
@@ -3003,7 +3005,7 @@ class EFTExtractorApp:
             return
         if not pdf_paths:
             self._set_reporte_status(
-                "Seleccione uno o más reportes PDF diarios de Elistar.",
+                "Seleccione uno o más reportes PDF diarios.",
                 is_error=True,
             )
             return
@@ -3059,7 +3061,7 @@ class EFTExtractorApp:
 
     def select_store_info_pdf_file(self):
         filenames = filedialog.askopenfilenames(
-            title="Seleccionar Reportes PDF Diarios de Elistar",
+            title="Seleccionar Reportes PDF Diarios",
             filetypes=PDF_DAILY_FILETYPES,
         )
         if not filenames:
@@ -3106,7 +3108,7 @@ class EFTExtractorApp:
             return
         if not pdf_paths:
             self._set_store_info_status(
-                "Seleccione uno o más reportes PDF diarios de Elistar.",
+                "Seleccione uno o más reportes PDF diarios.",
                 is_error=True,
             )
             return
