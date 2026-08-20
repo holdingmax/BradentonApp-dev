@@ -110,9 +110,13 @@ else:
     _CUPONES_APPEND_IMPORT_ERROR = None
 
 try:
-    from gettel_toyota_parser import merge_gettel_toyota_into_master
+    from gettel_toyota_parser import (
+        merge_gettel_toyota_into_master,
+        merge_gettel_toyota_pdf_into_master,
+    )
 except ImportError as _gettel_toyota_exc:
     merge_gettel_toyota_into_master = None
+    merge_gettel_toyota_pdf_into_master = None
     _GETTEL_TOYOTA_IMPORT_ERROR = _gettel_toyota_exc
 else:
     _GETTEL_TOYOTA_IMPORT_ERROR = None
@@ -125,6 +129,7 @@ from ui_theme import (
     EFT_THEME,
     EXCEL_FILETYPES_MASTER,
     FONT,
+    GETTEL_THEME,
     PDF_DAILY_FILETYPES,
     REPORTE_DIARIO_THEME,
     SALES_FILETYPES,
@@ -147,6 +152,7 @@ from ui_theme import (
     create_scrollable_body,
     create_secondary_button,
     create_status_bar,
+    make_tab_icon,
     set_status_style,
 )
 
@@ -704,8 +710,8 @@ def find_last_active_row_bottom_up(worksheet):
             return row
 
     raise ValueError(
-        "Could not find a historical coupon date in column A. "
-        f"Scanned rows {scan_start} down to {LEDGER_START_ROW}."
+        "No se encontró una fecha de cupón histórica en la columna A. "
+        f"Se revisaron las filas {scan_start} hasta {LEDGER_START_ROW}."
     )
 
 
@@ -849,7 +855,7 @@ def create_temp_work_copy(source_path):
     """Copy source spreadsheet to local workspace; return absolute temp path."""
     source_path = os.path.abspath(source_path)
     if not os.path.isfile(source_path):
-        raise FileNotFoundError(f"File not found: {source_path}")
+        raise FileNotFoundError(f"Archivo no encontrado: {source_path}")
 
     base_name = os.path.basename(source_path)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
@@ -1110,7 +1116,7 @@ def read_chase_activity_file(file_path):
     if extension in {".xlsx", ".xlsm", ".xls"}:
         return pd.read_excel(file_path, dtype=str, keep_default_na=False)
     raise ValueError(
-        f"Unsupported file type '{extension}'. Use CSV or Excel (.csv, .xlsx, .xlsm)."
+        f"Tipo de archivo no soportado '{extension}'. Use CSV o Excel (.csv, .xlsx, .xlsm)."
     )
 
 
@@ -1326,7 +1332,7 @@ def process_chase_categorization(file_path):
     description_col = find_chase_column(df, "Description", 2)
     if description_col is None:
         raise ValueError(
-            "Could not find Description column (expected Column C / 3rd column)."
+            "No se encontró la columna Description (se esperaba en la Columna C)."
         )
 
     posting_col = find_chase_column(df, "Posting Date", 1)
@@ -1337,7 +1343,7 @@ def process_chase_categorization(file_path):
 
     if posting_col is None or amount_col is None or balance_col is None:
         raise ValueError(
-            "Could not find required columns (B: Posting Date, D: Amount, F: Balance)."
+            "No se encontraron las columnas requeridas (B: Posting Date, D: Amount, F: Balance)."
         )
 
     detalle_col = ensure_detalle_column(df)
@@ -1364,10 +1370,10 @@ def process_chase_categorization(file_path):
         write_chase_excel_file(df, file_path, column_map)
     elif extension == ".xls":
         raise ValueError(
-            "Legacy .xls format is not supported for formulas. Save as .xlsx and retry."
+            "El formato .xls antiguo no soporta fórmulas. Guarde como .xlsx e intente de nuevo."
         )
     else:
-        raise ValueError(f"Cannot save unsupported file type '{extension}'.")
+        raise ValueError(f"No se puede guardar un tipo de archivo no soportado '{extension}'.")
 
     return updated_count, len(df)
 
@@ -1485,7 +1491,7 @@ def get_worksheet(workbook):
         if name.strip().lower() == SHEET_NAME.strip().lower():
             return workbook[name]
     raise ValueError(
-        f'Sheet "{SHEET_NAME}" not found. Available: {", ".join(workbook.sheetnames)}'
+        f'Hoja "{SHEET_NAME}" no encontrada. Disponibles: {", ".join(workbook.sheetnames)}'
     )
 
 
@@ -1497,7 +1503,7 @@ def update_excel_workbook(excel_path, header_data, paid_invoices, credit_coupons
         tuple: (start_row, end_row)
     """
     if not credit_coupons:
-        raise ValueError("No credit card coupons were extracted from the PDF.")
+        raise ValueError("No se extrajeron cupones de tarjeta de crédito del PDF.")
 
     workbook = load_workbook(excel_path, data_only=False)
     worksheet = get_worksheet(workbook)
@@ -1587,17 +1593,17 @@ class EFTExtractorApp:
         self.reporte_master_path = tk.StringVar(value="")
         self.reporte_pdf_path = tk.StringVar(value="")
         self.reporte_pdf_page = tk.StringVar(value="2")
-        self.status_text = tk.StringVar(value="Ready — select files to begin.")
+        self.status_text = tk.StringVar(value="Listo — seleccione los archivos para comenzar.")
         self.gettel_status_text = tk.StringVar(
             value="Listo — seleccione Excel de origen y master de destino."
         )
-        self.chase_status_text = tk.StringVar(value="Ready — select a Chase export.")
-        self.cmv_status_text = tk.StringVar(value="Ready — select department and master CMV files.")
+        self.chase_status_text = tk.StringVar(value="Listo — seleccione un extracto de Chase.")
+        self.cmv_status_text = tk.StringVar(value="Listo — seleccione los archivos de departamento y el maestro CMV.")
         self.sales_status_text = tk.StringVar(
-            value="Ready — select Master CMV workbook and Top-Selling POS CSV."
+            value="Listo — seleccione el Excel maestro CMV y el CSV de ventas del POS."
         )
         self.reporte_status_text = tk.StringVar(
-            value="Ready — select Bradenton Analisis C-Store master and Elistar daily PDF."
+            value="Listo — seleccione el master Bradenton Análisis C-Store y el PDF diario de Elistar."
         )
         self._cmv_dnd_card = None
         self._chase_display_rules_cache = []
@@ -1617,6 +1623,7 @@ class EFTExtractorApp:
             style,
             [
                 EFT_THEME,
+                GETTEL_THEME,
                 CHASE_THEME,
                 REPORTE_DIARIO_THEME,
                 CMV_THEME,
@@ -1633,12 +1640,27 @@ class EFTExtractorApp:
         reporte_tab = tk.Frame(notebook, bg=THEME.BG)
         cmv_tab = tk.Frame(notebook, bg=THEME.BG)
         sales_tab = tk.Frame(notebook, bg=THEME.BG)
-        notebook.add(eft_tab, text="  Gestión de Cupones y EFT  ")
-        notebook.add(gettel_tab, text="  Módulo Gettel / Toyota  ")
-        notebook.add(chase_tab, text="  Chase Bank  ")
-        notebook.add(reporte_tab, text="  REPORTE DIARIO  ")
-        notebook.add(cmv_tab, text="  CMV COSTO  ")
-        notebook.add(sales_tab, text="  CMV VENTAS  ")
+
+        # Kept alive on the instance — Tkinter drops PhotoImages with no
+        # surviving Python reference, which would blank the tab icons.
+        self._tab_icons = [
+            make_tab_icon(EFT_THEME.accent),
+            make_tab_icon(GETTEL_THEME.accent),
+            make_tab_icon(CHASE_THEME.accent),
+            make_tab_icon(REPORTE_DIARIO_THEME.accent),
+            make_tab_icon(CMV_THEME.accent),
+            make_tab_icon(SALES_THEME.accent),
+        ]
+        tabs = [
+            (eft_tab, "  Cupones y EFT  "),
+            (gettel_tab, "  Gettel / Toyota  "),
+            (chase_tab, "  Chase Bank  "),
+            (reporte_tab, "  Reporte Diario  "),
+            (cmv_tab, "  CMV Costo  "),
+            (sales_tab, "  CMV Ventas  "),
+        ]
+        for (tab, label), icon in zip(tabs, self._tab_icons):
+            notebook.add(tab, text=label, image=icon, compound=tk.LEFT)
 
         self._build_eft_tab(eft_tab)
         self._build_gettel_tab(gettel_tab)
@@ -1651,8 +1673,8 @@ class EFTExtractorApp:
         header, left, right = create_dual_column_tab(parent)
         create_compact_section_header(
             header,
-            "EFT Coupon Import",
-            "Run two isolated EFT pipelines: (1) PDF EFT -> Cta Cte update, (2) Monthly Excel J.H. -> Cupones append + cross-reference.",
+            "Gestión de Cupones y EFT",
+            "Dos flujos independientes: (1) PDF de EFT bancario → actualiza Cta Cte, (2) Reporte mensual de J.H. → agrega y cruza Cupones.",
             EFT_THEME,
         )
 
@@ -1692,12 +1714,12 @@ class EFTExtractorApp:
         )
         self.monthly_coupon_entry = create_file_row(
             coupon_card,
-            "Monthly Report",
+            "Reporte Mensual",
             self.monthly_coupon_path,
             self.select_monthly_coupon_report,
             section_theme=EFT_THEME,
             label_width=11,
-            browse_label="Browse…",
+            browse_label="Examinar…",
         )
         self.cupones_excel_entry = create_file_row(
             coupon_card,
@@ -1718,7 +1740,7 @@ class EFTExtractorApp:
         ).pack(anchor=tk.W)
         tk.Label(
             actions,
-            text='Deja "Monthly Report" vacío para solo actualizar pendientes.',
+            text='Deja "Reporte Mensual" vacío para solo actualizar pendientes.',
             font=(FONT, 8),
             fg=THEME.TEXT_MUTED_ON_DARK,
             bg=EFT_THEME.card_tint,
@@ -1731,13 +1753,12 @@ class EFTExtractorApp:
 
         create_info_panel(
             right,
-            "Workflow",
+            "Cómo funciona",
             [
-                "• PDF coupon extract → ledger sheet Cta Cte J.H.Williams",
-                "• Pipeline 1 keeps original PDF EFT updater unchanged",
-                "• Pipeline 2 skips row 1, drops Batch No(s), appends cleaned A:E",
-                "• F:I cross-reference formulas link dynamically to Cta Cte",
-                "• Sin Monthly Report: solo actualiza cupones pendientes/$0",
+                "El PDF de EFT actualiza la hoja Cta Cte J.H.Williams",
+                "El reporte mensual descarta el N° de bache y agrega A:E limpio",
+                "Las columnas F:I se enlazan dinámicamente con Cta Cte",
+                "Sin Reporte Mensual: solo actualiza cupones pendientes/$0",
             ],
             section_theme=EFT_THEME,
         )
@@ -1748,58 +1769,60 @@ class EFTExtractorApp:
             header,
             "Módulo Gettel / Toyota",
             "Resume el Excel diario de Gettel/Toyota (hoja de Rick) por día y lo fusiona en la hoja Gettel-Toyota del master.",
-            EFT_THEME,
+            GETTEL_THEME,
         )
 
-        gettel_card = create_card(left, section_theme=EFT_THEME)
+        gettel_card = create_card(left, section_theme=GETTEL_THEME)
         create_panel_label(
             gettel_card,
             "Pipeline GETTEL / TOYOTA",
-            EFT_THEME,
+            GETTEL_THEME,
         )
         self.gettel_source_excel_entry = create_file_row(
             gettel_card,
             "Seleccionar Excel de Origen (Cupones Diarios):",
             self.gettel_source_excel_path,
             self.select_gettel_source_excel,
-            section_theme=EFT_THEME,
+            section_theme=GETTEL_THEME,
             label_width=32,
-            browse_label="Browse…",
+            browse_label="Examinar…",
         )
         self.gettel_destination_excel_entry = create_file_row(
             gettel_card,
             "Seleccionar Excel de Destino (Master Cierre):",
             self.gettel_destination_excel_path,
             self.select_gettel_destination_excel,
-            section_theme=EFT_THEME,
+            section_theme=GETTEL_THEME,
             label_width=32,
-            browse_label="Browse…",
+            browse_label="Examinar…",
         )
 
-        gettel_actions = tk.Frame(gettel_card, bg=EFT_THEME.card_tint)
+        gettel_actions = tk.Frame(gettel_card, bg=GETTEL_THEME.card_tint)
         gettel_actions.pack(fill=tk.X, pady=(4, 0))
         create_primary_button(
             gettel_actions,
             "Procesar Reporte Gettel/Toyota",
             self.process_gettel_toyota_report,
-            section_theme=EFT_THEME,
+            section_theme=GETTEL_THEME,
         ).pack(anchor=tk.W)
 
         self.gettel_status_label, self.gettel_status_dot = create_status_bar(
-            left, self.gettel_status_text, section_theme=EFT_THEME
+            left, self.gettel_status_text, section_theme=GETTEL_THEME
         )
 
         create_info_panel(
             right,
-            "Workflow",
+            "Cómo funciona",
             [
-                "• Origen: hojas GETTEL/GETTLE y TOYOTA (Date/Amount/Gallons; Tracking se ignora)",
-                "• Suma montos y galones por día calendario (GETTEL y TOYOTA por separado)",
-                "• Destino: hoja «Gettel-Toyota MM.YYYY» — columnas E-H",
-                "• Ambos proveedores se emparejan por la Columna A (misma fila que Local Account)",
-                "• Abre copia temp del master — guarde manualmente con Guardar como",
+                "Origen: Excel (hojas GETTEL/GETTLE y TOYOTA) o PDF/foto escaneada",
+                "PDF/foto: lee con OCR, un proveedor por archivo (según el nombre)",
+                "Suma montos y galones por día calendario (GETTEL y TOYOTA por separado)",
+                "Destino: hoja «Gettel-Toyota MM.YYYY» — columnas E-H",
+                "Ambos proveedores se emparejan por la Columna A (misma fila que Local Account)",
+                "PDF/foto: si el reporte trae un subtotal impreso, se compara automáticamente",
+                "Abre copia temp del master — guarde manualmente con Guardar como",
             ],
-            section_theme=EFT_THEME,
+            section_theme=GETTEL_THEME,
         )
 
     def _build_chase_rules_manager(self, parent):
@@ -1818,13 +1841,13 @@ class EFTExtractorApp:
             rules_card,
             self.chase_rule_keyword,
             section_theme=CHASE_THEME,
-            label="Keyword to Detect",
+            label="Palabra clave a detectar",
         )
         create_compact_entry(
             rules_card,
             self.chase_rule_detail,
             section_theme=CHASE_THEME,
-            label="Target Detail",
+            label="Detalle a asignar",
         )
 
         btn_row = tk.Frame(rules_card, bg=CHASE_THEME.card_tint)
@@ -1891,7 +1914,7 @@ class EFTExtractorApp:
             height=10,
             selectmode="browse",
         )
-        self.chase_rules_tree.heading("keyword", text="Keyword")
+        self.chase_rules_tree.heading("keyword", text="Palabra Clave")
         self.chase_rules_tree.heading("detail", text="Detalle")
         self.chase_rules_tree.heading("source", text="Tipo")
         self.chase_rules_tree.column("keyword", width=180, anchor=tk.W, stretch=True)
@@ -2070,15 +2093,15 @@ class EFTExtractorApp:
         header, left, right = create_dual_column_tab(parent)
         create_compact_section_header(
             header,
-            "Chase Activity Categorization",
-            "Classify bank activity by matching Description keywords to Detalle with preserved formulas.",
+            "Chase Bank",
+            "Clasifica los movimientos bancarios comparando palabras clave de la Descripción contra el Detalle, sin tocar las fórmulas existentes.",
             CHASE_THEME,
         )
 
         card = create_card(left, section_theme=CHASE_THEME)
         self.chase_entry = create_file_row(
             card,
-            "Chase File",
+            "Archivo Chase",
             self.chase_path,
             self.select_chase_file,
             section_theme=CHASE_THEME,
@@ -2089,7 +2112,7 @@ class EFTExtractorApp:
         actions.pack(fill=tk.X, pady=(4, 0))
         create_primary_button(
             actions,
-            "Process and Categorize Chase Data",
+            "Procesar y Categorizar Chase",
             self.process_chase_data,
             section_theme=CHASE_THEME,
         ).pack(anchor=tk.W)
@@ -2104,16 +2127,16 @@ class EFTExtractorApp:
         header, left, right = create_dual_column_tab(parent)
         create_compact_section_header(
             header,
-            "Reporte Diario — C-Store Daily Sales",
-            "Import Elistar daily closure PDF (page 2) into the Bradenton Analisis C-Store "
-            "workbook on sheet CARGA AQUI with dynamic department header mapping.",
+            "Reporte Diario",
+            "Carga el PDF de cierre diario de Elistar en el master Bradenton Análisis C-Store, "
+            "hoja CARGA AQUI, mapeando los departamentos automáticamente.",
             REPORTE_DIARIO_THEME,
         )
 
         card = create_card(left, section_theme=REPORTE_DIARIO_THEME, padx=4, pady=4)
         self.reporte_master_entry = create_file_row(
             card,
-            "Master Excel",
+            "Excel Maestro",
             self.reporte_master_path,
             self.select_reporte_master_file,
             section_theme=REPORTE_DIARIO_THEME,
@@ -2126,7 +2149,7 @@ class EFTExtractorApp:
             self.select_reporte_pdf_file,
             section_theme=REPORTE_DIARIO_THEME,
             label_width=11,
-            browse_label="Browse…",
+            browse_label="Examinar…",
         )
         create_compact_entry(
             card,
@@ -2150,21 +2173,21 @@ class EFTExtractorApp:
 
         create_info_panel(
             right,
-            "Workflow",
+            "Cómo funciona",
             [
-                "• Master: Bradenton. Analisis C-Store (.xlsx / .xlsm)",
-                "• PDF: Elistar daily closure — page 2 department totals",
-                "• Row 3 on CARGA AQUI: dynamic header scan from column C",
-                "• Row 5+: first date row with empty tracking cells receives data",
-                "• GIFT CARD / VARIOS/BOLSA formula columns remain untouched",
-                "• Silent temp workbook launch — no completion popups",
+                "Master: Bradenton Análisis C-Store (.xlsx / .xlsm)",
+                "PDF: cierre diario de Elistar — totales por departamento",
+                "Fila 3 de CARGA AQUI: detecta los encabezados desde la columna C",
+                "Escribe en la fila del día cuyas celdas de seguimiento estén vacías",
+                "Las columnas con fórmula (GIFT CARD / VARIOS/BOLSA) nunca se tocan",
+                "Abre una copia temporal automáticamente al terminar",
             ],
             section_theme=REPORTE_DIARIO_THEME,
         )
 
         self.reporte_log_text, _log_card = create_log_panel(
             right,
-            "Processing Log",
+            "Registro de Procesamiento",
             section_theme=REPORTE_DIARIO_THEME,
             height=8,
         )
@@ -2173,9 +2196,9 @@ class EFTExtractorApp:
         header, left, right = create_dual_column_tab(parent)
         create_compact_section_header(
             header,
-            "CMV Cost Sync — COSTO.TODOS",
-            "Select multiple Elistars department files (bulk). Each file is comma-parsed, "
-            "matched by UPC on sheet COSTO.TODOS, and updates Cost (D) and Price (E) only.",
+            "CMV Costo",
+            "Selecciona uno o varios archivos de departamento de Elistar; se emparejan por UPC "
+            "en la hoja COSTO.TODOS, actualizando solo Costo y Precio.",
             CMV_THEME,
         )
 
@@ -2183,16 +2206,16 @@ class EFTExtractorApp:
         self._cmv_dnd_card = card
         self.cmv_entry = create_file_row(
             card,
-            "Dept Files",
+            "Archivos Depto.",
             self.cmv_path,
             self.select_cmv_file,
             section_theme=CMV_THEME,
             label_width=11,
-            browse_label="Browse…",
+            browse_label="Examinar…",
         )
         self.cmv_master_entry = create_file_row(
             card,
-            "CMV Master",
+            "Maestro CMV",
             self.cmv_master_path,
             self.select_cmv_master_file,
             section_theme=CMV_THEME,
@@ -2214,12 +2237,11 @@ class EFTExtractorApp:
 
         create_info_panel(
             right,
-            "CMV Processing",
+            "Cómo funciona",
             [
-                "• Bulk department files → single COSTO.TODOS merge",
-                "• UPC match updates columns D (Cost) and E (Price)",
-                "• A:E block shift for delimiter rows only",
-                "• Silent temp workbook launch on completion",
+                "Varios archivos de departamento → se fusionan en una sola COSTO.TODOS",
+                "El emparejamiento por UPC actualiza solo Costo (D) y Precio (E)",
+                "Abre automáticamente una copia temporal al terminar",
             ],
             section_theme=CMV_THEME,
         )
@@ -2232,15 +2254,15 @@ class EFTExtractorApp:
         header, left, right = create_dual_column_tab(parent)
         create_compact_section_header(
             header,
-            "Ventas — Monthly Sales Update",
-            "Select the Master CMV workbook and one or more POS sales reports (CSV/Excel) to update department sheets.",
+            "CMV Ventas",
+            "Selecciona el Excel maestro CMV y uno o más reportes de ventas del POS (CSV/Excel) para actualizar las hojas de departamento.",
             SALES_THEME,
         )
 
         card = create_card(left, section_theme=SALES_THEME)
         self.sales_master_entry = create_file_row(
             card,
-            "Master CMV",
+            "Maestro CMV",
             self.sales_master_path,
             self.select_sales_master_file,
             section_theme=SALES_THEME,
@@ -2253,7 +2275,7 @@ class EFTExtractorApp:
             self.select_sales_file,
             section_theme=SALES_THEME,
             label_width=11,
-            browse_label="Browse…",
+            browse_label="Examinar…",
         )
 
         actions = tk.Frame(left, bg=THEME.BG)
@@ -2271,13 +2293,13 @@ class EFTExtractorApp:
 
         create_info_panel(
             right,
-            "Sheet Routing & Rules",
+            "Cómo funciona",
             [
-                "• Routes by exact tab title (E-GIGARETTE, FOUTAIN, COFFE, etc.)",
-                "• Elistar bottom summary rows excluded from import",
-                "• TOTAL row + spacer + A:I shift with SUM on E/F/H",
-                "• RESUMEN A5→Total: enlaza B y E a autosumas E/F de cada hoja",
-                "• Vista previa temp — guarde el master manualmente con Guardar como",
+                "Enruta por el nombre exacto del departamento (E-GIGARETTE, FOUTAIN, COFFE, etc.)",
+                "Las filas de resumen al final del reporte Elistar se excluyen",
+                "Desplaza la fila TOTAL y recalcula las fórmulas SUM en E/F/H",
+                "RESUMEN A5→Total: enlaza B y E a autosumas E/F de cada hoja",
+                "Vista previa temp — guarde el master manualmente con Guardar como",
             ],
             section_theme=SALES_THEME,
         )
@@ -2309,7 +2331,7 @@ class EFTExtractorApp:
 
         if extension == ".pdf":
             self.pdf_path.set(file_path)
-            self._set_status("EFT PDF selected.")
+            self._set_status("PDF de EFT seleccionado.")
         elif extension in {".xlsx", ".xls", ".xlsm", ".xls", ".csv"}:
             master_candidates = [
                 p
@@ -2327,15 +2349,15 @@ class EFTExtractorApp:
             if dept_candidates:
                 self._set_cmv_dept_paths(dept_candidates)
                 self._set_cmv_status(
-                    f"{len(dept_candidates)} department file(s) selected."
+                    f"{len(dept_candidates)} archivo(s) de departamento seleccionado(s)."
                 )
             elif master_candidates:
-                self._set_cmv_status("Master CMV workbook selected.")
+                self._set_cmv_status("Excel maestro CMV seleccionado.")
             elif len(normalized) == 1:
                 self.chase_path.set(file_path)
-                self._set_chase_status("Chase file selected.")
+                self._set_chase_status("Archivo de Chase seleccionado.")
             else:
-                self._set_cmv_status("Files could not be classified for Chase or CMV.")
+                self._set_cmv_status("No se pudieron clasificar los archivos para Chase o CMV.")
 
     def _looks_like_elistars_department_export(self, file_path):
         """Heuristic: single-column comma blobs or known CMV/department filename tokens."""
@@ -2387,9 +2409,9 @@ class EFTExtractorApp:
             self._set_cmv_dept_paths(merged)
         count = len(split_paths(self.cmv_path.get())) if split_paths else 0
         self._set_cmv_status(
-            f"CMV selection updated ({count} department file(s))."
+            f"Selección CMV actualizada ({count} archivo(s) de departamento)."
             if count
-            else "Master CMV workbook selected."
+            else "Excel maestro CMV seleccionado."
         )
 
     def _set_status(self, message, is_error=False, completed=False):
@@ -2515,20 +2537,20 @@ class EFTExtractorApp:
 
     def select_pdf(self):
         path = filedialog.askopenfilename(
-            title="Select EFT PDF",
-            filetypes=[("PDF files", "*.pdf"), ("All files", "*.*")],
+            title="Seleccionar PDF de EFT",
+            filetypes=[("Archivos PDF", "*.pdf"), ("Todos los archivos", "*.*")],
         )
         if path:
             self.pdf_path.set(path)
-            self._set_status("EFT PDF selected.")
+            self._set_status("PDF de EFT seleccionado.")
 
     def _ask_excel_ledger_path(self):
         """Shared master workbook file picker for Paso 1 and Paso 2."""
         return filedialog.askopenfilename(
-            title="Select Excel File",
+            title="Seleccionar archivo Excel",
             filetypes=[
-                ("Excel files", "*.xlsx *.xlsm"),
-                ("All files", "*.*"),
+                ("Archivos Excel", "*.xlsx *.xlsm"),
+                ("Todos los archivos", "*.*"),
             ],
         )
 
@@ -2536,40 +2558,40 @@ class EFTExtractorApp:
         path = self._ask_excel_ledger_path()
         if path:
             self.excel_path.set(path)
-            self._set_status("Excel file selected.")
+            self._set_status("Archivo Excel seleccionado.")
 
     def select_cupones_excel_ledger(self):
         path = self._ask_excel_ledger_path()
         if path:
             self.cupones_excel_path.set(path)
-            self._set_status("Excel ledger selected for Cupones pipeline.")
+            self._set_status("Excel maestro seleccionado para el pipeline de Cupones.")
 
     def select_monthly_coupon_report(self):
         path = filedialog.askopenfilename(
-            title="Select Monthly J.H. Williams Coupon Report",
+            title="Seleccionar Reporte Mensual de Cupones J.H. Williams",
             filetypes=[
-                ("Monthly report files", "*.xlsx *.xlsm *.xls *.csv"),
-                ("Excel files", "*.xlsx *.xlsm *.xls"),
-                ("CSV files", "*.csv"),
-                ("All files", "*.*"),
+                ("Archivos de reporte mensual", "*.xlsx *.xlsm *.xls *.csv"),
+                ("Archivos Excel", "*.xlsx *.xlsm *.xls"),
+                ("Archivos CSV", "*.csv"),
+                ("Todos los archivos", "*.*"),
             ],
         )
         if path:
             self.monthly_coupon_path.set(path)
-            self._set_status("Monthly coupon report selected.")
+            self._set_status("Reporte mensual de cupones seleccionado.")
 
     def process_and_update(self):
         pdf_path = self.pdf_path.get().strip()
         excel_path = self.excel_path.get().strip()
 
         if not pdf_path:
-            messagebox.showwarning("Missing File", "Please select an EFT PDF file.")
+            messagebox.showwarning("Archivo faltante", "Seleccione un archivo PDF de EFT.")
             return
         if not excel_path:
-            messagebox.showwarning("Missing File", "Please select an Excel file.")
+            messagebox.showwarning("Archivo faltante", "Seleccione un archivo Excel.")
             return
 
-        self._set_status("Processing PDF and updating Excel...")
+        self._set_status("Procesando PDF y actualizando Excel...")
         self.root.update_idletasks()
 
         try:
@@ -2587,7 +2609,7 @@ class EFTExtractorApp:
             )
             open_excel_workbook(temp_excel_path)
             self._clear_eft_inputs()
-            self._set_status("Process Completed!", completed=True)
+            self._set_status("¡Proceso completado!", completed=True)
         except FileNotFoundError as exc:
             self._set_status(f"Error: {exc}", is_error=True)
         except ValueError as exc:
@@ -2608,8 +2630,8 @@ class EFTExtractorApp:
 
         if not excel_path:
             messagebox.showwarning(
-                "Missing File",
-                "Please select an Excel ledger file in Paso 2.",
+                "Archivo faltante",
+                "Seleccione un archivo Excel maestro en el Paso 2.",
             )
             return
 
@@ -2682,8 +2704,12 @@ class EFTExtractorApp:
 
     def select_gettel_source_excel(self):
         path = filedialog.askopenfilename(
-            title="Seleccionar Excel de Origen (Cupones Diarios)",
-            filetypes=[("Excel Files", "*.xlsx")],
+            title="Seleccionar Excel o PDF/Foto de Origen (Cupones Diarios)",
+            filetypes=[
+                ("Excel o PDF", "*.xlsx *.pdf"),
+                ("Archivos Excel", "*.xlsx"),
+                ("PDF (foto escaneada)", "*.pdf"),
+            ],
         )
         if not path:
             return
@@ -2697,7 +2723,7 @@ class EFTExtractorApp:
     def select_gettel_destination_excel(self):
         path = filedialog.askopenfilename(
             title="Seleccionar Excel de Destino (Master Cierre)",
-            filetypes=[("Excel Files", "*.xlsx")],
+            filetypes=[("Archivos Excel", "*.xlsx")],
         )
         if not path:
             return
@@ -2709,6 +2735,28 @@ class EFTExtractorApp:
         self._set_gettel_status(f"Destino: {os.path.basename(abs_path)}")
 
     def process_gettel_toyota_report(self):
+        source_path = self.gettel_source_excel_path.get().strip()
+        destination_path = self.gettel_destination_excel_path.get().strip()
+        if not source_path or not os.path.isfile(source_path):
+            messagebox.showwarning(
+                "Archivo faltante",
+                "Seleccione el Excel o PDF/foto de origen (cupones diarios).",
+            )
+            return
+        if not destination_path or not os.path.isfile(destination_path):
+            messagebox.showwarning(
+                "Archivo faltante",
+                "Seleccione el Excel de destino (master Cierre).",
+            )
+            return
+
+        is_pdf = os.path.splitext(source_path)[1].lower() == ".pdf"
+        if is_pdf:
+            self._process_gettel_toyota_pdf(source_path, destination_path)
+        else:
+            self._process_gettel_toyota_excel(source_path, destination_path)
+
+    def _process_gettel_toyota_excel(self, source_path, destination_path):
         if merge_gettel_toyota_into_master is None:
             self._set_gettel_status(
                 f"Gettel/Toyota no disponible: {_GETTEL_TOYOTA_IMPORT_ERROR}",
@@ -2716,67 +2764,111 @@ class EFTExtractorApp:
             )
             return
 
-        source_path = self.gettel_source_excel_path.get().strip()
-        destination_path = self.gettel_destination_excel_path.get().strip()
-        if not source_path or not os.path.isfile(source_path):
-            messagebox.showwarning(
-                "Archivo faltante",
-                "Seleccione el Excel de origen (cupones diarios).",
-            )
-            return
-        if not destination_path or not os.path.isfile(destination_path):
-            messagebox.showwarning(
-                "Archivo faltante",
-                "Seleccione el Excel de destino (master de 7 hojas).",
-            )
-            return
-
         self._set_gettel_status("Resumiendo cupones y fusionando en el master...")
         self.root.update_idletasks()
 
         try:
-            _preview_path, rows_matched, gettel_days, toyota_days = (
+            _preview_path, rows_matched, gettel_days, toyota_days, unmatched_days = (
                 merge_gettel_toyota_into_master(
                     source_path, destination_path, launch=True
                 )
             )
-            self.gettel_source_excel_path.set("")
-            self.gettel_destination_excel_path.set("")
-            if hasattr(self, "gettel_source_excel_entry"):
-                self.gettel_source_excel_entry.delete(0, tk.END)
-            if hasattr(self, "gettel_destination_excel_entry"):
-                self.gettel_destination_excel_entry.delete(0, tk.END)
-            self._set_gettel_status(
-                "Master abierto en Excel "
+            self._clear_gettel_inputs()
+            status_suffix = (
                 f"({rows_matched} fila(s) actualizadas; "
-                f"{gettel_days} día(s) GETTEL, {toyota_days} día(s) TOYOTA) — "
-                "use Guardar como.",
+                f"{gettel_days} día(s) GETTEL, {toyota_days} día(s) TOYOTA)"
+            )
+            if unmatched_days:
+                status_suffix += (
+                    f" — {len(unmatched_days)} día(s) del origen sin fila en el "
+                    "master, ignorado(s)"
+                )
+            self._set_gettel_status(
+                "Master abierto en Excel " + status_suffix + " — use Guardar como.",
                 completed=True,
             )
         except Exception as exc:
             self._set_gettel_status(f"Error: {exc}", is_error=True)
 
+    def _process_gettel_toyota_pdf(self, source_path, destination_path):
+        if merge_gettel_toyota_pdf_into_master is None:
+            self._set_gettel_status(
+                f"Gettel/Toyota no disponible: {_GETTEL_TOYOTA_IMPORT_ERROR}",
+                is_error=True,
+            )
+            return
+
+        self._set_gettel_status("Leyendo la foto/PDF con OCR (puede tardar unos segundos)...")
+        self.root.update_idletasks()
+
+        try:
+            _preview_path, rows_matched, vendor, days, diagnostics = (
+                merge_gettel_toyota_pdf_into_master(
+                    source_path, destination_path, launch=True
+                )
+            )
+            self._clear_gettel_inputs()
+            status_suffix = (
+                f"({rows_matched} día(s) actualizados, proveedor {vendor})"
+            )
+            unmatched_days = diagnostics.get("unmatched_days") or []
+            if unmatched_days:
+                status_suffix += (
+                    f" — {len(unmatched_days)} día(s) del reporte sin fila en el "
+                    "master, ignorado(s)"
+                )
+            if diagnostics.get("printed_subtotal_found"):
+                amount_ok = diagnostics.get("amount_matches_subtotal")
+                gallons_ok = diagnostics.get("gallons_matches_subtotal")
+                if amount_ok and gallons_ok:
+                    status_suffix += " — coincide con el subtotal impreso."
+                else:
+                    status_suffix += (
+                        " — ALERTA: no coincide exacto con el subtotal impreso "
+                        f"(calculado ${diagnostics['computed_amount']:.2f} vs "
+                        f"impreso ${diagnostics['printed_subtotal_amount']:.2f}); "
+                        "revise la foto antes de guardar."
+                    )
+            self._set_gettel_status(
+                "Master abierto en Excel " + status_suffix,
+                completed=True,
+                is_error=not (
+                    diagnostics.get("amount_matches_subtotal", True)
+                    and diagnostics.get("gallons_matches_subtotal", True)
+                ),
+            )
+        except Exception as exc:
+            self._set_gettel_status(f"Error: {exc}", is_error=True)
+
+    def _clear_gettel_inputs(self):
+        self.gettel_source_excel_path.set("")
+        self.gettel_destination_excel_path.set("")
+        if hasattr(self, "gettel_source_excel_entry"):
+            self.gettel_source_excel_entry.delete(0, tk.END)
+        if hasattr(self, "gettel_destination_excel_entry"):
+            self.gettel_destination_excel_entry.delete(0, tk.END)
+
     def select_chase_file(self):
         path = filedialog.askopenfilename(
-            title="Select Chase CSV/Excel",
+            title="Seleccionar CSV/Excel de Chase",
             filetypes=[
-                ("Chase files", "*.csv *.xlsx *.xlsm *.xls"),
-                ("CSV files", "*.csv"),
-                ("Excel files", "*.xlsx *.xlsm"),
-                ("All files", "*.*"),
+                ("Archivos Chase", "*.csv *.xlsx *.xlsm *.xls"),
+                ("Archivos CSV", "*.csv"),
+                ("Archivos Excel", "*.xlsx *.xlsm"),
+                ("Todos los archivos", "*.*"),
             ],
         )
         if path:
             self.chase_path.set(path)
-            self._set_chase_status("Chase file selected.")
+            self._set_chase_status("Archivo de Chase seleccionado.")
 
     def process_chase_data(self):
         file_path = self.chase_path.get().strip()
         if not file_path:
-            self._set_chase_status("Please select a Chase CSV or Excel file.", is_error=True)
+            self._set_chase_status("Seleccione un archivo CSV o Excel de Chase.", is_error=True)
             return
 
-        self._set_chase_status("Processing Chase bank activity...")
+        self._set_chase_status("Procesando movimientos bancarios de Chase...")
         self.root.update_idletasks()
 
         try:
@@ -2785,7 +2877,7 @@ class EFTExtractorApp:
             open_excel_workbook(temp_chase_path)
             self._clear_chase_inputs()
             self._set_chase_status(
-                f"Chase Processing Completed! ({updated_count} of {total_rows} rows categorized.)",
+                f"¡Procesamiento de Chase completado! ({updated_count} de {total_rows} filas categorizadas.)",
                 completed=True,
             )
         except FileNotFoundError as exc:
@@ -2797,7 +2889,7 @@ class EFTExtractorApp:
 
     def select_cmv_file(self):
         paths = filedialog.askopenfilenames(
-            title="Select Elistars Department Files",
+            title="Seleccionar Archivos de Departamento de Elistar",
             filetypes=DEPT_FILETYPES,
         )
         if not paths:
@@ -2807,32 +2899,32 @@ class EFTExtractorApp:
             return
         self._set_cmv_dept_paths(normalized)
         self._set_cmv_status(
-            f"{len(normalized)} department file(s) selected for batch processing."
+            f"{len(normalized)} archivo(s) de departamento seleccionado(s) para procesar."
         )
 
     def select_sales_master_file(self):
         filename = filedialog.askopenfilename(
-            title="Select Master CMV Excel File",
+            title="Seleccionar Excel Maestro CMV",
             filetypes=EXCEL_FILETYPES_MASTER,
         )
         if not filename:
             return
         self.sales_master_path.set(os.path.abspath(filename))
-        self._set_sales_status("Master CMV workbook selected.")
+        self._set_sales_status("Excel maestro CMV seleccionado.")
 
     def select_reporte_master_file(self):
         filename = filedialog.askopenfilename(
-            title="Select Bradenton Analisis C-Store Master",
+            title="Seleccionar Master Bradenton Análisis C-Store",
             filetypes=ANALISIS_MASTER_FILETYPES,
         )
         if not filename:
             return
         self.reporte_master_path.set(os.path.abspath(filename))
-        self._set_reporte_status("Bradenton Analisis C-Store master selected.")
+        self._set_reporte_status("Master Bradenton Análisis C-Store seleccionado.")
 
     def select_reporte_pdf_file(self):
         filenames = filedialog.askopenfilenames(
-            title="Select Elistar Daily PDF Reports",
+            title="Seleccionar Reportes PDF Diarios de Elistar",
             filetypes=PDF_DAILY_FILETYPES,
         )
         if not filenames:
@@ -2848,15 +2940,15 @@ class EFTExtractorApp:
             self.reporte_pdf_entry.insert(0, display_value)
         count = len(paths)
         self._set_reporte_status(
-            f"{count} daily PDF file(s) selected."
+            f"{count} PDF(s) diario(s) seleccionado(s)."
             if count != 1
-            else "1 daily PDF file selected."
+            else "1 PDF diario seleccionado."
         )
 
     def process_reporte_diario_file(self):
         if process_reporte_diario is None:
             self._set_reporte_status(
-                f"Reporte Diario module unavailable: {_REPORTE_IMPORT_ERROR}",
+                f"Módulo de Reporte Diario no disponible: {_REPORTE_IMPORT_ERROR}",
                 is_error=True,
             )
             return
@@ -2874,13 +2966,13 @@ class EFTExtractorApp:
 
         if not master_path:
             self._set_reporte_status(
-                "Please select the Bradenton Analisis C-Store master workbook.",
+                "Seleccione el master Bradenton Análisis C-Store.",
                 is_error=True,
             )
             return
         if not pdf_paths:
             self._set_reporte_status(
-                "Please select one or more Elistar daily PDF reports.",
+                "Seleccione uno o más reportes PDF diarios de Elistar.",
                 is_error=True,
             )
             return
@@ -2889,18 +2981,18 @@ class EFTExtractorApp:
             page_index = int(page_text) - 1
         except ValueError:
             self._set_reporte_status(
-                "Página del Reporte must be a whole number (e.g. 2).",
+                "Página del Reporte debe ser un número entero (ej. 2).",
                 is_error=True,
             )
             return
         if page_index < 0:
             self._set_reporte_status(
-                "Página del Reporte must be 1 or greater.", is_error=True
+                "Página del Reporte debe ser 1 o mayor.", is_error=True
             )
             return
 
         self._set_reporte_status(
-            f"Processing {len(pdf_paths)} daily PDF(s) — page {page_index + 1}..."
+            f"Procesando {len(pdf_paths)} PDF(s) diario(s) — página {page_index + 1}..."
         )
         self.root.config(cursor="watch")
         self.root.update_idletasks()
@@ -2910,18 +3002,18 @@ class EFTExtractorApp:
                 master_path, pdf_paths, page_index=page_index
             )
             log_lines = [
-                f"PDF page: {summary.get('page_number', page_index + 1)}",
-                f"Files processed: {summary.get('files_processed', len(pdf_paths))}",
-                f"Total departments written: {summary['departments_written']}",
-                f"Total skipped: {summary['departments_skipped']}",
+                f"Página del PDF: {summary.get('page_number', page_index + 1)}",
+                f"Archivos procesados: {summary.get('files_processed', len(pdf_paths))}",
+                f"Total de departamentos escritos: {summary['departments_written']}",
+                f"Total omitidos: {summary['departments_skipped']}",
                 "",
             ]
             for batch in summary.get("batch_results", []):
                 log_lines.append(
-                    f"Day {batch['calendar_day']} — {batch['filename']} "
-                    f"(row {batch['target_row']}): "
-                    f"{batch['departments_written']} written, "
-                    f"{batch['departments_skipped']} skipped"
+                    f"Día {batch['calendar_day']} — {batch['filename']} "
+                    f"(fila {batch['target_row']}): "
+                    f"{batch['departments_written']} escritos, "
+                    f"{batch['departments_skipped']} omitidos"
                 )
                 for item in batch.get("written", []):
                     log_lines.append(
@@ -2931,7 +3023,7 @@ class EFTExtractorApp:
                     )
                 skipped = batch.get("skipped") or []
                 if skipped:
-                    log_lines.append("    Skipped:")
+                    log_lines.append("    Omitidos:")
                     for name in skipped:
                         log_lines.append(f"      • {name}")
                 log_lines.append("")
@@ -2939,8 +3031,8 @@ class EFTExtractorApp:
             self._append_reporte_log(log_lines)
             self._clear_reporte_inputs()
             self._set_reporte_status(
-                f"Reporte Diario completed — {summary['files_processed']} day(s), "
-                f"{summary['departments_written']} department value(s) written.",
+                f"Reporte Diario completado — {summary['files_processed']} día(s), "
+                f"{summary['departments_written']} valor(es) de departamento escrito(s).",
                 completed=True,
             )
         except Exception as exc:
@@ -2952,7 +3044,7 @@ class EFTExtractorApp:
 
     def select_sales_file(self):
         filenames = filedialog.askopenfilenames(
-            title="Select Top-Selling POS Sales Reports",
+            title="Seleccionar Reportes de Ventas del POS",
             filetypes=SALES_FILETYPES,
         )
         if not filenames:
@@ -2968,19 +3060,19 @@ class EFTExtractorApp:
             self.sales_entry.insert(0, display_value)
         count = len(paths)
         self._set_sales_status(
-            f"{count} sales report file(s) selected."
+            f"{count} archivo(s) de ventas seleccionado(s)."
             if count != 1
-            else "1 sales report file selected."
+            else "1 archivo de ventas seleccionado."
         )
 
     def process_monthly_sales_file(self):
         if process_monthly_sales is None or split_paths is None:
             messagebox.showerror(
                 "Error",
-                f"Monthly Sales module unavailable: {_SALES_IMPORT_ERROR}",
+                f"Módulo de Ventas Mensuales no disponible: {_SALES_IMPORT_ERROR}",
             )
             self._set_sales_status(
-                f"Monthly Sales module unavailable: {_SALES_IMPORT_ERROR}",
+                f"Módulo de Ventas Mensuales no disponible: {_SALES_IMPORT_ERROR}",
                 is_error=True,
             )
             return
@@ -2993,7 +3085,7 @@ class EFTExtractorApp:
                 "Seleccione el archivo maestro CMV (.xlsx / .xlsm).",
             )
             self._set_sales_status(
-                "Please select the Master CMV workbook.", is_error=True
+                "Seleccione el Excel maestro CMV.", is_error=True
             )
             return
         if not sales_files:
@@ -3002,12 +3094,12 @@ class EFTExtractorApp:
                 "Seleccione uno o más archivos de ventas (CSV / Excel).",
             )
             self._set_sales_status(
-                "Please select one or more POS sales report files.", is_error=True
+                "Seleccione uno o más reportes de ventas del POS.", is_error=True
             )
             return
 
         self._set_sales_status(
-            f"Processing {len(sales_files)} sales file(s) and updating department sheets..."
+            f"Procesando {len(sales_files)} archivo(s) de ventas y actualizando hojas de departamento..."
         )
         self.root.config(cursor="watch")
         self.root.update_idletasks()
@@ -3022,8 +3114,8 @@ class EFTExtractorApp:
             if hasattr(self, "sales_master_entry"):
                 self.sales_master_entry.delete(0, tk.END)
             self._set_sales_status(
-                f"Updated {len(frame)} row(s) from {len(sales_files)} file(s) "
-                f"across {dept_count} department(s). Master preview opened.",
+                f"Se actualizaron {len(frame)} fila(s) de {len(sales_files)} archivo(s) "
+                f"en {dept_count} departamento(s). Vista previa del master abierta.",
                 completed=True,
             )
         except Exception as exc:
@@ -3036,22 +3128,22 @@ class EFTExtractorApp:
 
     def select_cmv_master_file(self):
         filename = filedialog.askopenfilename(
-            title="Select Master CMV Excel File",
+            title="Seleccionar Excel Maestro CMV",
             filetypes=EXCEL_FILETYPES_MASTER,
         )
         if not filename:
             return
         self.cmv_master_path.set(os.path.abspath(filename))
-        self._set_cmv_status("Master CMV workbook selected.")
+        self._set_cmv_status("Excel maestro CMV seleccionado.")
 
     def process_cmv_department(self):
         if update_master_costo_todos_bulk is None or split_paths is None:
             messagebox.showerror(
                 "Error",
-                f"CMV module unavailable: {_CMV_IMPORT_ERROR}",
+                f"Módulo de CMV no disponible: {_CMV_IMPORT_ERROR}",
             )
             self._set_cmv_status(
-                f"CMV module unavailable: {_CMV_IMPORT_ERROR}", is_error=True
+                f"Módulo de CMV no disponible: {_CMV_IMPORT_ERROR}", is_error=True
             )
             return
 
@@ -3064,7 +3156,7 @@ class EFTExtractorApp:
                 "Seleccione uno o más archivos de departamento (CSV/Excel).",
             )
             self._set_cmv_status(
-                "Please select one or more Elistars department files.", is_error=True
+                "Seleccione uno o más archivos de departamento de Elistar.", is_error=True
             )
             return
         if not master_path:
@@ -3073,12 +3165,12 @@ class EFTExtractorApp:
                 "Seleccione el archivo maestro CMV (.xls / .xlsx / .xlsm).",
             )
             self._set_cmv_status(
-                "Please select the master CMV Excel workbook.", is_error=True
+                "Seleccione el Excel maestro CMV.", is_error=True
             )
             return
 
         self._set_cmv_status(
-            f"Updating COSTO.TODOS from {len(dept_paths)} department file(s)..."
+            f"Actualizando COSTO.TODOS con {len(dept_paths)} archivo(s) de departamento..."
         )
         self.root.config(cursor="watch")
         self.root.update_idletasks()
@@ -3120,11 +3212,11 @@ def ensure_runtime_dependencies():
     except ImportError:
         missing.append("pandas")
     if _CMV_IMPORT_ERROR is not None:
-        missing.append("cmv_costo (local module)")
+        missing.append("cmv_costo (módulo local)")
     if _SALES_IMPORT_ERROR is not None:
-        missing.append("monthly_sales (local module)")
+        missing.append("monthly_sales (módulo local)")
     if _REPORTE_IMPORT_ERROR is not None:
-        missing.append("reporte_diario (local module)")
+        missing.append("reporte_diario (módulo local)")
     if sys.platform == "win32":
         try:
             import win32com.client  # noqa: F401
@@ -3136,14 +3228,14 @@ def ensure_runtime_dependencies():
             for pkg in missing
             if pkg
             not in {
-                "cmv_costo (local module)",
-                "monthly_sales (local module)",
-                "reporte_diario (local module)",
+                "cmv_costo (módulo local)",
+                "monthly_sales (módulo local)",
+                "reporte_diario (módulo local)",
             }
         )
         hint = (
-            f"Missing dependencies: {', '.join(missing)}.\n\n"
-            f"Install with:\n  pip install -r requirements.txt"
+            f"Faltan dependencias: {', '.join(missing)}.\n\n"
+            f"Instale con:\n  pip install -r requirements.txt"
         )
         if packages:
             hint += f"\n  pip install {packages}"

@@ -203,14 +203,14 @@ FUSED_DEPT_TRAILING_COUNT_RE = re.compile(
 def _ensure_pdfplumber():
     if pdfplumber is None:
         raise ImportError(
-            "Reporte Diario requires pdfplumber. Install with: pip install pdfplumber"
+            "Reporte Diario requiere pdfplumber. Instale con: pip install pdfplumber"
         )
 
 
 def _ensure_openpyxl():
     if not OPENPYXL_AVAILABLE:
         raise ImportError(
-            "Reporte Diario requires openpyxl. Install with: pip install openpyxl"
+            "Reporte Diario requiere openpyxl. Instale con: pip install openpyxl"
         )
 
 
@@ -620,7 +620,7 @@ def _get_carga_aqui_sheet(workbook):
         if name.strip().lower() == target:
             return workbook[name]
     raise ValueError(
-        f'Sheet "{SHEET_NAME}" not found. Available: {", ".join(workbook.sheetnames)}'
+        f'Hoja "{SHEET_NAME}" no encontrada. Disponibles: {", ".join(workbook.sheetnames)}'
     )
 
 
@@ -694,8 +694,8 @@ def extract_day_from_filename(file_path):
             return target_day
 
     raise ValueError(
-        f"Could not extract calendar day from filename: {os.path.basename(file_path)}. "
-        "Expected a pattern like 'Close Store 01-05.pdf'."
+        f"No se pudo extraer el día del nombre de archivo: {os.path.basename(file_path)}. "
+        "Se esperaba un patrón como 'Close Store 01-05.pdf'."
     )
 
 
@@ -778,8 +778,8 @@ def find_row_for_calendar_day(sheet, target_day, start_row=DATA_START_ROW):
         if cell_day is not None and int(cell_day) == target_day:
             return row
     raise ValueError(
-        f"No row with calendar day {target_day} found in column A on sheet {SHEET_NAME} "
-        f"(from row {start_row})."
+        f"No se encontró una fila con el día {target_day} en la columna A de la hoja {SHEET_NAME} "
+        f"(desde la fila {start_row})."
     )
 
 
@@ -866,7 +866,7 @@ def _parse_tables_with_line_anchor(page):
     """
     if not _anchor_passed_in_page_text(page):
         raise ValueError(
-            f'Anchor "{DEPARTMENT_SALES_REPORT_ANCHOR}" not found on PDF page.'
+            f'No se encontró el ancla "{DEPARTMENT_SALES_REPORT_ANCHOR}" en la página del PDF.'
         )
 
     cropped = _crop_page_below_anchor(page)
@@ -939,25 +939,25 @@ def parse_elistar_daily_pdf_page(pdf_path, page_index=DEFAULT_PDF_PAGE_INDEX):
     _ensure_pdfplumber()
     pdf_path = os.path.abspath(pdf_path)
     if not os.path.isfile(pdf_path):
-        raise FileNotFoundError(f"PDF not found: {pdf_path}")
+        raise FileNotFoundError(f"PDF no encontrado: {pdf_path}")
 
     if page_index < 0:
-        raise ValueError("PDF page index must be 0 or greater.")
+        raise ValueError("El índice de página del PDF debe ser 0 o mayor.")
 
     with pdfplumber.open(pdf_path) as pdf:
         if page_index >= len(pdf.pages):
             raise ValueError(
-                f"PDF page {page_index + 1} not found; "
-                f"document has {len(pdf.pages)} page(s)."
+                f"Página {page_index + 1} del PDF no encontrada; "
+                f"el documento tiene {len(pdf.pages)} página(s)."
             )
         page = pdf.pages[page_index]
         records = _parse_tables_with_line_anchor(page)
 
     if not records:
         raise ValueError(
-            f"No department records found on PDF page {page_index + 1} after "
+            f"No se encontraron registros de departamento en la página {page_index + 1} del PDF después de "
             f'"{DEPARTMENT_SALES_REPORT_ANCHOR}". '
-            "Expected Dept.Name (col 1), Net Count (col 5), Net Sales $ (col 8)."
+            "Se esperaba Dept.Name (col 1), Net Count (col 5), Net Sales $ (col 8)."
         )
 
     return [dict(record) for record in records]
@@ -1015,7 +1015,7 @@ def build_department_column_map(sheet):
 
     if not mapping:
         raise ValueError(
-            f"No department headers found on row {HEADER_ROW} starting at column C."
+            f"No se encontraron encabezados de departamento en la fila {HEADER_ROW} desde la columna C."
         )
 
     return mapping, protected
@@ -1210,13 +1210,13 @@ def process_reporte_diario(
     paths = _normalize_pdf_paths(pdf_paths)
 
     if not os.path.isfile(master_path):
-        raise FileNotFoundError(f"Master workbook not found: {master_path}")
+        raise FileNotFoundError(f"Excel maestro no encontrado: {master_path}")
     if not paths:
-        raise ValueError("No Elistar daily PDF files provided.")
+        raise ValueError("No se proporcionaron PDF diarios de Elistar.")
 
     extension = os.path.splitext(master_path)[1].lower()
     if extension not in {".xlsx", ".xlsm"}:
-        raise ValueError("Master workbook must be .xlsx or .xlsm.")
+        raise ValueError("El Excel maestro debe ser .xlsx o .xlsm.")
 
     keep_vba = extension == ".xlsm"
     workbook = load_workbook(master_path, data_only=False, keep_vba=keep_vba)
@@ -1232,7 +1232,7 @@ def process_reporte_diario(
 
     for pdf_path in sorted_paths:
         if not os.path.isfile(pdf_path):
-            raise FileNotFoundError(f"PDF not found: {pdf_path}")
+            raise FileNotFoundError(f"PDF no encontrado: {pdf_path}")
 
         target_day = int(extract_day_from_filename(pdf_path))
         pdf_records = parse_elistar_daily_pdf_page(pdf_path, page_index=page_index)

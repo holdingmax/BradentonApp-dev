@@ -1,6 +1,6 @@
 """
-Premium Tkinter theme and reusable UI components for BradentonApp.
-Compact dark workspace layout with dual-column tab shells.
+Tkinter theme and reusable UI components for BradentonApp.
+Clean, professional light workspace with a distinct color per module.
 """
 
 import tkinter as tk
@@ -8,44 +8,45 @@ from tkinter import ttk
 
 FONT = "Segoe UI"
 
-# Compact window bounds
-WINDOW_GEOMETRY = "1000x650"
-WINDOW_MINSIZE = (900, 580)
-PAD_INNER = 4
-PAD_TAB = 4
+WINDOW_GEOMETRY = "1180x760"
+WINDOW_MINSIZE = (1040, 680)
+PAD_INNER = 14
+PAD_TAB = 12
 
 
 class Theme:
-    """Base shell palette — deep charcoal / slate dark mode."""
+    """Base shell palette — light, professional workspace."""
 
-    BG = "#1E1E24"
-    BG_DEEP = "#14141A"
-    SURFACE = "#282A36"
-    SURFACE_ALT = "#3C3F41"
-    BORDER = "#4B5563"
-    BORDER_FOCUS = "#60A5FA"
+    BG = "#F4F6F9"
+    BG_DEEP = "#16233F"
+    SURFACE = "#FFFFFF"
+    SURFACE_ALT = "#F6F7FA"
+    BORDER = "#E1E5EB"
+    BORDER_FOCUS = "#3B5BDB"
 
-    TEXT = "#E8EAED"
-    TEXT_SOFT = "#B0B8C4"
-    TEXT_ON_DARK = "#F3F4F6"
-    TEXT_MUTED_ON_DARK = "#9CA3AF"
+    TEXT = "#1F2A3D"
+    TEXT_SOFT = "#5B6472"
+    TEXT_ON_DARK = "#FFFFFF"
+    TEXT_MUTED_ON_DARK = "#8A93A3"
 
-    BTN_SECONDARY = "#3C3F41"
-    BTN_SECONDARY_HOVER = "#4B5563"
-    BTN_SECONDARY_TEXT = "#E8EAED"
+    BTN_SECONDARY = "#EDF0F5"
+    BTN_SECONDARY_HOVER = "#DEE3EB"
+    BTN_SECONDARY_TEXT = "#1F2A3D"
 
-    SUCCESS = "#34D399"
-    ERROR = "#F87171"
-    WARNING = "#FBBF24"
+    SUCCESS = "#15803D"
+    ERROR = "#DC2626"
+    WARNING = "#B45309"
 
-    SHADOW = "#14141A"
-    TAB_IDLE = "#1E1E24"
-    TAB_ACTIVE_BG = "#282A36"
-    TAB_HOVER = "#252830"
+    SHADOW = "#D8DCE3"
+    TAB_IDLE = "#EAEDF2"
+    TAB_ACTIVE_BG = "#FFFFFF"
+    TAB_HOVER = "#E1E6ED"
+
+    HEADER_SUBTITLE = "#AAB6CC"
 
 
 class SectionTheme:
-    """Per-module accent palette."""
+    """Per-module accent palette — one distinct color identity per tab."""
 
     def __init__(
         self,
@@ -66,49 +67,58 @@ class SectionTheme:
 
 THEME = Theme()
 
+# Cupones y EFT — indigo
 EFT_THEME = SectionTheme(
-    accent="#3B82F6",
-    accent_hover="#2563EB",
-    accent_soft="#1E3A5F",
-    card_tint="#252830",
-    border_focus="#60A5FA",
-    tab_selected_fg="#60A5FA",
+    accent="#3B5BDB",
+    accent_hover="#2C46B5",
+    accent_soft="#DDE3FA",
+    card_tint="#FFFFFF",
+    border_focus="#3B5BDB",
 )
 
+# Gettel / Toyota — teal (its own identity, no longer borrowing EFT's blue)
+GETTEL_THEME = SectionTheme(
+    accent="#0D9488",
+    accent_hover="#0B7A70",
+    accent_soft="#D6F1EE",
+    card_tint="#FFFFFF",
+    border_focus="#0D9488",
+)
+
+# Chase Bank — green
 CHASE_THEME = SectionTheme(
-    accent="#10B981",
-    accent_hover="#059669",
-    accent_soft="#064E3B",
-    card_tint="#252830",
-    border_focus="#34D399",
-    tab_selected_fg="#34D399",
+    accent="#16A34A",
+    accent_hover="#128038",
+    accent_soft="#DCF3E3",
+    card_tint="#FFFFFF",
+    border_focus="#16A34A",
 )
 
-CMV_THEME = SectionTheme(
-    accent="#8B5CF6",
-    accent_hover="#7C3AED",
-    accent_soft="#4C1D95",
-    card_tint="#2A2540",
-    border_focus="#A78BFA",
-    tab_selected_fg="#A78BFA",
-)
-
-SALES_THEME = SectionTheme(
-    accent="#F97316",
-    accent_hover="#EA580C",
-    accent_soft="#7C2D12",
-    card_tint="#2D261F",
-    border_focus="#FB923C",
-    tab_selected_fg="#FB923C",
-)
-
+# Reporte Diario — cyan
 REPORTE_DIARIO_THEME = SectionTheme(
-    accent="#06B6D4",
-    accent_hover="#0891B2",
-    accent_soft="#164E63",
-    card_tint="#1F2A32",
-    border_focus="#22D3EE",
-    tab_selected_fg="#22D3EE",
+    accent="#0284C7",
+    accent_hover="#0369A1",
+    accent_soft="#D7EFFB",
+    card_tint="#FFFFFF",
+    border_focus="#0284C7",
+)
+
+# CMV Costo — purple
+CMV_THEME = SectionTheme(
+    accent="#7C3AED",
+    accent_hover="#6425D1",
+    accent_soft="#E9E0FC",
+    card_tint="#FFFFFF",
+    border_focus="#7C3AED",
+)
+
+# CMV Ventas — orange
+SALES_THEME = SectionTheme(
+    accent="#EA580C",
+    accent_hover="#C2440A",
+    accent_soft="#FCE4D6",
+    card_tint="#FFFFFF",
+    border_focus="#EA580C",
 )
 
 
@@ -117,24 +127,24 @@ def apply_root_style(root):
 
 
 def apply_notebook_style(style, sections=None):
-    sections = sections or [
-        EFT_THEME,
-        CHASE_THEME,
-        REPORTE_DIARIO_THEME,
-        CMV_THEME,
-        SALES_THEME,
-    ]
+    """
+    ttk.Notebook can't render a different hue per tab in its shared style —
+    each module's color identity instead lives in that tab's own content
+    (section badge, cards, buttons; see create_tab_icon for a small color
+    swatch next to the tab label). This just gives the strip itself one
+    clean, consistent look.
+    """
     style.theme_use("clam")
     style.configure(
         "Premium.TNotebook",
         background=THEME.BG,
         borderwidth=0,
-        tabmargins=[4, 4, 4, 0],
+        tabmargins=[6, 8, 6, 0],
     )
     style.configure(
         "Premium.TNotebook.Tab",
-        font=(FONT, 9, "bold"),
-        padding=[12, 7],
+        font=(FONT, 10, "bold"),
+        padding=[14, 10],
         background=THEME.TAB_IDLE,
         foreground=THEME.TEXT_SOFT,
         borderwidth=0,
@@ -143,7 +153,7 @@ def apply_notebook_style(style, sections=None):
     style.map(
         "Premium.TNotebook.Tab",
         background=[
-            ("selected", THEME.SURFACE),
+            ("selected", THEME.TAB_ACTIVE_BG),
             ("active", THEME.TAB_HOVER),
         ],
         foreground=[
@@ -154,53 +164,58 @@ def apply_notebook_style(style, sections=None):
     )
 
 
-def create_header_banner(parent):
-    banner = tk.Frame(parent, bg=THEME.BG_DEEP, padx=12, pady=10)
+def make_tab_icon(color, size=10):
+    """
+    A tiny solid-color square PhotoImage used as each notebook tab's leading
+    icon — the one place a per-tab hue can actually render in a ttk
+    Notebook strip. Caller must keep a reference (Tkinter drops images with
+    no live reference), e.g. self._tab_icons.append(...).
+    """
+    image = tk.PhotoImage(width=size, height=size)
+    image.put(color, to=(0, 0, size, size))
+    return image
+
+
+def create_header_banner(parent, subtitle=None):
+    banner = tk.Frame(parent, bg=THEME.BG_DEEP, padx=20, pady=14)
     banner.pack(fill=tk.X)
 
     top = tk.Frame(banner, bg=THEME.BG_DEEP)
     top.pack(fill=tk.X)
 
+    left = tk.Frame(top, bg=THEME.BG_DEEP)
+    left.pack(side=tk.LEFT, anchor=tk.W)
+
+    badge = tk.Frame(left, bg=EFT_THEME.accent, width=34, height=34)
+    badge.pack(side=tk.LEFT, padx=(0, 10))
+    badge.pack_propagate(False)
     tk.Label(
-        top,
-        text="Financial Automation Suite",
-        font=(FONT, 16, "bold"),
+        badge,
+        text="B",
+        font=(FONT, 14, "bold"),
+        fg="#FFFFFF",
+        bg=EFT_THEME.accent,
+    ).pack(expand=True)
+
+    text_col = tk.Frame(left, bg=THEME.BG_DEEP)
+    text_col.pack(side=tk.LEFT)
+    tk.Label(
+        text_col,
+        text="Bradenton App",
+        font=(FONT, 15, "bold"),
         fg=THEME.TEXT_ON_DARK,
         bg=THEME.BG_DEEP,
         anchor=tk.W,
-    ).pack(side=tk.LEFT, anchor=tk.W)
+    ).pack(anchor=tk.W)
+    tk.Label(
+        text_col,
+        text=subtitle or "Suite de automatización contable",
+        font=(FONT, 9),
+        fg=THEME.HEADER_SUBTITLE,
+        bg=THEME.BG_DEEP,
+        anchor=tk.W,
+    ).pack(anchor=tk.W)
 
-    badges = tk.Frame(top, bg=THEME.BG_DEEP)
-    badges.pack(side=tk.RIGHT)
-    for label, color in (
-        ("EFT", EFT_THEME.accent),
-        ("Chase", CHASE_THEME.accent),
-        ("Diario", REPORTE_DIARIO_THEME.accent),
-        ("CMV", CMV_THEME.accent),
-        ("Ventas", SALES_THEME.accent),
-    ):
-        tk.Label(
-            badges,
-            text=label,
-            font=(FONT, 7, "bold"),
-            fg="#FFFFFF",
-            bg=color,
-            padx=6,
-            pady=2,
-        ).pack(side=tk.LEFT, padx=(4, 0))
-
-    gradient = tk.Frame(banner, bg=THEME.BG_DEEP)
-    gradient.pack(fill=tk.X, pady=(8, 0))
-    for color in (
-        EFT_THEME.accent,
-        CHASE_THEME.accent,
-        REPORTE_DIARIO_THEME.accent,
-        CMV_THEME.accent,
-        SALES_THEME.accent,
-    ):
-        tk.Frame(gradient, bg=color, height=2).pack(
-            side=tk.LEFT, fill=tk.X, expand=True
-        )
     return banner
 
 
@@ -215,8 +230,8 @@ def create_dual_column_tab(parent):
     Two-column tab shell: header row spans both columns; row 1 = ops | rules.
     Returns (header_frame, left_ops_column, right_rules_column).
     """
-    parent.grid_columnconfigure(0, weight=1, uniform="tabcol")
-    parent.grid_columnconfigure(1, weight=1, uniform="tabcol")
+    parent.grid_columnconfigure(0, weight=3, uniform="tabcol")
+    parent.grid_columnconfigure(1, weight=2, uniform="tabcol")
     parent.grid_rowconfigure(1, weight=1)
 
     header = tk.Frame(parent, bg=THEME.BG)
@@ -226,15 +241,15 @@ def create_dual_column_tab(parent):
         columnspan=2,
         sticky="ew",
         padx=PAD_TAB,
-        pady=(PAD_TAB, 2),
+        pady=(PAD_TAB, 8),
     )
 
     left = tk.Frame(parent, bg=THEME.BG)
-    left.grid(row=1, column=0, sticky="nsew", padx=(PAD_TAB, 2), pady=PAD_TAB)
+    left.grid(row=1, column=0, sticky="nsew", padx=(PAD_TAB, 6), pady=(0, PAD_TAB))
     left.grid_columnconfigure(0, weight=1)
 
     right = tk.Frame(parent, bg=THEME.BG)
-    right.grid(row=1, column=1, sticky="nsew", padx=(2, PAD_TAB), pady=PAD_TAB)
+    right.grid(row=1, column=1, sticky="nsew", padx=(6, PAD_TAB), pady=(0, PAD_TAB))
     right.grid_columnconfigure(0, weight=1)
     right.grid_rowconfigure(0, weight=1)
 
@@ -248,13 +263,21 @@ def create_compact_section_header(parent, title, description, section_theme):
     title_row = tk.Frame(wrap, bg=THEME.BG)
     title_row.pack(fill=tk.X, anchor=tk.W)
 
-    stripe = tk.Frame(title_row, bg=section_theme.accent, width=4, height=18)
-    stripe.pack(side=tk.LEFT, padx=(0, 6))
+    badge = tk.Frame(title_row, bg=section_theme.accent, width=28, height=28)
+    badge.pack(side=tk.LEFT, padx=(0, 10))
+    badge.pack_propagate(False)
+    tk.Label(
+        badge,
+        text="●",
+        font=(FONT, 10),
+        fg="#FFFFFF",
+        bg=section_theme.accent,
+    ).pack(expand=True)
 
     tk.Label(
         title_row,
         text=title,
-        font=(FONT, 11, "bold"),
+        font=(FONT, 15, "bold"),
         fg=THEME.TEXT,
         bg=THEME.BG,
         anchor=tk.W,
@@ -263,13 +286,13 @@ def create_compact_section_header(parent, title, description, section_theme):
     tk.Label(
         wrap,
         text=description,
-        font=(FONT, 8),
+        font=(FONT, 9),
         fg=THEME.TEXT_SOFT,
         bg=THEME.BG,
         anchor=tk.W,
         justify=tk.LEFT,
-        wraplength=900,
-    ).pack(anchor=tk.W, pady=(2, 0), padx=(10, 0))
+        wraplength=1000,
+    ).pack(anchor=tk.W, pady=(4, 0), padx=(38, 0))
 
     return wrap
 
@@ -279,27 +302,27 @@ def create_panel_label(parent, text, section_theme=None):
     tk.Label(
         parent,
         text=text,
-        font=(FONT, 9, "bold"),
+        font=(FONT, 10, "bold"),
         fg=THEME.TEXT,
         bg=section_theme.card_tint,
         anchor=tk.W,
-    ).pack(fill=tk.X, pady=(0, 4))
+    ).pack(fill=tk.X, pady=(0, 8))
 
 
-def create_card(parent, section_theme=None, padx=8, pady=8, fill=tk.X, expand=False):
+def create_card(parent, section_theme=None, padx=14, pady=14, fill=tk.X, expand=False):
     section_theme = section_theme or EFT_THEME
     outer = tk.Frame(parent, bg=THEME.SHADOW, padx=0, pady=0)
-    outer.pack(fill=fill, expand=expand, pady=(0, 4))
+    outer.pack(fill=fill, expand=expand, pady=(0, 10))
 
     inner = tk.Frame(
         outer,
         bg=section_theme.card_tint,
-        highlightbackground=section_theme.accent_soft,
+        highlightbackground=THEME.BORDER,
         highlightthickness=1,
         padx=padx,
         pady=pady,
     )
-    inner.pack(fill=fill)
+    inner.pack(fill=fill, padx=(0, 0), pady=(0, 1))
     return inner
 
 
@@ -308,7 +331,7 @@ def create_primary_button(parent, text, command, section_theme=None):
     btn = tk.Button(
         parent,
         text=text,
-        font=(FONT, 9, "bold"),
+        font=(FONT, 10, "bold"),
         fg="#FFFFFF",
         bg=section_theme.accent,
         activebackground=section_theme.accent_hover,
@@ -316,8 +339,8 @@ def create_primary_button(parent, text, command, section_theme=None):
         relief=tk.FLAT,
         overrelief=tk.FLAT,
         cursor="hand2",
-        padx=16,
-        pady=9,
+        padx=18,
+        pady=10,
         borderwidth=0,
         highlightthickness=0,
         command=command,
@@ -333,16 +356,16 @@ def create_secondary_button(
     btn = tk.Button(
         parent,
         text=text,
-        font=(FONT, 8, "bold"),
-        fg=THEME.TEXT,
+        font=(FONT, 9, "bold"),
+        fg=THEME.BTN_SECONDARY_TEXT,
         bg=THEME.BTN_SECONDARY,
         activebackground=section_theme.accent,
         activeforeground="#FFFFFF",
         relief=tk.FLAT,
         overrelief=tk.FLAT,
         cursor="hand2",
-        padx=10,
-        pady=6,
+        padx=12,
+        pady=7,
         borderwidth=0,
         highlightthickness=0,
         command=command,
@@ -356,7 +379,7 @@ def create_secondary_button(
 def bind_hover_soft(button, section_theme):
     normal = THEME.BTN_SECONDARY
     hover = section_theme.accent
-    fg_normal = THEME.TEXT
+    fg_normal = THEME.BTN_SECONDARY_TEXT
     fg_hover = "#FFFFFF"
 
     def on_enter(_event):
@@ -376,17 +399,17 @@ def create_file_row(
     browse_command,
     section_theme=None,
     label_width=11,
-    browse_label="Browse",
+    browse_label="Examinar",
 ):
     section_theme = section_theme or EFT_THEME
     row = tk.Frame(parent, bg=section_theme.card_tint)
-    row.pack(fill=tk.X, pady=(0, 6))
+    row.pack(fill=tk.X, pady=(0, 8))
 
     tk.Label(
         row,
         text=label,
-        font=(FONT, 8, "bold"),
-        fg=THEME.TEXT,
+        font=(FONT, 9, "bold"),
+        fg=THEME.TEXT_SOFT,
         bg=section_theme.card_tint,
         width=label_width,
         anchor=tk.W,
@@ -395,15 +418,15 @@ def create_file_row(
     field_wrap = tk.Frame(
         row,
         bg=THEME.SURFACE_ALT,
-        highlightbackground=section_theme.accent_soft,
+        highlightbackground=THEME.BORDER,
         highlightthickness=1,
     )
-    field_wrap.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 6))
+    field_wrap.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 8))
 
     entry = tk.Entry(
         field_wrap,
         textvariable=textvariable,
-        font=(FONT, 9),
+        font=(FONT, 10),
         fg=THEME.TEXT,
         bg=THEME.SURFACE_ALT,
         relief=tk.FLAT,
@@ -413,7 +436,7 @@ def create_file_row(
         insertbackground=section_theme.accent,
         readonlybackground=THEME.SURFACE_ALT,
     )
-    entry.pack(fill=tk.X, expand=True, padx=6, pady=4)
+    entry.pack(fill=tk.X, expand=True, padx=8, pady=6)
 
     create_secondary_button(
         row, browse_label, browse_command, section_theme=section_theme
@@ -424,12 +447,12 @@ def create_file_row(
 def create_compact_entry(parent, textvariable, section_theme=None, label=None):
     section_theme = section_theme or EFT_THEME
     wrap = tk.Frame(parent, bg=section_theme.card_tint)
-    wrap.pack(fill=tk.X, pady=(0, 4))
+    wrap.pack(fill=tk.X, pady=(0, 6))
     if label:
         tk.Label(
             wrap,
             text=label,
-            font=(FONT, 8, "bold"),
+            font=(FONT, 9, "bold"),
             fg=THEME.TEXT_SOFT,
             bg=section_theme.card_tint,
             anchor=tk.W,
@@ -437,44 +460,47 @@ def create_compact_entry(parent, textvariable, section_theme=None, label=None):
     entry = tk.Entry(
         wrap,
         textvariable=textvariable,
-        font=(FONT, 9),
+        font=(FONT, 10),
         fg=THEME.TEXT,
         bg=THEME.SURFACE_ALT,
         relief=tk.FLAT,
+        highlightthickness=1,
+        highlightbackground=THEME.BORDER,
+        highlightcolor=section_theme.border_focus,
         insertbackground=section_theme.accent,
     )
-    entry.pack(fill=tk.X, pady=(2, 0), ipady=4)
+    entry.pack(fill=tk.X, pady=(3, 0), ipady=5)
     return entry
 
 
-def create_status_bar(parent, textvariable, section_theme=None, wraplength=420):
+def create_status_bar(parent, textvariable, section_theme=None, wraplength=460):
     section_theme = section_theme or EFT_THEME
     bar = tk.Frame(
         parent,
-        bg=THEME.SURFACE,
-        highlightbackground=section_theme.accent_soft,
+        bg=THEME.SURFACE_ALT,
+        highlightbackground=THEME.BORDER,
         highlightthickness=1,
-        padx=8,
-        pady=6,
+        padx=10,
+        pady=8,
     )
-    bar.pack(fill=tk.X, pady=(4, 0))
+    bar.pack(fill=tk.X, pady=(8, 0))
 
     dot = tk.Label(
-        bar, text="●", font=(FONT, 8), fg=section_theme.accent, bg=THEME.SURFACE
+        bar, text="●", font=(FONT, 9), fg=section_theme.accent, bg=THEME.SURFACE_ALT
     )
     dot.pack(side=tk.LEFT)
 
     label = tk.Label(
         bar,
         textvariable=textvariable,
-        font=(FONT, 8),
+        font=(FONT, 9),
         fg=THEME.TEXT_SOFT,
-        bg=THEME.SURFACE,
+        bg=THEME.SURFACE_ALT,
         anchor=tk.W,
         wraplength=wraplength,
         justify=tk.LEFT,
     )
-    label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(6, 0))
+    label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0))
     return label, dot
 
 
@@ -491,16 +517,25 @@ def create_info_panel(parent, title, lines, section_theme=None):
     )
     create_panel_label(card, title, section_theme)
     for line in lines:
+        row = tk.Frame(card, bg=section_theme.card_tint)
+        row.pack(fill=tk.X, pady=(0, 6), anchor=tk.W)
         tk.Label(
-            card,
+            row,
+            text="›",
+            font=(FONT, 9, "bold"),
+            fg=section_theme.accent,
+            bg=section_theme.card_tint,
+        ).pack(side=tk.LEFT, anchor=tk.N, padx=(0, 6))
+        tk.Label(
+            row,
             text=line,
-            font=(FONT, 8),
+            font=(FONT, 9),
             fg=THEME.TEXT_SOFT,
             bg=section_theme.card_tint,
             anchor=tk.W,
             justify=tk.LEFT,
             wraplength=380,
-        ).pack(anchor=tk.W, pady=(0, 2))
+        ).pack(side=tk.LEFT, anchor=tk.W)
     return card
 
 
@@ -520,7 +555,7 @@ def create_log_panel(parent, title, section_theme=None, height=10):
     container = tk.Frame(
         card,
         bg=THEME.SURFACE_ALT,
-        highlightbackground=section_theme.accent_soft,
+        highlightbackground=THEME.BORDER,
         highlightthickness=1,
     )
     container.pack(fill=tk.BOTH, expand=True)
@@ -532,15 +567,15 @@ def create_log_panel(parent, title, section_theme=None, height=10):
 
     log = tk.Text(
         container,
-        font=(FONT, 8),
+        font=(FONT, 9),
         fg=THEME.TEXT_SOFT,
         bg=THEME.SURFACE_ALT,
         relief=tk.FLAT,
         highlightthickness=0,
         wrap=tk.WORD,
         height=height,
-        padx=6,
-        pady=6,
+        padx=8,
+        pady=8,
         yscrollcommand=scrollbar.set,
         state=tk.DISABLED,
     )
@@ -551,14 +586,19 @@ def create_log_panel(parent, title, section_theme=None, height=10):
 
 def set_status_style(label, dot, message, section_theme=None, is_error=False, completed=False):
     section_theme = section_theme or EFT_THEME
+    lowered = message.lower()
+    is_success = completed or "completed" in lowered or "updated" in lowered
     if is_error:
         color = THEME.ERROR
-    elif completed or "completed" in message.lower() or "updated" in message.lower():
+        prefix = "✗ "
+    elif is_success:
         color = THEME.SUCCESS
+        prefix = "✓ "
     else:
         color = section_theme.accent
-    label.configure(fg=THEME.TEXT if not is_error and not completed else color)
-    dot.configure(fg=color)
+        prefix = "● "
+    dot.configure(text=prefix.strip(), fg=color)
+    label.configure(fg=THEME.TEXT if not is_error and not is_success else color)
 
 
 def bind_hover(button, normal_color, hover_color):

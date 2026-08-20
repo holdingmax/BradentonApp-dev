@@ -29,7 +29,7 @@ def _normalize_rule_entry(keyword, detail):
     keyword_text = str(keyword).strip()
     detail_text = str(detail).strip()
     if not keyword_text or not detail_text:
-        raise ValueError("Keyword and Target Detail are both required.")
+        raise ValueError("La palabra clave y el detalle son obligatorios.")
     return {"keyword": keyword_text, "detail": detail_text}
 
 
@@ -105,7 +105,7 @@ def delete_dynamic_rule(keyword, detail):
         )
     ]
     if len(filtered) == len(rules):
-        raise ValueError("Selected rule was not found in storage.")
+        raise ValueError("La regla seleccionada no se encontró en el almacenamiento.")
     save_dynamic_rules(filtered)
 
 
@@ -115,9 +115,9 @@ def delete_dynamic_rule_by_index(index):
     try:
         idx = int(index)
     except (TypeError, ValueError):
-        raise ValueError("Invalid rule index.") from None
+        raise ValueError("Índice de regla inválido.") from None
     if idx < 0 or idx >= len(rules):
-        raise ValueError("Selected rule was not found in storage.")
+        raise ValueError("La regla seleccionada no se encontró en el almacenamiento.")
     removed = rules.pop(idx)
     save_dynamic_rules(rules)
     return removed

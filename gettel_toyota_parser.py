@@ -11,6 +11,7 @@ renders them with a decimal comma. Batch runs produce one workbook with one
 worksheet per PDF (sheet title from the filename date range, e.g. 04-05 al 15-05).
 """
 
+import io
 import os
 import re
 import sys
@@ -21,6 +22,18 @@ try:
     import pdfplumber
 except ImportError:  # pragma: no cover - environment guard
     pdfplumber = None  # type: ignore[assignment]
+
+try:
+    import pandas as pd
+except ImportError:  # pragma: no cover - environment guard
+    pd = None  # type: ignore[assignment]
+
+try:
+    import pytesseract
+    from PIL import Image
+except ImportError:  # pragma: no cover - environment guard
+    pytesseract = None  # type: ignore[assignment]
+    Image = None  # type: ignore[assignment]
 
 try:
     from openpyxl import Workbook, load_workbook
@@ -74,14 +87,52 @@ HEADER_FONT = Font(bold=True) if Font is not None else None
 def _ensure_pdfplumber():
     if pdfplumber is None:
         raise ImportError(
-            "GETTEL_TOYOTA_PARSER requires pdfplumber. Install with: pip install pdfplumber"
+            "GETTEL_TOYOTA_PARSER requiere pdfplumber. Instale con: pip install pdfplumber"
         )
+
+
+_TESSERACT_CANDIDATE_PATHS = (
+    r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+    r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+)
+_TESSERACT_CONFIGURED = False
+
+
+def _ensure_pytesseract():
+    global _TESSERACT_CONFIGURED
+    if pytesseract is None or Image is None:
+        raise ImportError(
+            "Leer reportes escaneados/fotografiados requiere pytesseract y Pillow. "
+            "Instale con: pip install pytesseract pillow"
+        )
+    if pd is None:
+        raise ImportError(
+            "Leer reportes escaneados/fotografiados requiere pandas. "
+            "Instale con: pip install pandas"
+        )
+    if _TESSERACT_CONFIGURED:
+        return
+    try:
+        pytesseract.get_tesseract_version()
+        _TESSERACT_CONFIGURED = True
+        return
+    except Exception:
+        pass
+    for candidate in _TESSERACT_CANDIDATE_PATHS:
+        if os.path.isfile(candidate):
+            pytesseract.pytesseract.tesseract_cmd = candidate
+            _TESSERACT_CONFIGURED = True
+            return
+    raise ImportError(
+        "No se encontró el motor Tesseract OCR. Instálelo (ej. con 'winget install "
+        "UB-Mannheim.TesseractOCR') para poder leer reportes escaneados/fotografiados."
+    )
 
 
 def _ensure_openpyxl():
     if not OPENPYXL_AVAILABLE:
         raise ImportError(
-            "GETTEL_TOYOTA_PARSER requires openpyxl. Install with: pip install openpyxl"
+            "GETTEL_TOYOTA_PARSER requiere openpyxl. Instale con: pip install openpyxl"
         )
 
 
@@ -248,7 +299,7 @@ def parse_fuel_coupons_pdf(pdf_path):
     _ensure_pdfplumber()
     pdf_path = os.path.abspath(pdf_path)
     if not os.path.isfile(pdf_path):
-        raise FileNotFoundError(f"PDF not found: {pdf_path}")
+        raise FileNotFoundError(f"PDF no encontrado: {pdf_path}")
 
     page_texts = []
     pages = []
@@ -469,7 +520,7 @@ def write_multi_sheet_fuel_coupon_workbook(pdf_paths, output_path):
 
     if record_count == 0:
         workbook.close()
-        raise ValueError("No fuel coupon records found in the selected PDF(s).")
+        raise ValueError("No se encontraron registros de cupones de combustible en el/los PDF seleccionado(s).")
 
     workbook.save(output_path)
     workbook.close()
@@ -486,7 +537,7 @@ def generate_fuel_coupon_workbook_from_pdfs(pdf_paths, output_path=None, launch=
     """
     pdf_paths = _normalize_pdf_paths(pdf_paths)
     if not pdf_paths:
-        raise ValueError("No PDF paths provided.")
+        raise ValueError("No se proporcionaron rutas de PDF.")
 
     if output_path is None:
         probe_texts = []
@@ -564,11 +615,11 @@ def _identify_vendor_sheets(workbook):
     if gettel_sheet is None or toyota_sheet is None:
         available = ", ".join(workbook.sheetnames) or "(none)"
         raise ValueError(
-            "Could not find both a Gettel and a Toyota sheet in the source "
-            f"workbook. Available sheets: {available}"
+            "No se encontraron las hojas de Gettel y Toyota en el Excel de "
+            f"origen. Hojas disponibles: {available}"
         )
     if gettel_sheet.title == toyota_sheet.title:
-        raise ValueError("Gettel and Toyota resolved to the same worksheet.")
+        raise ValueError("Gettel y Toyota resolvieron a la misma hoja.")
     return gettel_sheet, toyota_sheet
 
 
@@ -585,7 +636,7 @@ def _find_daily_sheet_header_row(worksheet):
         ):
             return row
     raise ValueError(
-        f"Could not find a Date/Amount header row in sheet '{worksheet.title}'."
+        f"No se encontró una fila de encabezado Date/Amount en la hoja '{worksheet.title}'."
     )
 
 
@@ -604,7 +655,7 @@ def _map_daily_sheet_columns(worksheet, header_row):
     missing = [key for key in ("date", "amount", "gallons") if key not in columns]
     if missing:
         raise ValueError(
-            f"Sheet '{worksheet.title}' is missing column(s): {', '.join(missing)}."
+            f"A la hoja '{worksheet.title}' le faltan columna(s): {', '.join(missing)}."
         )
     return columns
 
@@ -665,6 +716,471 @@ def _summarize_origin_workbook(source_workbook):
     return gettel_totals, toyota_totals
 
 
+# ---------------------------------------------------------------------------
+# Scanned/photographed report parsing (OCR)
+#
+# The manager sometimes sends a phone photo of the same Date/Amount/Tracking/
+# Gallons report instead of an Excel export, saved as a PDF with no text
+# layer (each page is one embedded photo). Printed on a landscape page, the
+# report packs two mirrored copies of the 4-column layout side by side to
+# fit more rows. Any handwritten totals/adjustments scrawled below the
+# printed table are ignored entirely — only OCR text from the printed table
+# is trusted, and only rows with a recognizable printed date are kept.
+# ---------------------------------------------------------------------------
+
+_OCR_MIN_WORD_CONFIDENCE = 40
+_OCR_ROW_HEIGHT_TOLERANCE_FACTOR = 0.6
+_OCR_COLUMNS_PER_BLOCK = 4  # Date, Amount, Tracking (dropped), Gallons
+
+
+_OSD_ROTATE_TO_TRANSPOSE = {
+    90: Image.ROTATE_270 if Image is not None else None,
+    180: Image.ROTATE_180 if Image is not None else None,
+    270: Image.ROTATE_90 if Image is not None else None,
+}
+
+
+def _correct_image_orientation(image):
+    """
+    Detect and undo whole-page rotation (phone photos taken upside-down or
+    sideways — common when a multi-page report is snapped in a hurry, and
+    inconsistent from page to page within the same PDF) via Tesseract's own
+    orientation/script detection, before the main OCR pass ever runs.
+
+    Uses Image.transpose (exact 90°-multiple remap, no interpolation)
+    instead of Image.rotate — .rotate() resamples every pixel even for
+    right-angle turns, which was blurring characters (especially the "/" in
+    dates) just enough to break column detection on rotated pages.
+    Never raises — a page OSD can't confidently read is left as-is.
+    """
+    try:
+        osd = pytesseract.image_to_osd(image, output_type=pytesseract.Output.DICT)
+        rotate = int(osd.get("rotate", 0) or 0)
+    except Exception:
+        return image
+    transpose_const = _OSD_ROTATE_TO_TRANSPOSE.get(rotate)
+    if transpose_const is not None:
+        image = image.transpose(transpose_const)
+    return image
+
+
+def _extract_pdf_page_images(pdf_path):
+    """
+    Return one PIL Image per PDF page — the largest embedded photo on that
+    page, rotated upright — without needing poppler/ghostscript (the JPEG
+    bytes are pulled directly from the PDF's own image XObject).
+    """
+    _ensure_pdfplumber()
+    _ensure_pytesseract()
+    images = []
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            if not page.images:
+                continue
+            biggest = max(page.images, key=lambda im: im["width"] * im["height"])
+            raw = biggest["stream"].get_data()
+            image = Image.open(io.BytesIO(raw)).convert("RGB")
+            images.append(_correct_image_orientation(image))
+    if not images:
+        raise ValueError(f"No se encontraron imágenes embebidas en {pdf_path}.")
+    return images
+
+
+# No single Tesseract page-segmentation mode is reliably best across every
+# photo — PSM 12 (sparse text + OSD) read one report's photos almost
+# perfectly, but read ~30% of dates as garbage on a different, lower-quality
+# photo of the same report format, while other modes did better there. So
+# every page is tried under each of these and scored (see
+# _best_effort_extract_page) rather than trusting one fixed mode.
+_OCR_TESSERACT_CONFIGS = ("--psm 12", "--psm 11", "--psm 3", "--psm 6", "--psm 4")
+
+
+def _ocr_words(image, config=_OCR_TESSERACT_CONFIGS[0]):
+    """OCR one page image into a cleaned word-level DataFrame (left/top/text)."""
+    raw = pytesseract.image_to_data(
+        image, output_type=pytesseract.Output.DATAFRAME, config=config
+    )
+    words = raw[raw.text.notna() & (raw.text.str.strip() != "")]
+    words = words[words.conf > _OCR_MIN_WORD_CONFIDENCE]
+    return words
+
+
+def _cluster_words_into_rows(words):
+    """Group OCR words into text rows by vertical (y) proximity."""
+    if words.empty:
+        return []
+    working = words.copy()
+    working["center_y"] = working.top + working.height / 2
+    tolerance = max(8.0, working.height.median() * _OCR_ROW_HEIGHT_TOLERANCE_FACTOR)
+
+    rows = []
+    current = []
+    last_y = None
+    for _, word in working.sort_values("center_y").iterrows():
+        if last_y is not None and abs(word.center_y - last_y) > tolerance:
+            rows.append(current)
+            current = []
+        current.append(word)
+        last_y = word.center_y
+    if current:
+        rows.append(current)
+    return rows
+
+
+def _row_date_token(row_words):
+    """Return the first printed date-looking token in a row, if any."""
+    for word in row_words:
+        text = str(word.text).strip()
+        if DATE_PATTERN.fullmatch(text) or re.fullmatch(r"\d{1,2}/\d{1,2}/\d{2,4}", text):
+            return text
+    return None
+
+
+def _detect_block_count(rows):
+    """
+    Count how many mirrored Date/Amount/Tracking/Gallons blocks the page
+    has, by finding the header row and counting its "Date" labels.
+
+    More reliable than gap-detection on data-row positions: the printed
+    Amount/Gallons values are right-aligned and can sit much further from
+    their header label than the label-to-label gaps would suggest, so
+    counting header labels (not guessing from data-row spacing) is what
+    tells us how many blocks to expect.
+    """
+    for row in rows:
+        date_labels = sum(1 for w in row if str(w.text).strip().lower() == "date")
+        if date_labels >= 1:
+            return date_labels
+    return None
+
+
+def _kmeans_1d(values, k, iterations=50):
+    """Minimal 1-D k-means — no external dependency needed for this."""
+    values = sorted(values)
+    if k <= 1 or len(values) <= k:
+        return [sum(values) / len(values)] if values else []
+    lo, hi = values[0], values[-1]
+    centers = [lo + (hi - lo) * i / (k - 1) for i in range(k)]
+    for _ in range(iterations):
+        buckets = [[] for _ in range(k)]
+        for v in values:
+            idx = min(range(k), key=lambda i: abs(v - centers[i]))
+            buckets[idx].append(v)
+        new_centers = [
+            (sum(bucket) / len(bucket)) if bucket else centers[i]
+            for i, bucket in enumerate(buckets)
+        ]
+        if new_centers == centers:
+            break
+        centers = new_centers
+    return sorted(centers)
+
+
+def _detect_ocr_column_boundaries(data_rows, block_count):
+    """
+    Cluster every data-row word's x-position into exactly
+    block_count * _OCR_COLUMNS_PER_BLOCK column centers (k-means), then
+    return the midpoints between consecutive centers as boundaries.
+
+    Clustering the data itself (rather than assuming a fixed gap size)
+    adapts to whatever resolution/crop a given photo happens to have.
+    """
+    lefts = [word.left for row in data_rows for word in row]
+    if not lefts:
+        return []
+    k = block_count * _OCR_COLUMNS_PER_BLOCK
+    centers = _kmeans_1d(lefts, k)
+    return [
+        (a + b) / 2 for a, b in zip(centers, centers[1:])
+    ]
+
+
+def _assign_row_columns(row_words, boundaries):
+    """Bucket one row's words into column-index groups using x boundaries."""
+    bounds = [0.0] + sorted(boundaries) + [float("inf")]
+    buckets = ["" for _ in range(len(bounds) - 1)]
+    for word in sorted(row_words, key=lambda w: w.left):
+        for idx in range(len(bounds) - 1):
+            if bounds[idx] <= word.left < bounds[idx + 1]:
+                text = str(word.text).strip()
+                buckets[idx] = (buckets[idx] + " " + text).strip() if buckets[idx] else text
+                break
+    return buckets
+
+
+def _parse_ocr_amount_or_number(text, max_plausible=None):
+    """
+    Parse a printed $Amount or plain decimal, tolerant of stray OCR
+    punctuation. If max_plausible is given and the parsed value exceeds it,
+    returns None instead — a single fuel fill-up is never $500+ or 150+
+    gallons, so a value that large means OCR merged/misread digits (e.g.
+    the tracking number bleeding into the amount), not a real reading.
+    """
+    if not text:
+        return None
+    cleaned = text.replace("$", "").replace(",", "").strip().strip(".").strip("_")
+    try:
+        value = float(cleaned)
+    except ValueError:
+        return None
+    if max_plausible is not None and abs(value) > max_plausible:
+        return None
+    return value
+
+
+_MAX_PLAUSIBLE_AMOUNT = 500.0
+_MAX_PLAUSIBLE_GALLONS = 150.0
+
+
+def _estimate_block_count_from_data_rows(data_rows):
+    """
+    Fallback block-count guess when no page in the PDF has a header row
+    (e.g. every page was cropped to just the data). Uses the typical
+    number of words per data row, which should be a multiple of 4.
+    """
+    if not data_rows:
+        return 1
+    counts = sorted(len(row) for row in data_rows)
+    median_count = counts[len(counts) // 2]
+    return max(1, round(median_count / _OCR_COLUMNS_PER_BLOCK))
+
+
+def _extract_page_transactions(image, block_count, config):
+    """
+    OCR one report page and return a list of (date_str, amount, gallons)
+    tuples for every printed transaction row, across however many mirrored
+    Date/Amount/Tracking/Gallons blocks the page has (Tracking is dropped).
+
+    block_count is detected once per PDF (see summarize_pdf_report) since
+    only the first page of a multi-page report repeats the header row.
+    """
+    words = _ocr_words(image, config)
+    rows = _cluster_words_into_rows(words)
+
+    data_rows = [row for row in rows if _row_date_token(row) is not None]
+    if not data_rows:
+        return []
+
+    boundaries = _detect_ocr_column_boundaries(data_rows, block_count)
+
+    transactions = []
+    clean_date_matches = 0
+    last_valid_date = [None] * block_count
+    for row in data_rows:
+        columns = _assign_row_columns(row, boundaries)
+        for block in range(block_count):
+            offset = block * _OCR_COLUMNS_PER_BLOCK
+            if offset + 3 >= len(columns):
+                break
+            date_text = columns[offset]
+            amount_text = columns[offset + 1]
+            gallons_text = columns[offset + 3]
+
+            match = DATE_PATTERN.search(date_text or "")
+            if match:
+                date_text = match.group(1)
+                last_valid_date[block] = date_text
+                clean_date_matches += 1
+            elif last_valid_date[block] is not None:
+                # Date cell OCR'd blank/garbled (e.g. a stray "_" prefix) but
+                # the row itself is real — same-block rows run chronologically,
+                # so reuse the last date this block actually read rather than
+                # silently dropping a transaction whose amount did come through.
+                date_text = last_valid_date[block]
+            else:
+                continue
+
+            amount = _parse_ocr_amount_or_number(amount_text, _MAX_PLAUSIBLE_AMOUNT)
+            gallons = _parse_ocr_amount_or_number(gallons_text, _MAX_PLAUSIBLE_GALLONS)
+            if amount is None and gallons is None:
+                continue
+            transactions.append((date_text, amount, gallons))
+    return transactions, clean_date_matches
+
+
+def _score_page_transactions(transactions, clean_date_matches):
+    """
+    Higher is better. Cleanly-recognized date cells (not carried forward
+    from a previous row) dominate the score — a config that reads more
+    complete Amount/Gallons pairs but garbles a lot of dates is actually
+    worse, since it silently misattributes those rows to the wrong day.
+    Complete (Amount+Gallons both present) rows break ties.
+    """
+    complete = sum(1 for _date, amount, gallons in transactions if amount is not None and gallons is not None)
+    return clean_date_matches * 100 + complete
+
+
+def _best_effort_extract_page(image, block_count):
+    """
+    Try every candidate Tesseract config for this one page and keep
+    whichever reads the most complete/plausible transactions.
+
+    Returns:
+        tuple[list, str]: (winning transactions, the config that won)
+    """
+    best_transactions = []
+    best_score = -1
+    best_config = _OCR_TESSERACT_CONFIGS[0]
+    for config in _OCR_TESSERACT_CONFIGS:
+        transactions, clean_date_matches = _extract_page_transactions(image, block_count, config)
+        score = _score_page_transactions(transactions, clean_date_matches)
+        if score > best_score:
+            best_score = score
+            best_transactions = transactions
+            best_config = config
+    return best_transactions, best_config
+
+
+def _detect_ocr_subtotal(image, block_count, config):
+    """
+    Best-effort read of a printed subtotal row (Amount/Gallons per block,
+    no date) for cross-checking the OCR'd sum — never blocks on failure.
+    """
+    try:
+        words = _ocr_words(image, config)
+        rows = _cluster_words_into_rows(words)
+        data_rows = [row for row in rows if _row_date_token(row) is not None]
+        boundaries = _detect_ocr_column_boundaries(data_rows, block_count)
+        for row in rows:
+            if _row_date_token(row) is not None:
+                continue
+            columns = _assign_row_columns(row, boundaries)
+            totals = []
+            for block in range(block_count):
+                offset = block * _OCR_COLUMNS_PER_BLOCK
+                if offset + 3 >= len(columns):
+                    continue
+                amount = _parse_ocr_amount_or_number(columns[offset + 1])
+                gallons = _parse_ocr_amount_or_number(columns[offset + 3])
+                if amount is not None or gallons is not None:
+                    totals.append((amount or 0.0, gallons or 0.0))
+            if len(totals) >= 2:
+                return {
+                    "amount": sum(t[0] for t in totals),
+                    "gallons": sum(t[1] for t in totals),
+                }
+    except Exception:
+        return None
+    return None
+
+
+def summarize_pdf_report(pdf_path):
+    """
+    OCR a photographed Date/Amount/Tracking/Gallons report (PDF with no text
+    layer) into the same {date: {"amount", "gallons"}} shape produced by the
+    Excel-based summarizer, plus a diagnostic summary for the caller to
+    surface to the user.
+
+    Returns:
+        tuple[dict, dict]: (totals_by_date, diagnostics)
+    """
+    _ensure_pdfplumber()
+    _ensure_pytesseract()
+
+    images = _extract_pdf_page_images(pdf_path)
+
+    # Only the first page of a multi-page report repeats the header row, so
+    # detect the block count once — trying every OCR config on every page
+    # until one finds a legible header — and reuse that single count for
+    # every page. This keeps the block layout consistent across pages even
+    # when different pages end up needing different winning OCR configs.
+    block_count = None
+    for image in images:
+        for config in _OCR_TESSERACT_CONFIGS:
+            rows = _cluster_words_into_rows(_ocr_words(image, config))
+            block_count = _detect_block_count(rows)
+            if block_count:
+                break
+        if block_count:
+            break
+
+    all_transactions = []
+    printed_subtotal = {"amount": 0.0, "gallons": 0.0}
+    found_subtotal = False
+    page_configs_used = []
+
+    for image in images:
+        if block_count is None:
+            # No page anywhere had a legible header — fall back to guessing
+            # from this page's own data-row word counts.
+            default_rows = _cluster_words_into_rows(
+                _ocr_words(image, _OCR_TESSERACT_CONFIGS[0])
+            )
+            data_rows = [row for row in default_rows if _row_date_token(row) is not None]
+            block_count = _estimate_block_count_from_data_rows(data_rows)
+
+        page_transactions, winning_config = _best_effort_extract_page(image, block_count)
+        all_transactions.extend(page_transactions)
+        page_configs_used.append(winning_config)
+
+        page_subtotal = _detect_ocr_subtotal(image, block_count, winning_config)
+        if page_subtotal:
+            printed_subtotal["amount"] += page_subtotal["amount"]
+            printed_subtotal["gallons"] += page_subtotal["gallons"]
+            found_subtotal = True
+
+    totals_by_date = {}
+    for date_text, amount, gallons in all_transactions:
+        day = _date_dict_key(date_text)
+        if day is None:
+            continue
+        bucket = totals_by_date.setdefault(day, {"amount": 0.0, "gallons": 0.0})
+        bucket["amount"] += amount or 0.0
+        bucket["gallons"] += gallons or 0.0
+
+    computed_amount = sum(v["amount"] for v in totals_by_date.values())
+    computed_gallons = sum(v["gallons"] for v in totals_by_date.values())
+
+    diagnostics = {
+        "pages": len(images),
+        "transactions_read": len(all_transactions),
+        "days_found": len(totals_by_date),
+        "computed_amount": computed_amount,
+        "computed_gallons": computed_gallons,
+        "printed_subtotal_found": found_subtotal,
+        "printed_subtotal_amount": printed_subtotal["amount"] if found_subtotal else None,
+        "printed_subtotal_gallons": printed_subtotal["gallons"] if found_subtotal else None,
+        "ocr_configs_used": page_configs_used,
+    }
+    if found_subtotal:
+        diagnostics["amount_matches_subtotal"] = (
+            abs(computed_amount - printed_subtotal["amount"]) <= 0.05
+        )
+        diagnostics["gallons_matches_subtotal"] = (
+            abs(computed_gallons - printed_subtotal["gallons"]) <= 0.05
+        )
+
+    return totals_by_date, diagnostics
+
+
+def detect_vendor_from_ocr_text(pdf_path):
+    """
+    Detect Gettel vs Toyota for a photographed report.
+
+    Checks the filename first (the manager's naming convention, e.g. "Toyota
+    report 03-08 al 13-08.pdf", is a much more reliable signal than OCR here
+    — the small gray title banner at the top of the photo is exactly the
+    kind of low-contrast text PSM 12 sparse-text mode isn't tuned for, since
+    that mode is chosen for the printed data table instead). Falls back to
+    OCR'd text across every page if the filename doesn't say.
+    """
+    basename = os.path.basename(pdf_path).upper()
+    if any(token in basename for token in GETTEL_TOKENS):
+        return VENDOR_GETTEL[0]
+    if any(token in basename for token in TOYOTA_TOKENS):
+        return VENDOR_TOYOTA[0]
+
+    images = _extract_pdf_page_images(pdf_path)
+    blob = " ".join(
+        str(t).upper() for image in images for t in _ocr_words(image).text.tolist()
+    )
+    if any(token in blob for token in GETTEL_TOKENS):
+        return VENDOR_GETTEL[0]
+    if any(token in blob for token in TOYOTA_TOKENS):
+        return VENDOR_TOYOTA[0]
+    return None
+
+
 def _find_gettel_toyota_destination_sheet(workbook):
     if len(workbook.worksheets) >= 4:
         fourth = workbook.worksheets[3]
@@ -674,7 +1190,7 @@ def _find_gettel_toyota_destination_sheet(workbook):
         if _GETTEL_TOYOTA_DEST_SHEET_PATTERN.match(worksheet.title.strip()):
             return worksheet
     raise ValueError(
-        "Destination workbook has no sheet matching 'Gettel-Toyota MM.YYYY'."
+        "El Excel de destino no tiene ninguna hoja que coincida con 'Gettel-Toyota MM.YYYY'."
     )
 
 
@@ -695,8 +1211,17 @@ def _populate_gettel_toyota_destination_sheet(worksheet, gettel_totals, toyota_t
     Account, Gettel, and Toyota all on the same row, so both vendors must
     land on the row identified by Column A — Column B is a separate,
     unrelated date and is never used for matching.
+
+    A source day with no matching Column A row (the report covers a date
+    the master sheet doesn't have — wrong month, or a day past its range)
+    is skipped safely rather than raising: it's collected into
+    unmatched_days for the caller to surface, never silently dropped.
+
+    Returns:
+        tuple[int, list]: (rows_matched, sorted list of unmatched dates)
     """
     rows_matched = 0
+    matched_days = set()
     max_row = worksheet.max_row or _SOURCE_FIRST_DATA_ROW
     for row in range(_SOURCE_FIRST_DATA_ROW, max_row + 1):
         day = _date_dict_key(worksheet.cell(row=row, column=1).value)
@@ -718,8 +1243,11 @@ def _populate_gettel_toyota_destination_sheet(worksheet, gettel_totals, toyota_t
 
         if row_matched:
             rows_matched += 1
+            matched_days.add(day)
 
-    return rows_matched
+    all_source_days = set(gettel_totals) | set(toyota_totals)
+    unmatched_days = sorted(all_source_days - matched_days)
+    return rows_matched, unmatched_days
 
 
 def merge_gettel_toyota_into_master(source_path, destination_path, launch=True):
@@ -729,7 +1257,9 @@ def merge_gettel_toyota_into_master(source_path, destination_path, launch=True):
     MM.YYYY). Opens a temp preview copy.
 
     Returns:
-        tuple[str, int, int, int]: (preview path, rows matched, gettel days, toyota days)
+        tuple[str, int, int, int, list]: (preview path, rows matched, gettel
+        days, toyota days, unmatched dates — source days with no matching
+        Column A row in the master, safely skipped rather than erroring)
     """
     import shutil
     import tempfile
@@ -738,9 +1268,9 @@ def merge_gettel_toyota_into_master(source_path, destination_path, launch=True):
     source_path = os.path.abspath(source_path)
     destination_path = os.path.abspath(destination_path)
     if not os.path.isfile(source_path):
-        raise FileNotFoundError(f"Source Excel not found: {source_path}")
+        raise FileNotFoundError(f"Excel de origen no encontrado: {source_path}")
     if not os.path.isfile(destination_path):
-        raise FileNotFoundError(f"Destination Excel not found: {destination_path}")
+        raise FileNotFoundError(f"Excel de destino no encontrado: {destination_path}")
 
     source_workbook = load_workbook(source_path, data_only=True)
     try:
@@ -749,7 +1279,7 @@ def merge_gettel_toyota_into_master(source_path, destination_path, launch=True):
         source_workbook.close()
 
     if not gettel_totals and not toyota_totals:
-        raise ValueError("No coupon data found in the origin Excel file.")
+        raise ValueError("No se encontraron datos de cupones en el Excel de origen.")
 
     preview_handle = tempfile.NamedTemporaryFile(
         suffix=".xlsx",
@@ -763,7 +1293,7 @@ def merge_gettel_toyota_into_master(source_path, destination_path, launch=True):
     destination_workbook = load_workbook(preview_path)
     try:
         target_sheet = _find_gettel_toyota_destination_sheet(destination_workbook)
-        rows_matched = _populate_gettel_toyota_destination_sheet(
+        rows_matched, unmatched_days = _populate_gettel_toyota_destination_sheet(
             target_sheet, gettel_totals, toyota_totals
         )
         destination_workbook.save(preview_path)
@@ -773,7 +1303,75 @@ def merge_gettel_toyota_into_master(source_path, destination_path, launch=True):
     if launch:
         _launch_workbook(preview_path)
 
-    return preview_path, rows_matched, len(gettel_totals), len(toyota_totals)
+    return preview_path, rows_matched, len(gettel_totals), len(toyota_totals), unmatched_days
+
+
+def merge_gettel_toyota_pdf_into_master(pdf_path, destination_path, launch=True):
+    """
+    OCR a photographed Date/Amount/Tracking/Gallons report (one vendor per
+    PDF) and merge its daily totals into the destination sheet (Gettel-
+    Toyota MM.YYYY), the same way the Excel-based pipeline does. Opens a
+    temp preview copy — the destination file itself is never modified.
+
+    Returns:
+        tuple[str, int, str, int, dict]: (preview path, rows matched,
+        detected vendor label, days found, diagnostics dict from
+        summarize_pdf_report — includes the printed-subtotal cross-check
+        when the report has one)
+    """
+    import shutil
+    import tempfile
+
+    _ensure_openpyxl()
+    _ensure_pdfplumber()
+    _ensure_pytesseract()
+    pdf_path = os.path.abspath(pdf_path)
+    destination_path = os.path.abspath(destination_path)
+    if not os.path.isfile(pdf_path):
+        raise FileNotFoundError(f"PDF de origen no encontrado: {pdf_path}")
+    if not os.path.isfile(destination_path):
+        raise FileNotFoundError(f"Excel de destino no encontrado: {destination_path}")
+
+    vendor = detect_vendor_from_ocr_text(pdf_path)
+    if vendor is None:
+        raise ValueError(
+            "No se pudo determinar si el reporte es de Gettel o Toyota a partir de su "
+            "encabezado impreso. Verifique que la fila de encabezado sea legible."
+        )
+
+    totals_by_date, diagnostics = summarize_pdf_report(pdf_path)
+    if not totals_by_date:
+        raise ValueError("No se pudo leer ninguna fila de transacción del reporte PDF.")
+    diagnostics["vendor"] = vendor
+
+    gettel_totals = totals_by_date if vendor == VENDOR_GETTEL[0] else {}
+    toyota_totals = totals_by_date if vendor == VENDOR_TOYOTA[0] else {}
+
+    preview_handle = tempfile.NamedTemporaryFile(
+        suffix=".xlsx",
+        prefix="GettelToyotaMasterPreview_",
+        delete=False,
+    )
+    preview_path = preview_handle.name
+    preview_handle.close()
+    shutil.copy2(destination_path, preview_path)
+
+    destination_workbook = load_workbook(preview_path)
+    try:
+        target_sheet = _find_gettel_toyota_destination_sheet(destination_workbook)
+        rows_matched, unmatched_days = _populate_gettel_toyota_destination_sheet(
+            target_sheet, gettel_totals, toyota_totals
+        )
+        destination_workbook.save(preview_path)
+    finally:
+        destination_workbook.close()
+
+    diagnostics["unmatched_days"] = [d.isoformat() for d in unmatched_days]
+
+    if launch:
+        _launch_workbook(preview_path)
+
+    return preview_path, rows_matched, vendor, len(totals_by_date), diagnostics
 
 
 def main(argv=None):

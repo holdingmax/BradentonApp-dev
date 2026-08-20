@@ -332,7 +332,7 @@ def _read_delimited_csv(file_path):
 
     if not candidates:
         raise ValueError(
-            f"Could not read sales CSV: {os.path.basename(file_path)}"
+            f"No se pudo leer el CSV de ventas: {os.path.basename(file_path)}"
         ) from last_error
 
     column_count, _separator, frame = max(candidates, key=lambda item: item[0])
@@ -343,8 +343,8 @@ def _read_delimited_csv(file_path):
 
     if column_count <= 1:
         raise ValueError(
-            "Sales CSV could not be split into columns. "
-            "Check delimiter formatting (comma/semicolon/tab)."
+            "El CSV de ventas no se pudo dividir en columnas. "
+            "Verifique el formato del separador (coma/punto y coma/tab)."
         )
 
     return frame
@@ -478,8 +478,8 @@ def _coerce_retail_float(value):
 def _ensure_openpyxl_available():
     if not OPENPYXL_AVAILABLE:
         raise ImportError(
-            "Monthly sales master injection requires openpyxl. "
-            "Install with: pip install openpyxl"
+            "Cargar las ventas mensuales al maestro requiere openpyxl. "
+            "Instale con: pip install openpyxl"
         )
 
 
@@ -491,7 +491,7 @@ def _validate_master_path(master_path):
     extension = os.path.splitext(master_path)[1].lower()
     if extension not in {".xlsx", ".xlsm"}:
         raise ValueError(
-            "Master CMV workbook must be .xlsx or .xlsm for sales injection."
+            "El Excel maestro CMV debe ser .xlsx o .xlsm para cargar las ventas."
         )
     return extension
 
@@ -618,7 +618,7 @@ def _get_department_sheet(workbook, sheet_lookup, canonical_name):
 
     available = ", ".join(workbook.sheetnames)
     raise ValueError(
-        f'Department sheet "{canonical_name}" not found. Available: {available}'
+        f'Hoja de departamento "{canonical_name}" no encontrada. Disponibles: {available}'
     )
 
 
@@ -1150,7 +1150,7 @@ def _get_resumen_worksheet(workbook):
     for sheet_name in workbook.sheetnames:
         if sheet_name.strip().upper() == RESUMEN_SHEET_NAME:
             return workbook[sheet_name]
-    raise ValueError(f'Sheet "{RESUMEN_SHEET_NAME}" not found in the master workbook.')
+    raise ValueError(f'Hoja "{RESUMEN_SHEET_NAME}" no encontrada en el Excel maestro.')
 
 
 def update_resumen_department_links(workbook):
@@ -1255,7 +1255,7 @@ def _inject_sales_into_master(master_path, file_paths):
 
     paths = _normalize_sales_file_paths(file_paths)
     if not paths:
-        raise ValueError("No sales report files provided.")
+        raise ValueError("No se proporcionaron archivos de reporte de ventas.")
 
     extension = os.path.splitext(master_path)[1].lower()
     workbook = load_workbook(
@@ -1282,13 +1282,13 @@ def _inject_sales_into_master(master_path, file_paths):
     if unmapped:
         workbook.close()
         raise ValueError(
-            "Could not map department(s) to master sheets: "
+            "No se pudo mapear el/los departamento(s) a hojas del maestro: "
             + ", ".join(sorted(set(unmapped)))
         )
 
     if not sheet_batches:
         workbook.close()
-        raise ValueError("No department rows could be mapped to master sheets.")
+        raise ValueError("No se pudo mapear ninguna fila de departamento a hojas del maestro.")
 
     for sheet_name, batches in sheet_batches.items():
         combined = pd.concat(batches, ignore_index=True)
@@ -1390,7 +1390,7 @@ def _load_sales_raw_table(file_path):
             engine="xlrd",
         )
     raise ValueError(
-        f"Unsupported sales file type '{extension}'. Use .csv, .xlsx, .xlsm, or .xls."
+        f"Tipo de archivo de ventas no soportado '{extension}'. Use .csv, .xlsx, .xlsm o .xls."
     )
 
 
@@ -1435,7 +1435,7 @@ def parse_monthly_sales_file(file_path):
     """Parse and clean a Top-Selling POS CSV or Excel report into five columns."""
     file_path = os.path.abspath(file_path)
     if not os.path.isfile(file_path):
-        raise FileNotFoundError(f"Sales file not found: {file_path}")
+        raise FileNotFoundError(f"Archivo de ventas no encontrado: {file_path}")
 
     raw = _load_sales_raw_table(file_path)
     raw = _drop_header_row(raw)
@@ -1443,8 +1443,8 @@ def parse_monthly_sales_file(file_path):
 
     if raw.shape[1] < 5:
         raise ValueError(
-            f"Expected at least 5 columns in {os.path.basename(file_path)}; "
-            f"found {raw.shape[1]}."
+            f"Se esperaban al menos 5 columnas en {os.path.basename(file_path)}; "
+            f"se encontraron {raw.shape[1]}."
         )
 
     frame = raw.iloc[:, :5].copy()
@@ -1471,7 +1471,7 @@ def process_monthly_sales(file_paths, master_path=None):
     """
     paths = _normalize_sales_file_paths(file_paths)
     if not paths:
-        raise ValueError("No sales report files provided.")
+        raise ValueError("No se proporcionaron archivos de reporte de ventas.")
 
     frames = [parse_monthly_sales_file(path) for path in paths]
     combined = pd.concat(frames, ignore_index=True)

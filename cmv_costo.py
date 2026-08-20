@@ -88,7 +88,7 @@ def split_paths(text):
 def _ensure_openpyxl_available():
     if not OPENPYXL_AVAILABLE:
         raise ImportError(
-            "CMV merge requires openpyxl. Install with: pip install openpyxl"
+            "La fusión de CMV requiere openpyxl. Instale con: pip install openpyxl"
         )
 
 
@@ -164,12 +164,12 @@ def _read_raw_table(file_path):
     if extension == ".xls":
         if not XLRD_AVAILABLE:
             raise ImportError(
-                "Reading .xls department files requires xlrd. "
-                "Install dependencies: pip install -r requirements.txt"
+                "Leer archivos de departamento .xls requiere xlrd. "
+                "Instale las dependencias: pip install -r requirements.txt"
             )
         return pd.read_excel(file_path, header=None, dtype=str, engine="xlrd")
     raise ValueError(
-        f"Unsupported file type '{extension}'. Use .csv, .xlsx, .xlsm, or .xls."
+        f"Tipo de archivo no soportado '{extension}'. Use .csv, .xlsx, .xlsm o .xls."
     )
 
 
@@ -187,8 +187,8 @@ def read_elistars_department_file(file_path):
 
     if not records:
         raise ValueError(
-            f"No product rows in {os.path.basename(file_path)}. "
-            "Expected comma-delimited data in one column or columns A–I."
+            f"No hay filas de producto en {os.path.basename(file_path)}. "
+            "Se esperaban datos separados por comas en una columna o en las columnas A–I."
         )
 
     result = pd.DataFrame(records)
@@ -271,7 +271,7 @@ def _consolidate_department_files(department_paths):
         )
 
     if not frames:
-        raise ValueError("No department rows could be read from the selected files.")
+        raise ValueError("No se pudo leer ninguna fila de departamento de los archivos seleccionados.")
 
     combined = pd.concat(frames, ignore_index=True)
     combined = _finalize_department_frame(combined)
@@ -326,11 +326,11 @@ def _coerce_cost_price_float(value):
 def _validate_master_path(master_path):
     extension = os.path.splitext(master_path)[1].lower()
     if extension not in {".xlsx", ".xlsm", ".xls"}:
-        raise ValueError("Master CMV file must be .xls, .xlsx, or .xlsm.")
+        raise ValueError("El archivo maestro CMV debe ser .xls, .xlsx o .xlsm.")
     if extension == ".xls":
         raise ValueError(
-            "Legacy .xls masters cannot be updated in place with openpyxl. "
-            "Open the master in Excel and Save As .xlsx or .xlsm, then retry."
+            "Los maestros .xls antiguos no se pueden actualizar directamente con openpyxl. "
+            "Abra el maestro en Excel y use Guardar como .xlsx o .xlsm, luego intente de nuevo."
         )
     return extension
 
@@ -353,7 +353,7 @@ def _get_costo_todos_sheet(workbook):
         return workbook.worksheets[COSTO_TODOS_SHEET_INDEX - 1]
 
     raise ValueError(
-        f'Sheet "{COSTO_TODOS_SHEET_NAME}" not found. Available: {", ".join(names)}'
+        f'Hoja "{COSTO_TODOS_SHEET_NAME}" no encontrada. Disponibles: {", ".join(names)}'
     )
 
 
@@ -560,7 +560,7 @@ def update_master_costo_todos_bulk(master_path, department_paths):
                 upcs_not_in_master, master_row_count)
     """
     if not department_paths:
-        raise ValueError("No department files provided.")
+        raise ValueError("No se proporcionaron archivos de departamento.")
 
     master_path = os.path.abspath(master_path)
     _validate_master_path(master_path)
@@ -572,7 +572,7 @@ def update_master_costo_todos_bulk(master_path, department_paths):
     )
 
     if rows_appended == 0:
-        raise ValueError("No department rows could be written to COSTO.TODOS.")
+        raise ValueError("No se pudo escribir ninguna fila de departamento en COSTO.TODOS.")
 
     _launch_temp_workbook(temp_xlsx_path)
 

@@ -109,7 +109,7 @@ class NoPendingCouponsError(Exception):
 def _ensure_openpyxl():
     if not OPENPYXL_AVAILABLE:
         raise ImportError(
-            "Cupones append requires openpyxl. Install with: pip install openpyxl"
+            "Agregar cupones requiere openpyxl. Instale con: pip install openpyxl"
         )
 
 
@@ -215,7 +215,7 @@ def _get_sheet(workbook, target_name):
         if name.strip().lower() == lowered:
             return workbook[name]
     raise ValueError(
-        f'Sheet "{target_name}" not found. Available: {", ".join(workbook.sheetnames)}'
+        f'Hoja "{target_name}" no encontrada. Disponibles: {", ".join(workbook.sheetnames)}'
     )
 
 
@@ -1067,7 +1067,7 @@ def _read_monthly_coupon_rows(monthly_path):
     if extension in {".xlsx", ".xlsm", ".xls"}:
         return _read_monthly_coupon_rows_excel(monthly_path)
     raise ValueError(
-        f"Unsupported monthly report type '{extension}'. Use CSV or Excel."
+        f"Tipo de reporte mensual no soportado '{extension}'. Use CSV o Excel."
     )
 
 
@@ -1084,11 +1084,11 @@ def resync_cupones_only(master_path):
     _ensure_openpyxl()
     master_path = os.path.abspath(str(master_path).strip())
     if not os.path.isfile(master_path):
-        raise FileNotFoundError(f"Master workbook not found: {master_path}")
+        raise FileNotFoundError(f"Excel maestro no encontrado: {master_path}")
 
     extension = os.path.splitext(master_path)[1].lower()
     if extension not in {".xlsx", ".xlsm"}:
-        raise ValueError("Master workbook must be .xlsx or .xlsm.")
+        raise ValueError("El Excel maestro debe ser .xlsx o .xlsm.")
 
     keep_vba = extension == ".xlsm"
     workbook = None
@@ -1132,13 +1132,13 @@ def append_monthly_cupones(master_path, monthly_path):
     monthly_path = os.path.abspath(str(monthly_path).strip())
 
     if not os.path.isfile(master_path):
-        raise FileNotFoundError(f"Master workbook not found: {master_path}")
+        raise FileNotFoundError(f"Excel maestro no encontrado: {master_path}")
     if not os.path.isfile(monthly_path):
-        raise FileNotFoundError(f"Monthly coupon report not found: {monthly_path}")
+        raise FileNotFoundError(f"Reporte mensual de cupones no encontrado: {monthly_path}")
 
     raw_monthly_rows = _read_monthly_coupon_rows(monthly_path)
     if not raw_monthly_rows:
-        raise ValueError("No coupon rows found in the monthly report.")
+        raise ValueError("No se encontraron filas de cupones en el reporte mensual.")
 
     # Enforce chronological append order (earliest date first).
     monthly_rows = _sort_records_by_date(_expand_records_by_coupon_split(raw_monthly_rows))
@@ -1146,7 +1146,7 @@ def append_monthly_cupones(master_path, monthly_path):
 
     extension = os.path.splitext(master_path)[1].lower()
     if extension not in {".xlsx", ".xlsm"}:
-        raise ValueError("Master workbook must be .xlsx or .xlsm.")
+        raise ValueError("El Excel maestro debe ser .xlsx o .xlsm.")
 
     keep_vba = extension == ".xlsm"
     rows_skipped_duplicates = 0
