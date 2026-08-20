@@ -429,7 +429,14 @@ def _trim_elistar_summary_rows(raw):
     return pd.DataFrame(kept_rows, columns=raw.columns).reset_index(drop=True)
 
 
-def _coerce_upc_int(value):
+def _coerce_upc_text(value):
+    """
+    Validate/clean a UPC without ever casting it to int.
+
+    A leading zero (e.g. a UPC-A read from a text-formatted source cell) is
+    only meaningful as a string — int("071234500019") silently drops it, and
+    there's no way back once that happens.
+    """
     text = _strip_cell(value)
     if not text or text.lower() in {"nan", "none"}:
         return None
@@ -439,10 +446,9 @@ def _coerce_upc_int(value):
         if fractional == "" or set(fractional) <= {"0"}:
             text = whole
 
-    digits = re.sub(r"\D", "", text)
-    if not digits:
+    if not re.search(r"\d", text):
         return None
-    return int(digits)
+    return text
 
 
 def _coerce_count_int(value):
@@ -1210,7 +1216,7 @@ def _write_sales_rows(sheet, dept_frame):
     row_idx = SALES_DATA_START_ROW
     for _, row in dept_frame.iterrows():
         try:
-            _safe_write_cell(sheet, row_idx, 1, int(row["UPC"]), number_format="0")
+            _safe_write_cell(sheet, row_idx, 1, str(row["UPC"]), number_format="@")
             _safe_write_cell(
                 sheet,
                 row_idx,
@@ -1416,9 +1422,8 @@ def _finalize_sales_frame(frame):
         )
         frame = frame.iloc[:first_idx].copy()
 
-    frame["UPC"] = frame["UPC"].apply(_coerce_upc_int)
+    frame["UPC"] = frame["UPC"].apply(_coerce_upc_text)
     frame = frame[frame["UPC"].notna()].copy()
-    frame["UPC"] = frame["UPC"].astype(int)
 
     frame["Count"] = frame["Count"].apply(_coerce_count_int)
     frame = frame[frame["Count"].notna()].copy()

@@ -14,12 +14,13 @@ import pandas as pd
 
 try:
     from openpyxl import load_workbook
-    from openpyxl.styles import Border, Side
+    from openpyxl.styles import Border, PatternFill, Side
 
     OPENPYXL_AVAILABLE = True
 except ImportError:
     load_workbook = None  # type: ignore[assignment,misc]
     Border = None  # type: ignore[assignment,misc]
+    PatternFill = None  # type: ignore[assignment,misc]
     Side = None  # type: ignore[assignment,misc]
     OPENPYXL_AVAILABLE = False
 
@@ -36,6 +37,8 @@ COSTO_TODOS_SHEET_NAME = "COSTO.TODOS"
 COSTO_TODOS_SHEET_INDEX = 3  # 1-based sheet position in workbook
 DATA_START_ROW = 2  # Row 1 is header; product grid overwrite begins at A2
 COSTO_DATA_COLUMNS = 7  # A through G (UPC … DeptName)
+PRICE_CHANGE_COLUMN = 8  # H — Price this run minus Price last run, same UPC
+PRICE_CHANGE_HEADER = "Cambio Precio"
 
 if OPENPYXL_AVAILABLE and Side is not None and Border is not None:
     _THIN_SIDE = Side(style="thin", color="000000")
@@ -47,6 +50,17 @@ if OPENPYXL_AVAILABLE and Side is not None and Border is not None:
     )
 else:
     COSTO_GRID_BORDER = None
+
+if OPENPYXL_AVAILABLE and PatternFill is not None:
+    PRICE_INCREASE_FILL = PatternFill(
+        start_color="C6EFCE", end_color="C6EFCE", fill_type="solid"
+    )  # light green
+    PRICE_DECREASE_FILL = PatternFill(
+        start_color="FFC7CE", end_color="FFC7CE", fill_type="solid"
+    )  # light red
+else:
+    PRICE_INCREASE_FILL = None
+    PRICE_DECREASE_FILL = None
 
 RAW_COLUMN_NAMES = [
     "UPC",
@@ -295,15 +309,6 @@ def _cell_is_empty(value):
     return text == "" or text.lower() in {"nan", "none"}
 
 
-def _coerce_upc_integer(value, default=0):
-    """Convert a cleaned UPC string into a plain integer for Excel column A/B."""
-    text = clean_upc(value) if value is not None else ""
-    if not text:
-        return default
-    digits = "".join(character for character in text if character.isdigit())
-    if not digits:
-        return default
-    return int(digits)
 
 
 def _coerce_cost_price_float(value):
@@ -376,14 +381,20 @@ def _apply_costo_row_grid_border(sheet, row_idx):
         sheet.cell(row=row_idx, column=col).border = COSTO_GRID_BORDER
 
 
-def _write_upc_integer_cell(sheet, row_idx, column, value, default=0):
-    try:
-        amount = _coerce_upc_integer(value, default=default)
-    except (TypeError, ValueError):
-        return
+def _write_upc_text_cell(sheet, row_idx, column, value, default="0"):
+    """
+    Write a UPC as text, never as a number.
 
-    cell = sheet.cell(row=row_idx, column=column, value=int(amount))
-    cell.number_format = "0"
+    A leading zero only survives round-tripping through Excel if the cell is
+    text — writing it as a number (even with a "0" display format) silently
+    drops it, since an int can't represent one. This never invents digits:
+    whatever clean_upc() already preserved (or didn't) is written as-is.
+    """
+    text = clean_upc(value) if value is not None else ""
+    if not text:
+        text = default
+    cell = sheet.cell(row=row_idx, column=column, value=text)
+    cell.number_format = "@"
 
 
 def _write_currency_cell(sheet, row_idx, column, value):
@@ -402,8 +413,9 @@ def _write_currency_cell(sheet, row_idx, column, value):
     cell.number_format = "0.00"
 
 
-def _write_department_rows(sheet, dept_df, start_row):
+def _write_department_rows(sheet, dept_df, start_row, previous_prices=None):
     """Write consolidated department export starting at start_row; return next empty row."""
+    previous_prices = previous_prices or {}
     row_idx = start_row
     rows_appended = 0
 
@@ -412,13 +424,13 @@ def _write_department_rows(sheet, dept_df, start_row):
         if not upc:
             continue
 
-        _write_upc_integer_cell(sheet, row_idx, 1, upc)
+        _write_upc_text_cell(sheet, row_idx, 1, upc)
 
         upc_mod = row.get("UPCMod")
         if upc_mod is not None and not _cell_is_empty(upc_mod):
-            _write_upc_integer_cell(sheet, row_idx, 2, upc_mod, default=0)
+            _write_upc_text_cell(sheet, row_idx, 2, upc_mod, default="0")
         else:
-            _write_upc_integer_cell(sheet, row_idx, 2, "0", default=0)
+            _write_upc_text_cell(sheet, row_idx, 2, "0", default="0")
 
         name = row.get("Name")
         sheet.cell(
@@ -440,6 +452,7 @@ def _write_department_rows(sheet, dept_df, start_row):
             except (TypeError, ValueError):
                 pass
 
+        price_float = None
         price = row.get("Price")
         if price is not None:
             try:
@@ -451,7 +464,7 @@ def _write_department_rows(sheet, dept_df, start_row):
                 if price_float is not None:
                     _write_currency_cell(sheet, row_idx, 5, price_float)
             except (TypeError, ValueError):
-                pass
+                price_float = None
 
         dept_id = row.get("DeptID")
         if dept_id is not None and not _cell_is_empty(dept_id):
@@ -466,6 +479,8 @@ def _write_department_rows(sheet, dept_df, start_row):
             column=7,
             value="" if dept_name is None else str(dept_name).strip(),
         )
+
+        _write_price_change_cell(sheet, row_idx, upc, price_float, previous_prices)
 
         _apply_costo_row_grid_border(sheet, row_idx)
 
@@ -509,6 +524,54 @@ def _clear_costo_data_grid(sheet):
     return rows_to_delete
 
 
+def _snapshot_costo_prices(sheet):
+    """
+    Map UPC -> current Price before the grid is wiped, so the fresh import
+    can show each product's price change against last run in column H.
+    """
+    prices = {}
+    last_row = _find_last_costo_data_row(sheet)
+    for row_idx in range(DATA_START_ROW, last_row + 1):
+        upc = clean_upc(sheet.cell(row=row_idx, column=1).value)
+        if not upc:
+            continue
+        price = sheet.cell(row=row_idx, column=5).value
+        if isinstance(price, (int, float)):
+            prices[upc] = float(price)
+    return prices
+
+
+def _ensure_price_change_header(sheet):
+    cell = sheet.cell(row=1, column=PRICE_CHANGE_COLUMN)
+    if _cell_is_empty(cell.value):
+        cell.value = PRICE_CHANGE_HEADER
+
+
+def _write_price_change_cell(sheet, row_idx, upc, new_price, previous_prices):
+    """
+    Column H: new_price - last run's price for the same UPC.
+
+    Blank for a brand-new UPC (nothing to compare against) and for an
+    unchanged price — light green fill when it went up, red when it went
+    down, matching the "cambio de precio" the user actually wants to see.
+    """
+    if new_price is None:
+        return
+    old_price = previous_prices.get(upc)
+    if old_price is None:
+        return
+
+    diff = round(new_price - old_price, 2)
+    if diff == 0:
+        return
+
+    cell = sheet.cell(row=row_idx, column=PRICE_CHANGE_COLUMN, value=diff)
+    cell.number_format = "+0.00;-0.00"
+    if PRICE_INCREASE_FILL is None:
+        return
+    cell.fill = PRICE_INCREASE_FILL if diff > 0 else PRICE_DECREASE_FILL
+
+
 def _replace_costo_departments(sheet, department_paths):
     """
     Consolidate department exports, clear the COSTO.TODOS data grid, and write
@@ -516,8 +579,12 @@ def _replace_costo_departments(sheet, department_paths):
     """
     _hide_column_b(sheet)
     combined_df, file_stats = _consolidate_department_files(department_paths)
+    previous_prices = _snapshot_costo_prices(sheet)
     _clear_costo_data_grid(sheet)
-    _, rows_written = _write_department_rows(sheet, combined_df, DATA_START_ROW)
+    _ensure_price_change_header(sheet)
+    _, rows_written = _write_department_rows(
+        sheet, combined_df, DATA_START_ROW, previous_prices=previous_prices
+    )
     _hide_column_b(sheet)
     return file_stats, rows_written
 
