@@ -12,6 +12,7 @@ import re
 import sys
 import tempfile
 import unicodedata
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from difflib import get_close_matches
 from datetime import date, datetime, time, timedelta
 
@@ -1554,6 +1555,39 @@ def _normalize_pdf_paths(pdf_paths):
     ]
 
 
+_MAX_CONCURRENT_PDF_WORKERS = 4
+
+
+def _parse_pdfs_concurrently(paths, parse_fn, **kwargs):
+    """
+    Run parse_fn(path, **kwargs) for every path, in parallel when there's
+    more than one.
+
+    Each call ultimately shells out to Tesseract as its own OS process, so
+    this isn't fighting Python's GIL — a batch of daily PDFs really can be
+    read at the same time on a multi-core machine instead of strictly one
+    after another, with no change to how any single PDF is read. Capped at
+    a handful of workers so a big batch doesn't overwhelm the machine.
+    """
+
+    def _run(path):
+        try:
+            return parse_fn(path, **kwargs)
+        except Exception as exc:
+            raise type(exc)(f"{os.path.basename(path)}: {exc}") from exc
+
+    if len(paths) <= 1:
+        return {path: _run(path) for path in paths}
+
+    max_workers = min(len(paths), os.cpu_count() or _MAX_CONCURRENT_PDF_WORKERS, _MAX_CONCURRENT_PDF_WORKERS)
+    results = {}
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        futures = {executor.submit(_run, path): path for path in paths}
+        for future in as_completed(futures):
+            results[futures[future]] = future.result()
+    return results
+
+
 def process_reporte_diario(
     master_path, pdf_paths, page_index=DEFAULT_PDF_PAGE_INDEX
 ):
@@ -1561,7 +1595,9 @@ def process_reporte_diario(
     Parse one or more daily PDFs and inject each into its calendar day row.
 
     Day-of-month is read from each PDF filename (e.g. Close Store 07-05.pdf -> day 7).
-    Workbook is saved once after the full batch completes.
+    Each PDF is read (OCR included) in parallel across a small worker pool,
+    since that read — not the Excel write that follows — is what makes a
+    multi-PDF batch slow. Workbook is saved once after the full batch completes.
 
     Returns:
         tuple: (temp_path, summary dict)
@@ -1579,6 +1615,15 @@ def process_reporte_diario(
     if extension not in {".xlsx", ".xlsm"}:
         raise ValueError("El Excel maestro debe ser .xlsx o .xlsm.")
 
+    sorted_paths = sorted(paths, key=extract_day_from_filename)
+    for pdf_path in sorted_paths:
+        if not os.path.isfile(pdf_path):
+            raise FileNotFoundError(f"PDF no encontrado: {pdf_path}")
+
+    parsed_by_path = _parse_pdfs_concurrently(
+        sorted_paths, parse_elistar_daily_pdf_page, page_index=page_index
+    )
+
     keep_vba = extension == ".xlsm"
     workbook = load_workbook(master_path, data_only=False, keep_vba=keep_vba)
     sheet = _get_carga_aqui_sheet(workbook)
@@ -1589,16 +1634,9 @@ def process_reporte_diario(
     total_skipped = 0
     total_departments = 0
 
-    sorted_paths = sorted(paths, key=extract_day_from_filename)
-
     for pdf_path in sorted_paths:
-        if not os.path.isfile(pdf_path):
-            raise FileNotFoundError(f"PDF no encontrado: {pdf_path}")
-
+        pdf_records, pdf_diagnostics = parsed_by_path[pdf_path]
         target_day = int(extract_day_from_filename(pdf_path))
-        pdf_records, pdf_diagnostics = parse_elistar_daily_pdf_page(
-            pdf_path, page_index=page_index
-        )
         target_row = find_row_for_calendar_day(sheet, target_day)
 
         written, skipped = inject_daily_sales(
@@ -2056,6 +2094,10 @@ def process_store_info(master_path, pdf_paths):
     own calendar day (row 2 = day 1), not just the next blank row, so PDFs
     for non-consecutive days land where they belong and gaps stay blank.
 
+    Each PDF is read (OCR included) in parallel across a small worker pool,
+    since that read — not the Excel write that follows — is what makes a
+    multi-PDF batch slow.
+
     Returns:
         tuple: (temp_path, summary dict)
     """
@@ -2072,18 +2114,21 @@ def process_store_info(master_path, pdf_paths):
     if extension not in {".xlsx", ".xlsm"}:
         raise ValueError("El Excel de Store Info debe ser .xlsx o .xlsm.")
 
+    sorted_paths = sorted(paths, key=extract_day_from_filename)
+    for pdf_path in sorted_paths:
+        if not os.path.isfile(pdf_path):
+            raise FileNotFoundError(f"PDF no encontrado: {pdf_path}")
+
+    fields_by_path = _parse_pdfs_concurrently(sorted_paths, extract_store_info_from_pdf)
+
     keep_vba = extension == ".xlsm"
     workbook = load_workbook(master_path, data_only=False, keep_vba=keep_vba)
     sheet = _find_store_info_sheet(workbook)
 
     batch_results = []
-    sorted_paths = sorted(paths, key=extract_day_from_filename)
 
     for pdf_path in sorted_paths:
-        if not os.path.isfile(pdf_path):
-            raise FileNotFoundError(f"PDF no encontrado: {pdf_path}")
-
-        fields = extract_store_info_from_pdf(pdf_path)
+        fields = fields_by_path[pdf_path]
         row = write_store_info_row(sheet, fields)
         batch_results.append(
             {
