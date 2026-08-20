@@ -2222,13 +2222,6 @@ class EFTExtractorApp:
             section_theme=REPORTE_DIARIO_THEME,
         )
 
-        self.reporte_log_text, _log_card = create_log_panel(
-            right,
-            "Registro de Procesamiento",
-            section_theme=REPORTE_DIARIO_THEME,
-            height=8,
-        )
-
     def _build_cmv_tab(self, parent):
         header, left, right = create_dual_column_tab(parent)
         create_compact_section_header(
@@ -2537,15 +2530,6 @@ class EFTExtractorApp:
             is_error=is_error,
             completed=completed,
         )
-
-    def _append_reporte_log(self, lines):
-        if not hasattr(self, "reporte_log_text"):
-            return
-        self.reporte_log_text.configure(state=tk.NORMAL)
-        self.reporte_log_text.delete("1.0", tk.END)
-        for line in lines:
-            self.reporte_log_text.insert(tk.END, line + "\n")
-        self.reporte_log_text.configure(state=tk.DISABLED)
 
     def _clear_reporte_inputs(self):
         self.reporte_master_path.set("")
@@ -3032,50 +3016,33 @@ class EFTExtractorApp:
 
         try:
             _temp_path, summary = process_reporte_diario(master_path, pdf_paths)
-            log_lines = [
-                f"Archivos procesados: {summary.get('files_processed', len(pdf_paths))}",
-                f"Total de departamentos escritos: {summary['departments_written']}",
-                f"Total omitidos: {summary['departments_skipped']}",
-                "",
-            ]
+            warnings = []
             for batch in summary.get("batch_results", []):
-                log_lines.append(
-                    f"Día {batch['calendar_day']} — {batch['filename']} "
-                    f"(fila {batch['target_row']}): "
-                    f"{batch['departments_written']} escritos, "
-                    f"{batch['departments_skipped']} omitidos"
-                )
-                if batch.get("used_ocr"):
-                    pages = batch.get("pages_used") or []
-                    pages_text = ", ".join(str(p) for p in pages)
-                    log_lines.append(
-                        f"    Leído por OCR (foto/escaneo) — página(s) {pages_text}"
-                    )
                 if batch.get("warning"):
-                    log_lines.append(f"    Aviso: {batch['warning']}")
-                for item in batch.get("written", []):
-                    log_lines.append(
-                        f"    {item['department']}: "
-                        f"{item['count']} @ {item['count_col']} | "
-                        f"{item['amount']:.2f} @ {item['amount_col']}"
+                    warnings.append(
+                        f"Día {batch['calendar_day']} ({batch['filename']}): {batch['warning']}"
                     )
                 skipped = batch.get("skipped") or []
                 if skipped:
-                    log_lines.append("    Omitidos:")
-                    for name in skipped:
-                        log_lines.append(f"      • {name}")
-                log_lines.append("")
+                    warnings.append(
+                        f"Día {batch['calendar_day']} ({batch['filename']}): "
+                        f"omitidos — {', '.join(skipped)}"
+                    )
 
-            self._append_reporte_log(log_lines)
             self._clear_reporte_inputs()
             self._set_reporte_status(
                 f"Reporte Diario completado — {summary['files_processed']} día(s), "
-                f"{summary['departments_written']} valor(es) de departamento escrito(s).",
+                f"{summary['departments_written']} valor(es) escrito(s), "
+                f"{summary['departments_skipped']} omitido(s).",
                 completed=True,
             )
+            if warnings:
+                messagebox.showwarning(
+                    "Revisar Reporte Diario",
+                    "Se completó el proceso, pero hay avisos:\n\n" + "\n\n".join(warnings),
+                )
         except Exception as exc:
             self._set_reporte_status(f"Error: {exc}", is_error=True)
-            self._append_reporte_log([f"Error: {exc}"])
         finally:
             self.root.config(cursor="")
             self.root.update_idletasks()
@@ -3150,28 +3117,20 @@ class EFTExtractorApp:
 
         try:
             _temp_path, summary = process_store_info(master_path, pdf_paths)
-            log_lines = [
-                f"Archivos procesados: {summary.get('files_processed', len(pdf_paths))}",
-                "",
-            ]
-            for batch in summary.get("batch_results", []):
-                pages = batch.get("pages_used") or []
-                pages_text = ", ".join(str(p) for p in pages)
-                log_lines.append(
-                    f"{batch['from_date']} — {batch['filename']} "
-                    f"(fila {batch['target_row']}, OCR página(s) {pages_text})"
-                )
-            self._append_reporte_log(log_lines)
+            dates_text = ", ".join(
+                f"{batch['from_date']} (fila {batch['target_row']})"
+                for batch in summary.get("batch_results", [])
+            )
             self.store_info_pdf_path.set("")
             if hasattr(self, "store_info_pdf_entry"):
                 self.store_info_pdf_entry.delete(0, tk.END)
             self._set_store_info_status(
-                f"Store Info completado — {summary['files_processed']} día(s) agregado(s).",
+                f"Store Info completado — {summary['files_processed']} día(s) agregado(s): "
+                f"{dates_text}.",
                 completed=True,
             )
         except Exception as exc:
             self._set_store_info_status(f"Error: {exc}", is_error=True)
-            self._append_reporte_log([f"Error: {exc}"])
         finally:
             self.root.config(cursor="")
             self.root.update_idletasks()
