@@ -6,18 +6,26 @@ report, maps headers dynamically on sheet \"CARGA AQUI\" (row 3, column C onward
 and injects count/amount pairs on the first eligible operational row.
 """
 
+import io
 import os
 import re
 import sys
 import tempfile
 import unicodedata
 from difflib import get_close_matches
-from datetime import datetime
+from datetime import date, datetime, time, timedelta
 
 try:
     import pdfplumber
 except ImportError:
     pdfplumber = None  # type: ignore[assignment]
+
+try:
+    import pytesseract
+    from PIL import Image
+except ImportError:
+    pytesseract = None  # type: ignore[assignment]
+    Image = None  # type: ignore[assignment]
 
 try:
     from openpyxl import load_workbook
@@ -53,6 +61,7 @@ PDF_HEADER_NET_COUNT_TOKENS = ("net", "count")
 PDF_HEADER_NET_SALES_TOKENS = ("net", "sales")
 
 DEPARTMENT_SALES_REPORT_ANCHOR = "Department Sales Report"
+SAFE_DROP_REPORT_ANCHOR = "Safe Drop Report"
 
 PROTECTED_DEPARTMENT_LABELS = frozenset(
     {
@@ -212,6 +221,87 @@ def _ensure_openpyxl():
         raise ImportError(
             "Reporte Diario requiere openpyxl. Instale con: pip install openpyxl"
         )
+
+
+_TESSERACT_CANDIDATE_PATHS = (
+    r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+    r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+)
+_TESSERACT_CONFIGURED = False
+
+
+def _ensure_pytesseract():
+    """Same auto-detection as the Gettel/Toyota OCR pipeline — no pandas needed here."""
+    global _TESSERACT_CONFIGURED
+    if pytesseract is None or Image is None:
+        raise ImportError(
+            "Leer reportes escaneados/fotografiados requiere pytesseract y Pillow. "
+            "Instale con: pip install pytesseract pillow"
+        )
+    if _TESSERACT_CONFIGURED:
+        return
+    try:
+        pytesseract.get_tesseract_version()
+        _TESSERACT_CONFIGURED = True
+        return
+    except Exception:
+        pass
+    for candidate in _TESSERACT_CANDIDATE_PATHS:
+        if os.path.isfile(candidate):
+            pytesseract.pytesseract.tesseract_cmd = candidate
+            _TESSERACT_CONFIGURED = True
+            return
+    raise ImportError(
+        "No se encontró el motor Tesseract OCR. Instálelo (ej. con 'winget install "
+        "UB-Mannheim.TesseractOCR') para poder leer reportes escaneados/fotografiados."
+    )
+
+
+_OSD_ROTATE_TO_TRANSPOSE = {
+    90: Image.ROTATE_270 if Image is not None else None,
+    180: Image.ROTATE_180 if Image is not None else None,
+    270: Image.ROTATE_90 if Image is not None else None,
+}
+
+
+def _correct_image_orientation(image):
+    """
+    Undo whole-page rotation (phone photos snapped sideways/upside-down) via
+    Tesseract's own orientation detection before OCR runs. Uses Image.transpose
+    (exact 90°-multiple remap) instead of Image.rotate to avoid blurring text.
+    Never raises — a page OSD can't confidently read is left as-is.
+    """
+    try:
+        osd = pytesseract.image_to_osd(image, output_type=pytesseract.Output.DICT)
+        rotate = int(osd.get("rotate", 0) or 0)
+    except Exception:
+        return image
+    transpose_const = _OSD_ROTATE_TO_TRANSPOSE.get(rotate)
+    if transpose_const is not None:
+        image = image.transpose(transpose_const)
+    return image
+
+
+def _extract_pdf_page_images(pdf_path):
+    """
+    Return one PIL Image per PDF page — the largest embedded photo on that
+    page, rotated upright — without needing poppler/ghostscript.
+    """
+    _ensure_pdfplumber()
+    _ensure_pytesseract()
+    images = []
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            if not page.images:
+                images.append(None)
+                continue
+            biggest = max(page.images, key=lambda im: im["width"] * im["height"])
+            raw = biggest["stream"].get_data()
+            image = Image.open(io.BytesIO(raw)).convert("RGB")
+            images.append(_correct_image_orientation(image))
+    if not any(images):
+        raise ValueError(f"No se encontraron imágenes embebidas en {pdf_path}.")
+    return images
 
 
 def _strip_cell(value):
@@ -809,6 +899,21 @@ def _line_contains_anchor(line):
     return DEPARTMENT_SALES_REPORT_ANCHOR.lower() in _strip_cell(line).lower()
 
 
+def _line_contains_stop_marker(line):
+    """True at 'Safe Drop Report' — everything from there on is out of scope."""
+    text = _strip_cell(line).lower()
+    return "safe drop" in text
+
+
+def _is_ocr_header_line(text):
+    """
+    True for the "Dept. Name ... Net Count ... Net Sales $ ..." header row,
+    which OCR sometimes repeats mid-table as its own smashed-together line.
+    """
+    key = _normalize_department_label(text)
+    return "dept" in key and "name" in key
+
+
 def _anchor_passed_in_page_text(page):
     """True once 'Department Sales Report' appears in line-by-line page text."""
     for line in (page.extract_text() or "").splitlines():
@@ -926,15 +1031,235 @@ def _parse_tables_with_line_anchor(page):
     return records
 
 
+# No single Tesseract page-segmentation mode is reliably best across every
+# photo, so each page is tried under each of these and scored (see
+# _score_ocr_page_text) rather than trusting one fixed mode.
+_OCR_TEXT_CONFIGS = ("--psm 6", "--psm 4", "--psm 3", "--psm 11")
+
+# WATER is always the last department printed on a real report; when it was
+# a $0.00 day it's omitted and TAXABLE (the second-to-last) becomes the last
+# one. Used only as an informational cross-check, never to stop parsing.
+LAST_DEPARTMENT_CANDIDATES = ("WATER", "TAXABLE")
+
+# Fields after Dept.Name, right to left: % of Sales (dropped separately),
+# Net Sales $, Discount $, Refund $, Net Count, Refund Count, Item Count,
+# Gross Sales $ — 7 fields once the trailing % token is stripped.
+_OCR_ROW_TAIL_FIELDS = 7
+_OCR_NET_SALES_REVERSE_INDEX = -1
+_OCR_NET_COUNT_REVERSE_INDEX = -4
+
+
+def _parse_ocr_department_row(line):
+    """
+    Parse one OCR'd "Department Sales Report" line.
+
+    Tesseract's image_to_string collapses the original column gaps to single
+    spaces, so — unlike the pdfplumber text parser, which relies on
+    multi-space gaps to isolate the department name — this indexes strictly
+    from the right against the report's fixed layout: Dept.Name | Gross
+    Sales $ | Item Count | Refund Count | Net Count | Refund $ | Discount $ |
+    Net Sales $ | % of Sales. Returns None for anything that isn't a
+    parseable row; the printed grand-total line (no department name) comes
+    back with department="" and is_total=True for the OCR subtotal cross-check.
+    """
+    text = _normalize_department_spacing(_strip_cell(line))
+    if not text:
+        return None
+    if _is_ocr_header_line(text):
+        return None
+
+    parts = [token for token in text.split() if token]
+    if len(parts) < _OCR_ROW_TAIL_FIELDS + 1:
+        return None
+
+    # The trailing "% of Sales" column is always present in the source table
+    # even when Tesseract fails to read its literal "%" character (e.g. a
+    # garbled "OBI" instead of "0.02%") — so it is always dropped, rather
+    # than only when the "%" glyph itself came through.
+    tail_tokens = parts[:-1]
+
+    net_sales_raw = tail_tokens[_OCR_NET_SALES_REVERSE_INDEX]
+    net_count_raw = tail_tokens[_OCR_NET_COUNT_REVERSE_INDEX]
+    dept_tokens = tail_tokens[:-_OCR_ROW_TAIL_FIELDS]
+
+    amount = _sanitize_sales_float(net_sales_raw)
+    count = _safe_parse_count(net_count_raw)
+
+    if not dept_tokens:
+        return {"department": "", "count": int(count), "amount": float(amount), "is_total": True}
+
+    dept_raw = _normalize_department_spacing(" ".join(dept_tokens)).upper()
+    dept_text, _fused_count = _split_dept_name_from_fused_tail(dept_raw)
+    department = normalize_parsed_department_name(_fallback_department_alias(dept_text))
+    if not department or _is_summary_row(department) or _is_protected_department(department):
+        return None
+
+    return {"department": department, "count": int(count), "amount": float(amount), "is_total": False}
+
+
+def _score_ocr_page_text(text):
+    """
+    Score one OCR attempt by how many department rows it yields.
+
+    If the anchor line is present, only rows between it and the
+    "Safe Drop Report" stop marker count (skips preamble tables read on the
+    same page). If not, the whole page is treated as table continuation —
+    real reports sometimes spill the department table onto a second page.
+    """
+    lines = text.splitlines() if text else []
+    start = 0
+    has_anchor = False
+    for index, line in enumerate(lines):
+        if _line_contains_anchor(line):
+            start = index + 1
+            has_anchor = True
+            break
+
+    count = 0
+    for line in lines[start:]:
+        if _line_contains_stop_marker(line):
+            break
+        parsed = _parse_ocr_department_row(line)
+        if parsed is not None and not parsed["is_total"]:
+            count += 1
+    return (int(has_anchor), count)
+
+
+def _ocr_page_text(image):
+    """Best-effort OCR of a full page photo into plain text."""
+    if image is None:
+        return ""
+    _ensure_pytesseract()
+    best_text = ""
+    best_score = (-1, -1)
+    for config in _OCR_TEXT_CONFIGS:
+        try:
+            text = pytesseract.image_to_string(image, config=config) or ""
+        except Exception:
+            continue
+        score = _score_ocr_page_text(text)
+        if score > best_score:
+            best_score = score
+            best_text = text
+    return best_text
+
+
+def parse_elistar_daily_pdf_ocr(pdf_path, start_page_index=DEFAULT_PDF_PAGE_INDEX):
+    """
+    OCR-based extraction for photographed/scanned Elistar daily PDFs (no
+    extractable text). The "Department Sales Report" table doesn't always
+    land on the same page and can spill onto the next one, so this scans
+    forward from start_page_index (wrapping around) for the anchor,
+    corrects page rotation via Tesseract OSD, and keeps reading department
+    rows across pages until the "Safe Drop Report" anchor is reached.
+
+    Returns:
+        tuple[list[dict], dict]: (records, diagnostics) — diagnostics has
+        keys "pages_used", "last_department" and "subtotal_mismatch" (the
+        printed grand-total line is cross-checked against the sum of parsed
+        rows as a soft OCR-quality sanity check, never a blocking one).
+    """
+    pdf_path = os.path.abspath(pdf_path)
+    if not os.path.isfile(pdf_path):
+        raise FileNotFoundError(f"PDF no encontrado: {pdf_path}")
+
+    images = _extract_pdf_page_images(pdf_path)
+    total_pages = len(images)
+    if not (0 <= start_page_index < total_pages):
+        start_page_index = 0
+
+    search_order = list(range(start_page_index, total_pages)) + list(
+        range(0, start_page_index)
+    )
+
+    anchor_page = None
+    anchor_page_text = None
+    for idx in search_order:
+        text = _ocr_page_text(images[idx])
+        if _line_contains_anchor(text):
+            anchor_page = idx
+            anchor_page_text = text
+            break
+
+    if anchor_page is None:
+        raise ValueError(
+            f'No se encontró el ancla "{DEPARTMENT_SALES_REPORT_ANCHOR}" en ninguna '
+            "página del PDF (vía OCR). Verifique que el reporte no esté demasiado "
+            "borroso o girado."
+        )
+
+    records = []
+    printed_totals = None
+    pages_used = []
+    reached_stop = False
+    idx = anchor_page
+    while idx < total_pages:
+        page_text = anchor_page_text if idx == anchor_page else _ocr_page_text(images[idx])
+        pages_used.append(idx + 1)
+        past_anchor = idx != anchor_page
+        for line in page_text.splitlines():
+            if not past_anchor:
+                if _line_contains_anchor(line):
+                    past_anchor = True
+                continue
+            if _line_contains_stop_marker(line):
+                reached_stop = True
+                break
+            if not _strip_cell(line):
+                continue
+            parsed = _parse_ocr_department_row(line)
+            if parsed is None:
+                continue
+            if parsed["is_total"]:
+                printed_totals = parsed
+            else:
+                records.append(parsed)
+        if reached_stop:
+            break
+        idx += 1
+
+    if not records:
+        raise ValueError(
+            f"No se encontraron registros de departamento vía OCR después de "
+            f'"{DEPARTMENT_SALES_REPORT_ANCHOR}". Verifique que el reporte no esté '
+            "demasiado borroso o girado."
+        )
+
+    subtotal_mismatch = None
+    if printed_totals is not None:
+        computed_amount = round(sum(r["amount"] for r in records), 2)
+        computed_count = sum(r["count"] for r in records)
+        amount_diff = round(abs(computed_amount - printed_totals["amount"]), 2)
+        count_diff = abs(computed_count - printed_totals["count"])
+        if amount_diff > 1.00 or count_diff > 2:
+            subtotal_mismatch = {
+                "computed_amount": computed_amount,
+                "printed_amount": printed_totals["amount"],
+                "computed_count": computed_count,
+                "printed_count": printed_totals["count"],
+            }
+
+    diagnostics = {
+        "pages_used": pages_used,
+        "last_department": records[-1]["department"],
+        "subtotal_mismatch": subtotal_mismatch,
+    }
+    return records, diagnostics
+
+
 def parse_elistar_daily_pdf_page(pdf_path, page_index=DEFAULT_PDF_PAGE_INDEX):
     """
     Extract department records from the selected PDF page (0-based index).
 
     Only rows after the \"Department Sales Report\" anchor are parsed.
     Uses fixed columns: Dept.Name (1), Net Count (5), Net Sales $ (8).
+    Falls back to OCR automatically when the page has no extractable text
+    at all (a photographed/scanned report, as opposed to a digital export).
 
     Returns:
-        list[dict]: Each dict has keys department, count, amount.
+        tuple[list[dict], dict]: (records, diagnostics) — diagnostics has
+        keys "used_ocr", "pages_used" (OCR only) and "last_department"
+        (OCR only, may be absent for text-based extraction).
     """
     _ensure_pdfplumber()
     pdf_path = os.path.abspath(pdf_path)
@@ -951,16 +1276,25 @@ def parse_elistar_daily_pdf_page(pdf_path, page_index=DEFAULT_PDF_PAGE_INDEX):
                 f"el documento tiene {len(pdf.pages)} página(s)."
             )
         page = pdf.pages[page_index]
-        records = _parse_tables_with_line_anchor(page)
+        has_text = bool((page.extract_text() or "").strip())
+        records = _parse_tables_with_line_anchor(page) if has_text else []
 
-    if not records:
-        raise ValueError(
-            f"No se encontraron registros de departamento en la página {page_index + 1} del PDF después de "
-            f'"{DEPARTMENT_SALES_REPORT_ANCHOR}". '
-            "Se esperaba Dept.Name (col 1), Net Count (col 5), Net Sales $ (col 8)."
+    if records:
+        return [dict(record) for record in records], {"used_ocr": False}
+
+    if not has_text:
+        ocr_records, ocr_diagnostics = parse_elistar_daily_pdf_ocr(
+            pdf_path, start_page_index=page_index
         )
+        diagnostics = {"used_ocr": True}
+        diagnostics.update(ocr_diagnostics)
+        return [dict(record) for record in ocr_records], diagnostics
 
-    return [dict(record) for record in records]
+    raise ValueError(
+        f"No se encontraron registros de departamento en la página {page_index + 1} del PDF después de "
+        f'"{DEPARTMENT_SALES_REPORT_ANCHOR}". '
+        "Se esperaba Dept.Name (col 1), Net Count (col 5), Net Sales $ (col 8)."
+    )
 
 
 def build_department_column_map(sheet):
@@ -1235,7 +1569,9 @@ def process_reporte_diario(
             raise FileNotFoundError(f"PDF no encontrado: {pdf_path}")
 
         target_day = int(extract_day_from_filename(pdf_path))
-        pdf_records = parse_elistar_daily_pdf_page(pdf_path, page_index=page_index)
+        pdf_records, pdf_diagnostics = parse_elistar_daily_pdf_page(
+            pdf_path, page_index=page_index
+        )
         target_row = find_row_for_calendar_day(sheet, target_day)
 
         written, skipped = inject_daily_sales(
@@ -1245,6 +1581,26 @@ def process_reporte_diario(
         total_written += len(written)
         total_skipped += len(skipped)
         total_departments += len(pdf_records)
+
+        last_department = pdf_diagnostics.get("last_department")
+        warnings = []
+        if pdf_diagnostics.get("used_ocr") and last_department not in (
+            None,
+        ) + LAST_DEPARTMENT_CANDIDATES:
+            warnings.append(
+                f"El último departamento leído fue \"{last_department}\", no "
+                f"{'/'.join(LAST_DEPARTMENT_CANDIDATES)} — revise si la tabla se cortó."
+            )
+        mismatch = pdf_diagnostics.get("subtotal_mismatch")
+        if mismatch:
+            warnings.append(
+                "El total impreso en el PDF no coincide con lo leído: "
+                f"{mismatch['computed_count']} vs {mismatch['printed_count']} unidades, "
+                f"${mismatch['computed_amount']:.2f} vs ${mismatch['printed_amount']:.2f} — "
+                "revise el OCR."
+            )
+        warning = " | ".join(warnings) if warnings else None
+
         batch_results.append(
             {
                 "pdf_path": pdf_path,
@@ -1255,6 +1611,9 @@ def process_reporte_diario(
                 "departments_skipped": len(skipped),
                 "written": list(written),
                 "skipped": list(skipped),
+                "used_ocr": bool(pdf_diagnostics.get("used_ocr")),
+                "pages_used": pdf_diagnostics.get("pages_used"),
+                "warning": warning,
             }
         )
         pdf_records = None
@@ -1267,12 +1626,419 @@ def process_reporte_diario(
 
     summary = {
         "files_processed": len(batch_results),
-        "page_index": page_index,
-        "page_number": page_index + 1,
         "departments_written": total_written,
         "departments_skipped": total_skipped,
         "pdf_departments": total_departments,
         "protected_headers": sorted(protected),
+        "batch_results": batch_results,
+    }
+    return temp_path, summary
+
+
+# ---------------------------------------------------------------------------
+# Store Info — a second extraction from the same Elistar daily PDF (pages 3
+# and the start of 4, up to "Network Revenue") into a different workbook's
+# "Store Info" sheet: one summary row per day, appended after the last one.
+# ---------------------------------------------------------------------------
+
+STORE_INFO_SHEET_NAME = "Store Info"
+STORE_INFO_DATA_START_ROW = 2
+STORE_INFO_DATE_SCAN_COLUMN = 1  # Column A
+DEFAULT_STORE_INFO_PAGE_INDEX = 2  # Third page (0-based) — "PERIOD FROM:" anchor
+STORE_INFO_MAX_CONTINUATION_PAGES = 3  # Anchor page + up to 2 more, to reach Network Revenue
+
+PERIOD_FROM_ANCHOR = "period from"
+NETWORK_REVENUE_ANCHOR = "network revenue"
+
+# 1-based column numbers for the fields this extraction is allowed to touch.
+# Everything else (H, I..N, R, U, W) is either a formula or filled in some
+# other way and must never be written here.
+STORE_INFO_COL_FROM_DATE = 1  # A — Fecha (FROM date + 1 day)
+STORE_INFO_COL_FROM_TIME = 2  # B — hs (FROM time, unchanged)
+STORE_INFO_COL_TO_DATE = 3  # C — Fecha (FROM date + 2 days)
+STORE_INFO_COL_TO_TIME = 4  # D — hs (TO time, unchanged)
+STORE_INFO_COL_VOLUME = 5  # E — Volume
+STORE_INFO_COL_SALES_FUEL = 6  # F — SALES FUEL
+STORE_INFO_COL_DESC_COMB = 7  # G — Desc. Comb
+STORE_INFO_COL_NON_FUEL = 15  # O — C-Store=Total Non Fuel
+STORE_INFO_COL_DESC_OTROS = 16  # P — desc otros
+STORE_INFO_COL_TAX_COLLECT = 17  # Q — Tax collet
+STORE_INFO_COL_CASH = 19  # S — Cash
+STORE_INFO_COL_CREDIT = 20  # T — TC (written as a "=a+b+c" formula, like the sheet's own history)
+STORE_INFO_COL_LOCAL_ACCOUNTS = 22  # V — Local Account
+STORE_INFO_COL_NETWORK_REVENUE = 24  # X — Network Revenue
+
+_MONTH_NAME_TO_NUMBER = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+_PERIOD_FROM_TO_RE = re.compile(
+    r"([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})\s+(\d{1,2}):(\d{2})\s*([AP])\.?M\.?"
+    r".*?TO:?\s*([A-Za-z]{3,9})\.?\s+(\d{1,2}),?\s+(\d{4})\s+(\d{1,2}):(\d{2})\s*([AP])\.?M\.?",
+    re.IGNORECASE,
+)
+
+# A label line is "words... <first numeric-looking token> ...": everything
+# before that split point is the label, everything from it on are the values.
+_NUMERIC_TOKEN_RE = re.compile(r"^[-~(]*\$?\(?-?[\d,]+\.?\d*\)?%?$")
+
+_STORE_INFO_SCORING_ANCHORS = (
+    "period from",
+    "total fuel sales",
+    "fuel discounts",
+    "total non fuel sales",
+    "other discounts",
+    "total taxes collected",
+    "local accounts",
+    "network revenue",
+)
+
+
+def _to_24h_time(hour12, minute, ampm):
+    hour12 = int(hour12) % 12
+    if ampm.upper().startswith("P"):
+        return time(hour12 + 12, int(minute))
+    return time(hour12, int(minute))
+
+
+def _parse_period_from_to_line(line):
+    """
+    Parse "PERIOD FROM: Aug 18, 2026 10:51 PM TO: Aug 19, 2026 10:42 PM".
+
+    Returns a dict with from_date/from_time/to_date/to_time, or None.
+    """
+    match = _PERIOD_FROM_TO_RE.search(line)
+    if not match:
+        return None
+    (
+        from_mon, from_day, from_year, from_hh, from_mm, from_ampm,
+        to_mon, to_day, to_year, to_hh, to_mm, to_ampm,
+    ) = match.groups()
+    from_month = _MONTH_NAME_TO_NUMBER.get(from_mon[:3].lower())
+    to_month = _MONTH_NAME_TO_NUMBER.get(to_mon[:3].lower())
+    if not from_month or not to_month:
+        return None
+    try:
+        from_date_value = date(int(from_year), from_month, int(from_day))
+        to_date_value = date(int(to_year), to_month, int(to_day))
+    except ValueError:
+        return None
+    return {
+        "from_date": from_date_value,
+        "from_time": _to_24h_time(from_hh, from_mm, from_ampm),
+        "to_date": to_date_value,
+        "to_time": _to_24h_time(to_hh, to_mm, to_ampm),
+    }
+
+
+def _split_label_and_values(line):
+    """Split "Total Fuel Sales 1,236.070 $5,152.10" into label + value tokens."""
+    tokens = [t for t in _normalize_department_spacing(_strip_cell(line)).split() if t]
+    for index, token in enumerate(tokens):
+        if _NUMERIC_TOKEN_RE.match(token) and index > 0:
+            return " ".join(tokens[:index]), tokens[index:]
+    return None, []
+
+
+def _sanitize_store_info_float(raw_value):
+    """Like _sanitize_sales_float, but also treats a leading '~' as a minus sign (OCR glyph noise)."""
+    text = _strip_cell(raw_value)
+    if text.startswith("~"):
+        text = "-" + text[1:]
+    return _sanitize_sales_float(text)
+
+
+def _find_label_values(lines, *target_labels):
+    """Return the value tokens of the first line whose label exactly matches one of target_labels."""
+    targets = {label.lower() for label in target_labels}
+    for line in lines:
+        label, values = _split_label_and_values(line)
+        if label and label.lower() in targets:
+            return values
+    return None
+
+
+def _score_store_info_page_text(text):
+    lower = text.lower() if text else ""
+    return sum(1 for anchor in _STORE_INFO_SCORING_ANCHORS if anchor in lower)
+
+
+def _ocr_store_info_page_text(image):
+    """Best-effort OCR of a Store Info page — scored by how many known anchors it recovers."""
+    if image is None:
+        return ""
+    _ensure_pytesseract()
+    best_text = ""
+    best_score = -1
+    for config in _OCR_TEXT_CONFIGS:
+        try:
+            text = pytesseract.image_to_string(image, config=config) or ""
+        except Exception:
+            continue
+        score = _score_store_info_page_text(text)
+        if score > best_score:
+            best_score = score
+            best_text = text
+    return best_text
+
+
+def _extract_store_info_fields(lines):
+    """Pull every Store Info value out of the OCR'd lines of pages 3(-4)."""
+    period = None
+    for line in lines:
+        if PERIOD_FROM_ANCHOR in line.lower():
+            period = _parse_period_from_to_line(line)
+            if period:
+                break
+    if period is None:
+        raise ValueError('No se encontró la línea "PERIOD FROM: ... TO: ..." en el PDF.')
+
+    fuel_values = _find_label_values(lines, "Total Fuel Sales")
+    if not fuel_values or len(fuel_values) < 2:
+        raise ValueError('No se encontró "Total Fuel Sales" con Volume y Sales.')
+    volume = _sanitize_store_info_float(fuel_values[0])
+    sales_fuel = _sanitize_store_info_float(fuel_values[-1])
+
+    fuel_discounts = _find_label_values(lines, "Fuel Discounts")
+    desc_comb = _sanitize_store_info_float(fuel_discounts[-1]) if fuel_discounts else 0.0
+
+    non_fuel = _find_label_values(lines, "Total Non Fuel Sales")
+    if not non_fuel:
+        raise ValueError('No se encontró "Total Non Fuel Sales".')
+    non_fuel_total = _sanitize_store_info_float(non_fuel[-1])
+
+    other_discounts = _find_label_values(lines, "Other Discounts")
+    desc_otros = _sanitize_store_info_float(other_discounts[-1]) if other_discounts else 0.0
+
+    taxes = _find_label_values(lines, "Total Taxes Collected")
+    if not taxes:
+        raise ValueError('No se encontró "Total Taxes Collected".')
+    tax_collect = _sanitize_store_info_float(taxes[-1])
+
+    cash_values = _find_label_values(lines, "Cash")
+    if not cash_values:
+        raise ValueError('No se encontró la fila "Cash" bajo Method of Payment Totals.')
+    cash = _sanitize_store_info_float(cash_values[-1])
+
+    # Every payment-method row strictly between "Cash" and "LOCAL ACCOUNTS"
+    # (Credit, Crind CREDIT/DEBIT, CRIND P97, Debit, etc.) gets summed into
+    # the credit-card total — zero-valued rows are dropped, same as the
+    # sheet's own historical "=a+b+c" formulas.
+    credit_terms = []
+    local_accounts = None
+    in_range = False
+    for line in lines:
+        label, values = _split_label_and_values(line)
+        if label is None:
+            continue
+        norm_label = label.lower()
+        if norm_label == "cash":
+            in_range = True
+            continue
+        if norm_label == "local accounts":
+            if values:
+                local_accounts = _sanitize_store_info_float(values[-1])
+            break
+        if in_range and values:
+            amount = _sanitize_store_info_float(values[-1])
+            if amount:
+                credit_terms.append(amount)
+
+    if local_accounts is None:
+        raise ValueError('No se encontró la fila "LOCAL ACCOUNTS".')
+
+    network_values = _find_label_values(lines, "Network Revenue")
+    if not network_values:
+        raise ValueError('No se encontró "Network Revenue".')
+    network_revenue = _sanitize_store_info_float(network_values[-1])
+
+    return {
+        "from_date": period["from_date"],
+        "from_time": period["from_time"],
+        "to_time": period["to_time"],
+        "volume": volume,
+        "sales_fuel": sales_fuel,
+        "desc_comb": desc_comb,
+        "non_fuel_total": non_fuel_total,
+        "desc_otros": desc_otros,
+        "tax_collect": tax_collect,
+        "cash": cash,
+        "credit_terms": credit_terms,
+        "local_accounts": local_accounts,
+        "network_revenue": network_revenue,
+    }
+
+
+def extract_store_info_from_pdf(pdf_path, start_page_index=DEFAULT_STORE_INFO_PAGE_INDEX):
+    """
+    OCR the "PERIOD FROM:" page (generally page 3) plus as many following
+    pages as needed to reach "Network Revenue" (generally the start of page
+    4), and pull every Store Info field out of the combined text.
+    """
+    pdf_path = os.path.abspath(pdf_path)
+    if not os.path.isfile(pdf_path):
+        raise FileNotFoundError(f"PDF no encontrado: {pdf_path}")
+
+    images = _extract_pdf_page_images(pdf_path)
+    total_pages = len(images)
+    if not (0 <= start_page_index < total_pages):
+        start_page_index = 0
+
+    search_order = list(range(start_page_index, total_pages)) + list(
+        range(0, start_page_index)
+    )
+
+    anchor_page = None
+    anchor_text = None
+    for idx in search_order:
+        text = _ocr_store_info_page_text(images[idx])
+        if PERIOD_FROM_ANCHOR in text.lower():
+            anchor_page = idx
+            anchor_text = text
+            break
+
+    if anchor_page is None:
+        raise ValueError(
+            'No se encontró el ancla "PERIOD FROM:" en ninguna página del PDF (vía OCR). '
+            "Verifique que el reporte no esté demasiado borroso o girado."
+        )
+
+    lines = list(anchor_text.splitlines())
+    pages_used = [anchor_page + 1]
+    idx = anchor_page + 1
+    pages_tried = 1
+    while (
+        NETWORK_REVENUE_ANCHOR not in "\n".join(lines).lower()
+        and idx < total_pages
+        and pages_tried < STORE_INFO_MAX_CONTINUATION_PAGES
+    ):
+        text = _ocr_store_info_page_text(images[idx])
+        lines.extend(text.splitlines())
+        pages_used.append(idx + 1)
+        pages_tried += 1
+        idx += 1
+
+    fields = _extract_store_info_fields(lines)
+    fields["pages_used"] = pages_used
+    return fields
+
+
+def _find_store_info_sheet(workbook):
+    target = STORE_INFO_SHEET_NAME.strip().lower()
+    for name in workbook.sheetnames:
+        if name.strip().lower() == target:
+            return workbook[name]
+    raise ValueError(
+        f'Hoja "{STORE_INFO_SHEET_NAME}" no encontrada. Disponibles: {", ".join(workbook.sheetnames)}'
+    )
+
+
+def _find_next_store_info_row(sheet, start_row=STORE_INFO_DATA_START_ROW):
+    row = start_row
+    max_row = max(sheet.max_row, start_row)
+    while row <= max_row:
+        if sheet.cell(row=row, column=STORE_INFO_DATE_SCAN_COLUMN).value is None:
+            return row
+        row += 1
+    return max_row + 1
+
+
+def _build_credit_terms_formula(amounts):
+    """Mirror the sheet's own history: '=a+b+c', omitting zero-valued rows."""
+    if not amounts:
+        return 0.0
+    return "=" + "+".join(f"{amount:.2f}" for amount in amounts)
+
+
+def write_store_info_row(sheet, fields):
+    """Write one Store Info row on the first row whose Column A is empty."""
+    row = _find_next_store_info_row(sheet)
+    from_date = fields["from_date"]
+
+    sheet.cell(
+        row=row,
+        column=STORE_INFO_COL_FROM_DATE,
+        value=datetime(from_date.year, from_date.month, from_date.day) + timedelta(days=1),
+    )
+    sheet.cell(row=row, column=STORE_INFO_COL_FROM_TIME, value=fields["from_time"])
+    sheet.cell(
+        row=row,
+        column=STORE_INFO_COL_TO_DATE,
+        value=datetime(from_date.year, from_date.month, from_date.day) + timedelta(days=2),
+    )
+    sheet.cell(row=row, column=STORE_INFO_COL_TO_TIME, value=fields["to_time"])
+    sheet.cell(row=row, column=STORE_INFO_COL_VOLUME, value=fields["volume"])
+    sheet.cell(row=row, column=STORE_INFO_COL_SALES_FUEL, value=fields["sales_fuel"])
+    sheet.cell(row=row, column=STORE_INFO_COL_DESC_COMB, value=fields["desc_comb"])
+    sheet.cell(row=row, column=STORE_INFO_COL_NON_FUEL, value=fields["non_fuel_total"])
+    sheet.cell(row=row, column=STORE_INFO_COL_DESC_OTROS, value=fields["desc_otros"])
+    sheet.cell(row=row, column=STORE_INFO_COL_TAX_COLLECT, value=fields["tax_collect"])
+    sheet.cell(row=row, column=STORE_INFO_COL_CASH, value=fields["cash"])
+    sheet.cell(
+        row=row,
+        column=STORE_INFO_COL_CREDIT,
+        value=_build_credit_terms_formula(fields["credit_terms"]),
+    )
+    sheet.cell(row=row, column=STORE_INFO_COL_LOCAL_ACCOUNTS, value=fields["local_accounts"])
+    sheet.cell(
+        row=row, column=STORE_INFO_COL_NETWORK_REVENUE, value=fields["network_revenue"]
+    )
+    return row
+
+
+def process_store_info(master_path, pdf_paths):
+    """
+    Parse one or more Elistar daily PDFs and append one Store Info row per
+    day (in calendar order) to the "Store Info" sheet of a separate workbook.
+
+    Returns:
+        tuple: (temp_path, summary dict)
+    """
+    _ensure_openpyxl()
+    master_path = os.path.abspath(str(master_path).strip())
+    paths = _normalize_pdf_paths(pdf_paths)
+
+    if not os.path.isfile(master_path):
+        raise FileNotFoundError(f"Excel de Store Info no encontrado: {master_path}")
+    if not paths:
+        raise ValueError("No se proporcionaron PDF diarios de Elistar.")
+
+    extension = os.path.splitext(master_path)[1].lower()
+    if extension not in {".xlsx", ".xlsm"}:
+        raise ValueError("El Excel de Store Info debe ser .xlsx o .xlsm.")
+
+    keep_vba = extension == ".xlsm"
+    workbook = load_workbook(master_path, data_only=False, keep_vba=keep_vba)
+    sheet = _find_store_info_sheet(workbook)
+
+    batch_results = []
+    sorted_paths = sorted(paths, key=extract_day_from_filename)
+
+    for pdf_path in sorted_paths:
+        if not os.path.isfile(pdf_path):
+            raise FileNotFoundError(f"PDF no encontrado: {pdf_path}")
+
+        fields = extract_store_info_from_pdf(pdf_path)
+        row = write_store_info_row(sheet, fields)
+        batch_results.append(
+            {
+                "pdf_path": pdf_path,
+                "filename": os.path.basename(pdf_path),
+                "target_row": row,
+                "from_date": fields["from_date"].strftime("%d/%m/%Y"),
+                "pages_used": fields.get("pages_used"),
+            }
+        )
+
+    temp_path = _create_temp_workbook_path()
+    workbook.save(os.path.abspath(temp_path))
+    workbook.close()
+
+    _launch_temp_workbook(temp_path)
+
+    summary = {
+        "files_processed": len(batch_results),
         "batch_results": batch_results,
     }
     return temp_path, summary

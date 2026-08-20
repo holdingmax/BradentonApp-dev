@@ -86,9 +86,10 @@ else:
         split_paths = _monthly_sales_split_paths
 
 try:
-    from reporte_diario import process_reporte_diario
+    from reporte_diario import process_reporte_diario, process_store_info
 except ImportError as _reporte_exc:
     process_reporte_diario = None
+    process_store_info = None
     _REPORTE_IMPORT_ERROR = _reporte_exc
 else:
     _REPORTE_IMPORT_ERROR = None
@@ -1592,7 +1593,8 @@ class EFTExtractorApp:
         self.sales_master_path = tk.StringVar(value="")
         self.reporte_master_path = tk.StringVar(value="")
         self.reporte_pdf_path = tk.StringVar(value="")
-        self.reporte_pdf_page = tk.StringVar(value="2")
+        self.store_info_master_path = tk.StringVar(value="")
+        self.store_info_pdf_path = tk.StringVar(value="")
         self.status_text = tk.StringVar(value="Listo — seleccione los archivos para comenzar.")
         self.gettel_status_text = tk.StringVar(
             value="Listo — seleccione Excel de origen y master de destino."
@@ -1604,6 +1606,9 @@ class EFTExtractorApp:
         )
         self.reporte_status_text = tk.StringVar(
             value="Listo — seleccione el master Bradenton Análisis C-Store y el PDF diario de Elistar."
+        )
+        self.store_info_status_text = tk.StringVar(
+            value="Listo — seleccione el Excel de Cierre (hoja Store Info) y el PDF diario de Elistar."
         )
         self._cmv_dnd_card = None
         self._chase_display_rules_cache = []
@@ -2134,6 +2139,7 @@ class EFTExtractorApp:
         )
 
         card = create_card(left, section_theme=REPORTE_DIARIO_THEME, padx=4, pady=4)
+        create_panel_label(card, "Ventas por Departamento → CARGA AQUI", REPORTE_DIARIO_THEME)
         self.reporte_master_entry = create_file_row(
             card,
             "Excel Maestro",
@@ -2151,14 +2157,8 @@ class EFTExtractorApp:
             label_width=11,
             browse_label="Examinar…",
         )
-        create_compact_entry(
-            card,
-            self.reporte_pdf_page,
-            section_theme=REPORTE_DIARIO_THEME,
-            label="Página del Reporte:",
-        )
 
-        actions = tk.Frame(left, bg=THEME.BG)
+        actions = tk.Frame(card, bg=REPORTE_DIARIO_THEME.card_tint)
         actions.pack(fill=tk.X, pady=(4, 0))
         create_primary_button(
             actions,
@@ -2171,15 +2171,52 @@ class EFTExtractorApp:
             left, self.reporte_status_text, section_theme=REPORTE_DIARIO_THEME
         )
 
+        store_info_card = create_card(left, section_theme=REPORTE_DIARIO_THEME, padx=4, pady=4)
+        create_panel_label(store_info_card, "Store Info (Fechas, Fuel, Cash/TC)", REPORTE_DIARIO_THEME)
+        self.store_info_master_entry = create_file_row(
+            store_info_card,
+            "Excel Cierre",
+            self.store_info_master_path,
+            self.select_store_info_master_file,
+            section_theme=REPORTE_DIARIO_THEME,
+            label_width=11,
+        )
+        self.store_info_pdf_entry = create_file_row(
+            store_info_card,
+            "Elistar PDF",
+            self.store_info_pdf_path,
+            self.select_store_info_pdf_file,
+            section_theme=REPORTE_DIARIO_THEME,
+            label_width=11,
+            browse_label="Examinar…",
+        )
+
+        store_info_actions = tk.Frame(store_info_card, bg=REPORTE_DIARIO_THEME.card_tint)
+        store_info_actions.pack(fill=tk.X, pady=(4, 0))
+        create_primary_button(
+            store_info_actions,
+            "Procesar Store Info",
+            self.process_store_info_file,
+            section_theme=REPORTE_DIARIO_THEME,
+        ).pack(anchor=tk.W)
+
+        self.store_info_status_label, self.store_info_status_dot = create_status_bar(
+            left, self.store_info_status_text, section_theme=REPORTE_DIARIO_THEME
+        )
+
         create_info_panel(
             right,
             "Cómo funciona",
             [
                 "Master: Bradenton Análisis C-Store (.xlsx / .xlsm)",
                 "PDF: cierre diario de Elistar — totales por departamento",
+                "Detecta \"Department Sales Report\" automáticamente, sin indicar página",
+                "Si el PDF es una foto/escaneo, lee los datos por OCR (corrige giros de página)",
                 "Fila 3 de CARGA AQUI: detecta los encabezados desde la columna C",
                 "Escribe en la fila del día cuyas celdas de seguimiento estén vacías",
                 "Las columnas con fórmula (GIFT CARD / VARIOS/BOLSA) nunca se tocan",
+                "Store Info: lee PERIOD FROM/TO, Fuel, Cash/TC y Network Revenue "
+                "(páginas 3-4) y agrega una fila nueva en la hoja Store Info",
                 "Abre una copia temporal automáticamente al terminar",
             ],
             section_theme=REPORTE_DIARIO_THEME,
@@ -2484,6 +2521,17 @@ class EFTExtractorApp:
         set_status_style(
             self.reporte_status_label,
             self.reporte_status_dot,
+            message,
+            section_theme=REPORTE_DIARIO_THEME,
+            is_error=is_error,
+            completed=completed,
+        )
+
+    def _set_store_info_status(self, message, is_error=False, completed=False):
+        self.store_info_status_text.set(message)
+        set_status_style(
+            self.store_info_status_label,
+            self.store_info_status_dot,
             message,
             section_theme=REPORTE_DIARIO_THEME,
             is_error=is_error,
@@ -2955,7 +3003,6 @@ class EFTExtractorApp:
 
         master_path = self.reporte_master_path.get().strip()
         pdf_path_text = self.reporte_pdf_path.get().strip()
-        page_text = self.reporte_pdf_page.get().strip() or "2"
 
         if split_paths is not None:
             pdf_paths = split_paths(pdf_path_text)
@@ -2977,32 +3024,15 @@ class EFTExtractorApp:
             )
             return
 
-        try:
-            page_index = int(page_text) - 1
-        except ValueError:
-            self._set_reporte_status(
-                "Página del Reporte debe ser un número entero (ej. 2).",
-                is_error=True,
-            )
-            return
-        if page_index < 0:
-            self._set_reporte_status(
-                "Página del Reporte debe ser 1 o mayor.", is_error=True
-            )
-            return
-
         self._set_reporte_status(
-            f"Procesando {len(pdf_paths)} PDF(s) diario(s) — página {page_index + 1}..."
+            f"Procesando {len(pdf_paths)} PDF(s) diario(s)..."
         )
         self.root.config(cursor="watch")
         self.root.update_idletasks()
 
         try:
-            _temp_path, summary = process_reporte_diario(
-                master_path, pdf_paths, page_index=page_index
-            )
+            _temp_path, summary = process_reporte_diario(master_path, pdf_paths)
             log_lines = [
-                f"Página del PDF: {summary.get('page_number', page_index + 1)}",
                 f"Archivos procesados: {summary.get('files_processed', len(pdf_paths))}",
                 f"Total de departamentos escritos: {summary['departments_written']}",
                 f"Total omitidos: {summary['departments_skipped']}",
@@ -3015,6 +3045,14 @@ class EFTExtractorApp:
                     f"{batch['departments_written']} escritos, "
                     f"{batch['departments_skipped']} omitidos"
                 )
+                if batch.get("used_ocr"):
+                    pages = batch.get("pages_used") or []
+                    pages_text = ", ".join(str(p) for p in pages)
+                    log_lines.append(
+                        f"    Leído por OCR (foto/escaneo) — página(s) {pages_text}"
+                    )
+                if batch.get("warning"):
+                    log_lines.append(f"    Aviso: {batch['warning']}")
                 for item in batch.get("written", []):
                     log_lines.append(
                         f"    {item['department']}: "
@@ -3037,6 +3075,102 @@ class EFTExtractorApp:
             )
         except Exception as exc:
             self._set_reporte_status(f"Error: {exc}", is_error=True)
+            self._append_reporte_log([f"Error: {exc}"])
+        finally:
+            self.root.config(cursor="")
+            self.root.update_idletasks()
+
+    def select_store_info_master_file(self):
+        filename = filedialog.askopenfilename(
+            title="Seleccionar Excel de Cierre (hoja Store Info)",
+            filetypes=ANALISIS_MASTER_FILETYPES,
+        )
+        if not filename:
+            return
+        self.store_info_master_path.set(os.path.abspath(filename))
+        self._set_store_info_status("Excel de Cierre (Store Info) seleccionado.")
+
+    def select_store_info_pdf_file(self):
+        filenames = filedialog.askopenfilenames(
+            title="Seleccionar Reportes PDF Diarios de Elistar",
+            filetypes=PDF_DAILY_FILETYPES,
+        )
+        if not filenames:
+            return
+        paths = [os.path.abspath(path) for path in filenames]
+        if join_paths is not None:
+            display_value = join_paths(paths)
+        else:
+            display_value = "; ".join(paths)
+        self.store_info_pdf_path.set(display_value)
+        if hasattr(self, "store_info_pdf_entry"):
+            self.store_info_pdf_entry.delete(0, tk.END)
+            self.store_info_pdf_entry.insert(0, display_value)
+        count = len(paths)
+        self._set_store_info_status(
+            f"{count} PDF(s) diario(s) seleccionado(s)."
+            if count != 1
+            else "1 PDF diario seleccionado."
+        )
+
+    def process_store_info_file(self):
+        if process_store_info is None:
+            self._set_store_info_status(
+                f"Módulo de Reporte Diario no disponible: {_REPORTE_IMPORT_ERROR}",
+                is_error=True,
+            )
+            return
+
+        master_path = self.store_info_master_path.get().strip()
+        pdf_path_text = self.store_info_pdf_path.get().strip()
+
+        if split_paths is not None:
+            pdf_paths = split_paths(pdf_path_text)
+        elif pdf_path_text:
+            pdf_paths = [pdf_path_text]
+        else:
+            pdf_paths = []
+
+        if not master_path:
+            self._set_store_info_status(
+                "Seleccione el Excel de Cierre (hoja Store Info).",
+                is_error=True,
+            )
+            return
+        if not pdf_paths:
+            self._set_store_info_status(
+                "Seleccione uno o más reportes PDF diarios de Elistar.",
+                is_error=True,
+            )
+            return
+
+        self._set_store_info_status(f"Procesando {len(pdf_paths)} PDF(s) diario(s)...")
+        self.root.config(cursor="watch")
+        self.root.update_idletasks()
+
+        try:
+            _temp_path, summary = process_store_info(master_path, pdf_paths)
+            log_lines = [
+                f"Archivos procesados: {summary.get('files_processed', len(pdf_paths))}",
+                "",
+            ]
+            for batch in summary.get("batch_results", []):
+                pages = batch.get("pages_used") or []
+                pages_text = ", ".join(str(p) for p in pages)
+                log_lines.append(
+                    f"{batch['from_date']} — {batch['filename']} "
+                    f"(fila {batch['target_row']}, OCR página(s) {pages_text})"
+                )
+            self._append_reporte_log(log_lines)
+            self.store_info_pdf_path.set("")
+            if hasattr(self, "store_info_pdf_entry"):
+                self.store_info_pdf_entry.delete(0, tk.END)
+            self._set_store_info_status(
+                f"Store Info completado — {summary['files_processed']} día(s) agregado(s).",
+                completed=True,
+            )
+        except Exception as exc:
+            self._set_store_info_status(f"Error: {exc}", is_error=True)
             self._append_reporte_log([f"Error: {exc}"])
         finally:
             self.root.config(cursor="")
