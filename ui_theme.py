@@ -225,6 +225,49 @@ def create_scrollable_body(parent):
     return body
 
 
+def create_scrollable_tab_frame(notebook):
+    """
+    Wrap one notebook tab's content in a vertically scrollable canvas.
+
+    Only the tabs whose content can exceed the window's minimum height need
+    this — most tabs fit comfortably as a plain frame. Returns (outer,
+    inner): add `outer` to the notebook, build the tab's real content into
+    `inner` exactly as if it were a normal tab frame.
+    """
+    outer = tk.Frame(notebook, bg=THEME.BG)
+    canvas = tk.Canvas(outer, bg=THEME.BG, highlightthickness=0, bd=0)
+    scrollbar = ttk.Scrollbar(outer, orient=tk.VERTICAL, command=canvas.yview)
+    canvas.configure(yscrollcommand=scrollbar.set)
+    canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+    inner = tk.Frame(canvas, bg=THEME.BG)
+    inner_window = canvas.create_window((0, 0), window=inner, anchor="nw")
+
+    def _sync_scrollregion(_event=None):
+        canvas.configure(scrollregion=canvas.bbox("all"))
+
+    def _sync_inner_width(event):
+        canvas.itemconfigure(inner_window, width=event.width)
+
+    inner.bind("<Configure>", _sync_scrollregion)
+    canvas.bind("<Configure>", _sync_inner_width)
+
+    def _on_mousewheel(event):
+        canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+    def _bind_mousewheel(_event):
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)
+
+    def _unbind_mousewheel(_event):
+        canvas.unbind_all("<MouseWheel>")
+
+    canvas.bind("<Enter>", _bind_mousewheel)
+    canvas.bind("<Leave>", _unbind_mousewheel)
+
+    return outer, inner
+
+
 def create_dual_column_tab(parent):
     """
     Two-column tab shell: header row spans both columns; row 1 = ops | rules.

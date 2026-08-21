@@ -86,10 +86,11 @@ else:
         split_paths = _monthly_sales_split_paths
 
 try:
-    from reporte_diario import process_reporte_diario, process_store_info
+    from reporte_diario import process_reporte_diario, process_store_info, process_lottery
 except ImportError as _reporte_exc:
     process_reporte_diario = None
     process_store_info = None
+    process_lottery = None
     _REPORTE_IMPORT_ERROR = _reporte_exc
 else:
     _REPORTE_IMPORT_ERROR = None
@@ -151,6 +152,7 @@ from ui_theme import (
     create_panel_label,
     create_primary_button,
     create_scrollable_body,
+    create_scrollable_tab_frame,
     create_secondary_button,
     create_status_bar,
     make_tab_icon,
@@ -283,6 +285,15 @@ def parse_eft_pdf_date_us(date_str):
         except ValueError:
             continue
     return None
+
+
+def format_elapsed_duration(seconds):
+    """Elapsed time as '45 seg' or '6:30 min', for a process-completed status."""
+    total_seconds = int(round(seconds))
+    if total_seconds < 60:
+        return f"{total_seconds} seg"
+    minutes, secs = divmod(total_seconds, 60)
+    return f"{minutes}:{secs:02d} min"
 
 
 def format_eft_date_us(date_str):
@@ -1594,7 +1605,9 @@ class EFTExtractorApp:
         self.reporte_master_path = tk.StringVar(value="")
         self.reporte_pdf_path = tk.StringVar(value="")
         self.store_info_master_path = tk.StringVar(value="")
-        self.store_info_pdf_path = tk.StringVar(value="")
+        self.lottery_master_path = tk.StringVar(value="")
+        self.lottery_department_pdf_paths = tk.StringVar(value="")
+        self.lottery_sales_report_paths = tk.StringVar(value="")
         self.status_text = tk.StringVar(value="Listo — seleccione los archivos para comenzar.")
         self.gettel_status_text = tk.StringVar(
             value="Listo — seleccione Excel de origen y master de destino."
@@ -1609,6 +1622,12 @@ class EFTExtractorApp:
         )
         self.store_info_status_text = tk.StringVar(
             value="Listo — seleccione el Excel de Cierre (hoja Store Info) y el PDF diario."
+        )
+        self.lottery_sales_report_status_text = tk.StringVar(
+            value="Listo — seleccione el Excel de Lottery y el/los Daily Sales Report."
+        )
+        self.lottery_department_status_text = tk.StringVar(
+            value="Listo — seleccione el Excel de Lottery y el/los PDF diario(s)."
         )
         self._cmv_dnd_card = None
         self._chase_display_rules_cache = []
@@ -1639,10 +1658,15 @@ class EFTExtractorApp:
         notebook = ttk.Notebook(body, style="Premium.TNotebook")
         notebook.pack(fill=tk.BOTH, expand=True)
 
-        eft_tab = tk.Frame(notebook, bg=THEME.BG)
+        # These three tabs' content can run taller than the window's minimum
+        # height (Chase Bank and Cupones y EFT already did; Reporte Diario
+        # joined them once Store Info added a second card), so they scroll.
+        # The rest fit comfortably and stay as plain frames.
+        eft_tab, eft_content = create_scrollable_tab_frame(notebook)
         gettel_tab = tk.Frame(notebook, bg=THEME.BG)
-        chase_tab = tk.Frame(notebook, bg=THEME.BG)
-        reporte_tab = tk.Frame(notebook, bg=THEME.BG)
+        chase_tab, chase_content = create_scrollable_tab_frame(notebook)
+        reporte_tab, reporte_content = create_scrollable_tab_frame(notebook)
+        lottery_tab, lottery_content = create_scrollable_tab_frame(notebook)
         cmv_tab = tk.Frame(notebook, bg=THEME.BG)
         sales_tab = tk.Frame(notebook, bg=THEME.BG)
 
@@ -1653,6 +1677,7 @@ class EFTExtractorApp:
             make_tab_icon(GETTEL_THEME.accent),
             make_tab_icon(CHASE_THEME.accent),
             make_tab_icon(REPORTE_DIARIO_THEME.accent),
+            make_tab_icon(REPORTE_DIARIO_THEME.accent),
             make_tab_icon(CMV_THEME.accent),
             make_tab_icon(SALES_THEME.accent),
         ]
@@ -1661,16 +1686,18 @@ class EFTExtractorApp:
             (gettel_tab, "  Gettel / Toyota  "),
             (chase_tab, "  Chase Bank  "),
             (reporte_tab, "  Reporte Diario  "),
+            (lottery_tab, "  Lottery  "),
             (cmv_tab, "  CMV Costo  "),
             (sales_tab, "  CMV Ventas  "),
         ]
         for (tab, label), icon in zip(tabs, self._tab_icons):
             notebook.add(tab, text=label, image=icon, compound=tk.LEFT)
 
-        self._build_eft_tab(eft_tab)
+        self._build_eft_tab(eft_content)
         self._build_gettel_tab(gettel_tab)
-        self._build_chase_tab(chase_tab)
-        self._build_reporte_diario_tab(reporte_tab)
+        self._build_chase_tab(chase_content)
+        self._build_reporte_diario_tab(reporte_content)
+        self._build_lottery_tab(lottery_content)
         self._build_cmv_tab(cmv_tab)
         self._build_sales_tab(sales_tab)
 
@@ -2133,23 +2160,15 @@ class EFTExtractorApp:
         create_compact_section_header(
             header,
             "Reporte Diario",
-            "Carga el PDF de cierre diario en el master Bradenton Análisis C-Store, "
-            "hoja CARGA AQUI, mapeando los departamentos automáticamente.",
+            "Un mismo PDF de cierre diario alimenta varios destinos — Ventas por "
+            "Departamento y Store Info.",
             REPORTE_DIARIO_THEME,
         )
 
-        card = create_card(left, section_theme=REPORTE_DIARIO_THEME, padx=4, pady=4)
-        create_panel_label(card, "Ventas por Departamento → CARGA AQUI", REPORTE_DIARIO_THEME)
-        self.reporte_master_entry = create_file_row(
-            card,
-            "Excel Maestro",
-            self.reporte_master_path,
-            self.select_reporte_master_file,
-            section_theme=REPORTE_DIARIO_THEME,
-            label_width=11,
-        )
+        pdf_card = create_card(left, section_theme=REPORTE_DIARIO_THEME, padx=4, pady=4)
+        create_panel_label(pdf_card, "PDF Diario", REPORTE_DIARIO_THEME)
         self.reporte_pdf_entry = create_file_row(
-            card,
+            pdf_card,
             "PDF(s)",
             self.reporte_pdf_path,
             self.select_reporte_pdf_file,
@@ -2157,12 +2176,30 @@ class EFTExtractorApp:
             label_width=11,
             browse_label="Examinar…",
         )
+        pdf_actions = tk.Frame(pdf_card, bg=REPORTE_DIARIO_THEME.card_tint)
+        pdf_actions.pack(fill=tk.X, pady=(4, 0))
+        create_secondary_button(
+            pdf_actions,
+            "Limpiar Todo",
+            self.clear_reporte_diario_tab,
+            section_theme=REPORTE_DIARIO_THEME,
+        ).pack(anchor=tk.W)
 
-        actions = tk.Frame(card, bg=REPORTE_DIARIO_THEME.card_tint)
-        actions.pack(fill=tk.X, pady=(4, 0))
+        ventas_card = create_card(left, section_theme=REPORTE_DIARIO_THEME, padx=4, pady=4)
+        create_panel_label(ventas_card, "Ventas por Departamento → CARGA AQUI", REPORTE_DIARIO_THEME)
+        self.reporte_master_entry = create_file_row(
+            ventas_card,
+            "Excel Ventas",
+            self.reporte_master_path,
+            self.select_reporte_master_file,
+            section_theme=REPORTE_DIARIO_THEME,
+            label_width=11,
+        )
+        ventas_actions = tk.Frame(ventas_card, bg=REPORTE_DIARIO_THEME.card_tint)
+        ventas_actions.pack(fill=tk.X, pady=(4, 0))
         create_primary_button(
-            actions,
-            "Procesar Reporte Diario",
+            ventas_actions,
+            "Procesar Ventas",
             self.process_reporte_diario_file,
             section_theme=REPORTE_DIARIO_THEME,
         ).pack(anchor=tk.W)
@@ -2175,22 +2212,12 @@ class EFTExtractorApp:
         create_panel_label(store_info_card, "Store Info (Fechas, Fuel, Cash/TC)", REPORTE_DIARIO_THEME)
         self.store_info_master_entry = create_file_row(
             store_info_card,
-            "Excel Cierre",
+            "Excel Store Info",
             self.store_info_master_path,
             self.select_store_info_master_file,
             section_theme=REPORTE_DIARIO_THEME,
             label_width=11,
         )
-        self.store_info_pdf_entry = create_file_row(
-            store_info_card,
-            "PDF(s)",
-            self.store_info_pdf_path,
-            self.select_store_info_pdf_file,
-            section_theme=REPORTE_DIARIO_THEME,
-            label_width=11,
-            browse_label="Examinar…",
-        )
-
         store_info_actions = tk.Frame(store_info_card, bg=REPORTE_DIARIO_THEME.card_tint)
         store_info_actions.pack(fill=tk.X, pady=(4, 0))
         create_primary_button(
@@ -2208,18 +2235,113 @@ class EFTExtractorApp:
             right,
             "Cómo funciona",
             [
-                "Master: Bradenton Análisis C-Store (.xlsx / .xlsm)",
-                "PDF: cierre diario — totales por departamento",
+                "Un solo PDF alimenta los dos destinos de abajo",
+                "El PDF queda cargado entre procesos — se limpia con \"Limpiar Todo\"",
                 "Podés elegir varios PDF a la vez (Ctrl/Shift + clic en el diálogo)",
                 "Cada PDF se ubica por su propia fecha — no hace falta que sean días seguidos",
-                "Detecta \"Department Sales Report\" automáticamente, sin indicar página",
+                "Ventas: detecta \"Department Sales Report\" automáticamente, sin indicar página",
                 "Si el PDF es una foto/escaneo, lee los datos por OCR (corrige giros de página)",
                 "Fila 3 de CARGA AQUI: detecta los encabezados desde la columna C",
-                "Escribe en la fila del día cuyas celdas de seguimiento estén vacías",
                 "Las columnas con fórmula (GIFT CARD / VARIOS/BOLSA) nunca se tocan",
                 "Store Info: lee PERIOD FROM/TO, Fuel, Cash/TC y Network Revenue "
                 "(páginas 3-4) y agrega una fila nueva en la hoja Store Info",
                 "Abre una copia temporal automáticamente al terminar",
+            ],
+            section_theme=REPORTE_DIARIO_THEME,
+        )
+
+    def _build_lottery_tab(self, parent):
+        header, left, right = create_dual_column_tab(parent)
+        create_compact_section_header(
+            header,
+            "Lottery",
+            "Dos flujos independientes sobre el mismo Excel de Lottery — cada uno con su "
+            "propio PDF y su propio botón, no hace falta cargar los dos juntos.",
+            REPORTE_DIARIO_THEME,
+        )
+
+        master_card = create_card(left, section_theme=REPORTE_DIARIO_THEME, padx=4, pady=4)
+        create_panel_label(master_card, "Excel Lottery", REPORTE_DIARIO_THEME)
+        self.lottery_master_entry = create_file_row(
+            master_card,
+            "Excel Lottery",
+            self.lottery_master_path,
+            self.select_lottery_master_file,
+            section_theme=REPORTE_DIARIO_THEME,
+            label_width=13,
+        )
+        master_actions = tk.Frame(master_card, bg=REPORTE_DIARIO_THEME.card_tint)
+        master_actions.pack(fill=tk.X, pady=(4, 0))
+        create_secondary_button(
+            master_actions,
+            "Limpiar Todo",
+            self.clear_lottery_tab,
+            section_theme=REPORTE_DIARIO_THEME,
+        ).pack(anchor=tk.W)
+
+        sales_report_card = create_card(left, section_theme=REPORTE_DIARIO_THEME, padx=4, pady=4)
+        create_panel_label(
+            sales_report_card, "Daily Sales Report → F/G/H/I/K, P/Q/R/S", REPORTE_DIARIO_THEME
+        )
+        self.lottery_sales_report_entry = create_file_row(
+            sales_report_card,
+            "PDF(s)",
+            self.lottery_sales_report_paths,
+            self.select_lottery_sales_report_files,
+            section_theme=REPORTE_DIARIO_THEME,
+            label_width=13,
+            browse_label="Examinar…",
+        )
+        sales_report_actions = tk.Frame(sales_report_card, bg=REPORTE_DIARIO_THEME.card_tint)
+        sales_report_actions.pack(fill=tk.X, pady=(4, 0))
+        create_primary_button(
+            sales_report_actions,
+            "Procesar Daily Sales Report",
+            self.process_lottery_sales_report_file,
+            section_theme=REPORTE_DIARIO_THEME,
+        ).pack(anchor=tk.W)
+
+        self.lottery_sales_report_status_label, self.lottery_sales_report_status_dot = create_status_bar(
+            left, self.lottery_sales_report_status_text, section_theme=REPORTE_DIARIO_THEME
+        )
+
+        department_card = create_card(left, section_theme=REPORTE_DIARIO_THEME, padx=4, pady=4)
+        create_panel_label(department_card, "PDF Diario → D/E/N/O", REPORTE_DIARIO_THEME)
+        self.lottery_department_pdf_entry = create_file_row(
+            department_card,
+            "PDF(s)",
+            self.lottery_department_pdf_paths,
+            self.select_lottery_department_pdf_files,
+            section_theme=REPORTE_DIARIO_THEME,
+            label_width=13,
+            browse_label="Examinar…",
+        )
+        department_actions = tk.Frame(department_card, bg=REPORTE_DIARIO_THEME.card_tint)
+        department_actions.pack(fill=tk.X, pady=(4, 0))
+        create_primary_button(
+            department_actions,
+            "Procesar PDF Diario",
+            self.process_lottery_department_file,
+            section_theme=REPORTE_DIARIO_THEME,
+        ).pack(anchor=tk.W)
+
+        self.lottery_department_status_label, self.lottery_department_status_dot = create_status_bar(
+            left, self.lottery_department_status_text, section_theme=REPORTE_DIARIO_THEME
+        )
+
+        create_info_panel(
+            right,
+            "Cómo funciona",
+            [
+                "Daily Sales Report → completa F/G/H/I/K (Online) y P/Q/R/S (Scratch-Off)",
+                "PDF Diario (Department Sales Report) → completa D/E/N/O",
+                "Cada botón procesa solo su propia fuente — no hace falta cargar ambas juntas",
+                "Podés cargar varios PDF a la vez en cada campo (Ctrl/Shift + clic)",
+                "Cada PDF se ubica por su propia fecha — no hace falta que sean días seguidos",
+                "La comisión ONLINE (columna I) se calcula como -6.00% de F (columna J), "
+                "y lo que sobra del total se completa en K",
+                "Si algún dato no se pudo leer, avisa cuál revisar a mano",
+                "Cada Procesar abre su propia copia temporal al terminar",
             ],
             section_theme=REPORTE_DIARIO_THEME,
         )
@@ -2533,13 +2655,67 @@ class EFTExtractorApp:
             completed=completed,
         )
 
-    def _clear_reporte_inputs(self):
-        self.reporte_master_path.set("")
-        self.reporte_pdf_path.set("")
-        if hasattr(self, "reporte_master_entry"):
-            self.reporte_master_entry.delete(0, tk.END)
-        if hasattr(self, "reporte_pdf_entry"):
-            self.reporte_pdf_entry.delete(0, tk.END)
+    def _set_lottery_sales_report_status(self, message, is_error=False, completed=False):
+        self.lottery_sales_report_status_text.set(message)
+        set_status_style(
+            self.lottery_sales_report_status_label,
+            self.lottery_sales_report_status_dot,
+            message,
+            section_theme=REPORTE_DIARIO_THEME,
+            is_error=is_error,
+            completed=completed,
+        )
+
+    def _set_lottery_department_status(self, message, is_error=False, completed=False):
+        self.lottery_department_status_text.set(message)
+        set_status_style(
+            self.lottery_department_status_label,
+            self.lottery_department_status_dot,
+            message,
+            section_theme=REPORTE_DIARIO_THEME,
+            is_error=is_error,
+            completed=completed,
+        )
+
+    def clear_reporte_diario_tab(self):
+        """
+        Reset the PDF and both destination Excel paths at once.
+
+        The PDF and each Excel now stay loaded across multiple "Procesar"
+        actions (the same PDF feeds Ventas and Store Info one after
+        another) — this is the explicit way to start fresh instead of an
+        automatic clear-on-success that would force re-selecting the PDF
+        for every destination.
+        """
+        fields = (
+            (self.reporte_pdf_path, "reporte_pdf_entry"),
+            (self.reporte_master_path, "reporte_master_entry"),
+            (self.store_info_master_path, "store_info_master_entry"),
+        )
+        for variable, entry_attr in fields:
+            variable.set("")
+            entry = getattr(self, entry_attr, None)
+            if entry is not None:
+                entry.delete(0, tk.END)
+
+        self._set_reporte_status("Listo — seleccione el master Bradenton Análisis C-Store y el PDF diario.")
+        self._set_store_info_status("Listo — seleccione el Excel de Cierre (hoja Store Info) y el PDF diario.")
+
+    def clear_lottery_tab(self):
+        """Reset both Lottery source PDFs and the Excel path, matching clear_reporte_diario_tab's pattern."""
+        fields = (
+            (self.lottery_department_pdf_paths, "lottery_department_pdf_entry"),
+            (self.lottery_sales_report_paths, "lottery_sales_report_entry"),
+            (self.lottery_master_path, "lottery_master_entry"),
+        )
+        for variable, entry_attr in fields:
+            variable.set("")
+            entry = getattr(self, entry_attr, None)
+            if entry is not None:
+                entry.delete(0, tk.END)
+
+        self._set_lottery_sales_report_status("Listo — seleccione el Excel de Lottery y el/los Daily Sales Report.")
+        self._set_lottery_department_status("Listo — seleccione el Excel de Lottery y el/los PDF diario(s).")
 
     def _clear_chase_inputs(self):
         """Clear Chase file path entry widgets after successful processing."""
@@ -3015,6 +3191,7 @@ class EFTExtractorApp:
         )
         self.root.config(cursor="watch")
         self.root.update_idletasks()
+        start_time = time.time()
 
         try:
             _temp_path, summary = process_reporte_diario(master_path, pdf_paths)
@@ -3031,13 +3208,8 @@ class EFTExtractorApp:
                         f"omitidos — {', '.join(skipped)}"
                     )
 
-            self._clear_reporte_inputs()
-            self._set_reporte_status(
-                f"Reporte Diario completado — {summary['files_processed']} día(s), "
-                f"{summary['departments_written']} valor(es) escrito(s), "
-                f"{summary['departments_skipped']} omitido(s).",
-                completed=True,
-            )
+            elapsed = format_elapsed_duration(time.time() - start_time)
+            self._set_reporte_status(f"Completado en {elapsed}.", completed=True)
             if warnings:
                 messagebox.showwarning(
                     "Revisar Reporte Diario",
@@ -3059,24 +3231,52 @@ class EFTExtractorApp:
         self.store_info_master_path.set(os.path.abspath(filename))
         self._set_store_info_status("Excel de Cierre (Store Info) seleccionado.")
 
-    def select_store_info_pdf_file(self):
+    def select_lottery_master_file(self):
+        filename = filedialog.askopenfilename(
+            title="Seleccionar Excel de Lottery",
+            filetypes=ANALISIS_MASTER_FILETYPES,
+        )
+        if not filename:
+            return
+        self.lottery_master_path.set(os.path.abspath(filename))
+        self._set_lottery_sales_report_status("Excel de Lottery seleccionado.")
+        self._set_lottery_department_status("Excel de Lottery seleccionado.")
+
+    def select_lottery_sales_report_files(self):
         filenames = filedialog.askopenfilenames(
-            title="Seleccionar Reportes PDF Diarios",
+            title="Seleccionar Daily Sales Report(s) de Lottery",
             filetypes=PDF_DAILY_FILETYPES,
         )
         if not filenames:
             return
         paths = [os.path.abspath(path) for path in filenames]
-        if join_paths is not None:
-            display_value = join_paths(paths)
-        else:
-            display_value = "; ".join(paths)
-        self.store_info_pdf_path.set(display_value)
-        if hasattr(self, "store_info_pdf_entry"):
-            self.store_info_pdf_entry.delete(0, tk.END)
-            self.store_info_pdf_entry.insert(0, display_value)
+        display_value = join_paths(paths) if join_paths is not None else "; ".join(paths)
+        self.lottery_sales_report_paths.set(display_value)
+        if hasattr(self, "lottery_sales_report_entry"):
+            self.lottery_sales_report_entry.delete(0, tk.END)
+            self.lottery_sales_report_entry.insert(0, display_value)
         count = len(paths)
-        self._set_store_info_status(
+        self._set_lottery_sales_report_status(
+            f"{count} Daily Sales Report(s) seleccionado(s)."
+            if count != 1
+            else "1 Daily Sales Report seleccionado."
+        )
+
+    def select_lottery_department_pdf_files(self):
+        filenames = filedialog.askopenfilenames(
+            title="Seleccionar PDF(s) Diario(s) — Department Sales Report",
+            filetypes=PDF_DAILY_FILETYPES,
+        )
+        if not filenames:
+            return
+        paths = [os.path.abspath(path) for path in filenames]
+        display_value = join_paths(paths) if join_paths is not None else "; ".join(paths)
+        self.lottery_department_pdf_paths.set(display_value)
+        if hasattr(self, "lottery_department_pdf_entry"):
+            self.lottery_department_pdf_entry.delete(0, tk.END)
+            self.lottery_department_pdf_entry.insert(0, display_value)
+        count = len(paths)
+        self._set_lottery_department_status(
             f"{count} PDF(s) diario(s) seleccionado(s)."
             if count != 1
             else "1 PDF diario seleccionado."
@@ -3091,7 +3291,7 @@ class EFTExtractorApp:
             return
 
         master_path = self.store_info_master_path.get().strip()
-        pdf_path_text = self.store_info_pdf_path.get().strip()
+        pdf_path_text = self.reporte_pdf_path.get().strip()
 
         if split_paths is not None:
             pdf_paths = split_paths(pdf_path_text)
@@ -3116,23 +3316,118 @@ class EFTExtractorApp:
         self._set_store_info_status(f"Procesando {len(pdf_paths)} PDF(s) diario(s)...")
         self.root.config(cursor="watch")
         self.root.update_idletasks()
+        start_time = time.time()
 
         try:
             _temp_path, summary = process_store_info(master_path, pdf_paths)
-            dates_text = ", ".join(
-                f"{batch['from_date']} (fila {batch['target_row']})"
-                for batch in summary.get("batch_results", [])
-            )
-            self.store_info_pdf_path.set("")
-            if hasattr(self, "store_info_pdf_entry"):
-                self.store_info_pdf_entry.delete(0, tk.END)
-            self._set_store_info_status(
-                f"Store Info completado — {summary['files_processed']} día(s) agregado(s): "
-                f"{dates_text}.",
-                completed=True,
-            )
+            elapsed = format_elapsed_duration(time.time() - start_time)
+            self._set_store_info_status(f"Completado en {elapsed}.", completed=True)
         except Exception as exc:
             self._set_store_info_status(f"Error: {exc}", is_error=True)
+        finally:
+            self.root.config(cursor="")
+            self.root.update_idletasks()
+
+    def process_lottery_sales_report_file(self):
+        """Update only F/G/H/I/K (Online) and P/Q/R/S (Scratch-Off) from the Daily Sales Report PDF(s)."""
+        if process_lottery is None:
+            self._set_lottery_sales_report_status(
+                f"Módulo de Reporte Diario no disponible: {_REPORTE_IMPORT_ERROR}",
+                is_error=True,
+            )
+            return
+
+        master_path = self.lottery_master_path.get().strip()
+        sales_report_pdf_text = self.lottery_sales_report_paths.get().strip()
+
+        if split_paths is not None:
+            sales_report_pdf_paths = split_paths(sales_report_pdf_text)
+        else:
+            sales_report_pdf_paths = [sales_report_pdf_text] if sales_report_pdf_text else []
+
+        if not master_path:
+            self._set_lottery_sales_report_status("Seleccione el Excel de Lottery.", is_error=True)
+            return
+        if not sales_report_pdf_paths:
+            self._set_lottery_sales_report_status(
+                "Seleccione uno o más Daily Sales Report de Lottery.", is_error=True
+            )
+            return
+
+        self._set_lottery_sales_report_status(f"Procesando {len(sales_report_pdf_paths)} PDF(s)...")
+        self.root.config(cursor="watch")
+        self.root.update_idletasks()
+        start_time = time.time()
+
+        try:
+            _temp_path, summary = process_lottery(master_path, [], sales_report_pdf_paths)
+            warnings = [
+                f"{batch['report_date']} ({batch['filename']}): {batch['warning']}"
+                for batch in summary.get("batch_results", [])
+                if batch.get("warning")
+            ]
+            elapsed = format_elapsed_duration(time.time() - start_time)
+            self._set_lottery_sales_report_status(f"Completado en {elapsed}.", completed=True)
+            if warnings:
+                messagebox.showwarning(
+                    "Revisar Lottery",
+                    "Se completó el proceso, pero hay datos que no se pudieron leer "
+                    "(quedaron con el valor que ya tenía la plantilla):\n\n" + "\n\n".join(warnings),
+                )
+        except Exception as exc:
+            self._set_lottery_sales_report_status(f"Error: {exc}", is_error=True)
+        finally:
+            self.root.config(cursor="")
+            self.root.update_idletasks()
+
+    def process_lottery_department_file(self):
+        """Update only D/E/N/O from the shared daily PDF's Department Sales Report."""
+        if process_lottery is None:
+            self._set_lottery_department_status(
+                f"Módulo de Reporte Diario no disponible: {_REPORTE_IMPORT_ERROR}",
+                is_error=True,
+            )
+            return
+
+        master_path = self.lottery_master_path.get().strip()
+        department_pdf_text = self.lottery_department_pdf_paths.get().strip()
+
+        if split_paths is not None:
+            department_pdf_paths = split_paths(department_pdf_text)
+        else:
+            department_pdf_paths = [department_pdf_text] if department_pdf_text else []
+
+        if not master_path:
+            self._set_lottery_department_status("Seleccione el Excel de Lottery.", is_error=True)
+            return
+        if not department_pdf_paths:
+            self._set_lottery_department_status(
+                "Seleccione uno o más PDF diarios.", is_error=True
+            )
+            return
+
+        self._set_lottery_department_status(f"Procesando {len(department_pdf_paths)} PDF(s)...")
+        self.root.config(cursor="watch")
+        self.root.update_idletasks()
+        start_time = time.time()
+
+        try:
+            _temp_path, summary = process_lottery(master_path, department_pdf_paths, [])
+            warnings = [
+                f"{batch['report_date']} ({batch['filename']}): {batch['warning']}"
+                for batch in summary.get("batch_results", [])
+                if batch.get("warning")
+            ]
+            elapsed = format_elapsed_duration(time.time() - start_time)
+            self._set_lottery_department_status(f"Completado en {elapsed}.", completed=True)
+            if warnings:
+                messagebox.showwarning(
+                    "Revisar Lottery",
+                    "Se completó el proceso, pero hay datos que no se pudieron leer "
+                    "(quedaron con el valor que ya tenía la plantilla):\n\n" + "\n\n".join(warnings),
+                )
+        except Exception as exc:
+            self._set_lottery_department_status(f"Error: {exc}", is_error=True)
         finally:
             self.root.config(cursor="")
             self.root.update_idletasks()

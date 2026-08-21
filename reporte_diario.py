@@ -13,7 +13,7 @@ import sys
 import tempfile
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from difflib import get_close_matches
+from difflib import SequenceMatcher, get_close_matches
 from datetime import date, datetime, time, timedelta
 
 try:
@@ -1801,16 +1801,17 @@ def _split_label_and_values(line):
     Split "Total Fuel Sales 1,236.070 $5,152.10" into label + value tokens.
 
     Strips stray punctuation off the label's edge (e.g. OCR sometimes reads
-    a faint column rule next to "Cash" as "Cash :") so it still matches the
-    real label exactly, without loosening the match enough to also catch a
-    longer label like "Cash Acceptor Cash". Value tokens are filtered down
-    to ones that actually look numeric, so a trailing OCR artifact (e.g.
-    "Total Taxes Collected $157.89 ;") doesn't get picked up as the amount.
+    a faint column rule next to "Cash" as "Cash :", or a graphic behind the
+    text as "Cash |)") so it still matches the real label exactly, without
+    loosening the match enough to also catch a longer label like "Cash
+    Acceptor Cash". Value tokens are filtered down to ones that actually
+    look numeric, so a trailing OCR artifact (e.g. "Total Taxes Collected
+    $157.89 ;") doesn't get picked up as the amount.
     """
     tokens = [t for t in _normalize_department_spacing(_strip_cell(line)).split() if t]
     for index, token in enumerate(tokens):
         if _NUMERIC_TOKEN_RE.match(token) and index > 0:
-            label = " ".join(tokens[:index]).strip(" :;.,-–—")
+            label = re.sub(r"[^A-Za-z]+$", "", " ".join(tokens[:index])).strip()
             values = [t for t in tokens[index:] if _NUMERIC_TOKEN_RE.match(t)]
             return label, values
     return None, []
@@ -2137,6 +2138,521 @@ def process_store_info(master_path, pdf_paths):
                 "target_row": row,
                 "from_date": fields["from_date"].strftime("%d/%m/%Y"),
                 "pages_used": fields.get("pages_used"),
+            }
+        )
+
+    temp_path = _create_temp_workbook_path()
+    workbook.save(os.path.abspath(temp_path))
+    workbook.close()
+
+    _launch_temp_workbook(temp_path)
+
+    summary = {
+        "files_processed": len(batch_results),
+        "batch_results": batch_results,
+    }
+    return temp_path, summary
+
+
+# ---------------------------------------------------------------------------
+# Lottery — a third extraction from the same daily PDF, this time from its
+# last two pages (Florida Lottery terminal receipts: "Daily Terminal Games
+# Sales" for ONLINE and "Daily Scratch-Off Games Sales" for SKOFF), combined
+# with the ONLINE/SKOFF rows already read off the Department Sales Report
+# for the Ventas pipeline, into one row of the monthly Lottery workbook.
+# ---------------------------------------------------------------------------
+
+LOTTERY_DATA_START_ROW = 4  # Row 3 is the header; data starts at row 4
+LOTTERY_COL_DATE_A = 1  # A — Fecha (period start, informational only)
+LOTTERY_COL_DATE_B = 2  # B — Fecha (the date every row is actually keyed on)
+LOTTERY_COL_ONLINE_COUNT = 4  # D — ONLINE Net Count (from Department Sales Report)
+LOTTERY_COL_ONLINE_NET_SALES = 5  # E — ONLINE Net Sales (from Department Sales Report)
+LOTTERY_COL_SALES = 6  # F — NET SALES off the terminal-games receipt
+LOTTERY_COL_PAGOS = 7  # G — PAYS off the terminal-games receipt
+LOTTERY_COL_CASH_BALANCE = 8  # H — F - G, pasted as a value, never a formula
+LOTTERY_COL_COMIS = 9  # I — the NET SALES nested under TOTAL SALES COMM
+LOTTERY_COL_PRIZE_FREE_PLAYS = 11  # K — PRIZE FREE PLAYS (+ PROMO FREE PLAYS if any)
+LOTTERY_COL_SKOFF_COUNT = 14  # N — SKOFF Net Count (from Department Sales Report)
+LOTTERY_COL_SKOFF_NET_SALES = 15  # O — SKOFF Net Sales (from Department Sales Report)
+LOTTERY_COL_SKOFF_PAYS_UNITS = 16  # P — PAYS unit count off the scratch-off receipt
+LOTTERY_COL_SKOFF_PAYS_AMOUNT = 17  # Q — PAYS $ amount off the scratch-off receipt
+LOTTERY_COL_SKOFF_SALES_AMOUNT = 18  # R — "Instant Sales Amount" off the Daily Sales Report
+LOTTERY_COL_SALES_COMM = 19  # S — SALES COMM off the scratch-off receipt
+
+LOTTERY_ONLINE_DEPARTMENT = "ONLINE"
+LOTTERY_SKOFF_DEPARTMENT = "SKOFF"
+
+# The last two pages of the daily PDF, but "generally" — searched from the
+# end backward rather than assumed to be the literal last two, in case an
+# extra page gets appended some days.
+LOTTERY_MAX_SEARCH_PAGES_FROM_END = 5
+
+_LOTTERY_PAGE_SCORING_ANCHORS = (
+    "terminal game",
+    "scratch",
+    "net sales",
+    "pays",
+    "total sales comm",
+    "prize free plays",
+    "books settled",
+    "sales comm",
+)
+
+_LOTTERY_FOR_DATE_RE = re.compile(
+    r"(?:FOR\s+)?[A-Za-z]{3,9}\s+(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})", re.IGNORECASE
+)
+
+
+def _score_lottery_page_text(text):
+    lower = text.lower() if text else ""
+    return sum(1 for anchor in _LOTTERY_PAGE_SCORING_ANCHORS if anchor in lower)
+
+
+def _ocr_lottery_page_candidates(image):
+    """
+    Every PSM-config OCR attempt for one page image, best-scoring first.
+
+    Returning all of them (not just the top one) lets the field extractors
+    fall through to the next attempt when the "best" overall render still
+    garbles the one specific line they need — these receipts are small,
+    cramped text over a busy graphic, and which config reads which part
+    cleanly varies from photo to photo.
+    """
+    if image is None:
+        return []
+    _ensure_pytesseract()
+    scored = []
+    for config in _OCR_TEXT_CONFIGS:
+        try:
+            text = pytesseract.image_to_string(image, config=config) or ""
+        except Exception:
+            continue
+        scored.append((_score_lottery_page_text(text), text))
+    scored.sort(key=lambda item: item[0], reverse=True)
+    return [text for _score, text in scored]
+
+
+def _ocr_lottery_page_candidates_robust(image):
+    """
+    Try the OSD-corrected orientation's candidates first; if none of them
+    are recognizable at all, brute-force the other three 90-degree
+    rotations too.
+
+    OSD (Tesseract's own orientation detector) can misfire on these Lottery
+    receipts specifically, since a large translucent "Lottery" logo
+    watermark dominates much of the page and throws off its guess — a
+    completely upside-down page then reads as pure noise instead of
+    "Terminal Games"/"Scratch-Off", so this is the fallback for that case.
+    """
+    if image is None:
+        return []
+    candidates = _ocr_lottery_page_candidates(image)
+    best_score = _score_lottery_page_text(candidates[0]) if candidates else -1
+    if best_score > 0:
+        return candidates
+
+    best_candidates = candidates
+    for rotation in (Image.ROTATE_90, Image.ROTATE_180, Image.ROTATE_270):
+        rotated = image.transpose(rotation)
+        rotated_candidates = _ocr_lottery_page_candidates(rotated)
+        score = _score_lottery_page_text(rotated_candidates[0]) if rotated_candidates else -1
+        if score > best_score:
+            best_score = score
+            best_candidates = rotated_candidates
+    return best_candidates
+
+
+def _classify_lottery_page(text):
+    lower = text.lower()
+    if "scratch" in lower and "off" in lower:
+        return "skoff"
+    if "terminal" in lower:
+        return "online"
+    return None
+
+
+def _parse_lottery_report_date(text):
+    """The report's own business date is the one after 'FOR <weekday>' — not the print timestamp near the top."""
+    match = _LOTTERY_FOR_DATE_RE.search(text)
+    if not match:
+        return None
+    month, day, year = (int(part) for part in match.groups())
+    if year < 100:
+        year += 2000
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
+
+
+def _find_department_record(records, department_name):
+    for record in records:
+        if record["department"] == department_name:
+            return record
+    return None
+
+
+def extract_lottery_department_fields_from_pdf(pdf_path, page_index=DEFAULT_PDF_PAGE_INDEX):
+    """
+    D/E/N/O — the ONLINE/SKOFF rows off the Department Sales Report (same
+    page the Ventas pipeline reads) — plus this PDF's own business date,
+    read off whichever Lottery receipt page (Terminal or Scratch-Off, near
+    the end of the PDF) OCRs first, since both print the same
+    "FOR <día> MM/DD/YY" line. F/G/H/I/K and P/Q/R/S no longer come from
+    here: see extract_lottery_receipt_fields_from_sales_report, which reads
+    those columns from the Florida Lottery portal's own "Daily Sales
+    Report" PDF — real embedded text instead of a photographed receipt.
+    """
+    pdf_path = os.path.abspath(pdf_path)
+    if not os.path.isfile(pdf_path):
+        raise FileNotFoundError(f"PDF no encontrado: {pdf_path}")
+
+    dept_records, _dept_diagnostics = parse_elistar_daily_pdf_page(pdf_path, page_index=page_index)
+    online_record = _find_department_record(dept_records, LOTTERY_ONLINE_DEPARTMENT)
+    if online_record is None:
+        raise ValueError(
+            f'No se encontró el departamento "{LOTTERY_ONLINE_DEPARTMENT}" en el Department Sales Report.'
+        )
+    skoff_record = _find_department_record(dept_records, LOTTERY_SKOFF_DEPARTMENT)
+    if skoff_record is None:
+        raise ValueError(
+            f'No se encontró el departamento "{LOTTERY_SKOFF_DEPARTMENT}" en el Department Sales Report.'
+        )
+
+    report_date = None
+    page_used = None
+    images = _LazyPdfPageImages(pdf_path)
+    try:
+        total_pages = len(images)
+        oldest_page_to_try = max(-1, total_pages - 1 - LOTTERY_MAX_SEARCH_PAGES_FROM_END)
+        for idx in range(total_pages - 1, oldest_page_to_try, -1):
+            candidates = _ocr_lottery_page_candidates_robust(images[idx])
+            if not candidates or _classify_lottery_page(candidates[0]) not in ("online", "skoff"):
+                continue
+            for text in candidates:
+                report_date = _parse_lottery_report_date(text)
+                if report_date is not None:
+                    break
+            if report_date is not None:
+                page_used = idx + 1
+                break
+    finally:
+        images.close()
+
+    if report_date is None:
+        raise ValueError('No se encontró la fecha ("FOR <día> MM/DD/YY") en el reporte de Lottery.')
+
+    return {
+        "report_date": report_date,
+        "online_count": int(online_record["count"]),
+        "online_net_sales": float(online_record["amount"]),
+        "skoff_count": int(skoff_record["count"]),
+        "skoff_net_sales": float(skoff_record["amount"]),
+        "page_used": page_used,
+    }
+
+
+_LOTTERY_SALES_REPORT_START_DATE_RE = re.compile(r"Start Date:\s*(\d{4})-(\d{2})-(\d{2})")
+
+# The Lottery's own commission rate on ONLINE net sales — column J's own
+# "=+I/F" formula is meant to always read -6.00%; confirmed exactly against
+# three independent real days (comis/sales = -15.66/261, -15.0/250, -5.82/97).
+_LOTTERY_ONLINE_COMMISSION_RATE = 0.06
+
+# label -> (result key, sign rule) for every value this module needs off the
+# Florida Lottery portal's "Daily Sales Report" PDF. Unlike the photographed
+# terminal receipt, this document has a real embedded text layer, so each
+# label is matched once, exactly, with no fuzzy/OCR tolerance needed.
+_LOTTERY_SALES_REPORT_FIELDS = (
+    ("sales", "Net Terminal Sales Amount", _force_positive),
+    ("pagos", "Terminal Pay Amount", _force_negative),
+    ("comis", "Terminal Sales Commission", _force_negative),
+    ("pays_units", "Instant Tickets Paid", None),
+    ("pays_amount", "Instant Pay Amount", _force_negative),
+    ("skoff_sales_amount", "Instant Sales Amount", _force_positive),
+    ("sales_comm", "Instant Sales Commission", _force_negative),
+)
+
+
+def _parse_lottery_sales_report_date(text):
+    match = _LOTTERY_SALES_REPORT_START_DATE_RE.search(text)
+    if not match:
+        return None
+    year, month, day = (int(part) for part in match.groups())
+    try:
+        return date(year, month, day)
+    except ValueError:
+        return None
+
+
+def _extract_sales_report_value(text, label):
+    """Numeric token immediately after an exact label — safe here since the label set has no overlapping substrings."""
+    match = re.search(re.escape(label) + r"\s*\$?(-?[\d,]+\.?\d*)", text)
+    if not match:
+        return None
+    return match.group(1).replace(",", "")
+
+
+def extract_lottery_receipt_fields_from_sales_report(pdf_path):
+    """
+    F/G/H/I/K (ONLINE) and P/Q/R/S (SKOFF) off the Florida Lottery portal's
+    own "Daily Sales Report" PDF — real embedded text, not a photographed
+    terminal receipt, so there's no OCR and no ambiguity. This source only
+    prints the combined "Terminal Sales Commission" total, not the NET
+    SALES / PRIZE FREE PLAYS split the physical receipt shows — but I/F is
+    fixed at -6.00% by the Lottery's own commission rate (column J's own
+    "=+I/F" formula), so I is rebuilt from that fixed rate against F and K
+    takes whatever's left of the total, reproducing the same split the
+    receipt shows without needing to read it.
+    """
+    _ensure_pdfplumber()
+    pdf_path = os.path.abspath(pdf_path)
+    if not os.path.isfile(pdf_path):
+        raise FileNotFoundError(f"PDF no encontrado: {pdf_path}")
+
+    with pdfplumber.open(pdf_path) as pdf:
+        raw_text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+    text = _normalize_department_spacing(raw_text)
+
+    report_date = _parse_lottery_sales_report_date(text)
+    if report_date is None:
+        raise ValueError('No se encontró "Start Date" en el Daily Sales Report de Lottery.')
+
+    warnings = []
+    values = {}
+    for key, label, sign_rule in _LOTTERY_SALES_REPORT_FIELDS:
+        raw = _extract_sales_report_value(text, label)
+        if raw is None:
+            values[key] = None
+            warnings.append(f'No se pudo leer "{label}" en el Daily Sales Report de Lottery — revisar manualmente.')
+            continue
+        number = float(raw)
+        values[key] = sign_rule(number) if sign_rule else _safe_parse_count(raw)
+
+    sales = values["sales"]
+    pagos = values["pagos"]
+    cash_balance = round(sales + pagos, 2) if sales is not None and pagos is not None else None
+
+    total_comm = values["comis"]
+    if total_comm is not None and sales is not None:
+        comis = round(-_LOTTERY_ONLINE_COMMISSION_RATE * sales, 2)
+        prize_free_plays = round(total_comm - comis, 2)
+    elif total_comm is not None:
+        comis = total_comm
+        prize_free_plays = 0.0
+        warnings.append(
+            'No se pudo leer "Net Terminal Sales Amount" (columna F), así que no se pudo dividir '
+            "la comisión entre I y K — se cargó el total completo en I."
+        )
+    else:
+        comis = None
+        prize_free_plays = None
+
+    return {
+        "report_date": report_date,
+        "sales": sales,
+        "pagos": pagos,
+        "cash_balance": cash_balance,
+        "comis": comis,
+        "prize_free_plays": prize_free_plays,
+        "pays_units": values["pays_units"],
+        "pays_amount": values["pays_amount"],
+        "skoff_sales_amount": values["skoff_sales_amount"],
+        "sales_comm": values["sales_comm"],
+        "warning": " | ".join(warnings) if warnings else None,
+    }
+
+
+def _find_lottery_sheet(workbook):
+    """
+    The Lottery workbook has one sheet per month, named after the month
+    (e.g. "08.2026") — so unlike CARGA AQUI or Store Info there's no fixed
+    name to look for. Falls back to the sheet matching the known header
+    signature (Fecha/Fecha/.../COUNT in row 3) when there's more than one.
+    """
+    names = workbook.sheetnames
+    if len(names) == 1:
+        return workbook[names[0]]
+
+    for name in names:
+        sheet = workbook[name]
+        header_a = _strip_cell(sheet.cell(row=3, column=LOTTERY_COL_DATE_A).value).lower()
+        header_d = _strip_cell(sheet.cell(row=3, column=LOTTERY_COL_ONLINE_COUNT).value).lower()
+        if header_a == "fecha" and header_d == "count":
+            return sheet
+
+    raise ValueError(
+        f'No se pudo identificar la hoja de Lottery. Disponibles: {", ".join(names)}'
+    )
+
+
+def _find_lottery_row_for_date(sheet, target_date, start_row=LOTTERY_DATA_START_ROW):
+    """
+    Exact (day, month, year) match first; if that fails, fall back to
+    (day, month) alone. A single Lottery workbook only ever spans one
+    month, so a day/month match is already unambiguous — and this recovers
+    from a lone OCR-misread year digit (e.g. "26" read as "25"), which
+    doesn't affect which real-world day the report is for.
+    """
+    max_row = max(sheet.max_row, start_row)
+    day_month_row = None
+    for row in range(start_row, max_row + 1):
+        cell_value = sheet.cell(row=row, column=LOTTERY_COL_DATE_B).value
+        if not isinstance(cell_value, datetime):
+            continue
+        if cell_value.date() == target_date:
+            return row
+        if day_month_row is None and (cell_value.month, cell_value.day) == (
+            target_date.month,
+            target_date.day,
+        ):
+            day_month_row = row
+    if day_month_row is not None:
+        return day_month_row
+    raise ValueError(
+        f"No se encontró una fila con la fecha {target_date.strftime('%d/%m/%Y')} en la "
+        f"columna B de la hoja de Lottery."
+    )
+
+
+def write_lottery_row(sheet, fields):
+    row = _find_lottery_row_for_date(sheet, fields["report_date"])
+
+    if fields.get("online_count") is not None:
+        sheet.cell(row=row, column=LOTTERY_COL_ONLINE_COUNT, value=fields["online_count"])
+    if fields.get("online_net_sales") is not None:
+        sheet.cell(row=row, column=LOTTERY_COL_ONLINE_NET_SALES, value=fields["online_net_sales"])
+    if fields.get("sales") is not None:
+        sheet.cell(row=row, column=LOTTERY_COL_SALES, value=fields["sales"])
+    if fields.get("pagos") is not None:
+        sheet.cell(row=row, column=LOTTERY_COL_PAGOS, value=fields["pagos"])
+    if fields.get("cash_balance") is not None:
+        sheet.cell(row=row, column=LOTTERY_COL_CASH_BALANCE, value=fields["cash_balance"])
+    if fields.get("comis") is not None:
+        sheet.cell(row=row, column=LOTTERY_COL_COMIS, value=fields["comis"])
+    if fields.get("prize_free_plays") is not None:
+        sheet.cell(row=row, column=LOTTERY_COL_PRIZE_FREE_PLAYS, value=fields["prize_free_plays"])
+    if fields.get("skoff_count") is not None:
+        sheet.cell(row=row, column=LOTTERY_COL_SKOFF_COUNT, value=fields["skoff_count"])
+    if fields.get("skoff_net_sales") is not None:
+        sheet.cell(row=row, column=LOTTERY_COL_SKOFF_NET_SALES, value=fields["skoff_net_sales"])
+    if fields.get("pays_units") is not None:
+        sheet.cell(row=row, column=LOTTERY_COL_SKOFF_PAYS_UNITS, value=fields["pays_units"])
+    if fields.get("pays_amount") is not None:
+        sheet.cell(row=row, column=LOTTERY_COL_SKOFF_PAYS_AMOUNT, value=fields["pays_amount"])
+    if fields.get("skoff_sales_amount") is not None:
+        sheet.cell(row=row, column=LOTTERY_COL_SKOFF_SALES_AMOUNT, value=fields["skoff_sales_amount"])
+    if fields.get("sales_comm") is not None:
+        sheet.cell(row=row, column=LOTTERY_COL_SALES_COMM, value=fields["sales_comm"])
+    return row
+
+
+def process_lottery(master_path, department_pdf_paths, sales_report_pdf_paths):
+    """
+    Write one Lottery row per business date, merging two independent PDF
+    sources by that date: the shared daily PDF's Department Sales Report
+    (D/E/N/O — ONLINE/SKOFF counts and sales, same source the Ventas
+    pipeline reads) and the Florida Lottery portal's own "Daily Sales
+    Report" PDF (F/G/H/I/K, P/Q/R/S). Either source can be given alone —
+    a date present in only one still gets a row written with just that
+    source's columns, and a warning noting the other is missing — since a
+    given batch of uploads won't always include both for every day.
+
+    Each PDF set is parsed in parallel (within its own set) before any
+    writing happens, since that read is what makes a multi-PDF batch slow.
+
+    Returns:
+        tuple: (temp_path, summary dict)
+    """
+    _ensure_openpyxl()
+    master_path = os.path.abspath(str(master_path).strip())
+    department_paths = _normalize_pdf_paths(department_pdf_paths)
+    sales_report_paths = _normalize_pdf_paths(sales_report_pdf_paths)
+
+    if not os.path.isfile(master_path):
+        raise FileNotFoundError(f"Excel de Lottery no encontrado: {master_path}")
+    if not department_paths and not sales_report_paths:
+        raise ValueError("No se proporcionaron PDFs de Lottery.")
+
+    extension = os.path.splitext(master_path)[1].lower()
+    if extension not in {".xlsx", ".xlsm"}:
+        raise ValueError("El Excel de Lottery debe ser .xlsx o .xlsm.")
+
+    for pdf_path in department_paths + sales_report_paths:
+        if not os.path.isfile(pdf_path):
+            raise FileNotFoundError(f"PDF no encontrado: {pdf_path}")
+
+    department_fields_by_path = (
+        _parse_pdfs_concurrently(department_paths, extract_lottery_department_fields_from_pdf)
+        if department_paths
+        else {}
+    )
+    sales_report_fields_by_path = (
+        _parse_pdfs_concurrently(sales_report_paths, extract_lottery_receipt_fields_from_sales_report)
+        if sales_report_paths
+        else {}
+    )
+
+    department_by_date = {
+        fields["report_date"]: (path, fields) for path, fields in department_fields_by_path.items()
+    }
+    sales_report_by_date = {
+        fields["report_date"]: (path, fields) for path, fields in sales_report_fields_by_path.items()
+    }
+
+    keep_vba = extension == ".xlsm"
+    workbook = load_workbook(master_path, data_only=False, keep_vba=keep_vba)
+    sheet = _find_lottery_sheet(workbook)
+
+    all_dates = sorted(set(department_by_date) | set(sales_report_by_date))
+
+    batch_results = []
+    for report_date in all_dates:
+        dept_path, dept_fields = department_by_date.get(report_date, (None, None))
+        sales_path, sales_fields = sales_report_by_date.get(report_date, (None, None))
+
+        merged = {"report_date": report_date}
+        warnings = []
+        if dept_fields is not None:
+            merged.update(
+                {
+                    "online_count": dept_fields["online_count"],
+                    "online_net_sales": dept_fields["online_net_sales"],
+                    "skoff_count": dept_fields["skoff_count"],
+                    "skoff_net_sales": dept_fields["skoff_net_sales"],
+                }
+            )
+        elif department_paths and sales_report_paths:
+            # Only worth flagging when this run intentionally supplied both
+            # sources and one of them simply has no PDF for this particular
+            # date — a single-source run (the normal case: the GUI's two
+            # Lottery flows each call this with the other list empty) isn't
+            # missing anything, it just never touches the other's columns.
+            warnings.append(
+                "No se subió el PDF diario con el Department Sales Report para esta fecha "
+                "— columnas D/E/N/O sin actualizar."
+            )
+        if sales_fields is not None:
+            for key in (
+                "sales", "pagos", "cash_balance", "comis", "prize_free_plays",
+                "pays_units", "pays_amount", "skoff_sales_amount", "sales_comm",
+            ):
+                merged[key] = sales_fields[key]
+            if sales_fields.get("warning"):
+                warnings.append(sales_fields["warning"])
+        elif department_paths and sales_report_paths:
+            warnings.append(
+                "No se subió el Daily Sales Report de Lottery para esta fecha "
+                "— columnas F/G/H/I/K/P/Q/R/S sin actualizar."
+            )
+
+        row = write_lottery_row(sheet, merged)
+        batch_results.append(
+            {
+                "filename": os.path.basename(sales_path or dept_path),
+                "target_row": row,
+                "report_date": report_date.strftime("%d/%m/%Y"),
+                "warning": " | ".join(warnings) if warnings else None,
             }
         )
 
