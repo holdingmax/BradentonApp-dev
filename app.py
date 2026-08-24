@@ -1736,7 +1736,13 @@ class EFTExtractorApp:
             "Actualizar Cta Cte (Procesar PDF EFT)",
             self.process_and_update,
             section_theme=EFT_THEME,
-        ).pack(anchor=tk.W)
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        create_secondary_button(
+            cta_actions,
+            "Limpiar PDF",
+            lambda: self._clear_field(self.pdf_path, "pdf_entry"),
+            section_theme=EFT_THEME,
+        ).pack(side=tk.LEFT)
 
         coupon_card = create_card(left, section_theme=EFT_THEME)
         create_panel_label(
@@ -1769,7 +1775,13 @@ class EFTExtractorApp:
             "Cargar Reporte Mensual / Actualizar Cupones",
             self.process_monthly_coupon_append,
             section_theme=EFT_THEME,
-        ).pack(anchor=tk.W)
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        create_secondary_button(
+            actions,
+            "Limpiar Reporte",
+            lambda: self._clear_field(self.monthly_coupon_path, "monthly_coupon_entry"),
+            section_theme=EFT_THEME,
+        ).pack(side=tk.LEFT)
         tk.Label(
             actions,
             text='Deja "Reporte Mensual" vacío para solo actualizar pendientes.',
@@ -1836,7 +1848,13 @@ class EFTExtractorApp:
             "Procesar Reporte Gettel/Toyota",
             self.process_gettel_toyota_report,
             section_theme=GETTEL_THEME,
-        ).pack(anchor=tk.W)
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        create_secondary_button(
+            gettel_actions,
+            "Limpiar Origen",
+            lambda: self._clear_field(self.gettel_source_excel_path, "gettel_source_excel_entry"),
+            section_theme=GETTEL_THEME,
+        ).pack(side=tk.LEFT)
 
         self.gettel_status_label, self.gettel_status_dot = create_status_bar(
             left, self.gettel_status_text, section_theme=GETTEL_THEME
@@ -2180,8 +2198,8 @@ class EFTExtractorApp:
         pdf_actions.pack(fill=tk.X, pady=(4, 0))
         create_secondary_button(
             pdf_actions,
-            "Limpiar Todo",
-            self.clear_reporte_diario_tab,
+            "Limpiar PDF",
+            self.clear_reporte_pdf,
             section_theme=REPORTE_DIARIO_THEME,
         ).pack(anchor=tk.W)
 
@@ -2236,7 +2254,8 @@ class EFTExtractorApp:
             "Cómo funciona",
             [
                 "Un solo PDF alimenta los dos destinos de abajo",
-                "El PDF queda cargado entre procesos — se limpia con \"Limpiar Todo\"",
+                "El PDF queda cargado entre procesos — se limpia con \"Limpiar PDF\"",
+                "Cada Excel se limpia solo apenas termina de procesarse",
                 "Podés elegir varios PDF a la vez (Ctrl/Shift + clic en el diálogo)",
                 "Cada PDF se ubica por su propia fecha — no hace falta que sean días seguidos",
                 "Ventas: detecta \"Department Sales Report\" automáticamente, sin indicar página",
@@ -2270,14 +2289,6 @@ class EFTExtractorApp:
             section_theme=REPORTE_DIARIO_THEME,
             label_width=13,
         )
-        master_actions = tk.Frame(master_card, bg=REPORTE_DIARIO_THEME.card_tint)
-        master_actions.pack(fill=tk.X, pady=(4, 0))
-        create_secondary_button(
-            master_actions,
-            "Limpiar Todo",
-            self.clear_lottery_tab,
-            section_theme=REPORTE_DIARIO_THEME,
-        ).pack(anchor=tk.W)
 
         sales_report_card = create_card(left, section_theme=REPORTE_DIARIO_THEME, padx=4, pady=4)
         create_panel_label(
@@ -2299,7 +2310,13 @@ class EFTExtractorApp:
             "Procesar Daily Sales Report",
             self.process_lottery_sales_report_file,
             section_theme=REPORTE_DIARIO_THEME,
-        ).pack(anchor=tk.W)
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        create_secondary_button(
+            sales_report_actions,
+            "Limpiar",
+            lambda: self._clear_field(self.lottery_sales_report_paths, "lottery_sales_report_entry"),
+            section_theme=REPORTE_DIARIO_THEME,
+        ).pack(side=tk.LEFT)
 
         self.lottery_sales_report_status_label, self.lottery_sales_report_status_dot = create_status_bar(
             left, self.lottery_sales_report_status_text, section_theme=REPORTE_DIARIO_THEME
@@ -2323,7 +2340,13 @@ class EFTExtractorApp:
             "Procesar PDF Diario",
             self.process_lottery_department_file,
             section_theme=REPORTE_DIARIO_THEME,
-        ).pack(anchor=tk.W)
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        create_secondary_button(
+            department_actions,
+            "Limpiar",
+            lambda: self._clear_field(self.lottery_department_pdf_paths, "lottery_department_pdf_entry"),
+            section_theme=REPORTE_DIARIO_THEME,
+        ).pack(side=tk.LEFT)
 
         self.lottery_department_status_label, self.lottery_department_status_dot = create_status_bar(
             left, self.lottery_department_status_text, section_theme=REPORTE_DIARIO_THEME
@@ -2336,6 +2359,8 @@ class EFTExtractorApp:
                 "Daily Sales Report → completa F/G/H/I/K (Online) y P/Q/R/S (Scratch-Off)",
                 "PDF Diario (Department Sales Report) → completa D/E/N/O",
                 "Cada botón procesa solo su propia fuente — no hace falta cargar ambas juntas",
+                "El Excel Lottery se limpia solo apenas termina de procesarse (cualquiera de los dos botones)",
+                "Cada PDF queda cargado hasta que uses su propio botón \"Limpiar\"",
                 "Podés cargar varios PDF a la vez en cada campo (Ctrl/Shift + clic)",
                 "Cada PDF se ubica por su propia fecha — no hace falta que sean días seguidos",
                 "La comisión ONLINE (columna I) se calcula como -6.00% de F (columna J), "
@@ -2383,7 +2408,13 @@ class EFTExtractorApp:
             "Transformar Excel",
             self.process_cmv_department,
             section_theme=CMV_THEME,
-        ).pack(anchor=tk.W)
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        create_secondary_button(
+            actions,
+            "Limpiar Archivos",
+            lambda: self._clear_field(self.cmv_path, "cmv_entry"),
+            section_theme=CMV_THEME,
+        ).pack(side=tk.LEFT)
 
         self.cmv_status_label, self.cmv_status_dot = create_status_bar(
             left, self.cmv_status_text, section_theme=CMV_THEME
@@ -2439,7 +2470,13 @@ class EFTExtractorApp:
             "Procesar Ventas",
             self.process_monthly_sales_file,
             section_theme=SALES_THEME,
-        ).pack(anchor=tk.W)
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        create_secondary_button(
+            actions,
+            "Limpiar POS Reports",
+            lambda: self._clear_field(self.sales_path, "sales_entry"),
+            section_theme=SALES_THEME,
+        ).pack(side=tk.LEFT)
 
         self.sales_status_label, self.sales_status_dot = create_status_bar(
             left, self.sales_status_text, section_theme=SALES_THEME
@@ -2677,73 +2714,37 @@ class EFTExtractorApp:
             completed=completed,
         )
 
-    def clear_reporte_diario_tab(self):
+    def clear_reporte_pdf(self):
         """
-        Reset the PDF and both destination Excel paths at once.
+        Reset just the shared PDF Diario box.
 
-        The PDF and each Excel now stay loaded across multiple "Procesar"
-        actions (the same PDF feeds Ventas and Store Info one after
-        another) — this is the explicit way to start fresh instead of an
-        automatic clear-on-success that would force re-selecting the PDF
-        for every destination.
+        The PDF stays loaded across multiple "Procesar" actions (it feeds
+        Ventas and Store Info one after another) — this is the explicit way
+        to swap it out. The destination Excels aren't included here since
+        each already clears itself right after its own successful process.
         """
-        fields = (
-            (self.reporte_pdf_path, "reporte_pdf_entry"),
-            (self.reporte_master_path, "reporte_master_entry"),
-            (self.store_info_master_path, "store_info_master_entry"),
-        )
-        for variable, entry_attr in fields:
-            variable.set("")
-            entry = getattr(self, entry_attr, None)
-            if entry is not None:
-                entry.delete(0, tk.END)
+        self._clear_field(self.reporte_pdf_path, "reporte_pdf_entry")
 
-        self._set_reporte_status("Listo — seleccione el master Bradenton Análisis C-Store y el PDF diario.")
-        self._set_store_info_status("Listo — seleccione el Excel de Cierre (hoja Store Info) y el PDF diario.")
+    def _clear_field(self, variable, entry_attr):
+        """
+        Reset one file-path StringVar and its Entry widget.
 
-    def clear_lottery_tab(self):
-        """Reset both Lottery source PDFs and the Excel path, matching clear_reporte_diario_tab's pattern."""
-        fields = (
-            (self.lottery_department_pdf_paths, "lottery_department_pdf_entry"),
-            (self.lottery_sales_report_paths, "lottery_sales_report_entry"),
-            (self.lottery_master_path, "lottery_master_entry"),
-        )
-        for variable, entry_attr in fields:
-            variable.set("")
-            entry = getattr(self, entry_attr, None)
-            if entry is not None:
-                entry.delete(0, tk.END)
-
-        self._set_lottery_sales_report_status("Listo — seleccione el Excel de Lottery y el/los Daily Sales Report.")
-        self._set_lottery_department_status("Listo — seleccione el Excel de Lottery y el/los PDF diario(s).")
+        The shared primitive behind every per-box "Limpiar" button and every
+        automatic post-success master-Excel reset: master/destination Excel
+        fields always auto-clear right after a successful process (so the
+        same file never gets double-processed by accident), while source
+        PDFs/reports are left for the user to clear deliberately, since
+        those are often reused across more than one destination.
+        """
+        variable.set("")
+        entry = getattr(self, entry_attr, None)
+        if entry is not None:
+            entry.delete(0, tk.END)
 
     def _clear_chase_inputs(self):
         """Clear Chase file path entry widgets after successful processing."""
         self.chase_path.set("")
         self.chase_entry.delete(0, tk.END)
-
-    def _clear_cmv_inputs(self):
-        self.cmv_path.set("")
-        self.cmv_master_path.set("")
-        if hasattr(self, "cmv_entry"):
-            self.cmv_entry.delete(0, tk.END)
-        if hasattr(self, "cmv_master_entry"):
-            self.cmv_master_entry.delete(0, tk.END)
-
-    def _clear_eft_inputs(self):
-        """Clear Tab 1 file path entry widgets after successful processing."""
-        self.pdf_path.set("")
-        self.excel_path.set("")
-        self.monthly_coupon_path.set("")
-        self.cupones_excel_path.set("")
-        if hasattr(self, "pdf_entry"):
-            self.pdf_entry.delete(0, tk.END)
-        if hasattr(self, "excel_entry"):
-            self.excel_entry.delete(0, tk.END)
-        if hasattr(self, "monthly_coupon_entry"):
-            self.monthly_coupon_entry.delete(0, tk.END)
-        if hasattr(self, "cupones_excel_entry"):
-            self.cupones_excel_entry.delete(0, tk.END)
 
     def select_pdf(self):
         path = filedialog.askopenfilename(
@@ -2818,7 +2819,7 @@ class EFTExtractorApp:
                 temp_excel_path, header_data, paid_invoices, credit_coupons
             )
             open_excel_workbook(temp_excel_path)
-            self._clear_eft_inputs()
+            self._clear_field(self.excel_path, "excel_entry")
             self._set_status("¡Proceso completado!", completed=True)
         except FileNotFoundError as exc:
             self._set_status(f"Error: {exc}", is_error=True)
@@ -2854,7 +2855,7 @@ class EFTExtractorApp:
 
         try:
             _saved_path, summary = append_monthly_cupones(excel_path, monthly_report_path)
-            self._clear_eft_inputs()
+            self._clear_field(self.cupones_excel_path, "cupones_excel_entry")
             skipped = summary.get("rows_skipped_duplicates", 0)
             resynced = summary.get("rows_resynced_pending", 0)
             status_suffix = (
@@ -2897,6 +2898,7 @@ class EFTExtractorApp:
 
         try:
             _saved_path, summary = resync_cupones_only(excel_path)
+            self._clear_field(self.cupones_excel_path, "cupones_excel_entry")
             resynced = summary.get("rows_resynced_pending", 0)
             self._set_status(
                 f"Cupones actualizados ({resynced} pendiente(s) resincronizado(s)).",
@@ -2983,7 +2985,7 @@ class EFTExtractorApp:
                     source_path, destination_path, launch=True
                 )
             )
-            self._clear_gettel_inputs()
+            self._clear_field(self.gettel_destination_excel_path, "gettel_destination_excel_entry")
             status_suffix = (
                 f"({rows_matched} fila(s) actualizadas; "
                 f"{gettel_days} día(s) GETTEL, {toyota_days} día(s) TOYOTA)"
@@ -3017,7 +3019,7 @@ class EFTExtractorApp:
                     source_path, destination_path, launch=True
                 )
             )
-            self._clear_gettel_inputs()
+            self._clear_field(self.gettel_destination_excel_path, "gettel_destination_excel_entry")
             status_suffix = (
                 f"({rows_matched} día(s) actualizados, proveedor {vendor})"
             )
@@ -3049,14 +3051,6 @@ class EFTExtractorApp:
             )
         except Exception as exc:
             self._set_gettel_status(f"Error: {exc}", is_error=True)
-
-    def _clear_gettel_inputs(self):
-        self.gettel_source_excel_path.set("")
-        self.gettel_destination_excel_path.set("")
-        if hasattr(self, "gettel_source_excel_entry"):
-            self.gettel_source_excel_entry.delete(0, tk.END)
-        if hasattr(self, "gettel_destination_excel_entry"):
-            self.gettel_destination_excel_entry.delete(0, tk.END)
 
     def select_chase_file(self):
         path = filedialog.askopenfilename(
@@ -3195,6 +3189,7 @@ class EFTExtractorApp:
 
         try:
             _temp_path, summary = process_reporte_diario(master_path, pdf_paths)
+            self._clear_field(self.reporte_master_path, "reporte_master_entry")
             warnings = []
             for batch in summary.get("batch_results", []):
                 if batch.get("warning"):
@@ -3320,6 +3315,7 @@ class EFTExtractorApp:
 
         try:
             _temp_path, summary = process_store_info(master_path, pdf_paths)
+            self._clear_field(self.store_info_master_path, "store_info_master_entry")
             elapsed = format_elapsed_duration(time.time() - start_time)
             self._set_store_info_status(f"Completado en {elapsed}.", completed=True)
         except Exception as exc:
@@ -3361,6 +3357,7 @@ class EFTExtractorApp:
 
         try:
             _temp_path, summary = process_lottery(master_path, [], sales_report_pdf_paths)
+            self._clear_field(self.lottery_master_path, "lottery_master_entry")
             warnings = [
                 f"{batch['report_date']} ({batch['filename']}): {batch['warning']}"
                 for batch in summary.get("batch_results", [])
@@ -3413,6 +3410,7 @@ class EFTExtractorApp:
 
         try:
             _temp_path, summary = process_lottery(master_path, department_pdf_paths, [])
+            self._clear_field(self.lottery_master_path, "lottery_master_entry")
             warnings = [
                 f"{batch['report_date']} ({batch['filename']}): {batch['warning']}"
                 for batch in summary.get("batch_results", [])
@@ -3497,12 +3495,7 @@ class EFTExtractorApp:
         try:
             frame, _preview_path = process_monthly_sales(sales_files, master_path)
             dept_count = frame["Dept Name"].nunique()
-            self.sales_path.set("")
-            self.sales_master_path.set("")
-            if hasattr(self, "sales_entry"):
-                self.sales_entry.delete(0, tk.END)
-            if hasattr(self, "sales_master_entry"):
-                self.sales_master_entry.delete(0, tk.END)
+            self._clear_field(self.sales_master_path, "sales_master_entry")
             self._set_sales_status(
                 f"Se actualizaron {len(frame)} fila(s) de {len(sales_files)} archivo(s) "
                 f"en {dept_count} departamento(s). Vista previa del master abierta.",
@@ -3576,7 +3569,7 @@ class EFTExtractorApp:
                 _master_upc_count,
             ) = update_master_costo_todos_bulk(master_abs, dept_paths)
 
-            self._clear_cmv_inputs()
+            self._clear_field(self.cmv_master_path, "cmv_master_entry")
             self._set_cmv_status(
                 f"Vista previa abierta en Excel ({total_rows_updated} fila(s) añadidas).",
                 completed=True,

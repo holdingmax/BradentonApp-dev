@@ -930,13 +930,23 @@ def _line_contains_stop_marker(line):
     return "safe drop" in text
 
 
+_OCR_HEADER_COMPANION_TOKENS = ("sales", "count", "refund", "item")
+
+
 def _is_ocr_header_line(text):
     """
     True for the "Dept. Name ... Net Count ... Net Sales $ ..." header row,
-    which OCR sometimes repeats mid-table as its own smashed-together line.
+    which OCR sometimes repeats mid-table as its own smashed-together line —
+    including right before a same-day Refund sub-table, which reprints its
+    own header. "dept" is checked as normal, but OCR also regularly drops
+    its leading "D" ("Dept." -> "Ept."), so "name" alongside any other
+    column-header word is treated as the same header line too — no real
+    department is ever literally named "Name".
     """
     key = _normalize_department_label(text)
-    return "dept" in key and "name" in key
+    if "dept" in key and "name" in key:
+        return True
+    return "name" in key and any(token in key for token in _OCR_HEADER_COMPANION_TOKENS)
 
 
 def _anchor_passed_in_page_text(page):
@@ -2182,108 +2192,6 @@ LOTTERY_COL_SALES_COMM = 19  # S — SALES COMM off the scratch-off receipt
 LOTTERY_ONLINE_DEPARTMENT = "ONLINE"
 LOTTERY_SKOFF_DEPARTMENT = "SKOFF"
 
-# The last two pages of the daily PDF, but "generally" — searched from the
-# end backward rather than assumed to be the literal last two, in case an
-# extra page gets appended some days.
-LOTTERY_MAX_SEARCH_PAGES_FROM_END = 5
-
-_LOTTERY_PAGE_SCORING_ANCHORS = (
-    "terminal game",
-    "scratch",
-    "net sales",
-    "pays",
-    "total sales comm",
-    "prize free plays",
-    "books settled",
-    "sales comm",
-)
-
-_LOTTERY_FOR_DATE_RE = re.compile(
-    r"(?:FOR\s+)?[A-Za-z]{3,9}\s+(\d{1,2})[/\-](\d{1,2})[/\-](\d{2,4})", re.IGNORECASE
-)
-
-
-def _score_lottery_page_text(text):
-    lower = text.lower() if text else ""
-    return sum(1 for anchor in _LOTTERY_PAGE_SCORING_ANCHORS if anchor in lower)
-
-
-def _ocr_lottery_page_candidates(image):
-    """
-    Every PSM-config OCR attempt for one page image, best-scoring first.
-
-    Returning all of them (not just the top one) lets the field extractors
-    fall through to the next attempt when the "best" overall render still
-    garbles the one specific line they need — these receipts are small,
-    cramped text over a busy graphic, and which config reads which part
-    cleanly varies from photo to photo.
-    """
-    if image is None:
-        return []
-    _ensure_pytesseract()
-    scored = []
-    for config in _OCR_TEXT_CONFIGS:
-        try:
-            text = pytesseract.image_to_string(image, config=config) or ""
-        except Exception:
-            continue
-        scored.append((_score_lottery_page_text(text), text))
-    scored.sort(key=lambda item: item[0], reverse=True)
-    return [text for _score, text in scored]
-
-
-def _ocr_lottery_page_candidates_robust(image):
-    """
-    Try the OSD-corrected orientation's candidates first; if none of them
-    are recognizable at all, brute-force the other three 90-degree
-    rotations too.
-
-    OSD (Tesseract's own orientation detector) can misfire on these Lottery
-    receipts specifically, since a large translucent "Lottery" logo
-    watermark dominates much of the page and throws off its guess — a
-    completely upside-down page then reads as pure noise instead of
-    "Terminal Games"/"Scratch-Off", so this is the fallback for that case.
-    """
-    if image is None:
-        return []
-    candidates = _ocr_lottery_page_candidates(image)
-    best_score = _score_lottery_page_text(candidates[0]) if candidates else -1
-    if best_score > 0:
-        return candidates
-
-    best_candidates = candidates
-    for rotation in (Image.ROTATE_90, Image.ROTATE_180, Image.ROTATE_270):
-        rotated = image.transpose(rotation)
-        rotated_candidates = _ocr_lottery_page_candidates(rotated)
-        score = _score_lottery_page_text(rotated_candidates[0]) if rotated_candidates else -1
-        if score > best_score:
-            best_score = score
-            best_candidates = rotated_candidates
-    return best_candidates
-
-
-def _classify_lottery_page(text):
-    lower = text.lower()
-    if "scratch" in lower and "off" in lower:
-        return "skoff"
-    if "terminal" in lower:
-        return "online"
-    return None
-
-
-def _parse_lottery_report_date(text):
-    """The report's own business date is the one after 'FOR <weekday>' — not the print timestamp near the top."""
-    match = _LOTTERY_FOR_DATE_RE.search(text)
-    if not match:
-        return None
-    month, day, year = (int(part) for part in match.groups())
-    if year < 100:
-        year += 2000
-    try:
-        return date(year, month, day)
-    except ValueError:
-        return None
-
 
 def _find_department_record(records, department_name):
     for record in records:
@@ -2295,13 +2203,18 @@ def _find_department_record(records, department_name):
 def extract_lottery_department_fields_from_pdf(pdf_path, page_index=DEFAULT_PDF_PAGE_INDEX):
     """
     D/E/N/O — the ONLINE/SKOFF rows off the Department Sales Report (same
-    page the Ventas pipeline reads) — plus this PDF's own business date,
-    read off whichever Lottery receipt page (Terminal or Scratch-Off, near
-    the end of the PDF) OCRs first, since both print the same
-    "FOR <día> MM/DD/YY" line. F/G/H/I/K and P/Q/R/S no longer come from
-    here: see extract_lottery_receipt_fields_from_sales_report, which reads
-    those columns from the Florida Lottery portal's own "Daily Sales
-    Report" PDF — real embedded text instead of a photographed receipt.
+    page the Ventas pipeline reads) — plus this PDF's own business date.
+
+    The date is read the same way Store Info reads it (PERIOD FROM/TO, +1
+    day) rather than off the Lottery receipt pages: those are small, dense,
+    watermark-obscured text where OCR has repeatedly misread a single digit
+    (e.g. "08" -> "09"), while PERIOD FROM/TO is a larger, cleaner line that
+    Store Info already reads reliably from this exact same PDF.
+
+    F/G/H/I/K and P/Q/R/S no longer come from here: see
+    extract_lottery_receipt_fields_from_sales_report, which reads those
+    columns from the Florida Lottery portal's own "Daily Sales Report"
+    PDF — real embedded text instead of a photographed receipt.
     """
     pdf_path = os.path.abspath(pdf_path)
     if not os.path.isfile(pdf_path):
@@ -2319,28 +2232,9 @@ def extract_lottery_department_fields_from_pdf(pdf_path, page_index=DEFAULT_PDF_
             f'No se encontró el departamento "{LOTTERY_SKOFF_DEPARTMENT}" en el Department Sales Report.'
         )
 
-    report_date = None
-    page_used = None
-    images = _LazyPdfPageImages(pdf_path)
-    try:
-        total_pages = len(images)
-        oldest_page_to_try = max(-1, total_pages - 1 - LOTTERY_MAX_SEARCH_PAGES_FROM_END)
-        for idx in range(total_pages - 1, oldest_page_to_try, -1):
-            candidates = _ocr_lottery_page_candidates_robust(images[idx])
-            if not candidates or _classify_lottery_page(candidates[0]) not in ("online", "skoff"):
-                continue
-            for text in candidates:
-                report_date = _parse_lottery_report_date(text)
-                if report_date is not None:
-                    break
-            if report_date is not None:
-                page_used = idx + 1
-                break
-    finally:
-        images.close()
-
-    if report_date is None:
-        raise ValueError('No se encontró la fecha ("FOR <día> MM/DD/YY") en el reporte de Lottery.')
+    store_info_fields = extract_store_info_from_pdf(pdf_path)
+    from_date = store_info_fields["from_date"]
+    report_date = date(from_date.year, from_date.month, from_date.day) + timedelta(days=1)
 
     return {
         "report_date": report_date,
@@ -2348,7 +2242,6 @@ def extract_lottery_department_fields_from_pdf(pdf_path, page_index=DEFAULT_PDF_
         "online_net_sales": float(online_record["amount"]),
         "skoff_count": int(skoff_record["count"]),
         "skoff_net_sales": float(skoff_record["amount"]),
-        "page_used": page_used,
     }
 
 
