@@ -115,10 +115,12 @@ try:
     from gettel_toyota_parser import (
         merge_gettel_toyota_into_master,
         merge_gettel_toyota_pdf_into_master,
+        process_gettel_pagos,
     )
 except ImportError as _gettel_toyota_exc:
     merge_gettel_toyota_into_master = None
     merge_gettel_toyota_pdf_into_master = None
+    process_gettel_pagos = None
     _GETTEL_TOYOTA_IMPORT_ERROR = _gettel_toyota_exc
 else:
     _GETTEL_TOYOTA_IMPORT_ERROR = None
@@ -1595,6 +1597,7 @@ class EFTExtractorApp:
         self.monthly_coupon_path = tk.StringVar(value="")
         self.gettel_source_excel_path = tk.StringVar(value="")
         self.gettel_destination_excel_path = tk.StringVar(value="")
+        self.gettel_pagos_pdf_paths = tk.StringVar(value="")
         self.chase_path = tk.StringVar(value="")
         self.chase_rule_keyword = tk.StringVar(value="")
         self.chase_rule_detail = tk.StringVar(value="")
@@ -1611,6 +1614,9 @@ class EFTExtractorApp:
         self.status_text = tk.StringVar(value="Listo — seleccione los archivos para comenzar.")
         self.gettel_status_text = tk.StringVar(
             value="Listo — seleccione Excel de origen y master de destino."
+        )
+        self.gettel_pagos_status_text = tk.StringVar(
+            value="Listo — seleccione el master Cierre y el/los PDF de Pagos."
         )
         self.chase_status_text = tk.StringVar(value="Listo — seleccione un extracto de Chase.")
         self.cmv_status_text = tk.StringVar(value="Listo — seleccione los archivos de departamento y el maestro CMV.")
@@ -1860,6 +1866,36 @@ class EFTExtractorApp:
             left, self.gettel_status_text, section_theme=GETTEL_THEME
         )
 
+        pagos_card = create_card(left, section_theme=GETTEL_THEME)
+        create_panel_label(pagos_card, "Pagos (Cupones) → hoja PAGO Cupones", GETTEL_THEME)
+        self.gettel_pagos_entry = create_file_row(
+            pagos_card,
+            "PDF(s) de Pagos",
+            self.gettel_pagos_pdf_paths,
+            self.select_gettel_pagos_files,
+            section_theme=GETTEL_THEME,
+            label_width=32,
+            browse_label="Examinar…",
+        )
+        pagos_actions = tk.Frame(pagos_card, bg=GETTEL_THEME.card_tint)
+        pagos_actions.pack(fill=tk.X, pady=(4, 0))
+        create_primary_button(
+            pagos_actions,
+            "Procesar Pagos",
+            self.process_gettel_pagos_file,
+            section_theme=GETTEL_THEME,
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        create_secondary_button(
+            pagos_actions,
+            "Limpiar",
+            lambda: self._clear_field(self.gettel_pagos_pdf_paths, "gettel_pagos_entry"),
+            section_theme=GETTEL_THEME,
+        ).pack(side=tk.LEFT)
+
+        self.gettel_pagos_status_label, self.gettel_pagos_status_dot = create_status_bar(
+            left, self.gettel_pagos_status_text, section_theme=GETTEL_THEME
+        )
+
         create_info_panel(
             right,
             "Cómo funciona",
@@ -1870,6 +1906,9 @@ class EFTExtractorApp:
                 "Destino: hoja «Gettel-Toyota MM.YYYY» — columnas E-H",
                 "Ambos proveedores se emparejan por la Columna A (misma fila que Local Account)",
                 "PDF/foto: si el reporte trae un subtotal impreso, se compara automáticamente",
+                "Pagos: usa el mismo master Cierre — cada PDF \"PagosN (Empresa).pdf\" es un recibo por página",
+                "Pagos: fecha y N° de pago van combinados (A/B); Trans # y Total van por fila (C/D)",
+                "Pagos: agranda o achica el bloque de filas para que coincida con la cantidad de recibos",
                 "Abre copia temp del master — guarde manualmente con Guardar como",
             ],
             section_theme=GETTEL_THEME,
@@ -2627,6 +2666,17 @@ class EFTExtractorApp:
             completed=completed,
         )
 
+    def _set_gettel_pagos_status(self, message, is_error=False, completed=False):
+        self.gettel_pagos_status_text.set(message)
+        set_status_style(
+            self.gettel_pagos_status_label,
+            self.gettel_pagos_status_dot,
+            message,
+            section_theme=GETTEL_THEME,
+            is_error=is_error,
+            completed=completed,
+        )
+
     def _set_chase_status(self, message, is_error=False, completed=False):
         self.chase_status_text.set(message)
         set_status_style(
@@ -2945,6 +2995,78 @@ class EFTExtractorApp:
             self.gettel_destination_excel_entry.delete(0, tk.END)
             self.gettel_destination_excel_entry.insert(0, abs_path)
         self._set_gettel_status(f"Destino: {os.path.basename(abs_path)}")
+
+    def select_gettel_pagos_files(self):
+        filenames = filedialog.askopenfilenames(
+            title="Seleccionar PDF(s) de Pagos",
+            filetypes=PDF_DAILY_FILETYPES,
+        )
+        if not filenames:
+            return
+        paths = [os.path.abspath(path) for path in filenames]
+        display_value = join_paths(paths) if join_paths is not None else "; ".join(paths)
+        self.gettel_pagos_pdf_paths.set(display_value)
+        if hasattr(self, "gettel_pagos_entry"):
+            self.gettel_pagos_entry.delete(0, tk.END)
+            self.gettel_pagos_entry.insert(0, display_value)
+        count = len(paths)
+        self._set_gettel_pagos_status(
+            f"{count} PDF(s) de Pagos seleccionado(s)." if count != 1 else "1 PDF de Pagos seleccionado."
+        )
+
+    def process_gettel_pagos_file(self):
+        if process_gettel_pagos is None:
+            self._set_gettel_pagos_status(
+                f"Gettel/Toyota no disponible: {_GETTEL_TOYOTA_IMPORT_ERROR}",
+                is_error=True,
+            )
+            return
+
+        master_path = self.gettel_destination_excel_path.get().strip()
+        pdf_text = self.gettel_pagos_pdf_paths.get().strip()
+
+        if split_paths is not None:
+            pdf_paths = split_paths(pdf_text)
+        else:
+            pdf_paths = [pdf_text] if pdf_text else []
+
+        if not master_path:
+            self._set_gettel_pagos_status(
+                "Seleccione el Excel de Destino (Master Cierre).", is_error=True
+            )
+            return
+        if not pdf_paths:
+            self._set_gettel_pagos_status(
+                "Seleccione uno o más PDF de Pagos.", is_error=True
+            )
+            return
+
+        self._set_gettel_pagos_status(f"Procesando {len(pdf_paths)} PDF(s) de Pagos...")
+        self.root.config(cursor="watch")
+        self.root.update_idletasks()
+        start_time = time.time()
+
+        try:
+            _preview_path, summary = process_gettel_pagos(master_path, pdf_paths)
+            self._clear_field(self.gettel_destination_excel_path, "gettel_destination_excel_entry")
+            warnings = [
+                f"Pago {batch['payment_number']} ({batch['company']}, {batch['date']}): {batch['warning']}"
+                for batch in summary.get("batch_results", [])
+                if batch.get("warning")
+            ]
+            elapsed = format_elapsed_duration(time.time() - start_time)
+            self._set_gettel_pagos_status(f"Completado en {elapsed}.", completed=True)
+            if warnings:
+                messagebox.showwarning(
+                    "Revisar Pagos",
+                    "Se completó el proceso, pero hay datos que no se pudieron leer "
+                    "(revisar manualmente):\n\n" + "\n\n".join(warnings),
+                )
+        except Exception as exc:
+            self._set_gettel_pagos_status(f"Error: {exc}", is_error=True)
+        finally:
+            self.root.config(cursor="")
+            self.root.update_idletasks()
 
     def process_gettel_toyota_report(self):
         source_path = self.gettel_source_excel_path.get().strip()

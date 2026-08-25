@@ -16,6 +16,7 @@ import os
 import re
 import sys
 import time
+from collections import Counter
 from datetime import datetime
 
 try:
@@ -37,7 +38,7 @@ except ImportError:  # pragma: no cover - environment guard
 
 try:
     from openpyxl import Workbook, load_workbook
-    from openpyxl.styles import Alignment, Font
+    from openpyxl.styles import Alignment, Border, Font, Side
     from openpyxl.utils.datetime import from_excel
 
     OPENPYXL_AVAILABLE = True
@@ -45,7 +46,9 @@ except ImportError:  # pragma: no cover - environment guard
     Workbook = None  # type: ignore[assignment,misc]
     load_workbook = None  # type: ignore[assignment,misc]
     Alignment = None  # type: ignore[assignment,misc]
+    Border = None  # type: ignore[assignment,misc]
     Font = None  # type: ignore[assignment,misc]
+    Side = None  # type: ignore[assignment,misc]
     from_excel = None  # type: ignore[assignment,misc]
     OPENPYXL_AVAILABLE = False
 
@@ -1372,6 +1375,359 @@ def merge_gettel_toyota_pdf_into_master(pdf_path, destination_path, launch=True)
         _launch_workbook(preview_path)
 
     return preview_path, rows_matched, vendor, len(totals_by_date), diagnostics
+
+
+# ---- Pagos (payment receipts) OCR -> "PAGO Cupones" sheet ----
+#
+# Each "PagosN (Empresa).pdf" is one payment run: every page is a single
+# register receipt, and the whole PDF shares one payment date and one
+# payment number (the sheet merges those down column A/B, one value for
+# the whole run, exactly like the user already does by hand). Column C
+# (Trans #) and D (Total) are per-receipt, one value per row.
+
+PAGO_CUPONES_SHEET_NAME = "PAGO Cupones"
+PAGO_CUPONES_DATA_START_ROW = 4
+PAGO_COL_FECHA = 1  # A
+PAGO_COL_NUMERO = 2  # B
+PAGO_COL_TRANS = 3  # C
+PAGO_COL_TOTAL = 4  # D
+PAGO_COL_EMPRESA = 5  # E
+
+_PAGOS_FILENAME_RE = re.compile(r"pagos?\s*(\d+)\s*\(([^)]+)\)", re.IGNORECASE)
+_PAGOS_TRANS_RE = re.compile(r"trans\s*#\s*[:;,.]*\s*(\d+)", re.IGNORECASE)
+_PAGOS_TOTAL_RE = re.compile(r"total\s*=?\s*\$?\s*([\d,]+\.\d{2})", re.IGNORECASE)
+_PAGOS_DATE_RE = re.compile(r"(\d{1,2}/\d{1,2}/\d{2,4})")
+
+_PAGO_ROW_STYLE_SPEC = {
+    PAGO_COL_FECHA: {"size": 11, "bold": False, "format": "mm-dd-yy", "align": "center"},
+    PAGO_COL_NUMERO: {"size": 10, "bold": False, "format": "0", "align": "center"},
+    PAGO_COL_TRANS: {"size": 11, "bold": False, "format": "0", "align": "center"},
+    PAGO_COL_TOTAL: {"size": 11, "bold": True, "format": '"$"\\ #,##0.00', "align": "center"},
+}
+
+
+def _parse_pagos_filename(pdf_path):
+    """
+    "Pagos2 (Toyota).pdf" -> (2, "Toyota").
+
+    The payment number and company come from the filename, not the receipt
+    photos: a cash receipt never names which company the payment is being
+    tracked under (only some card receipts show a store name, and that's a
+    different thing), so the filename is the only reliable source.
+    """
+    base = os.path.splitext(os.path.basename(pdf_path))[0]
+    match = _PAGOS_FILENAME_RE.search(base)
+    if not match:
+        raise ValueError(
+            f'No se pudo leer el número de pago ni la empresa del nombre "{os.path.basename(pdf_path)}" '
+            '(se espera algo como "Pagos2 (Toyota).pdf").'
+        )
+    return int(match.group(1)), match.group(2).strip()
+
+
+def _ocr_pago_receipt_text(image):
+    """
+    Best-effort OCR of one payment receipt photo, scored by how many of the
+    three fields this module needs (date/trans#/total) come through — these
+    are clean register receipts (not a cramped/watermarked report), so a
+    plain image_to_string per PSM mode is enough without needing multiple
+    OCR passes' output merged together.
+    """
+    if image is None:
+        return ""
+    _ensure_pytesseract()
+    best_text = ""
+    best_score = -1
+    for config in _OCR_TESSERACT_CONFIGS:
+        try:
+            text = pytesseract.image_to_string(image, config=config) or ""
+        except Exception:
+            continue
+        score = sum(
+            1
+            for pattern in (_PAGOS_TRANS_RE, _PAGOS_TOTAL_RE, _PAGOS_DATE_RE)
+            if pattern.search(text)
+        )
+        if score > best_score:
+            best_score = score
+            best_text = text
+    return best_text
+
+
+def extract_pago_batch_from_pdf(pdf_path):
+    """
+    OCR every page of one "PagosN (Empresa).pdf" into an ordered list of
+    {trans_number, total} receipts (in page order), plus the batch's shared
+    date (the most common date read across its pages) and the payment
+    number/company parsed from the filename.
+    """
+    payment_number, company = _parse_pagos_filename(pdf_path)
+    images = _extract_pdf_page_images(pdf_path)
+
+    receipts = []
+    dates_found = []
+    warnings = []
+    for index, image in enumerate(images):
+        text = _ocr_pago_receipt_text(image)
+        trans_match = _PAGOS_TRANS_RE.search(text)
+        total_match = _PAGOS_TOTAL_RE.search(text)
+        date_match = _PAGOS_DATE_RE.search(text)
+
+        trans_number = int(trans_match.group(1)) if trans_match else None
+        total = _coerce_float(_clean_number_token(total_match.group(1))) if total_match else None
+        date_value = _parse_date(date_match.group(1)) if date_match else None
+
+        if date_value is not None:
+            dates_found.append(date_value)
+        if trans_number is None:
+            warnings.append(f'Página {index + 1}: no se pudo leer "Trans #" — revisar manualmente.')
+        if total is None:
+            warnings.append(f'Página {index + 1}: no se pudo leer "Total = $" — revisar manualmente.')
+        receipts.append({"trans_number": trans_number, "total": total})
+
+    if not dates_found:
+        raise ValueError(f'No se pudo leer ninguna fecha en "{os.path.basename(pdf_path)}".')
+    batch_date = Counter(dates_found).most_common(1)[0][0]
+
+    return {
+        "payment_number": payment_number,
+        "company": company,
+        "date": batch_date,
+        "receipts": receipts,
+        "warning": " | ".join(warnings) if warnings else None,
+    }
+
+
+def _find_pago_cupones_sheet(workbook):
+    for name in workbook.sheetnames:
+        if name.strip().lower() == PAGO_CUPONES_SHEET_NAME.lower():
+            return workbook[name]
+    raise ValueError(
+        f'Hoja "{PAGO_CUPONES_SHEET_NAME}" no encontrada. Disponibles: {", ".join(workbook.sheetnames)}'
+    )
+
+
+def _merge_range_at(sheet, row, column):
+    """The MergedCellRange covering (row, column), or None if that cell isn't merged."""
+    for merged_range in sheet.merged_cells.ranges:
+        if (
+            merged_range.min_row <= row <= merged_range.max_row
+            and merged_range.min_col <= column <= merged_range.max_col
+        ):
+            return merged_range
+    return None
+
+
+def _pago_block_row_span(sheet, start_row):
+    """How many rows the block at `start_row` currently occupies, from column A's merge (1 if it isn't merged)."""
+    merged = _merge_range_at(sheet, start_row, PAGO_COL_FECHA)
+    if merged is not None and merged.min_row == start_row:
+        return merged.max_row - merged.min_row + 1
+    return 1
+
+
+def _find_pago_block_start_row(sheet, payment_number):
+    """The row where column B already holds `payment_number` (top of an existing block), or None."""
+    for row in range(PAGO_CUPONES_DATA_START_ROW, sheet.max_row + 1):
+        value = sheet.cell(row=row, column=PAGO_COL_NUMERO).value
+        if value is not None and _coerce_float(str(value)) == payment_number:
+            return row
+    return None
+
+
+def _find_pago_insertion_row(sheet, payment_number):
+    """
+    Where a brand-new Pago N block (no existing stub row for it) should
+    start: right after the highest existing payment number below N, or at
+    the very first data row if there's no earlier block at all.
+    """
+    best_row = None
+    best_number = None
+    for row in range(PAGO_CUPONES_DATA_START_ROW, sheet.max_row + 1):
+        value = sheet.cell(row=row, column=PAGO_COL_NUMERO).value
+        if value is None:
+            continue
+        existing_number = _coerce_float(str(value))
+        if existing_number is not None and existing_number < payment_number:
+            if best_number is None or existing_number > best_number:
+                best_number = existing_number
+                best_row = row
+    if best_row is None:
+        return PAGO_CUPONES_DATA_START_ROW
+    return best_row + _pago_block_row_span(sheet, best_row)
+
+
+def _resize_pago_block(sheet, start_row, old_size, new_size):
+    """
+    Grow or shrink the block at `start_row` from `old_size` to `new_size`
+    rows, relocating every merged range in the sheet by hand.
+
+    openpyxl's insert_rows/delete_rows shift cell values and styles down or
+    up correctly, but do NOT adjust merged-cell ranges — left alone, every
+    block below the one being resized (and the summary rows further down)
+    would keep pointing at their old row numbers instead of following the
+    shift, corrupting the sheet's structure. Unmerging everything first,
+    doing the plain row insert/delete, then recomputing each range against
+    the same delta keeps every block (and the fixed 2-row gap before
+    whatever comes after the last one) lined up automatically.
+
+    Deliberately leaves the resized block's own A/B range unmerged on
+    return — every cell in a merged range other than its top-left anchor is
+    a read-only MergedCell in openpyxl, so styling it after re-merging
+    silently does nothing. The caller re-merges only after restyling each
+    row.
+    """
+    delta = new_size - old_size
+    if delta == 0:
+        return
+
+    boundary = start_row + old_size
+    existing_merges = [
+        (r.min_row, r.min_col, r.max_row, r.max_col) for r in list(sheet.merged_cells.ranges)
+    ]
+    for merged_range in list(sheet.merged_cells.ranges):
+        sheet.unmerge_cells(str(merged_range))
+
+    if delta > 0:
+        sheet.insert_rows(boundary, delta)
+    else:
+        sheet.delete_rows(boundary + delta, -delta)
+
+    for min_row, min_col, max_row, max_col in existing_merges:
+        if min_row == start_row and old_size > 0 and max_row == start_row + old_size - 1:
+            continue  # the block being resized -- left unmerged, see docstring
+        elif min_row >= boundary:
+            min_row += delta
+            max_row += delta
+        if max_row < min_row or (min_row == max_row and min_col == max_col):
+            continue
+        sheet.merge_cells(start_row=min_row, start_column=min_col, end_row=max_row, end_column=max_col)
+
+
+def _apply_pago_row_style(sheet, row, is_first_row_of_block):
+    thin = Side(style="thin")
+    for column, spec in _PAGO_ROW_STYLE_SPEC.items():
+        cell = sheet.cell(row=row, column=column)
+        cell.font = Font(name="Calibri", size=spec["size"], bold=spec["bold"])
+        cell.number_format = spec["format"]
+        cell.alignment = Alignment(horizontal=spec["align"])
+        if column in (PAGO_COL_FECHA, PAGO_COL_NUMERO):
+            cell.border = Border(top=thin if is_first_row_of_block else None, left=thin, right=thin)
+        else:
+            cell.border = Border(top=thin, bottom=thin, left=thin, right=thin)
+
+
+def _write_pago_batch(sheet, batch):
+    payment_number = batch["payment_number"]
+    receipts = batch["receipts"]
+    new_size = len(receipts)
+
+    start_row = _find_pago_block_start_row(sheet, payment_number)
+    if start_row is not None:
+        old_size = _pago_block_row_span(sheet, start_row)
+    else:
+        start_row = _find_pago_insertion_row(sheet, payment_number)
+        old_size = 0
+
+    _resize_pago_block(sheet, start_row, old_size, new_size)
+
+    # Style every row while its A/B cells are still plain (unmerged) Cell
+    # objects -- every cell but a merge's top-left anchor becomes a
+    # read-only MergedCell once merged, silently dropping style changes.
+    for offset in range(new_size):
+        _apply_pago_row_style(sheet, start_row + offset, is_first_row_of_block=(offset == 0))
+
+    if new_size > 1:
+        sheet.merge_cells(
+            start_row=start_row, start_column=PAGO_COL_FECHA,
+            end_row=start_row + new_size - 1, end_column=PAGO_COL_FECHA,
+        )
+        sheet.merge_cells(
+            start_row=start_row, start_column=PAGO_COL_NUMERO,
+            end_row=start_row + new_size - 1, end_column=PAGO_COL_NUMERO,
+        )
+
+    sheet.cell(row=start_row, column=PAGO_COL_FECHA, value=batch["date"])
+    sheet.cell(row=start_row, column=PAGO_COL_NUMERO, value=payment_number)
+    company_cell = sheet.cell(row=start_row, column=PAGO_COL_EMPRESA, value=f"({batch['company']})")
+    company_cell.font = Font(name="Calibri", size=11, bold=True)
+
+    for offset, receipt in enumerate(receipts):
+        row = start_row + offset
+        if receipt["trans_number"] is not None:
+            sheet.cell(row=row, column=PAGO_COL_TRANS, value=receipt["trans_number"])
+        if receipt["total"] is not None:
+            sheet.cell(row=row, column=PAGO_COL_TOTAL, value=receipt["total"])
+
+    return start_row
+
+
+def process_gettel_pagos(master_path, pdf_paths):
+    """
+    OCR one or more "PagosN (Empresa).pdf" payment-receipt batches into the
+    "PAGO Cupones" sheet's A-E columns.
+
+    Each batch's row block is resized to match its real receipt count
+    exactly (growing or shrinking as needed), which shifts every block
+    below it — and the summary rows further down the sheet — by however
+    many rows that adds or removes, so the fixed 2-row gap after the last
+    block is preserved automatically regardless of how many receipts came
+    in this month. Opens a temp preview copy — the destination file itself
+    is never modified.
+
+    Returns:
+        tuple[str, dict]: (preview path, summary dict with batch_results)
+    """
+    import shutil
+    import tempfile
+
+    _ensure_openpyxl()
+    _ensure_pdfplumber()
+    _ensure_pytesseract()
+    master_path = os.path.abspath(str(master_path).strip())
+    paths = _normalize_pdf_paths(pdf_paths)
+
+    if not os.path.isfile(master_path):
+        raise FileNotFoundError(f"Excel no encontrado: {master_path}")
+    if not paths:
+        raise ValueError("No se proporcionaron PDF de pagos.")
+    for pdf_path in paths:
+        if not os.path.isfile(pdf_path):
+            raise FileNotFoundError(f"PDF no encontrado: {pdf_path}")
+
+    batches = [extract_pago_batch_from_pdf(pdf_path) for pdf_path in paths]
+    batches.sort(key=lambda b: b["payment_number"])
+
+    preview_handle = tempfile.NamedTemporaryFile(
+        suffix=".xlsx", prefix="GettelPagosPreview_", delete=False
+    )
+    preview_path = preview_handle.name
+    preview_handle.close()
+    shutil.copy2(master_path, preview_path)
+
+    workbook = load_workbook(preview_path)
+    try:
+        sheet = _find_pago_cupones_sheet(workbook)
+        batch_results = []
+        for batch in batches:
+            row = _write_pago_batch(sheet, batch)
+            batch_results.append(
+                {
+                    "payment_number": batch["payment_number"],
+                    "company": batch["company"],
+                    "date": batch["date"].strftime("%d/%m/%Y"),
+                    "row": row,
+                    "receipt_count": len(batch["receipts"]),
+                    "warning": batch["warning"],
+                }
+            )
+        workbook.save(preview_path)
+    finally:
+        workbook.close()
+
+    _launch_workbook(preview_path)
+
+    return preview_path, {"batch_results": batch_results}
 
 
 def main(argv=None):
