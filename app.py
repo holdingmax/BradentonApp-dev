@@ -1593,7 +1593,6 @@ class EFTExtractorApp:
 
         self.pdf_path = tk.StringVar(value="")
         self.excel_path = tk.StringVar(value="")
-        self.cupones_excel_path = tk.StringVar(value="")
         self.monthly_coupon_path = tk.StringVar(value="")
         self.gettel_source_excel_path = tk.StringVar(value="")
         self.gettel_destination_excel_path = tk.StringVar(value="")
@@ -1728,8 +1727,19 @@ class EFTExtractorApp:
         create_compact_section_header(
             header,
             "Gestión de Cupones y EFT",
-            "Dos flujos independientes: (1) PDF de EFT bancario → actualiza Cta Cte, (2) Reporte mensual de J.H. → agrega y cruza Cupones.",
+            "Dos flujos independientes sobre el mismo Excel Ledger — (1) PDF de EFT bancario → actualiza Cta Cte, (2) Reporte mensual de J.H. → agrega y cruza Cupones.",
             EFT_THEME,
+        )
+
+        ledger_card = create_card(left, section_theme=EFT_THEME)
+        create_panel_label(ledger_card, "Excel Ledger", EFT_THEME)
+        self.excel_entry = create_file_row(
+            ledger_card,
+            "Excel Ledger",
+            self.excel_path,
+            self.select_excel,
+            section_theme=EFT_THEME,
+            label_width=11,
         )
 
         cta_card = create_card(left, section_theme=EFT_THEME)
@@ -1739,14 +1749,6 @@ class EFTExtractorApp:
             "EFT PDF",
             self.pdf_path,
             self.select_pdf,
-            section_theme=EFT_THEME,
-            label_width=11,
-        )
-        self.excel_entry = create_file_row(
-            cta_card,
-            "Excel Ledger",
-            self.excel_path,
-            self.select_excel,
             section_theme=EFT_THEME,
             label_width=11,
         )
@@ -1780,14 +1782,6 @@ class EFTExtractorApp:
             section_theme=EFT_THEME,
             label_width=11,
             browse_label="Examinar…",
-        )
-        self.cupones_excel_entry = create_file_row(
-            coupon_card,
-            "Excel Ledger",
-            self.cupones_excel_path,
-            self.select_cupones_excel_ledger,
-            section_theme=EFT_THEME,
-            label_width=11,
         )
 
         actions = tk.Frame(coupon_card, bg=EFT_THEME.card_tint)
@@ -2835,12 +2829,6 @@ class EFTExtractorApp:
             self.excel_path.set(path)
             self._set_status("Archivo Excel seleccionado.")
 
-    def select_cupones_excel_ledger(self):
-        path = self._ask_excel_ledger_path()
-        if path:
-            self.cupones_excel_path.set(path)
-            self._set_status("Excel maestro seleccionado para el pipeline de Cupones.")
-
     def select_monthly_coupon_report(self):
         path = filedialog.askopenfilename(
             title="Seleccionar Reporte Mensual de Cupones J.H. Williams",
@@ -2900,13 +2888,13 @@ class EFTExtractorApp:
             )
             return
 
-        excel_path = self.cupones_excel_path.get().strip()
+        excel_path = self.excel_path.get().strip()
         monthly_report_path = self.monthly_coupon_path.get().strip()
 
         if not excel_path:
             messagebox.showwarning(
                 "Archivo faltante",
-                "Seleccione un archivo Excel maestro en el Paso 2.",
+                "Seleccione el Excel Ledger.",
             )
             return
 
@@ -2919,7 +2907,7 @@ class EFTExtractorApp:
 
         try:
             _saved_path, summary = append_monthly_cupones(excel_path, monthly_report_path)
-            self._clear_field(self.cupones_excel_path, "cupones_excel_entry")
+            self._clear_field(self.excel_path, "excel_entry")
             skipped = summary.get("rows_skipped_duplicates", 0)
             resynced = summary.get("rows_resynced_pending", 0)
             status_suffix = (
@@ -2962,7 +2950,7 @@ class EFTExtractorApp:
 
         try:
             _saved_path, summary = resync_cupones_only(excel_path)
-            self._clear_field(self.cupones_excel_path, "cupones_excel_entry")
+            self._clear_field(self.excel_path, "excel_entry")
             resynced = summary.get("rows_resynced_pending", 0)
             self._set_status(
                 f"Cupones actualizados ({resynced} pendiente(s) resincronizado(s)).",
