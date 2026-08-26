@@ -1663,6 +1663,9 @@ class EFTExtractorApp:
 
         notebook = ttk.Notebook(body, style="Premium.TNotebook")
         notebook.pack(fill=tk.BOTH, expand=True)
+        self.notebook = notebook
+        self.root.bind_all("<Control-Next>", self._select_next_tab)
+        self.root.bind_all("<Control-Prior>", self._select_previous_tab)
 
         # These three tabs' content can run taller than the window's minimum
         # height (Chase Bank and Cupones y EFT already did; Reporte Diario
@@ -1706,6 +1709,19 @@ class EFTExtractorApp:
         self._build_lottery_tab(lottery_content)
         self._build_cmv_tab(cmv_tab)
         self._build_sales_tab(sales_tab)
+
+    def _select_next_tab(self, event=None):
+        self._cycle_tab(1)
+
+    def _select_previous_tab(self, event=None):
+        self._cycle_tab(-1)
+
+    def _cycle_tab(self, direction):
+        tabs = self.notebook.tabs()
+        if not tabs:
+            return
+        current = self.notebook.index(self.notebook.select())
+        self.notebook.select(tabs[(current + direction) % len(tabs)])
 
     def _build_eft_tab(self, parent):
         header, left, right = create_dual_column_tab(parent)
