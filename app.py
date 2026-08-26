@@ -1822,32 +1822,30 @@ class EFTExtractorApp:
             GETTEL_THEME,
         )
 
-        gettel_card = create_card(left, section_theme=GETTEL_THEME)
-        create_panel_label(
-            gettel_card,
-            "Pipeline GETTEL / TOYOTA",
-            GETTEL_THEME,
-        )
-        self.gettel_source_excel_entry = create_file_row(
-            gettel_card,
-            "Seleccionar Excel de Origen (Cupones Diarios):",
-            self.gettel_source_excel_path,
-            self.select_gettel_source_excel,
-            section_theme=GETTEL_THEME,
-            label_width=32,
-            browse_label="Examinar…",
-        )
+        master_card = create_card(left, section_theme=GETTEL_THEME)
+        create_panel_label(master_card, "Excel Maestro (Master Cierre)", GETTEL_THEME)
         self.gettel_destination_excel_entry = create_file_row(
-            gettel_card,
-            "Seleccionar Excel de Destino (Master Cierre):",
+            master_card,
+            "Excel Maestro",
             self.gettel_destination_excel_path,
             self.select_gettel_destination_excel,
             section_theme=GETTEL_THEME,
-            label_width=32,
+            label_width=13,
             browse_label="Examinar…",
         )
 
-        gettel_actions = tk.Frame(gettel_card, bg=GETTEL_THEME.card_tint)
+        cupones_card = create_card(left, section_theme=GETTEL_THEME)
+        create_panel_label(cupones_card, "Cupones Diarios → hoja Gettel-Toyota", GETTEL_THEME)
+        self.gettel_source_excel_entry = create_file_row(
+            cupones_card,
+            "Excel Cupones",
+            self.gettel_source_excel_path,
+            self.select_gettel_source_excel,
+            section_theme=GETTEL_THEME,
+            label_width=13,
+            browse_label="Examinar…",
+        )
+        gettel_actions = tk.Frame(cupones_card, bg=GETTEL_THEME.card_tint)
         gettel_actions.pack(fill=tk.X, pady=(4, 0))
         create_primary_button(
             gettel_actions,
@@ -1857,7 +1855,7 @@ class EFTExtractorApp:
         ).pack(side=tk.LEFT, padx=(0, 8))
         create_secondary_button(
             gettel_actions,
-            "Limpiar Origen",
+            "Limpiar",
             lambda: self._clear_field(self.gettel_source_excel_path, "gettel_source_excel_entry"),
             section_theme=GETTEL_THEME,
         ).pack(side=tk.LEFT)
