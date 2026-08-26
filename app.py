@@ -125,6 +125,14 @@ except ImportError as _gettel_toyota_exc:
 else:
     _GETTEL_TOYOTA_IMPORT_ERROR = None
 
+try:
+    from proveedores import append_supplier_invoices
+except ImportError as _proveedores_exc:
+    append_supplier_invoices = None
+    _PROVEEDORES_IMPORT_ERROR = _proveedores_exc
+else:
+    _PROVEEDORES_IMPORT_ERROR = None
+
 from ui_theme import (
     ANALISIS_MASTER_FILETYPES,
     CHASE_THEME,
@@ -135,6 +143,7 @@ from ui_theme import (
     FONT,
     GETTEL_THEME,
     PDF_DAILY_FILETYPES,
+    PROVEEDORES_THEME,
     REPORTE_DIARIO_THEME,
     SALES_FILETYPES,
     SALES_THEME,
@@ -1597,6 +1606,8 @@ class EFTExtractorApp:
         self.gettel_source_excel_path = tk.StringVar(value="")
         self.gettel_destination_excel_path = tk.StringVar(value="")
         self.gettel_pagos_pdf_paths = tk.StringVar(value="")
+        self.proveedores_ledger_path = tk.StringVar(value="")
+        self.proveedores_invoice_pdf_paths = tk.StringVar(value="")
         self.chase_path = tk.StringVar(value="")
         self.chase_rule_keyword = tk.StringVar(value="")
         self.chase_rule_detail = tk.StringVar(value="")
@@ -1616,6 +1627,9 @@ class EFTExtractorApp:
         )
         self.gettel_pagos_status_text = tk.StringVar(
             value="Listo — seleccione el master Cierre y el/los PDF de Pagos."
+        )
+        self.proveedores_status_text = tk.StringVar(
+            value="Listo — seleccione el Excel Ledger y el/los PDF de facturas."
         )
         self.chase_status_text = tk.StringVar(value="Listo — seleccione un extracto de Chase.")
         self.cmv_status_text = tk.StringVar(value="Listo — seleccione los archivos de departamento y el maestro CMV.")
@@ -1672,6 +1686,7 @@ class EFTExtractorApp:
         # The rest fit comfortably and stay as plain frames.
         eft_tab, eft_content = create_scrollable_tab_frame(notebook)
         gettel_tab = tk.Frame(notebook, bg=THEME.BG)
+        proveedores_tab = tk.Frame(notebook, bg=THEME.BG)
         chase_tab, chase_content = create_scrollable_tab_frame(notebook)
         reporte_tab, reporte_content = create_scrollable_tab_frame(notebook)
         lottery_tab, lottery_content = create_scrollable_tab_frame(notebook)
@@ -1683,6 +1698,7 @@ class EFTExtractorApp:
         self._tab_icons = [
             make_tab_icon(EFT_THEME.accent),
             make_tab_icon(GETTEL_THEME.accent),
+            make_tab_icon(PROVEEDORES_THEME.accent),
             make_tab_icon(CHASE_THEME.accent),
             make_tab_icon(REPORTE_DIARIO_THEME.accent),
             make_tab_icon(REPORTE_DIARIO_THEME.accent),
@@ -1692,6 +1708,7 @@ class EFTExtractorApp:
         tabs = [
             (eft_tab, "  Cupones y EFT  "),
             (gettel_tab, "  Gettel / Toyota  "),
+            (proveedores_tab, "  Proveedores  "),
             (chase_tab, "  Chase Bank  "),
             (reporte_tab, "  Reporte Diario  "),
             (lottery_tab, "  Lottery  "),
@@ -1703,6 +1720,7 @@ class EFTExtractorApp:
 
         self._build_eft_tab(eft_content)
         self._build_gettel_tab(gettel_tab)
+        self._build_proveedores_tab(proveedores_tab)
         self._build_chase_tab(chase_content)
         self._build_reporte_diario_tab(reporte_content)
         self._build_lottery_tab(lottery_content)
@@ -1920,6 +1938,74 @@ class EFTExtractorApp:
                 "Abre copia temp del master — guarde manualmente con Guardar como",
             ],
             section_theme=GETTEL_THEME,
+        )
+
+    def _build_proveedores_tab(self, parent):
+        header, left, right = create_dual_column_tab(parent)
+        create_compact_section_header(
+            header,
+            "Proveedores",
+            "Lee facturas de compra (PDF) y agrega la fila correspondiente en la hoja "
+            "de cada proveedor del libro de cuentas corrientes.",
+            PROVEEDORES_THEME,
+        )
+
+        ledger_card = create_card(left, section_theme=PROVEEDORES_THEME)
+        create_panel_label(ledger_card, "Excel Ledger (Cta Cte Proveedores)", PROVEEDORES_THEME)
+        self.proveedores_ledger_entry = create_file_row(
+            ledger_card,
+            "Excel Ledger",
+            self.proveedores_ledger_path,
+            self.select_proveedores_ledger,
+            section_theme=PROVEEDORES_THEME,
+            label_width=13,
+        )
+
+        invoices_card = create_card(left, section_theme=PROVEEDORES_THEME)
+        create_panel_label(invoices_card, "Cargar Facturas → fila \"invoice\" por proveedor", PROVEEDORES_THEME)
+        self.proveedores_invoice_entry = create_file_row(
+            invoices_card,
+            "PDF(s)",
+            self.proveedores_invoice_pdf_paths,
+            self.select_proveedores_invoice_files,
+            section_theme=PROVEEDORES_THEME,
+            label_width=13,
+            browse_label="Examinar…",
+        )
+        invoices_actions = tk.Frame(invoices_card, bg=PROVEEDORES_THEME.card_tint)
+        invoices_actions.pack(fill=tk.X, pady=(4, 0))
+        create_primary_button(
+            invoices_actions,
+            "Procesar Facturas",
+            self.process_proveedores_invoices,
+            section_theme=PROVEEDORES_THEME,
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        create_secondary_button(
+            invoices_actions,
+            "Limpiar",
+            lambda: self._clear_field(self.proveedores_invoice_pdf_paths, "proveedores_invoice_entry"),
+            section_theme=PROVEEDORES_THEME,
+        ).pack(side=tk.LEFT)
+
+        self.proveedores_status_label, self.proveedores_status_dot = create_status_bar(
+            left, self.proveedores_status_text, section_theme=PROVEEDORES_THEME
+        )
+
+        create_info_panel(
+            right,
+            "Cómo funciona",
+            [
+                "Se puede cargar más de un PDF a la vez, incluso de distintos proveedores",
+                "El proveedor se detecta automáticamente por el contenido del PDF",
+                "Por ahora solo reconoce a H.T. Hackney — se agregan más a medida que se validan",
+                "Se ordenan por fecha y se agregan encadenadas a la última fila real de esa hoja",
+                "Si cambia el mes, respeta la fila separadora y alterna el color verde/amarillo",
+                "Una factura ya cargada (mismo N°) se omite automáticamente",
+                "El BALANCE se recalcula solo — no hace falta tocarlo",
+                "Abre copia temp del Excel — guarde manualmente con Guardar como",
+                "Los pagos (Chase) se cargan aparte, en una etapa siguiente",
+            ],
+            section_theme=PROVEEDORES_THEME,
         )
 
     def _build_chase_rules_manager(self, parent):
@@ -2685,6 +2771,17 @@ class EFTExtractorApp:
             completed=completed,
         )
 
+    def _set_proveedores_status(self, message, is_error=False, completed=False):
+        self.proveedores_status_text.set(message)
+        set_status_style(
+            self.proveedores_status_label,
+            self.proveedores_status_dot,
+            message,
+            section_theme=PROVEEDORES_THEME,
+            is_error=is_error,
+            completed=completed,
+        )
+
     def _set_chase_status(self, message, is_error=False, completed=False):
         self.chase_status_text.set(message)
         set_status_style(
@@ -3066,6 +3163,95 @@ class EFTExtractorApp:
                 )
         except Exception as exc:
             self._set_gettel_pagos_status(f"Error: {exc}", is_error=True)
+        finally:
+            self.root.config(cursor="")
+            self.root.update_idletasks()
+
+    def select_proveedores_ledger(self):
+        path = filedialog.askopenfilename(
+            title="Seleccionar Excel Ledger (Cta Cte Proveedores)",
+            filetypes=[("Archivos Excel", "*.xlsx")],
+        )
+        if not path:
+            return
+        abs_path = os.path.abspath(path)
+        self.proveedores_ledger_path.set(abs_path)
+        if hasattr(self, "proveedores_ledger_entry"):
+            self.proveedores_ledger_entry.delete(0, tk.END)
+            self.proveedores_ledger_entry.insert(0, abs_path)
+        self._set_proveedores_status(f"Excel Ledger: {os.path.basename(abs_path)}")
+
+    def select_proveedores_invoice_files(self):
+        filenames = filedialog.askopenfilenames(
+            title="Seleccionar PDF(s) de Facturas",
+            filetypes=PDF_DAILY_FILETYPES,
+        )
+        if not filenames:
+            return
+        paths = [os.path.abspath(path) for path in filenames]
+        display_value = join_paths(paths) if join_paths is not None else "; ".join(paths)
+        self.proveedores_invoice_pdf_paths.set(display_value)
+        if hasattr(self, "proveedores_invoice_entry"):
+            self.proveedores_invoice_entry.delete(0, tk.END)
+            self.proveedores_invoice_entry.insert(0, display_value)
+        count = len(paths)
+        self._set_proveedores_status(
+            f"{count} PDF(s) de facturas seleccionado(s)." if count != 1 else "1 PDF de factura seleccionado."
+        )
+
+    def process_proveedores_invoices(self):
+        if append_supplier_invoices is None:
+            self._set_proveedores_status(
+                f"Proveedores no disponible: {_PROVEEDORES_IMPORT_ERROR}",
+                is_error=True,
+            )
+            return
+
+        ledger_path = self.proveedores_ledger_path.get().strip()
+        pdf_text = self.proveedores_invoice_pdf_paths.get().strip()
+
+        if split_paths is not None:
+            pdf_paths = split_paths(pdf_text)
+        else:
+            pdf_paths = [pdf_text] if pdf_text else []
+
+        if not ledger_path:
+            self._set_proveedores_status(
+                "Seleccione el Excel Ledger.", is_error=True
+            )
+            return
+        if not pdf_paths:
+            self._set_proveedores_status(
+                "Seleccione uno o más PDF de facturas.", is_error=True
+            )
+            return
+
+        self._set_proveedores_status(f"Procesando {len(pdf_paths)} PDF(s) de facturas...")
+        self.root.config(cursor="watch")
+        self.root.update_idletasks()
+        start_time = time.time()
+
+        try:
+            _preview_path, summary = append_supplier_invoices(ledger_path, pdf_paths)
+            self._clear_field(self.proveedores_invoice_pdf_paths, "proveedores_invoice_entry")
+            warnings = [
+                f"{batch['supplier']}: {len(batch['duplicates_skipped'])} factura(s) ya "
+                f"cargada(s), omitida(s) — {', '.join(batch['duplicates_skipped'])}"
+                for batch in summary.get("batch_results", [])
+                if batch.get("duplicates_skipped")
+            ]
+            elapsed = format_elapsed_duration(time.time() - start_time)
+            self._set_proveedores_status(
+                f"Completado en {elapsed} ({summary['invoices_appended']} factura(s) agregada(s)).",
+                completed=True,
+            )
+            if warnings:
+                messagebox.showwarning(
+                    "Revisar Proveedores",
+                    "Se completó el proceso, pero hay avisos:\n\n" + "\n\n".join(warnings),
+                )
+        except Exception as exc:
+            self._set_proveedores_status(f"Error: {exc}", is_error=True)
         finally:
             self.root.config(cursor="")
             self.root.update_idletasks()

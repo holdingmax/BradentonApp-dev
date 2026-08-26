@@ -121,6 +121,15 @@ SALES_THEME = SectionTheme(
     border_focus="#EA580C",
 )
 
+# Proveedores — pink
+PROVEEDORES_THEME = SectionTheme(
+    accent="#DB2777",
+    accent_hover="#B91C63",
+    accent_soft="#FBD9EA",
+    card_tint="#FFFFFF",
+    border_focus="#DB2777",
+)
+
 
 def apply_root_style(root):
     root.configure(bg=THEME.BG)
