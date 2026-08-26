@@ -48,6 +48,7 @@ HEADER_ROW = 3
 HEADER_START_COLUMN = 3  # Column C
 DATA_START_ROW = 5
 DATE_SCAN_COLUMN = 1  # Column A only — calendar day matching
+MANUAL_REPORT_COUNT_COLUMN = 71  # Column BS — total de unidades del reporte, cargado a mano
 
 DEFAULT_PDF_PAGE_INDEX = 3  # Fourth page (0-based) for full un-cropped daily PDF
 
@@ -1543,6 +1544,47 @@ def inject_daily_sales(sheet, pdf_records, column_map, target_row):
     return written, skipped
 
 
+def _read_manual_report_count(sheet, row):
+    """
+    BS — el total de unidades impreso en el reporte, cargado a mano por el
+    usuario (BR, al lado, es una fórmula que suma lo ya cargado en la fila
+    y no se toca acá).
+
+    Un día real nunca imprime 0 unidades vendidas, así que un 0 literal se
+    trata igual que una celda vacía (todavía no se cargó el dato a mano).
+    Una fórmula sin calcular también se ignora, por las dudas.
+    """
+    raw = sheet.cell(row=row, column=MANUAL_REPORT_COUNT_COLUMN).value
+    if raw is None or (isinstance(raw, str) and (not raw.strip() or raw.strip().startswith("="))):
+        return None
+    return _safe_parse_count(raw) or None
+
+
+def check_loaded_count_against_manual_entry(sheet, target_row, column_map):
+    """
+    Compare BS (cargado a mano desde el reporte impreso) contra la suma de
+    Net Count ya presente en todas las columnas de departamento de esa fila.
+
+    Devuelve None si BS está vacío (todavía no se cargó) o si ambos totales
+    coinciden; si no, un dict con los dos totales para armar el aviso.
+    """
+    manual_count = _read_manual_report_count(sheet, target_row)
+    if manual_count is None:
+        return None
+
+    seen_columns = set()
+    loaded_count = 0
+    for count_col, _amount_col in column_map.values():
+        if count_col in seen_columns:
+            continue
+        seen_columns.add(count_col)
+        loaded_count += _safe_parse_count(sheet.cell(row=target_row, column=count_col).value)
+
+    if loaded_count == manual_count:
+        return None
+    return {"manual_count": manual_count, "loaded_count": loaded_count}
+
+
 def _normalize_pdf_paths(pdf_paths):
     if pdf_paths is None:
         return []
@@ -1673,6 +1715,15 @@ def process_reporte_diario(
                 f"{mismatch['computed_count']} vs {mismatch['printed_count']} unidades, "
                 f"${mismatch['computed_amount']:.2f} vs ${mismatch['printed_amount']:.2f} — "
                 "revise el OCR."
+            )
+        manual_mismatch = check_loaded_count_against_manual_entry(
+            sheet, target_row, column_map
+        )
+        if manual_mismatch:
+            warnings.append(
+                f"La columna BS dice {manual_mismatch['manual_count']} unidades, pero "
+                f"en la fila hay {manual_mismatch['loaded_count']} cargadas — revise "
+                "los departamentos."
             )
         warning = " | ".join(warnings) if warnings else None
 
