@@ -10,6 +10,7 @@ detectado automáticamente por el contenido del PDF. Se agregan proveedores
 nuevos ahí, sin tocar la lógica de inserción de filas.
 """
 
+import io
 import os
 import re
 import sys
@@ -23,14 +24,28 @@ except ImportError:  # pragma: no cover - environment guard
     pdfplumber = None  # type: ignore[assignment]
 
 try:
+    import pytesseract
+    from PIL import Image
+except ImportError:  # pragma: no cover - environment guard
+    pytesseract = None  # type: ignore[assignment]
+    Image = None  # type: ignore[assignment]
+
+try:
     from openpyxl import load_workbook
-    from openpyxl.styles import PatternFill
+    from openpyxl.styles import Font, PatternFill
 
     OPENPYXL_AVAILABLE = True
 except ImportError:  # pragma: no cover - environment guard
     load_workbook = None  # type: ignore[assignment,misc]
+    Font = None  # type: ignore[assignment,misc]
     PatternFill = None  # type: ignore[assignment,misc]
     OPENPYXL_AVAILABLE = False
+
+_OSD_ROTATE_TO_TRANSPOSE = {
+    90: Image.ROTATE_270 if Image is not None else None,
+    180: Image.ROTATE_180 if Image is not None else None,
+    270: Image.ROTATE_90 if Image is not None else None,
+}
 
 # Columnas de cada hoja de proveedor (1-based): DATE|COMPROB|N|Amount(DEBE)|
 # Amount(HABER)|BALANCE|DETAIL. Las filas de factura solo escriben
@@ -50,6 +65,62 @@ def _ensure_pdfplumber():
         raise ImportError(
             "Proveedores requiere pdfplumber. Instale con: pip install pdfplumber"
         )
+
+
+_TESSERACT_CANDIDATE_PATHS = (
+    r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+    r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
+)
+_TESSERACT_CONFIGURED = False
+
+
+def _ensure_pytesseract():
+    global _TESSERACT_CONFIGURED
+    if pytesseract is None or Image is None:
+        raise ImportError(
+            "Leer facturas escaneadas requiere pytesseract y Pillow. "
+            "Instale con: pip install pytesseract pillow"
+        )
+    if _TESSERACT_CONFIGURED:
+        return
+    try:
+        pytesseract.get_tesseract_version()
+        _TESSERACT_CONFIGURED = True
+        return
+    except Exception:
+        pass
+    for candidate in _TESSERACT_CANDIDATE_PATHS:
+        if os.path.isfile(candidate):
+            pytesseract.pytesseract.tesseract_cmd = candidate
+            _TESSERACT_CONFIGURED = True
+            return
+    raise ImportError(
+        "No se encontró el motor Tesseract OCR. Instálelo (ej. con 'winget install "
+        "UB-Mannheim.TesseractOCR') para poder leer facturas escaneadas."
+    )
+
+
+def _correct_image_orientation(image):
+    """Undo whole-page rotation via la propia deteccion de orientacion de Tesseract."""
+    try:
+        osd = pytesseract.image_to_osd(image, output_type=pytesseract.Output.DICT)
+        rotate = int(osd.get("rotate", 0) or 0)
+    except Exception:
+        return image
+    transpose_const = _OSD_ROTATE_TO_TRANSPOSE.get(rotate)
+    if transpose_const is not None:
+        image = image.transpose(transpose_const)
+    return image
+
+
+def _extract_page_image(page):
+    """La imagen mas grande incrustada en una pagina de pdfplumber, o None."""
+    if not page.images:
+        return None
+    biggest = max(page.images, key=lambda im: im["width"] * im["height"])
+    raw = biggest["stream"].get_data()
+    image = Image.open(io.BytesIO(raw)).convert("RGB")
+    return _correct_image_orientation(image)
 
 
 def _create_temp_workbook_path():
@@ -98,6 +169,41 @@ def _extract_ht_hackney_invoice(pdf_path):
     return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
 
 
+def _extract_cec_invoice(pdf_path):
+    """
+    Las facturas de CEC (Chinook Enterprises Corp.) son un escaneo de una
+    sola página, sin capa de texto -- hace falta OCR. El N° de invoice
+    puede salir con un espacio de más entre dígitos (ej. "188412 7"), y el
+    total final a veces se pierde por el fondo gris de su casillero, así
+    que se usa el "Subtotal:" -- numéricamente igual al total en todas las
+    facturas vistas -- que siempre se lee bien.
+    """
+    _ensure_pdfplumber()
+    _ensure_pytesseract()
+    with pdfplumber.open(pdf_path) as pdf:
+        image = _extract_page_image(pdf.pages[0])
+    if image is None:
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se encontró la imagen escaneada de la factura CEC."
+        )
+    text = pytesseract.image_to_string(image)
+
+    invoice_match = re.search(r"Inv\s*#\s*([\d\s]+?)\n", text)
+    date_match = re.search(r"Order taken on\s*(\d{1,2}/\d{1,2}/\d{4})", text)
+    subtotal_match = re.search(r"Subtotal:?\s*\$?\s*([\d,]+\.\d{2})", text)
+
+    if not (invoice_match and date_match and subtotal_match):
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total "
+            "del PDF de CEC (Chinook)."
+        )
+
+    invoice_no = int(re.sub(r"\s+", "", invoice_match.group(1)))
+    invoice_date = datetime.strptime(date_match.group(1), "%m/%d/%Y")
+    amount = float(subtotal_match.group(1).replace(",", ""))
+    return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
+
+
 SUPPLIER_REGISTRY = {
     "ht_hackney": {
         "label": "H.T. Hackney",
@@ -105,13 +211,31 @@ SUPPLIER_REGISTRY = {
         "detect": lambda text: "h.t. hackney" in text.lower(),
         "extract": _extract_ht_hackney_invoice,
     },
+    "cec": {
+        "label": "CEC (Chinook Enterprises Corp.)",
+        "sheet_name": "Chinook CEC",
+        "detect": lambda text: "cec distributing" in text.lower(),
+        "extract": _extract_cec_invoice,
+    },
 }
 
 
 def _detect_supplier(pdf_path):
+    """
+    Detecta el proveedor por el contenido del PDF: primero intenta con el
+    texto digital (rápido, sin OCR); si el PDF es un escaneo sin capa de
+    texto, recién ahí hace OCR de la primera página.
+    """
     _ensure_pdfplumber()
     with pdfplumber.open(pdf_path) as pdf:
-        text = pdf.pages[0].extract_text() or ""
+        first_page = pdf.pages[0]
+        text = first_page.extract_text() or ""
+        if not text.strip():
+            image = _extract_page_image(first_page)
+            if image is not None:
+                _ensure_pytesseract()
+                text = pytesseract.image_to_string(image)
+
     for key, config in SUPPLIER_REGISTRY.items():
         if config["detect"](text):
             return key
@@ -139,6 +263,19 @@ def _find_last_real_row(sheet):
         if sheet.cell(row=row, column=COL_DATE).value not in (None, ""):
             last_real_row = row
     return last_real_row
+
+
+def _find_last_invoice_row(sheet, from_row):
+    """
+    Última fila de tipo "invoice" (COMPROB) hasta from_row inclusive -- una
+    fila "OP" (pago) no sirve de referencia de estilo porque su columna N
+    normalmente queda en blanco, sin la negrita que sí llevan las facturas.
+    """
+    for row in range(from_row, 0, -1):
+        comprob = sheet.cell(row=row, column=COL_COMPROB).value
+        if isinstance(comprob, str) and comprob.strip().lower() == "invoice":
+            return row
+    return from_row
 
 
 def _find_last_month_color(sheet, from_row):
@@ -187,6 +324,19 @@ def _append_invoice_row(sheet, style_ref_row, last_row, last_color, last_date, i
         new_cell.border = copy(ref_cell.border)
         new_cell.alignment = copy(ref_cell.alignment)
         new_cell.number_format = ref_cell.number_format
+
+    # El N° de factura siempre va en negrita, sin importar el estilo que
+    # haya traído style_ref_row.
+    number_cell = sheet.cell(row=target_row, column=COL_NUMERO)
+    number_font = number_cell.font
+    number_cell.font = Font(
+        name=number_font.name,
+        size=number_font.sz,
+        bold=True,
+        italic=number_font.italic,
+        color=number_font.color,
+        underline=number_font.underline,
+    )
 
     sheet.cell(row=target_row, column=COL_DATE, value=new_date)
     sheet.cell(row=target_row, column=COL_COMPROB, value="invoice")
@@ -244,7 +394,7 @@ def append_supplier_invoices(ledger_path, pdf_paths):
         last_row = _find_last_real_row(sheet)
         last_date = sheet.cell(row=last_row, column=COL_DATE).value
         last_color = _find_last_month_color(sheet, last_row)
-        style_ref_row = last_row
+        style_ref_row = _find_last_invoice_row(sheet, last_row)
 
         appended = 0
         duplicates_skipped = []

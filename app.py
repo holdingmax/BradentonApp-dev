@@ -1997,7 +1997,7 @@ class EFTExtractorApp:
             [
                 "Se puede cargar más de un PDF a la vez, incluso de distintos proveedores",
                 "El proveedor se detecta automáticamente por el contenido del PDF",
-                "Por ahora solo reconoce a H.T. Hackney — se agregan más a medida que se validan",
+                "Se van sumando proveedores de a poco — si no lo reconoce, el aviso dice cuáles ya están",
                 "Se ordenan por fecha y se agregan encadenadas a la última fila real de esa hoja",
                 "Si cambia el mes, respeta la fila separadora y alterna el color verde/amarillo",
                 "Una factura ya cargada (mismo N°) se omite automáticamente",
