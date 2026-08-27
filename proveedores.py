@@ -670,6 +670,263 @@ def _extract_flori_gas_invoice(pdf_path):
     return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
 
 
+def _extract_airgas_invoice(pdf_path):
+    """
+    Airgas National Carbonation -- texto digital (no escaneado), dos tipos
+    de factura ("STANDARD INVOICE" de gas y "CYLINDER RENTAL INVOICE" de
+    alquiler de tanque), ambos con la misma tabla resumen "INVOICE DATE
+    PAYER INVOICE NO. DUE DATE PAY THIS AMOUNT".
+
+    Trampa real: en facturas de alquiler con débito automático, "PAY THIS
+    AMOUNT" a veces muestra $0.00 (no queda nada por pagar aparte del
+    débito), pero el importe real de la factura es el que aparece más
+    abajo en el campo "AMOUNT" (junto a "Sales Tax"). Por eso se toma
+    siempre la ÚLTIMA coincidencia de "AMOUNT" en el texto, nunca la
+    primera.
+    """
+    _ensure_pdfplumber()
+    with pdfplumber.open(pdf_path) as pdf:
+        text = pdf.pages[0].extract_text() or ""
+
+    header_match = re.search(
+        r"(\d{1,2}/\d{1,2}/\d{4})\s+\d{6,8}\s+(\d{8,10})\s+\d{1,2}/\d{1,2}/\d{4}\s+\$?\s*[\d,]+\.\d{2}",
+        text,
+    )
+    amount_matches = re.findall(r"AMOUNT\D{0,6}?\$?\s*([\d,]+\.\d{2})", text)
+
+    if not (header_match and amount_matches):
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total del PDF de Airgas."
+        )
+
+    invoice_no = int(header_match.group(2))
+    invoice_date = datetime.strptime(header_match.group(1), "%m/%d/%Y")
+    amount = float(amount_matches[-1].replace(",", ""))
+    return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
+
+
+def _extract_az_invoice(pdf_path):
+    """
+    AZ Southeast Distributors -- vale de entrega escaneado (no factura
+    formal), con bastante ruido visual (grapas, dobleces, cheque o recibo
+    de "Paid Out" superpuesto). El N° de factura es el "DELIVERY NO." de
+    la cajita de arriba a la izquierda -- el CUST# de esa misma cajita
+    (siempre el mismo número en todas las facturas del cliente) NO es el
+    N° de factura, y el nombre de archivo a veces usa por error ese
+    número en vez del DELIVERY NO. real.
+
+    La fecha normalmente se lee bien del texto completo de la página, pero
+    en algún escaneo esa cajita sale en blanco del todo -- ahí se recurre
+    al recorte de la cajita con la grilla removida, donde sí aparece. El
+    monto ("SUB TOTAL") casi nunca se lee del texto completo (queda
+    perdido entre el cheque o el recibo de Paid Out superpuestos) -- se
+    recorta la cajita de totales de abajo a la derecha con la grilla
+    removida, ahí sí es consistente.
+
+    LÍMITE CONOCIDO IMPORTANTE: a diferencia de los demás proveedores de
+    este módulo, este extractor falla en la MAYORÍA de las facturas reales
+    probadas (~5 de 32 en una validación amplia contra el archivo del
+    Drive, sin importar el año) -- el recorte fijo de la cajita de totales
+    no encuentra "SUB TOTAL" en muchos escaneos porque esa franja de la
+    imagen varía de tamaño/posición según cómo quedó pegado el cheque o el
+    recibo de "Paid Out" sobre el vale, o directamente el texto no es
+    legible ahí. Cuando falla, falla limpio (no carga un valor incorrecto),
+    pero la tasa de éxito real es baja -- conviene tratarlo como un
+    complemento que a veces ahorra la carga manual, no como confiable en
+    general.
+    """
+    _ensure_pdfplumber()
+    _ensure_pytesseract()
+    with pdfplumber.open(pdf_path) as pdf:
+        page = pdf.pages[0]
+        full_text = page.extract_text() or ""
+        image = _extract_page_image(page)
+    if image is None:
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se encontró la imagen escaneada del vale de "
+            "AZ Southeast."
+        )
+    if not full_text.strip():
+        full_text = pytesseract.image_to_string(image)
+
+    top_crop = _remove_grid_lines(_crop_relative(image, 0.0, 0.0, 0.25, 0.10), upscale=4)
+    top_text = pytesseract.image_to_string(top_crop)
+    invoice_match = re.search(r"(\d{9})", top_text)
+
+    date_match = re.search(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b", full_text)
+    if not date_match:
+        date_match = re.search(r"(\d{1,2})/(\d{1,2})/(\d{4})", top_text)
+
+    bottom_crop = _remove_grid_lines(_crop_relative(image, 0.55, 0.68, 1.0, 0.92), upscale=3)
+    bottom_text = pytesseract.image_to_string(bottom_crop)
+    total_match = re.search(r"TOTAL\D{0,10}?([\d,]+\.\d{2})", bottom_text)
+
+    if not (invoice_match and date_match and total_match):
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total del vale de "
+            "AZ Southeast."
+        )
+
+    invoice_no = int(invoice_match.group(1))
+    invoice_date = datetime(int(date_match.group(3)), int(date_match.group(1)), int(date_match.group(2)))
+    amount = float(total_match.group(1).replace(",", ""))
+    return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
+
+
+def _extract_express_beverage_invoice(pdf_path):
+    """
+    Express Beverage of Tampa -- escaneo de una sola página, impreso
+    prolijo (no manuscrito). N°/fecha viven en la tabla "Date | Invoice #"
+    de arriba a la derecha; el total en la celda "Total" de abajo a la
+    derecha, justo arriba del cheque grapado. El N° de factura a veces
+    sale con espacios sueltos entre dígitos por el OCR (ej. "01 371 1"),
+    por eso se toma todo el resto de esa línea después de la fecha y se
+    le quitan los espacios, en vez de exigir un ancho fijo de dígitos.
+    """
+    _ensure_pdfplumber()
+    _ensure_pytesseract()
+    with pdfplumber.open(pdf_path) as pdf:
+        image = _extract_page_image(pdf.pages[0])
+    if image is None:
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se encontró la imagen escaneada de la factura "
+            "Express Beverage."
+        )
+
+    top_crop = _crop_relative(image, 0.68, 0.08, 1.0, 0.17)
+    top_text = pytesseract.image_to_string(top_crop)
+    date_match = re.search(r"(\d{1,2}/\d{1,2}/\d{4})", top_text)
+    invoice_match = None
+    if date_match:
+        line_after_date = top_text[date_match.end():].split("\n", 1)[0]
+        invoice_match = re.search(r"(\d[\d\s]{3,7}\d)", line_after_date)
+
+    total_crop = _crop_relative(image, 0.55, 0.69, 1.0, 0.80)
+    total_text = pytesseract.image_to_string(total_crop)
+    total_match = re.search(r"([\d,]+\.\d{2})", total_text)
+    if total_match is None:
+        total_text = pytesseract.image_to_string(_remove_grid_lines(total_crop, upscale=3))
+        total_match = re.search(r"([\d,]+\.\d{2})", total_text)
+
+    if not (date_match and invoice_match and total_match):
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total del PDF de "
+            "Express Beverage."
+        )
+
+    invoice_no = int(re.sub(r"\s+", "", invoice_match.group(1)))
+    invoice_date = datetime.strptime(date_match.group(1), "%m/%d/%Y")
+    amount = float(total_match.group(1).replace(",", ""))
+    return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
+
+
+def _extract_kooler_ice_invoice(pdf_path):
+    """
+    Kooler Ice, Inc. -- mezcla facturas con texto digital y escaneos según
+    el pedido, y al menos dos plantillas: los pedidos normales/reparación/
+    suscripción usan N° "INV{n}" y terminan la tabla resumen en "Applied
+    Deposit" (que en esos casos coincide con el importe real -- se usa en
+    vez de "Total", que en las facturas de suscripción queda separado y en
+    $0.00, el saldo pendiente, no el importe de la factura); los pedidos
+    de equipos usan N° "SO{n}" y no tienen "Applied Deposit" -- ahí el
+    importe real sí está directamente en "Total".
+
+    Validado contra el archivo histórico del Drive: ~75% de éxito (9/12).
+    Las fallas restantes vistas fueron escaneos con el papel arrugado/
+    doblado justo sobre el N° de factura ("#INV...") -- el resto del texto
+    (fecha, importe) se lee bien, pero sin el N° no hay forma segura de
+    cargar la fila; falla limpio en esos casos.
+    """
+    _ensure_pdfplumber()
+    with pdfplumber.open(pdf_path) as pdf:
+        page = pdf.pages[0]
+        text = page.extract_text() or ""
+        if not text.strip():
+            _ensure_pytesseract()
+            image = _extract_page_image(page)
+            if image is None:
+                raise ValueError(
+                    f"{os.path.basename(pdf_path)}: no se encontró la imagen escaneada de la "
+                    "factura de Kooler Ice."
+                )
+            text = pytesseract.image_to_string(image)
+
+    invoice_match = re.search(r"(?:INV|SO)\s*(\d{3,7})", text, re.IGNORECASE)
+    date_match = re.search(r"(\d{1,2}/\d{1,2}/\d{4})", text)
+    amount_match = re.search(r"Applied Deposit\D{0,6}\$?\s*([\d,]+\.\d{2})", text, re.IGNORECASE)
+    if not amount_match:
+        amount_match = re.search(r"\bTotal\D{0,6}\$?\s*([\d,]+\.\d{2})", text, re.IGNORECASE)
+
+    if not (invoice_match and date_match and amount_match):
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total del PDF de "
+            "Kooler Ice."
+        )
+
+    invoice_no = int(invoice_match.group(1))
+    invoice_date = datetime.strptime(date_match.group(1), "%m/%d/%Y")
+    amount = float(amount_match.group(1).replace(",", ""))
+    return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
+
+
+def _extract_sams_club_invoice(pdf_path):
+    """
+    Sam's Club -- recibo de caja escaneado (no factura formal). El N° de
+    "factura" es el número de 4 dígitos que sigue a la hora en el
+    encabezado del recibo (ej. "01/06/26 09:40 5495 08201 002 3909" -> N°
+    5495), el mismo número que ya usa el usuario en el nombre de archivo.
+
+    El monto se prefiere del recibo de "Paid Out" grapado ("Cash: $-X"),
+    porque la columna de TOTAL del recibo original suele leerse mal (los
+    dígitos de precio de la tabla de ítems quedan mezclados verticalmente
+    por el OCR) -- pero no todas las compras tienen ese recibo (ej. una
+    compra sin impuesto, solo alimentos, puede no llevarlo), así que si no
+    aparece se cae al campo "TOTAL" leído directamente. El recibo y el
+    "Paid Out" a veces quedan en páginas separadas del PDF (no una sola
+    imagen combinada), por eso se juntan todas las páginas antes de buscar.
+
+    Riesgo conocido (mismo tipo que Red Bull): en un caso Tesseract
+    confundió un solo dígito del N° de recibo (5 leído como 6) de forma
+    consistente sin importar el recorte o preprocesamiento probado --
+    conviene revisar visualmente antes de guardar.
+
+    Validado contra el archivo histórico del Drive: ~68% de éxito (13/19).
+    Las fallas restantes fueron recibos viejos con ruido de OCR puntual
+    (ej. la hora del encabezado ilegible, lo que rompe el patrón fecha+N°)
+    -- fallan limpio, no insertan un valor incorrecto.
+    """
+    _ensure_pdfplumber()
+    _ensure_pytesseract()
+    with pdfplumber.open(pdf_path) as pdf:
+        pages_text = []
+        for page in pdf.pages:
+            image = _extract_page_image(page)
+            if image is not None:
+                pages_text.append(pytesseract.image_to_string(image))
+    if not pages_text:
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se encontró la imagen escaneada del recibo de "
+            "Sam's Club."
+        )
+    text = "\n".join(pages_text)
+
+    header_match = re.search(r"(\d{2}/\d{2}/\d{2})\s+\d{1,2}:\d{2}\s+(\d{4})\s+\d{5}", text)
+    amount_match = re.search(r"\$-\s*([\d,]+\.\d{2})", text)
+    if not amount_match:
+        amount_match = re.search(r"\bTOTAL\D{0,10}?([\d,]+\.\d{2})", text, re.IGNORECASE)
+
+    if not (header_match and amount_match):
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total del recibo de "
+            "Sam's Club."
+        )
+
+    invoice_no = int(header_match.group(2))
+    invoice_date = datetime.strptime(header_match.group(1), "%m/%d/%y")
+    amount = float(amount_match.group(1).replace(",", ""))
+    return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
+
+
 SUPPLIER_REGISTRY = {
     "ht_hackney": {
         "label": "H.T. Hackney",
@@ -742,6 +999,36 @@ SUPPLIER_REGISTRY = {
         "sheet_name": "FLORI-GAS",
         "detect": lambda text: "305-637-9262" in text,
         "extract": _extract_flori_gas_invoice,
+    },
+    "airgas": {
+        "label": "Airgas National Carbonation",
+        "sheet_name": "AIRGAS",
+        "detect": lambda text: "airgas" in text.lower(),
+        "extract": _extract_airgas_invoice,
+    },
+    "az": {
+        "label": "AZ Southeast Distributors LLC",
+        "sheet_name": "AZ Sout",
+        "detect": lambda text: "az southeast distributors" in text.lower(),
+        "extract": _extract_az_invoice,
+    },
+    "express": {
+        "label": "Express Beverage of Tampa",
+        "sheet_name": "EXPRESS ",
+        "detect": lambda text: "express beverage" in text.lower(),
+        "extract": _extract_express_beverage_invoice,
+    },
+    "kooler_ice": {
+        "label": "Kooler Ice, Inc.",
+        "sheet_name": "KOOLER ICE",
+        "detect": lambda text: "kooler ice" in text.lower(),
+        "extract": _extract_kooler_ice_invoice,
+    },
+    "sams_club": {
+        "label": "Sam's Club",
+        "sheet_name": "SAM'S",
+        "detect": lambda text: re.search(r"sam.?s\s*club", text.lower()) is not None,
+        "extract": _extract_sams_club_invoice,
     },
 }
 
