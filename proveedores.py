@@ -66,6 +66,12 @@ GREEN_FILL = "FF92D050"
 YELLOW_FILL = "FFFFFF00"
 MONTH_FILL_COLORS = (GREEN_FILL, YELLOW_FILL)
 
+# Pestaña de la hoja: celeste mientras el proveedor tenga saldo pendiente
+# (le debemos), sin color cuando el saldo vuelve a 0. Mismo celeste que el
+# usuario ya venía usando a mano en algunas hojas del libro real (ej.
+# AIRGAS, KING'S) -- no es un color nuevo, solo se automatiza.
+DEBT_TAB_COLOR = "FF00B0F0"
+
 
 def _ensure_pdfplumber():
     if pdfplumber is None:
@@ -1101,6 +1107,29 @@ def _find_last_month_color(sheet, from_row):
     return None
 
 
+def _update_sheet_tab_color(sheet):
+    """
+    Pinta la pestaña de la hoja de celeste si el proveedor tiene saldo
+    pendiente (le debemos), y la despinta si el saldo llega a 0 (ej. al
+    cargar un pago desde Chase en la Fase 2 del módulo). El saldo se
+    calcula sumando DEBE y HABER directamente en vez de leer la fórmula de
+    BALANCE, porque openpyxl no evalúa fórmulas y la fila recién agregada
+    todavía no tiene un valor calculado en caché.
+    """
+    last_row = _find_last_real_row(sheet)
+    total_debe = 0.0
+    total_haber = 0.0
+    for row in range(1, (last_row or 0) + 1):
+        debe = sheet.cell(row=row, column=COL_DEBE).value
+        haber = sheet.cell(row=row, column=COL_HABER).value
+        if isinstance(debe, (int, float)):
+            total_debe += debe
+        if isinstance(haber, (int, float)):
+            total_haber += haber
+    balance = total_debe - total_haber
+    sheet.sheet_properties.tabColor = DEBT_TAB_COLOR if balance > 0.005 else None
+
+
 def _existing_invoice_numbers(sheet):
     numbers = set()
     for row in range(1, sheet.max_row + 1):
@@ -1223,6 +1252,8 @@ def append_supplier_invoices(ledger_path, pdf_paths):
             last_date = invoice["date"]
             existing_numbers.add(invoice["invoice_no"])
             appended += 1
+
+        _update_sheet_tab_color(sheet)
 
         total_appended += appended
         batch_results.append(
