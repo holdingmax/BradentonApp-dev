@@ -31,6 +31,13 @@ except ImportError:  # pragma: no cover - environment guard
     Image = None  # type: ignore[assignment]
 
 try:
+    import cv2
+    import numpy as np
+except ImportError:  # pragma: no cover - environment guard
+    cv2 = None  # type: ignore[assignment]
+    np = None  # type: ignore[assignment]
+
+try:
     from openpyxl import load_workbook
     from openpyxl.styles import Font, PatternFill
 
@@ -139,6 +146,41 @@ def _launch_temp_workbook(temp_path):
         os.system(f'xdg-open "{abs_path}"')
 
 
+def _ensure_cv2():
+    if cv2 is None or np is None:
+        raise ImportError(
+            "Leer algunas facturas escaneadas requiere opencv-python y numpy. "
+            "Instale con: pip install opencv-python numpy"
+        )
+
+
+def _crop_relative(image, left, top, right, bottom):
+    """Recorte por fracción del ancho/alto (0.0-1.0), no por píxeles fijos."""
+    w, h = image.size
+    return image.crop((int(w * left), int(h * top), int(w * right), int(h * bottom)))
+
+
+def _remove_grid_lines(image, upscale=3):
+    """
+    Algunas facturas meten el N°/fecha en una tabla con bordes que Tesseract
+    confunde con parte del texto (o directamente no lee nada adentro).
+    Sube la resolución y borra las líneas horizontales/verticales con
+    morfología de OpenCV antes de OCR -- sin esto, celdas como la de fecha
+    de King's salen vacías o con los dígitos mezclados con el borde.
+    """
+    _ensure_cv2()
+    gray = np.array(image.convert("L").resize((image.width * upscale, image.height * upscale), Image.LANCZOS))
+    _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    horiz_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (40, 1))
+    vert_kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, 120))
+    lines = cv2.bitwise_or(
+        cv2.morphologyEx(bw, cv2.MORPH_OPEN, horiz_kernel, iterations=2),
+        cv2.morphologyEx(bw, cv2.MORPH_OPEN, vert_kernel, iterations=2),
+    )
+    cleaned = cv2.bitwise_not(cv2.bitwise_and(bw, cv2.bitwise_not(lines)))
+    return Image.fromarray(cleaned)
+
+
 # ---- Extractores por proveedor ----
 
 def _extract_ht_hackney_invoice(pdf_path):
@@ -204,6 +246,430 @@ def _extract_cec_invoice(pdf_path):
     return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
 
 
+def _extract_colonial_invoice(pdf_path):
+    """
+    Colonial Wholesale Dist. LLC -- escaneo de una sola página. El N° y la
+    fecha están en la cajita de arriba a la derecha ("INVOICE NO." /
+    "INVOICE DATE"); el "BALANCE DUE" en la esquina inferior derecha, sobre
+    la línea de la firma.
+
+    Limitación conocida: si el conductor corrigió el total a mano (ej. un
+    crédito tachado y reescrito), la letra manuscrita no se puede leer de
+    forma confiable y esta función va a fallar con un error claro -- en ese
+    caso hay que cargar esa factura a mano.
+    """
+    _ensure_pdfplumber()
+    _ensure_pytesseract()
+    with pdfplumber.open(pdf_path) as pdf:
+        image = _extract_page_image(pdf.pages[0])
+    if image is None:
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se encontró la imagen escaneada de la factura Colonial."
+        )
+
+    top_text = pytesseract.image_to_string(_crop_relative(image, 0.68, 0.0, 1.0, 0.22))
+    bottom_text = pytesseract.image_to_string(_crop_relative(image, 0.50, 0.90, 1.0, 1.0))
+
+    invoice_match = re.search(r"\b(\d{7})\b", top_text)
+    date_match = re.search(r"(\d{1,2}/\d{1,2}/\d{2,4})", top_text)
+    balance_match = re.search(r"([\d,]+\.\d{2})", bottom_text)
+
+    if not (invoice_match and date_match and balance_match):
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total del PDF de "
+            "Colonial (si tiene una corrección a mano, cargue esta factura manualmente)."
+        )
+
+    invoice_no = int(invoice_match.group(1))
+    invoice_date = datetime.strptime(date_match.group(1), "%m/%d/%y")
+    amount = float(balance_match.group(1).replace(",", ""))
+    return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
+
+
+def _extract_gce_invoice(pdf_path):
+    """
+    Gold Coast Eagle -- escaneo; con muchos ítems, la factura se corre a
+    una segunda página y la línea de confirmación ("Inv# 657065
+    $1,381.00", con invoice y total juntos) queda ahí, no en la primera.
+    """
+    _ensure_pdfplumber()
+    _ensure_pytesseract()
+    with pdfplumber.open(pdf_path) as pdf:
+        pages_text = []
+        for page in pdf.pages:
+            image = _extract_page_image(page)
+            if image is not None:
+                pages_text.append(pytesseract.image_to_string(image))
+    text = "\n".join(pages_text)
+
+    confirm_match = re.search(r"Inv.{0,4}?(\d{5,7})\D{0,3}\$?\s*([\d,]+\.\d{2})", text)
+    date_match = re.search(r"(\w{3}\s+\w{3}\s+\d{1,2},\s*\d{4})", text)
+
+    if not (confirm_match and date_match):
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total del PDF de "
+            "Gold Coast Eagle."
+        )
+
+    invoice_no = int(confirm_match.group(1))
+    invoice_date = datetime.strptime(date_match.group(1), "%a %b %d, %Y")
+    amount = float(confirm_match.group(2).replace(",", ""))
+    return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
+
+
+def _extract_frito_lay_invoice(pdf_path):
+    """
+    Frito-Lay -- escaneo; puede traer una foto del cheque en una página
+    aparte (se ignora, ninguno de los campos buscados aparece ahí). El
+    total real es "TOTAL DUE", no el "GROSS SALES AMOUNT" de la tabla.
+
+    Hay al menos dos plantillas distintas de recibo: "CASH SALE" (con
+    "DATE: 27 Dec 2025" y "TOTAL DUE:") y "CHARGE SALES" (con la fecha
+    suelta como "11/06/24" sin etiqueta, y "TOTAL DUE =" con igual en vez
+    de dos puntos) -- se intentan ambos formatos.
+    """
+    _ensure_pdfplumber()
+    _ensure_pytesseract()
+    with pdfplumber.open(pdf_path) as pdf:
+        pages_text = []
+        for page in pdf.pages:
+            image = _extract_page_image(page)
+            if image is not None:
+                pages_text.append(pytesseract.image_to_string(image))
+    text = "\n".join(pages_text)
+
+    invoice_match = re.search(r"INVOICE\s*#\s*[:\s]*(\d+)", text, re.IGNORECASE)
+    total_match = re.search(r"TOTAL DUE\s*[:=]\s*\$?\s*([\d,]+\.\d{2})", text, re.IGNORECASE)
+
+    date_match = re.search(r"DATE:\s*(\d{1,2}\s+\w{3}\s+\d{4})", text, re.IGNORECASE)
+    if date_match:
+        invoice_date = datetime.strptime(date_match.group(1), "%d %b %Y")
+    else:
+        date_match = re.search(r"\b(\d{1,2}/\d{1,2}/\d{2})\b", text)
+        invoice_date = datetime.strptime(date_match.group(1), "%m/%d/%y") if date_match else None
+
+    if not (invoice_match and date_match and total_match):
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total del PDF de Frito-Lay."
+        )
+
+    invoice_no = int(invoice_match.group(1))
+    amount = float(total_match.group(1).replace(",", ""))
+    return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
+
+
+def _extract_kings_invoice(pdf_path):
+    """
+    King's Wholesale Florists -- tanto la fecha/N° de invoice (tabla de
+    arriba) como el total (cuadro "Total:" abajo a la derecha) viven en
+    tablas con bordes que Tesseract confunde con el texto -- ambas franjas
+    se recortan y se les quitan las líneas de grilla antes de OCR.
+    """
+    _ensure_pdfplumber()
+    _ensure_pytesseract()
+    with pdfplumber.open(pdf_path) as pdf:
+        image = _extract_page_image(pdf.pages[0])
+    if image is None:
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se encontró la imagen escaneada de la factura King's."
+        )
+
+    info_crop = _crop_relative(image, 0.0, 0.29, 1.0, 0.35)
+    info_text = pytesseract.image_to_string(_remove_grid_lines(info_crop))
+    totals_crop = _crop_relative(image, 0.55, 0.72, 1.0, 0.97)
+    totals_text = pytesseract.image_to_string(_remove_grid_lines(totals_crop))
+
+    invoice_match = re.search(r"(\d{6})", info_text)
+    date_match = re.search(r"(\d{1,2}/\d{1,2}/\d{4})", info_text)
+    # "Total:" también matchea dentro de "Sub Total:" -- el importe final
+    # siempre es la ÚLTIMA coincidencia (Sub Total, ..., Total, en ese orden).
+    total_matches = re.findall(r"Total:\s*([\d,]+\.\d{2})", totals_text)
+
+    if not (invoice_match and date_match and total_matches):
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total del PDF de King's."
+        )
+
+    invoice_no = int(invoice_match.group(1))
+    invoice_date = datetime.strptime(date_match.group(1), "%m/%d/%Y")
+    amount = float(total_matches[-1].replace(",", ""))
+    return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
+
+
+def _extract_red_bull_invoice(pdf_path):
+    """
+    Red Bull Distribution -- escaneo de una sola página. El renglón
+    "TOTAL DUE" final a veces no lo lee Tesseract, pero el mismo número
+    aparece en el cuadro TOTALS como "INVOICE" (Deposit/Tax siempre en
+    $0.00 en las facturas vistas, así que es el mismo importe).
+    """
+    _ensure_pdfplumber()
+    _ensure_pytesseract()
+    with pdfplumber.open(pdf_path) as pdf:
+        image = _extract_page_image(pdf.pages[0])
+    if image is None:
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se encontró la imagen escaneada de la factura Red Bull."
+        )
+    text = pytesseract.image_to_string(image)
+
+    invoice_match = re.search(r"\bInv\w{0,6}:\s*(\d{6,})", text)
+    date_match = re.search(r"(\d{1,2}/\d{1,2}/\d{4})\s+\d{1,2}:\d{2}\s*[AP]M", text)
+    total_match = re.search(r"INVOICE\D*([\d,]+\.\d{2})", text)
+
+    if not (invoice_match and date_match and total_match):
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total del PDF de Red Bull."
+        )
+
+    invoice_no = int(invoice_match.group(1))
+    invoice_date = datetime.strptime(date_match.group(1), "%m/%d/%Y")
+    amount = float(total_match.group(1).replace(",", ""))
+    return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
+
+
+def _extract_sweetheart_invoice(pdf_path):
+    """
+    Sweetheart Ice Cream -- escaneo de una sola página con la info que hace
+    falta; puede traer una foto del cheque en una segunda página (se
+    ignora). "BALANCE DUE" a veces sale con un dígito mal leído -- se usa
+    "TOTAL SALES", que es el mismo importe y lee mejor.
+    """
+    _ensure_pdfplumber()
+    _ensure_pytesseract()
+    with pdfplumber.open(pdf_path) as pdf:
+        image = _extract_page_image(pdf.pages[0])
+    if image is None:
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se encontró la imagen escaneada de la factura Sweetheart."
+        )
+    text = pytesseract.image_to_string(image)
+
+    invoice_match = re.search(r"INVOICE.{0,4}?(\d{8,})", text, re.IGNORECASE)
+    date_match = re.search(r"Date:\s*(\d{1,2}/\d{1,2}/\d{4})", text)
+    total_match = re.search(r"TOTAL SALES:\s*\$?\s*([\d,]+\.\d{2})", text, re.IGNORECASE)
+
+    if not (invoice_match and date_match and total_match):
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total del PDF de Sweetheart."
+        )
+
+    invoice_no = int(invoice_match.group(1))
+    invoice_date = datetime.strptime(date_match.group(1), "%m/%d/%Y")
+    amount = float(total_match.group(1).replace(",", ""))
+    return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
+
+
+def _extract_bimbo_invoice(pdf_path):
+    """
+    Bimbo Bakeries -- escaneo, puede traer una foto de cheque en otra
+    página (se ignora). El total real ("TICKET TOTALS", ya neto de
+    devoluciones) vive en una tabla con bordes:
+
+    1) A veces hay una línea de confirmación al pie ("{invoice} {fecha}
+       {total}") que trae fecha y total juntos y lee mejor que la tabla.
+    2) Si esa línea quedó tapada por el recibo de "Paid Out" grapado
+       encima (pasa seguido), se recorta la fila de "TICKET" -- ubicada
+       dinámicamente, no a una altura fija, porque varía según la
+       cantidad de ítems -- y se le quitan las líneas de grilla.
+    """
+    _ensure_pdfplumber()
+    _ensure_pytesseract()
+    with pdfplumber.open(pdf_path) as pdf:
+        pages_text = []
+        pages_images = []
+        for page in pdf.pages:
+            image = _extract_page_image(page)
+            if image is not None:
+                pages_images.append(image)
+                pages_text.append(pytesseract.image_to_string(image))
+    text = "\n".join(pages_text)
+
+    invoice_match = re.search(r"INVOICE#\s*([\d\s]+?)\s*\n", text, re.IGNORECASE)
+    if not invoice_match:
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se pudo leer el N° de invoice del PDF de Bimbo."
+        )
+    invoice_no = int(re.sub(r"\s+", "", invoice_match.group(1)))
+
+    footer_match = re.search(r"(\d{1,2}/\d{1,2}/\d{4})[:.]*\s*([\d,]+)[.\s]+(\d{2})\b", text)
+    if footer_match:
+        invoice_date = datetime.strptime(footer_match.group(1), "%m/%d/%Y")
+        amount = float(f"{footer_match.group(2).replace(',', '')}.{footer_match.group(3)}")
+        return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
+
+    date_match = re.search(r"SDD[:;]?\s*(\d{1,2}/\d{1,2}/\d{4})", text, re.IGNORECASE)
+
+    amount = None
+    for image in pages_images:
+        data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
+        y = next(
+            (data["top"][i] for i, word in enumerate(data["text"]) if word.strip().upper() == "TICKET"),
+            None,
+        )
+        if y is None:
+            continue
+        crop = image.crop((0, max(0, y - 10), image.width, min(image.height, y + 220)))
+        clean_text = pytesseract.image_to_string(_remove_grid_lines(crop, upscale=2))
+        amounts = re.findall(r"([\d,]+\.\d{2})", clean_text)
+        if amounts:
+            amount = float(amounts[-1].replace(",", ""))
+            break
+
+    if not (date_match and amount is not None):
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se pudo leer fecha/total del PDF de Bimbo "
+            "(si el recibo de Paid Out tapa el total, cargue esta factura manualmente)."
+        )
+
+    invoice_date = datetime.strptime(date_match.group(1), "%m/%d/%Y")
+    return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
+
+
+def _extract_midtown_invoice(pdf_path):
+    """
+    Midtown Wholesale -- "Sales Order" de 2 páginas + una foto de cheque,
+    en cualquier orden entre las 3 (a veces el cheque va primero, a veces
+    último), así que se juntan las 3 antes de buscar los campos.
+
+    El "Notes:" / "Subtotal:" van en dos columnas separadas, y eso
+    descoloca el orden de lectura del OCR (separa la etiqueta "Total" de
+    su importe si se busca en el texto completo de la página) -- por eso
+    se ubica "Subtotal" con coordenadas y se recorta esa columna sola.
+
+    Limitación conocida: si el chofer tachó un ítem a mano y corrigió el
+    Total a mano (le pasó al menos una vez), el OCR de esa columna sale
+    ilegible (sin el punto decimal) y esta función falla con un error
+    claro -- en ese caso hay que cargar la factura manualmente, nunca va
+    a devolver el importe viejo por error.
+    """
+    _ensure_pdfplumber()
+    _ensure_pytesseract()
+    with pdfplumber.open(pdf_path) as pdf:
+        pages_text = []
+        totals_text = ""
+        for page in pdf.pages:
+            image = _extract_page_image(page)
+            if image is None:
+                continue
+            pages_text.append(pytesseract.image_to_string(image))
+            if totals_text:
+                continue
+            data = pytesseract.image_to_data(image, output_type=pytesseract.Output.DICT)
+            y = next((data["top"][i] for i, w in enumerate(data["text"]) if "Subtotal" in w), None)
+            x = next((data["left"][i] for i, w in enumerate(data["text"]) if "Subtotal" in w), None)
+            if y is not None:
+                crop = image.crop((max(0, x - 50), max(0, y - 10), image.width, min(image.height, y + 250)))
+                totals_text = pytesseract.image_to_string(crop)
+    text = "\n".join(pages_text)
+
+    invoice_match = re.search(r"Receipt #:?\s*(\d+)", text, re.IGNORECASE)
+    date_match = re.search(r"Receipt Date\s*:?\s*(\d{1,2})-(\d{1,2})-(\d{4})", text, re.IGNORECASE)
+    total_match = re.search(r"\bTotal\D{0,5}\$?\s*([\d,]+\.\d{2})", totals_text)
+
+    if not (invoice_match and date_match and total_match):
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total del PDF de Midtown."
+        )
+
+    invoice_no = int(invoice_match.group(1))
+    month, day, year = date_match.groups()
+    invoice_date = datetime(int(year), int(month), int(day))
+    amount = float(total_match.group(1).replace(",", ""))
+    return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
+
+
+def _extract_johnson_brothers_invoice(pdf_path):
+    """
+    Johnson Brothers of Florida -- puede venir en 1 o 2 páginas (el total
+    real solo aparece en la última). El N° de invoice sale de "DOC {N}" al
+    pie, salvo que el OCR lo lea como "boc" -- ahí se recurre a la fila de
+    encabezado, anclada por la cuenta fija "146571", que trae fecha e
+    invoice juntos (aunque a veces en orden invertido según la página).
+    El total real está siempre pegado al texto fijo "APR 18%" del cargo
+    por mora, nunca al "Gross Amount" de la tabla de arriba.
+    """
+    _ensure_pdfplumber()
+    _ensure_pytesseract()
+    with pdfplumber.open(pdf_path) as pdf:
+        pages_text = []
+        for page in pdf.pages:
+            image = _extract_page_image(page)
+            if image is not None:
+                pages_text.append(pytesseract.image_to_string(image))
+    text = "\n".join(pages_text)
+
+    date_match = re.search(r"146571.{0,30}?(\d{1,2}/\d{1,2}/\d{2,4})", text)
+    invoice_match = re.search(r"DOC\s*(\d{6,7})", text, re.IGNORECASE)
+    if not invoice_match:
+        invoice_match = re.search(
+            r"146571.{0,30}?\d{1,2}/\d{1,2}/\d{2,4}.{0,20}?(\d{6,7})", text
+        )
+    amount_match = re.search(r"APR\s*18%\s+([\d,]+)\s*\.?\s*(\d{2})\b", text)
+
+    if not (date_match and invoice_match and amount_match):
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total del PDF de "
+            "Johnson Brothers."
+        )
+
+    invoice_no = int(invoice_match.group(1))
+    invoice_date = datetime.strptime(date_match.group(1), "%m/%d/%y")
+    amount = float(f"{amount_match.group(1).replace(',', '')}.{amount_match.group(2)}")
+    return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
+
+
+def _extract_flori_gas_invoice(pdf_path):
+    """
+    Flori-Gas -- formulario de matriz de punto (carbón), muy desgastado:
+    el N° de invoice y la fecha impresos no se pueden leer de forma
+    confiable ni recortando ni con más resolución. Por decisión del
+    usuario, para ESTOS DOS CAMPOS se usa el nombre del archivo (formato
+    "Invoice {N} {DD.MM.YYYY}.pdf"), que ya se viene usando como
+    referencia confiable en todo este módulo.
+
+    El monto sí se verifica contra el documento: sale del recibo de
+    "Paid Out" grapado (Cash: $-X, igual al total de la factura en todos
+    los casos vistos). Si no hay recibo de "Paid Out" en el PDF, falla
+    con un error en vez de arriesgar leer mal el total escrito a mano.
+    """
+    filename_match = re.search(
+        r"Invoice\s+(\d+)\s+(\d{1,2})\.(\d{1,2})\.(\d{4})",
+        os.path.basename(pdf_path),
+        re.IGNORECASE,
+    )
+    if not filename_match:
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: el nombre del archivo no tiene el formato "
+            '"Invoice {N} {DD.MM.YYYY}.pdf" esperado para Flori-Gas.'
+        )
+    invoice_no = int(filename_match.group(1))
+    day, month, year = filename_match.group(2), filename_match.group(3), filename_match.group(4)
+    invoice_date = datetime(int(year), int(month), int(day))
+
+    _ensure_pdfplumber()
+    _ensure_pytesseract()
+    with pdfplumber.open(pdf_path) as pdf:
+        pages_text = []
+        for page in pdf.pages:
+            image = _extract_page_image(page)
+            if image is not None:
+                pages_text.append(pytesseract.image_to_string(image))
+    text = "\n".join(pages_text)
+
+    # El diseño en 2 columnas (recibo de Paid Out + factura lado a lado)
+    # a veces separa la etiqueta "Cash:" de su valor en la lectura del
+    # OCR, así que se busca directamente el patrón "$-X.XX" del recibo.
+    amount_match = re.search(r"\$-\s*([\d,]+\.\d{2})", text)
+    if not amount_match:
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se encontró el recibo de \"Paid Out\" para leer "
+            "el monto de esta factura de Flori-Gas -- cárguela manualmente."
+        )
+    amount = float(amount_match.group(1).replace(",", ""))
+    return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
+
+
 SUPPLIER_REGISTRY = {
     "ht_hackney": {
         "label": "H.T. Hackney",
@@ -217,6 +683,66 @@ SUPPLIER_REGISTRY = {
         "detect": lambda text: "cec distributing" in text.lower(),
         "extract": _extract_cec_invoice,
     },
+    "colonial": {
+        "label": "Colonial Wholesale Dist. LLC",
+        "sheet_name": "Colonial",
+        "detect": lambda text: "colonial wholesale" in text.lower(),
+        "extract": _extract_colonial_invoice,
+    },
+    "gce": {
+        "label": "Gold Coast Eagle",
+        "sheet_name": "GOLDCE",
+        "detect": lambda text: "gold coast eagle" in text.lower(),
+        "extract": _extract_gce_invoice,
+    },
+    "frito_lay": {
+        "label": "Frito-Lay",
+        "sheet_name": "FRITO-LAY",
+        "detect": lambda text: "frito" in text.lower() and "lay" in text.lower(),
+        "extract": _extract_frito_lay_invoice,
+    },
+    "kings": {
+        "label": "King's Wholesale Florists",
+        "sheet_name": "KING'S",
+        "detect": lambda text: "wholesale florists" in text.lower(),
+        "extract": _extract_kings_invoice,
+    },
+    "red_bull": {
+        "label": "Red Bull Distribution Company",
+        "sheet_name": "RED BULL",
+        "detect": lambda text: "red bull distribution" in text.lower(),
+        "extract": _extract_red_bull_invoice,
+    },
+    "sweetheart": {
+        "label": "Sweetheart Ice Cream",
+        "sheet_name": "SWEETHEART-ICE CREAM",
+        "detect": lambda text: "sweetheart" in text.lower(),
+        "extract": _extract_sweetheart_invoice,
+    },
+    "bimbo": {
+        "label": "Bimbo Bakeries USA, Inc.",
+        "sheet_name": "BIMBO",
+        "detect": lambda text: "bimbo bakeries" in text.lower(),
+        "extract": _extract_bimbo_invoice,
+    },
+    "midtown": {
+        "label": "Midtown Wholesale LLC",
+        "sheet_name": "MIDTOWN",
+        "detect": lambda text: "midtown wholesale" in text.lower(),
+        "extract": _extract_midtown_invoice,
+    },
+    "johnson": {
+        "label": "Johnson Brothers of Florida",
+        "sheet_name": "JOHNSON",
+        "detect": lambda text: "johnson brothers" in text.lower(),
+        "extract": _extract_johnson_brothers_invoice,
+    },
+    "flori_gas": {
+        "label": "Flori-Gas",
+        "sheet_name": "FLORI-GAS",
+        "detect": lambda text: "305-637-9262" in text,
+        "extract": _extract_flori_gas_invoice,
+    },
 }
 
 
@@ -224,21 +750,23 @@ def _detect_supplier(pdf_path):
     """
     Detecta el proveedor por el contenido del PDF: primero intenta con el
     texto digital (rápido, sin OCR); si el PDF es un escaneo sin capa de
-    texto, recién ahí hace OCR de la primera página.
+    texto, recién ahí hace OCR -- de cada página hasta encontrar una
+    coincidencia, porque algunos proveedores meten la foto del cheque
+    ANTES que la factura (la primera página sola no alcanza).
     """
     _ensure_pdfplumber()
     with pdfplumber.open(pdf_path) as pdf:
-        first_page = pdf.pages[0]
-        text = first_page.extract_text() or ""
-        if not text.strip():
-            image = _extract_page_image(first_page)
-            if image is not None:
-                _ensure_pytesseract()
-                text = pytesseract.image_to_string(image)
+        for page in pdf.pages:
+            text = page.extract_text() or ""
+            if not text.strip():
+                image = _extract_page_image(page)
+                if image is not None:
+                    _ensure_pytesseract()
+                    text = pytesseract.image_to_string(image)
+            for key, config in SUPPLIER_REGISTRY.items():
+                if config["detect"](text):
+                    return key
 
-    for key, config in SUPPLIER_REGISTRY.items():
-        if config["detect"](text):
-            return key
     supported = ", ".join(cfg["label"] for cfg in SUPPLIER_REGISTRY.values())
     raise ValueError(
         f"{os.path.basename(pdf_path)}: proveedor no reconocido todavía. "
