@@ -1,0 +1,142 @@
+# BradentonApp — Contexto del proyecto
+
+> Este archivo es para que una conversación NUEVA de Claude Code entienda todo el proyecto sin que el usuario tenga que reexplicar nada. Se actualiza al final de cada sesión con lo que se hizo y lo que queda pendiente. Si estás leyendo esto en una sesión nueva: leé todo antes de tocar código.
+
+## Quién es el usuario y qué es esto
+
+El usuario es bookkeeper de una gasolinera/tienda de conveniencia (Bradenton Gas Station USA LLC), técnico universitario en programación, primera vez usando GitHub. `BradentonApp` es una app de escritorio Tkinter en Python que él mismo usa para automatizar tareas de contabilidad que antes hacía a mano en Excel (cargar reportes diarios, cupones, EFT, Gettel/Toyota, Lottery, CMV, y ahora facturas de proveedores).
+
+Working directory: `C:\BradentonApp`.
+
+## Arquitectura general
+
+- **app.py** — UI principal Tkinter. Un `ttk.Notebook` con una pestaña por módulo. `Ctrl+RePag`/`Ctrl+AvPag` cicla entre pestañas (como un navegador).
+- **ui_theme.py** — temas de color por módulo (`SectionTheme`) y componentes UI reutilizables (`create_card`, `create_dual_column_tab`, `create_file_row`, `create_status_bar`, etc.).
+- Un módulo de lógica de negocio por dominio, cada uno con sus propios helpers duplicados (no hay un `utils.py` compartido — es el patrón establecido del repo): `reporte_diario.py`, `gettel_toyota_parser.py`, `cupones_append.py`, `monthly_sales.py`, `cmv_costo.py`, `proveedores.py`.
+
+### Patrón de UI (aplicado a TODOS los módulos)
+
+Cada pestaña tiene "cuadros" (cards):
+- Un cuadro para el Excel maestro/destino, compartido por los sub-flujos de esa pestaña, **sin botón de proceso propio**. Se limpia solo automáticamente al terminar cualquier proceso con éxito.
+- Un cuadro por cada sub-flujo (ej. "Cargar Facturas", "Procesar Ventas"), con su propio selector de archivo(s), botón "Procesar", botón "Limpiar" (solo limpia ESE campo, no todo), y su propia barra de estado.
+
+Este patrón se aplicó parejo en Cupones y EFT, Gettel/Toyota, Reporte Diario, Lottery, y Proveedores durante esta sesión — si se agrega un módulo nuevo, seguir el mismo esquema.
+
+### Patrón de guardado (aplicado a TODOS los módulos)
+
+Nunca se sobrescribe el archivo original del usuario. Cada proceso: abre el workbook con `openpyxl`, hace los cambios, guarda en un **archivo temporal** (`tempfile.mkstemp`) y lo abre automáticamente con `os.startfile` (patrón `_create_temp_workbook_path` / `_launch_temp_workbook`, duplicado por módulo). El usuario revisa y hace "Guardar como" él mismo.
+
+## OCR y extracción de PDF
+
+- `pytesseract` + `pdfplumber`. **Siempre** llamar a `_ensure_pytesseract()` antes de usar pytesseract directo (auto-detecta el path de Tesseract en Windows) — existe una copia de esta función en `reporte_diario.py`, `gettel_toyota_parser.py` y `proveedores.py`.
+- `_extract_page_image(page)` (en `proveedores.py`) / `_LazyPdfPageImages` (en `reporte_diario.py`): extraen la imagen más grande embebida en una página con corrección de orientación via Tesseract OSD (`_correct_image_orientation`).
+- **Técnicas para texto que Tesseract lee mal:**
+  - Tablas con bordes/grilla que confunden el OCR → `_remove_grid_lines()` (OpenCV, morfología con kernels horizontal/vertical, sube resolución antes).
+  - Layouts en 2+ columnas que descolocan el orden de lectura (una etiqueta separada de su valor) → ubicar el ancla por posición con `pytesseract.image_to_data()` y recortar esa zona específica, en vez de buscar en el texto completo de la página.
+  - Cuando dos campos redundantes existen en un documento (ej. "Total Sales" vs "Balance Due"), usar el que lea más limpio de forma consistente — no asumir cuál "debería" ser el correcto.
+- **Regla de oro: si el OCR no puede leer algo de forma confiable, fallar con un `ValueError` claro — nunca insertar un valor de baja confianza silenciosamente.** Mejor un error que el usuario tiene que revisar a mano, que un dato mal cargado en un libro contable real.
+- Fotos de cheque bancario bundleadas en cualquier PDF de cualquier proveedor: **siempre se ignoran**, solo importa la factura.
+- La detección de proveedor (o de cualquier campo) NUNCA debe asumir que lo que busca está en la página 0 — algunos proveedores meten la foto del cheque ANTES que la factura.
+
+## Git / GitHub
+
+- Dos remotos: `origin` = `https://github.com/holdingmax/BradentonApp-dev.git` (sandbox/dev), `produccion` = `https://github.com/holdingmax/BradentonApp.git` (producción). Org `holdingmax`. Contacto de infra: Jorge Artigas.
+- Rama `main` en ambos.
+- `.claude/settings.local.json` (gitignored) tiene `{"permissions": {"allow": ["Bash(git push*)"]}}` — permite pushear sin el bloqueo del clasificador de Claude Code. Ya está configurado y probado.
+- **Convención de commits**: mensajes descriptivos en español, **uno por cada instrucción/fix resuelto** (nunca agrupar cambios no relacionados en un mismo commit), terminando con:
+  ```
+  Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
+  ```
+  Se commitea apenas el usuario confirma que algo anda bien ("guarda esto", "anda bien", "carga bien").
+- Solo se pushea a `produccion` cuando el usuario lo pide explícitamente. A `origin` se puede pushear apenas se confirma un fix (con aviso, no autopilot silencioso).
+
+## Módulos existentes (estado: completos, no requieren acción salvo pedido nuevo)
+
+- **Cupones y EFT**: PDF de EFT bancario → Cta Cte J.H.Williams; reporte mensual → Cupones. Excel Ledger compartido en cuadro propio (antes se pedía duplicado en cada sub-flujo).
+- **Gettel / Toyota**: ahora se alimenta **solo con Excel-a-Excel** (ya no PDF/foto para el flujo principal, decisión explícita del usuario). Tiene un submódulo "Pagos" aparte que sí usa OCR de recibos de pago. UI en 3 cuadros: Excel Maestro / Cupones Diarios / Pagos.
+- **Chase Bank**: reglas de clasificación de movimientos.
+- **Reporte Diario**: PDF de cierre diario → Ventas por Departamento + Store Info. Bug de fecha de Lottery corregido (deriva la fecha de `extract_store_info_from_pdf` + 1 día). Bug de falso "omitido" cuando OCR pierde la "D" de "Dept." corregido. Nuevo: columna **BS** — el usuario carga a mano el total de unidades impreso en el reporte, se compara contra la suma de Net Count ya cargada; si no coincide avisa. (La columna **BR** de al lado es una fórmula preexistente que NO hay que tocar — no confundir las dos.)
+- **Lottery**: dos flujos (Daily Sales Report, PDF Diario) sobre el mismo Excel.
+- **CMV Costo** / **CMV Ventas**: costos por departamento / ventas del POS.
+- **Proveedores**: ver sección dedicada abajo — módulo en desarrollo activo, no terminado.
+
+## Módulo Proveedores (EN DESARROLLO — foco actual)
+
+### Objetivo
+Leer facturas de compra en PDF de ~32 proveedores y agregar filas tipo "invoice" al libro `Bradenton. Cta Cte Proveedores.xlsx` (una hoja por proveedor), donde el usuario hoy carga todo a mano.
+
+### Archivos clave
+- **`C:\BradentonApp\proveedores.py`** — todo el módulo: extractores por proveedor, detección, inserción de filas.
+- **`app.py`** — pestaña "Proveedores" (`_build_proveedores_tab`), 2 cuadros: Excel Ledger (compartido) + Cargar Facturas (PDF(s) + Procesar + Limpiar).
+- **`ui_theme.py`** — `PROVEEDORES_THEME` (rosa).
+- **Libro real**: `G:\...\Bradenton\Proveedores\Bradenton. Cta Cte Proveedores.xlsx` (antes `.xls`; se convirtió a `.xlsx` a pedido de Claude porque `openpyxl` no puede escribir `.xls` de forma segura — el usuario ya lo guardó así).
+- **Copia de prueba** (nunca se toca el original): `C:\Alfonso\Bradenton. Cta Cte Proveedores (testeo).xlsx` — tiene las facturas de agosto 2026 borradas para poder probar cargas sin ensuciar datos reales.
+- **PDFs de proveedores**: `G:\.shortcut-targets-by-id\1NdiYjB3tA6w90-ekRpM2ksmVuK3i57_1\Bradenton\Proveedores\{Carpeta del proveedor}\{MM-YY o YYYY\MM-YY}\{archivo}.pdf`. Los nombres de carpeta no siempre coinciden exacto con el nombre de hoja o el label (ej. carpeta "Jonhson Brothers" con typo, hoja "JOHNSON").
+
+### Estructura de cada hoja de proveedor
+Columnas (1-based): **A**=DATE, **B**=COMPROB ("invoice"/"OP"), **C**=N° (número de factura, solo en filas "invoice"), **D**=Amount/DEBE, **E**=Amount/HABER (pagos), **F**=BALANCE, **G**=DETAIL.
+- Filas alternan "invoice" (factura, sube el saldo) y "OP" (pago, baja el saldo).
+- **BALANCE** es una fórmula `=+F{fila-1}+D{fila}-E{fila}` — se recalcula sola en Excel, nunca hay que poner un valor fijo.
+- La columna **C (N°)** alterna color de fondo **verde/amarillo mes a mes** — se detecta el último color usado y se alterna, nunca se hardcodea qué mes es cuál color.
+- El **N° de factura siempre va en negrita** — se fuerza explícitamente en el código (no basta con copiar el estilo de la fila de referencia, puede venir de una fila "OP" sin negrita).
+- Entre el último mes cargado y uno nuevo hay una **fila separadora en blanco** que ya existe en la plantilla — se detecta y se respeta (no se pisa).
+
+### Lógica de inserción (`proveedores.py`)
+- `_find_last_real_row`: última fila con fecha real en columna A.
+- `_find_last_invoice_row`: última fila de tipo "invoice" (no "OP") — de ahí se copia el estilo (fuente/borde/alineación/formato), porque una fila "OP" de referencia tendría la columna N° sin el formato correcto.
+- `_find_last_month_color`: último color usado en la columna N°, para alternar si cambia el mes.
+- `_append_invoice_row`: decide si hay que saltar la fila separadora (cambio de mes) o agregar debajo (mismo mes), copia estilo, fuerza negrita en N°, escribe la fórmula de BALANCE.
+- `append_supplier_invoices(ledger_path, pdf_paths)`: función pública. Detecta proveedor de cada PDF, agrupa por proveedor, ordena por fecha, evita duplicados (por N° de factura ya existente en toda la hoja), inserta encadenado, guarda copia temporal y la abre.
+- `SUPPLIER_REGISTRY`: diccionario `{clave: {label, sheet_name, detect(text)->bool, extract(pdf_path)->dict}}`. **Para agregar un proveedor nuevo: solo hace falta escribir su función de extracción y registrarla acá — la lógica de inserción de filas ya es genérica y no hay que tocarla.**
+
+### Proveedores ya agregados (17) — probados con 2-3 facturas reales cada uno (salvo el lote de 5 más reciente, validado contra el archivo histórico completo — ver nota al final de esta lista)
+
+1. **H.T. Hackney** — texto digital (no escaneado), multi-página, el total real (con fuel surcharge/delivery/impuestos) solo aparece en la última página.
+2. **CEC (Chinook Enterprises Corp.)** — escaneo, OCR. El N° a veces sale con un espacio de más entre dígitos ("188412 7"). Usar **"Subtotal:"**, no "Total:" — el fondo gris del casillero de Total a veces le come el número al OCR.
+3. **Colonial Wholesale Dist. LLC** — escaneo. N°/fecha en la cajita arriba-derecha, Balance Due abajo-derecha (ambos recortados). **Límite conocido**: si el chofer corrigió el total a mano (crédito tachado y reescrito), no hay forma de leerlo — falla limpio, cargar manual.
+4. **Gold Coast Eagle** — puede correrse a una 2da página si hay muchos ítems (el total y N° pueden estar ahí, no en la página 0). Usar la línea de confirmación final "Inv# {n} ${total}" — tolerante a que el "#" se lea como letra ("Inve", "Invs").
+5. **Frito-Lay** — dos plantillas de recibo distintas ("CASH SALE" con "DATE: 27 Dec 2025"; "CHARGE SALES" con fecha suelta sin etiqueta tipo "11/06/24"). "TOTAL DUE" a veces con "=" en vez de ":". Puede traer foto de cheque en página aparte (se ignora sola, no tiene los campos buscados).
+6. **King's Wholesale Florists** — la tabla de N°/fecha Y la de totales tienen bordes que rompen el OCR — a las dos se les aplica `_remove_grid_lines`. Ojo: "Total:" también matchea dentro de "Sub Total:" — usar el ÚLTIMO match, no el primero.
+7. **Red Bull Distribution Company** — "TOTAL DUE" final a veces no lo lee Tesseract; usar "INVOICE ${total}" del cuadro TOTALS (ahí Deposit/Tax están en $0 en todos los casos vistos, así que es el mismo importe). **Riesgo real observado**: en un escaneo de mala calidad el OCR confundió un dígito del N° de factura Y de la fecha sin que el código lo detectara (no hay forma de blindar contra un carácter mal reconocido dentro de un patrón que por lo demás matchea bien) — recomendarle al usuario revisar visualmente antes de guardar, sobre todo en escaneos borrosos.
+8. **Sweetheart Ice Cream** — escaneo simple, puede traer foto de cheque en 2da página (se ignora). Usar **"TOTAL SALES:"**, no "BALANCE DUE:" (este último a veces con un dígito mal leído). El "#" de "INVOICE#" a veces se lee como "S" ("INVOICES").
+9. **Bimbo Bakeries USA, Inc.** — el más inconsistente de los 12. A veces el total real está en una línea de confirmación al pie (fecha+total juntos, formato flexible con espacio en vez de punto decimal); a veces esa línea queda tapada físicamente por el recibo de "Paid Out" grapado encima (pasa seguido) y ahí hay que ubicar dinámicamente la fila "TICKET" con `pytesseract.image_to_data` y recortar+limpiar grilla esa zona. La detección de proveedor debe revisar TODAS las páginas (a veces la foto del cheque es la página 0 y la factura la 1, no al revés).
+10. **Midtown Wholesale LLC** — "Sales Order" de 2 páginas + foto de cheque, en **cualquier orden** entre las 3 páginas (varía por factura). El diseño en 2 columnas (Notes / Subtotal-Total) descoloca la etiqueta "Total" de su valor en el texto completo de la página — se ubica "Subtotal" por coordenadas y se recorta esa columna sola. **Límite conocido**: corrección a mano falla limpio (nunca devuelve el valor viejo por error, se verificó explícitamente).
+11. **Johnson Brothers of Florida** — 1 o 2 páginas. N°/fecha se ubican pegados a la cuenta fija "146571" (el orden entre fecha e invoice varía según la página/plantilla — hay que probar ambos órdenes). El N° también sale de "DOC {n}" cuando el OCR lo lee bien (a veces "DOC" se lee "boc", ahí falla y se usa el ancla "146571"). El total real siempre está pegado al texto fijo "APR 18%" del cargo por mora — nunca el "Gross Amount" de la tabla de ítems.
+12. **Flori-Gas** — formulario de matriz de punto (carbón) muy desgastado; se probaron múltiples técnicas (recortes, zoom, limpieza de grilla) y el N°/fecha impresos **no son legibles de forma confiable**. **Decisión explícita del usuario**: para N°/fecha se usa el **nombre del archivo** (formato `Invoice {N} {DD.MM.YYYY}.pdf`), que ya se probó confiable como referencia en todo este proyecto. El **monto sí se verifica contra el documento real**: se busca el patrón `$-{monto}` del recibo de "Paid Out" grapado (que coincide con el total en todos los casos vistos) — si ese recibo no está en el PDF, falla limpio en vez de arriesgar leer mal el monto escrito a mano de la tabla.
+13. **Airgas National Carbonation** — texto digital (no escaneado), dos plantillas ("STANDARD INVOICE" de gas y "CYLINDER RENTAL INVOICE" de alquiler de tanque). **Trampa real**: en facturas de alquiler con débito automático, el campo "PAY THIS AMOUNT" de la tabla resumen a veces muestra $0.00 (no queda nada por pagar aparte del débito) — el importe real está más abajo en el campo "AMOUNT" junto a "Sales Tax"; se usa siempre la ÚLTIMA coincidencia de "AMOUNT" en el texto, nunca la primera. Validado contra 12/12 facturas del archivo histórico (100%) — el más sólido del lote.
+14. **Express Beverage of Tampa** — escaneo impreso prolijo (no manuscrito), N°/fecha en tabla "Date | Invoice #" arriba-derecha, total en celda "Total" abajo-derecha. Validado 4/4 (100%).
+15. **Kooler Ice, Inc.** — mezcla texto digital y escaneo, dos plantillas: pedidos normales/reparación/suscripción con N° "INV{n}" (el importe real coincide con "Applied Deposit", no "Total" — en las facturas de suscripción "Total" queda en $0.00, el saldo pendiente); pedidos de equipos con N° "SO{n}" y sin "Applied Deposit" (ahí el importe real sí está en "Total" directo). Validado 9/12 (75%) — las fallas restantes son papel arrugado/doblado justo sobre el N° de factura, fallan limpio.
+16. **Sam's Club** — recibo de caja escaneado (no factura formal), no una "factura" real. El N° es el número de 4 dígitos que sigue a la hora en el encabezado (ej. "01/06/26 09:40 5495 08201 002 3909" → N° 5495). El monto se prefiere del recibo de "Paid Out" grapado ("Cash: $-X"); si la compra no tiene ese recibo (ej. una compra sin impuesto, solo alimentos) se cae al campo "TOTAL" leído directo de la tabla. El recibo y el "Paid Out" a veces quedan en páginas separadas del PDF, no una sola imagen — hay que juntar todas las páginas antes de buscar. **Riesgo real observado** (mismo tipo que Red Bull): en un caso Tesseract confundió un solo dígito del N° (5→6) de forma consistente sin importar el recorte/preprocesamiento — revisar visualmente antes de guardar. Validado 13/19 (68%) — el resto son escaneos viejos con ruido de OCR puntual (ej. la hora del encabezado ilegible).
+17. **AZ Southeast Distributors LLC** — vale de entrega escaneado (no factura formal), con grapas/dobleces/cheque o "Paid Out" superpuesto. El N° es el "DELIVERY NO." de la cajita arriba-izquierda (el CUST#, siempre el mismo número, NO es el N° de factura — el nombre de archivo a veces usa por error el CUST# en vez del DELIVERY NO. real). **LÍMITE CONOCIDO IMPORTANTE, decisión explícita del usuario**: la tasa de éxito real validada contra el archivo histórico es baja (~5/32, ~16%, sin importar el año) — el recorte fijo de la cajita de totales no encuentra "SUB TOTAL" en la mayoría de los escaneos reales porque esa franja de la imagen varía de tamaño/posición según cómo quedó pegado el cheque o el "Paid Out" sobre el vale, y en algunos casos el texto directamente no es legible ahí. El usuario decidió dejarlo activo igual: cuando funciona ahorra la carga manual, y cuando falla avisa limpio. Si se retoma para mejorar la tasa de éxito, la pista más prometedora sin terminar de validar es ubicar "SUB"/"TOTAL" por posición real vía `pytesseract.image_to_data()` en vez de recorte por porcentaje fijo (funcionó en una prueba puntual, pero es sensible al padding exacto — no se llegó a generalizar).
+
+**Nota de metodología (aprendida con este lote de 5)**: probar solo 2-3 facturas por proveedor puede dar una falsa sensación de confiabilidad — a AZ le fue 3/3 en las primeras muestras curadas (todas de 2025) y terminó en ~16% al validar contra el archivo histórico completo del Drive. Para un proveedor con muchas facturas disponibles, vale la pena correr una validación amplia (10+ muestras, mezclando años/carpetas) antes de darlo por terminado, no solo las 2-3 más recientes.
+
+### Pendiente / decisiones abiertas (arrancar la próxima sesión por acá)
+
+1. **Manatee County Utilities** (pago de agua, no es mercadería) — **no tiene hoja en el Excel de prueba actual**. Preguntar al usuario dónde/cómo debería cargarse (¿hoja nueva? ¿se maneja aparte de este módulo?) antes de construir su extractor. No tiene N° de factura real, solo "Account Number" fijo — también hay que decidir qué va en la columna N° si se agrega.
+2. **Pepsi y Coca-Cola** — ambos meten **varias facturas con N° distinto en un mismo PDF**. La arquitectura actual asume "1 PDF = 1 factura" (`extract()` devuelve un solo dict). Antes de agregarlos hay que ampliar el diseño para que un extractor pueda devolver una **lista** de facturas por PDF, y que `append_supplier_invoices` lo maneje. Para Coca-Cola específicamente (ya validado en la fase de investigación): usar el campo **"Amount Paid"**, no "Amount Due", cuando hay una factura de devolución/crédito neteada contra la principal — evita necesitar una fila aparte para la devolución.
+3. **Proveedores sin investigar todavía** (ni extracción ni carga probada): FS Wholesale, LMT, Overflow, Swisher, Signarama, SkyHarvest, Vasaro Inc, J.H W.
+4. **Brandon Liu (Liu Enterprise) y Slush Puppies (Tri-State, Inc.) — confirmado INVIABLES por OCR**: en ambos, la factura completa es 100% manuscrita (N°, fecha y montos a mano, incluso el total final a veces escrito fuera de la casilla correspondiente) — no hay texto impreso confiable en ningún lado del documento para anclar una extracción, a diferencia de Colonial/Midtown (que solo tienen una corrección puntual a mano sobre una plantilla impresa). No se escribió código para ninguno de los dos. Si el usuario quiere retomarlos, la única vía realista sería un servicio de reconocimiento de escritura manuscrita (fuera del alcance actual de Tesseract), no una mejora de recortes/regex.
+   - **Dato suelto encontrado**: hay un PDF de Slush Puppie ($639.50, WO# 25-001622, 20-12-2025) guardado por error dentro de la carpeta de Drive de "Brandon Liu" en vez de "Slush Puppies". Ya existe una copia correcta en la carpeta de Slush Puppie, así que no hay dato perdido — es solo un archivo duplicado/mal ubicado, prescindible limpiarlo cuando el usuario quiera.
+5. **J.J. Taylor Dist. FL, Inc.** — el usuario pidió explícitamente "de momento ignora a J.J." (pausado, no cancelado — puede retomarse si lo pide).
+6. **Fase 2 del módulo (no empezada)**: cruzar el Excel de Chase (pagos a proveedores) para insertar las filas "OP" (pago) en la posición cronológica correcta entre las facturas ya cargadas, usando las fechas del banco y emparejamiento por orden (FIFO) — el usuario ya entiende que no puede ser un match exacto. Sería un segundo cuadro nuevo en la pestaña Proveedores ("Cargar Pagos"), separado del de facturas.
+7. Sin decidir si el criterio "Amount Paid vs Amount Due" de Coca-Cola generaliza a otros proveedores con neteo similar (solo se vio en Coca-Cola hasta ahora).
+8. `_correct_image_orientation` (rotación automática via Tesseract OSD) — **confirmado que funciona**: se validó con una factura real de Sam's Club escaneada girada 90° (rotate=270 detectado por OSD, corregida a upright) — funciona siempre que `_ensure_pytesseract()` ya se haya llamado antes de `_extract_page_image()` (si no, el `except Exception` interno de `_correct_image_orientation` swallowa el error de Tesseract no encontrado y devuelve la imagen sin rotar, sin avisar — no es un problema en la práctica porque todos los extractores ya llaman `_ensure_pytesseract()` primero, pero tenerlo en cuenta si se refactoriza el orden de llamadas alguna vez).
+
+### Metodología de trabajo específica de este módulo
+El usuario pidió explícitamente trabajar en **lotes de 5 proveedores**: Claude arma y prueba 5 (con PDFs reales que ya están en el Drive, no hace falta que el usuario los reenvíe si ya se pueden encontrar en la carpeta del proveedor), avisa cuáles agregó, y el usuario los prueba él mismo desde la app — **ya no hace falta generar un Excel de prueba para mostrarle cada uno** (eso era el flujo del principio, ahora es más rápido). Guardar en GitHub queda para el final del lote, no proveedor por proveedor.
+
+**Importante**: cuando un extractor funciona con la primera muestra, probarlo igual con una segunda/tercera factura real de ese mismo proveedor antes de darlo por terminado — varias veces algo que funcionaba con 1 muestra falló con la 2da por una plantilla distinta, un layout en columnas, o una variación de OCR no vista antes (ver la lista de los 12 arriba, casi todos tuvieron al menos un ajuste post-primera-muestra).
+
+## Otro contexto de fondo
+
+- **Posible migración a web**: pausada, pendiente de una reunión con el equipo de automatización de la empresa (Vigo, Mamaní, Artigas) que estaba prevista para el 2026-08-26. Repos de GitHub ya conectados y funcionando (`origin`/`produccion` de arriba). Si el usuario menciona que la reunión ya pasó, preguntar qué se definió antes de asumir que se sigue sin la metodología web.
+- El usuario **no es programador profesional pero entiende de programación** (técnico universitario) — está bien dar explicaciones técnicas, no hace falta simplificar en exceso.
+
+## Convenciones de trabajo con el usuario (aplican a todo el proyecto, no solo Proveedores)
+
+- Avanzar de a poco: un problema a la vez, probar antes de seguir — salvo en el módulo Proveedores, donde el usuario pidió explícitamente lotes de 5 (ver arriba).
+- Commitear apenas el usuario confirma que algo anda bien, con mensajes descriptivos en español, uno por cambio no relacionado (nunca agrupar).
+- Nunca sobrescribir el archivo real del usuario durante pruebas — copiar a una ruta de prueba (`C:\Alfonso\...`) o al scratchpad de la sesión.
+- Cuando el OCR no puede leer algo de forma confiable de manera sistemática (no un caso aislado), preguntarle al usuario cómo prefiere resolverlo en vez de decidir unilateralmente (ver el caso de Flori-Gas arriba).
+- Los scripts/imágenes de investigación quedan en el scratchpad de la sesión (`AppData\Local\Temp\claude\...\scratchpad\`) — **es específico de cada sesión, no persiste entre conversaciones**. Si hace falta reinvestigar un proveedor ya validado, puede haber que re-extraer las imágenes desde cero (los PDFs originales sí siguen en el Drive, en las rutas ya conocidas).
