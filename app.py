@@ -3233,7 +3233,7 @@ class EFTExtractorApp:
 
         try:
             _preview_path, summary = append_supplier_invoices(ledger_path, pdf_paths)
-            self._clear_field(self.proveedores_invoice_pdf_paths, "proveedores_invoice_entry")
+            self._clear_field(self.proveedores_ledger_path, "proveedores_ledger_entry")
             warnings = [
                 f"{batch['supplier']}: {len(batch['duplicates_skipped'])} factura(s) ya "
                 f"cargada(s), omitida(s) — {', '.join(batch['duplicates_skipped'])}"
