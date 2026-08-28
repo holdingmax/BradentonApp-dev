@@ -187,6 +187,21 @@ def _remove_grid_lines(image, upscale=3):
     return Image.fromarray(cleaned)
 
 
+def _parse_mmdd_year_flexible(date_text):
+    """
+    Parsea "M/D/AA" o "M/D/AAAA" con el mismo patrón -- varios extractores
+    permiten año de 2 o 4 dígitos en su regex pero llamaban a strptime con
+    "%y" fijo, así que un año de 4 dígitos rompía con un ValueError críptico
+    de la librería estándar en vez del mensaje de error propio de la función.
+    """
+    for fmt in ("%m/%d/%y", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(date_text, fmt)
+        except ValueError:
+            continue
+    raise ValueError(f'No se pudo interpretar la fecha "{date_text}".')
+
+
 # ---- Extractores por proveedor ----
 
 def _extract_ht_hackney_invoice(pdf_path):
@@ -212,7 +227,7 @@ def _extract_ht_hackney_invoice(pdf_path):
         )
 
     invoice_no = int(invoice_match.group(1))
-    invoice_date = datetime.strptime(date_match.group(1), "%m/%d/%y")
+    invoice_date = _parse_mmdd_year_flexible(date_match.group(1))
     amount = float(totals[-1].replace(",", ""))
     return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
 
@@ -287,7 +302,7 @@ def _extract_colonial_invoice(pdf_path):
         )
 
     invoice_no = int(invoice_match.group(1))
-    invoice_date = datetime.strptime(date_match.group(1), "%m/%d/%y")
+    invoice_date = _parse_mmdd_year_flexible(date_match.group(1))
     amount = float(balance_match.group(1).replace(",", ""))
     return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
 
@@ -620,7 +635,7 @@ def _extract_johnson_brothers_invoice(pdf_path):
         )
 
     invoice_no = int(invoice_match.group(1))
-    invoice_date = datetime.strptime(date_match.group(1), "%m/%d/%y")
+    invoice_date = _parse_mmdd_year_flexible(date_match.group(1))
     amount = float(f"{amount_match.group(1).replace(',', '')}.{amount_match.group(2)}")
     return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
 
