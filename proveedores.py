@@ -933,6 +933,296 @@ def _extract_sams_club_invoice(pdf_path):
     return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
 
 
+def _extract_fs_wholesale_invoice(pdf_path):
+    """
+    FS Wholesale -- en realidad factura Florida Smokes Wholesale, LLC.
+    Escaneo de 2-3 páginas (puede traer foto de cheque en una página
+    aparte, se ignora): el N°/fecha viven en el encabezado de la primera
+    página ("05 Nov 2025 98836 10 BRADENTON GAS STATION USA" -- fecha,
+    invoice, cantidad de ítems, cliente, todo en la misma fila), pero el
+    total real ("Tax Invoice Total (USD)") está en la página de Payments,
+    no en la primera -- se buscan ambos patrones en el texto combinado de
+    todas las páginas.
+    """
+    _ensure_pdfplumber()
+    _ensure_pytesseract()
+    with pdfplumber.open(pdf_path) as pdf:
+        pages_text = []
+        for page in pdf.pages:
+            image = _extract_page_image(page)
+            if image is not None:
+                pages_text.append(pytesseract.image_to_string(image))
+    text = "\n".join(pages_text)
+
+    header_match = re.search(r"(\d{1,2}\s+[A-Za-z]{3}\s+\d{4})\s+(\d{5,7})\s+\d+", text)
+    total_match = re.search(
+        r"(?:Tax\s+)?Invoice Total\s*\(USD\):\s*\$?\s*([\d,]+\.\d{2})", text, re.IGNORECASE
+    )
+
+    if not (header_match and total_match):
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total del PDF de "
+            "FS Wholesale."
+        )
+
+    invoice_no = int(header_match.group(2))
+    invoice_date = datetime.strptime(header_match.group(1), "%d %b %Y")
+    amount = float(total_match.group(1).replace(",", ""))
+    return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
+
+
+def _extract_lmt_invoice(pdf_path):
+    """
+    LMT Trading Company LLC -- escaneo, y el PDF casi siempre agrupa la
+    factura real de LMT con una de J.J. Taylor Dist. FL, Inc. (comparten
+    domicilio, teléfono y plantilla de reparto) en cualquier orden entre
+    1-2 páginas. J.J. Taylor está pausado por pedido del usuario, así que
+    se usa SOLO la página que trae "Paylink - LMT" (la de J.J. Taylor
+    trae "Paylink - JT") -- el ancla que más limpio lee de todo el
+    encabezado, incluso cuando "LMT Trading Company" sale muy garabateado.
+
+    El N°/fecha del nombre de archivo ("[LMT. ]Invoice {N} {DD.MM.YYYY}.pdf")
+    y los impresos en el encabezado del documento ("{fecha} {N} {load
+    sheet}...") normalmente coinciden, pero NINGUNO de los dos es
+    confiable al 100% por separado -- se encontró un caso real donde el
+    nombre de archivo tenía un N°/fecha completamente distintos a los del
+    documento y el libro real (archivo mal nombrado), y otro caso real
+    donde el documento leyó un dígito de más en el N° por OCR. Por eso se
+    cruzan ambas fuentes cuando el encabezado del documento se puede leer:
+    si coinciden, hay confianza; si no, se falla con un error claro en vez
+    de adivinar cuál de las dos está bien (si el documento no se puede
+    leer, se sigue confiando solo en el nombre de archivo, como Flori-Gas).
+
+    El total ("Sub Total"/"Total", mismo importe repetido) se lee del
+    documento: se ubica la fila por posición vía pytesseract.image_to_data
+    (ancla "Sub", con "Total" de respaldo si "Sub" no se detectó como
+    palabra aparte) y se recorta esa franja para un OCR más limpio.
+    """
+    filename_match = re.search(
+        r"Invoice\s+(\d+)\s+(\d{1,2})\.(\d{1,2})\.(\d{4})",
+        os.path.basename(pdf_path),
+        re.IGNORECASE,
+    )
+    if not filename_match:
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: el nombre del archivo no tiene el formato "
+            '"Invoice {N} {DD.MM.YYYY}.pdf" esperado para LMT.'
+        )
+    invoice_no = int(filename_match.group(1))
+    day, month, year = filename_match.group(2), filename_match.group(3), filename_match.group(4)
+    invoice_date = datetime(int(year), int(month), int(day))
+
+    _ensure_pdfplumber()
+    _ensure_pytesseract()
+    lmt_image = None
+    lmt_text = ""
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            image = _extract_page_image(page)
+            if image is None:
+                continue
+            text = pytesseract.image_to_string(image)
+            if re.search(r"paylink\s*-\s*lmt", text, re.IGNORECASE):
+                lmt_image = image
+                lmt_text = text
+                break
+    if lmt_image is None:
+        raise ValueError(
+            f'{os.path.basename(pdf_path)}: no se encontró la página de LMT (con "Paylink - LMT") '
+            "en este PDF."
+        )
+
+    header_match = re.search(r"(\d{1,2}/\d{1,2}/\d{4})\s+(\d{5,8})\b", lmt_text)
+    if header_match:
+        doc_invoice_no = int(header_match.group(2))
+        if doc_invoice_no != invoice_no:
+            raise ValueError(
+                f"{os.path.basename(pdf_path)}: el N° de factura del nombre de archivo "
+                f"({invoice_no}) no coincide con el N° leído del documento ({doc_invoice_no}) "
+                "-- revise cuál es el correcto y cárguela manualmente."
+            )
+        try:
+            doc_date = datetime.strptime(header_match.group(1), "%m/%d/%Y")
+        except ValueError:
+            doc_date = None
+        if doc_date is not None and doc_date.date() != invoice_date.date():
+            raise ValueError(
+                f"{os.path.basename(pdf_path)}: la fecha del nombre de archivo "
+                f"({invoice_date:%d/%m/%Y}) no coincide con la fecha leída del documento "
+                f"({doc_date:%d/%m/%Y}) -- revise cuál es la correcta y cárguela manualmente."
+            )
+
+    upscaled = lmt_image.resize((lmt_image.width * 2, lmt_image.height * 2), Image.LANCZOS)
+    data = pytesseract.image_to_data(upscaled, output_type=pytesseract.Output.DICT)
+
+    sub_ys = [
+        data["top"][i]
+        for i, w in enumerate(data["text"])
+        if w.strip().lower() in ("sub", "suo", "sud", "sob")
+    ]
+    total_ys = [
+        data["top"][i]
+        for i, w in enumerate(data["text"])
+        if "otal" in w.lower() or w.strip().lower() in ("tol", "oul", "onl", "toul")
+    ]
+
+    amount = None
+    if sub_ys:
+        y = max(sub_ys)
+        crop = upscaled.crop((0, max(0, y - 15), upscaled.width, min(upscaled.height, y + 150)))
+        amount_match = re.search(r"([\d,]+\.\d{2})", pytesseract.image_to_string(crop))
+        if amount_match:
+            amount = float(amount_match.group(1).replace(",", ""))
+    if amount is None and total_ys:
+        y = max(total_ys)
+        crop = upscaled.crop((0, max(0, y - 30), upscaled.width, min(upscaled.height, y + 250)))
+        amount_match = re.search(r"([\d,]+\.\d{2})", pytesseract.image_to_string(crop))
+        if amount_match:
+            amount = float(amount_match.group(1).replace(",", ""))
+
+    if amount is None:
+        raise ValueError(f"{os.path.basename(pdf_path)}: no se pudo leer el total del PDF de LMT.")
+
+    return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
+
+
+def _extract_overflow_invoice(pdf_path):
+    """
+    Overflow Group Distribution -- escaneo de una sola página, texto
+    limpio. N°/fecha en el encabezado ("Invoice #1500034491" /
+    "11/13/2025 2:45:03 PM"), monto en "Total Sales:" (igual a "Balance:"
+    en las facturas vistas, sin pagos parciales).
+    """
+    _ensure_pdfplumber()
+    _ensure_pytesseract()
+    with pdfplumber.open(pdf_path) as pdf:
+        image = _extract_page_image(pdf.pages[0])
+    if image is None:
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se encontró la imagen escaneada de la factura Overflow."
+        )
+    text = pytesseract.image_to_string(image)
+
+    invoice_match = re.search(r"Invoice\s*#\s*(\d+)", text, re.IGNORECASE)
+    date_match = re.search(r"(\d{1,2}/\d{1,2}/\d{4})\s+\d{1,2}:\d{2}:\d{2}\s*[AP]M", text)
+    total_match = re.search(r"Total Sales:\s*\$?\s*([\d,]+\.\d{2})", text, re.IGNORECASE)
+
+    if not (invoice_match and date_match and total_match):
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total del PDF de Overflow."
+        )
+
+    invoice_no = int(invoice_match.group(1))
+    invoice_date = datetime.strptime(date_match.group(1), "%m/%d/%Y")
+    amount = float(total_match.group(1).replace(",", ""))
+    return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
+
+
+def _extract_swisher_invoice(pdf_path):
+    """
+    Swisher -- recibo de caja escaneado (no factura formal, como Sam's
+    Club/AZ). El N° es el "Receipt #" del encabezado (a veces con un
+    espacio de más en medio, se le saca). La fecha viene en dos formatos
+    según la antigüedad de la factura ("8/28/24 10:14 AM" en las viejas,
+    "2026-02-23" suelto en las nuevas) -- se prueban ambos. El monto se
+    prefiere del recibo de "Paid Out" grapado ("Cash: $-X", con alguna
+    coma suelta de OCR que se descarta) -- el "Total"/"Cash Due Now" de la
+    tabla principal casi siempre sale con la parte decimal incompleta.
+    """
+    _ensure_pdfplumber()
+    _ensure_pytesseract()
+    with pdfplumber.open(pdf_path) as pdf:
+        image = _extract_page_image(pdf.pages[0])
+    if image is None:
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se encontró la imagen escaneada del recibo de Swisher."
+        )
+    text = pytesseract.image_to_string(image)
+
+    invoice_match = re.search(r"Receipt\s*#?\s*(\d[\d\s]{5,20}\d)", text, re.IGNORECASE)
+    date_match = re.search(r"(\d{1,2}/\d{1,2}/\d{2})\s+\d{1,2}:\d{2}\s*[AP]M", text)
+    if date_match:
+        invoice_date = datetime.strptime(date_match.group(1), "%m/%d/%y")
+    else:
+        date_match = re.search(r"(\d{4}-\d{2}-\d{2})", text)
+        invoice_date = datetime.strptime(date_match.group(1), "%Y-%m-%d") if date_match else None
+    amount_match = re.search(r"Cash:\s*/?\s*\$-\s*([\d,]+\.?\d{0,2})", text, re.IGNORECASE)
+
+    if not (invoice_match and date_match and amount_match):
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total del recibo de Swisher."
+        )
+
+    invoice_no = int(re.sub(r"\s+", "", invoice_match.group(1)))
+    amount = float(amount_match.group(1).replace(",", ""))
+    return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
+
+
+def _extract_signarama_invoice(pdf_path):
+    """
+    Signarama (Bradenton Signs) -- escaneo, puede traer foto de cheque en
+    página aparte (se ignora). N°/fecha salen limpios del texto completo
+    ("IN INV-8148", "Created Date: 7/17/2026" -- coincide con el nombre
+    de archivo en casi todos los casos vistos; se prefiere sobre
+    "Generated On", que puede ser muchos días posterior por una reimpresión).
+
+    El "Grand Total" vive en una plantilla a 2 columnas (etiquetas a la
+    izquierda, importes a la derecha) que la mayoría de las veces
+    descoloca el valor del OCR de página completa -- se ubica la palabra
+    "Grand" (o "Total" de respaldo) por posición con
+    pytesseract.image_to_data y se recorta esa fila hacia la derecha, con
+    más resolución, para leer el importe.
+    """
+    _ensure_pdfplumber()
+    _ensure_pytesseract()
+    signarama_image = None
+    text = ""
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            image = _extract_page_image(page)
+            if image is None:
+                continue
+            page_text = pytesseract.image_to_string(image)
+            if "bradentonsigns" in page_text.lower() or "inv-" in page_text.lower():
+                signarama_image = image
+                text = page_text
+                break
+    if signarama_image is None:
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se encontró la página de factura de Signarama."
+        )
+
+    invoice_match = re.search(r"INV[-\s]?(\d{3,6})", text, re.IGNORECASE)
+    date_match = re.search(r"Created Date:\s*(\d{1,2})/(\d{1,2})/(\d{4})", text, re.IGNORECASE)
+
+    data = pytesseract.image_to_data(signarama_image, output_type=pytesseract.Output.DICT)
+    label_idx = next((i for i, w in enumerate(data["text"]) if w.strip().lower() == "grand"), None)
+    if label_idx is None:
+        label_idx = next((i for i, w in enumerate(data["text"]) if "total" in w.lower()), None)
+
+    amount = None
+    if label_idx is not None:
+        top = data["top"][label_idx]
+        height = data["height"][label_idx]
+        left = data["left"][label_idx]
+        crop = signarama_image.crop(
+            (left, max(0, top - 10), signarama_image.width, top + height + 25)
+        )
+        upscaled = crop.resize((crop.width * 3, crop.height * 3), Image.LANCZOS)
+        amount_match = re.search(r"([\d,]+\.\d{2})", pytesseract.image_to_string(upscaled))
+        if amount_match:
+            amount = float(amount_match.group(1).replace(",", ""))
+
+    if not (invoice_match and date_match and amount is not None):
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total del PDF de Signarama."
+        )
+
+    invoice_no = int(invoice_match.group(1))
+    invoice_date = datetime(int(date_match.group(3)), int(date_match.group(1)), int(date_match.group(2)))
+    return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
+
+
 SUPPLIER_REGISTRY = {
     "ht_hackney": {
         "label": "H.T. Hackney",
@@ -1035,6 +1325,36 @@ SUPPLIER_REGISTRY = {
         "sheet_name": "SAM'S",
         "detect": lambda text: re.search(r"sam.?s\s*club", text.lower()) is not None,
         "extract": _extract_sams_club_invoice,
+    },
+    "fs_wholesale": {
+        "label": "FS Wholesale (Florida Smokes Wholesale, LLC)",
+        "sheet_name": "FS WHOLESALE",
+        "detect": lambda text: "florida smokes" in text.lower(),
+        "extract": _extract_fs_wholesale_invoice,
+    },
+    "lmt": {
+        "label": "LMT Trading Company LLC",
+        "sheet_name": "LMT",
+        "detect": lambda text: re.search(r"paylink\s*-\s*lmt", text.lower()) is not None,
+        "extract": _extract_lmt_invoice,
+    },
+    "overflow": {
+        "label": "Overflow Group Distribution",
+        "sheet_name": "OVERFLOW",
+        "detect": lambda text: "overflowgroupdistribution" in text.lower().replace(" ", ""),
+        "extract": _extract_overflow_invoice,
+    },
+    "swisher": {
+        "label": "Swisher",
+        "sheet_name": "SWISHER",
+        "detect": lambda text: "swisher" in text.lower(),
+        "extract": _extract_swisher_invoice,
+    },
+    "signarama": {
+        "label": "Signarama (Bradenton Signs)",
+        "sheet_name": "SIGNARAMA",
+        "detect": lambda text: "bradentonsigns" in text.lower(),
+        "extract": _extract_signarama_invoice,
     },
 }
 
