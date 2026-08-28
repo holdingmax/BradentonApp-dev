@@ -1244,8 +1244,11 @@ def _write_sales_rows(sheet, dept_frame):
             )
             for col_idx in range(1, SALES_DATA_COLUMNS + 1):
                 _safe_apply_border(sheet, row_idx, col_idx)
-        except (AttributeError, TypeError, Exception):
-            pass
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"No se pudo escribir la fila de ventas {row_idx} "
+                f"(UPC {row.get('UPC')!r}): {exc}"
+            ) from exc
         row_idx += 1
 
 
