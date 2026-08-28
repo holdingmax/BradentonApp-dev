@@ -3430,9 +3430,15 @@ class EFTExtractorApp:
         normalized = [os.path.abspath(str(p).strip()) for p in paths if str(p).strip()]
         if not normalized:
             return
-        self._set_cmv_dept_paths(normalized)
+        # Igual que _on_cmv_file_drop: se fusiona con lo ya elegido en vez de
+        # reemplazarlo, porque el diálogo nativo solo multi-selecciona dentro
+        # de UNA carpeta y los exports de distintos departamentos de Elistar
+        # pueden vivir en carpetas separadas.
+        existing = split_paths(self.cmv_path.get()) if split_paths else []
+        merged = existing + [p for p in normalized if p not in existing]
+        self._set_cmv_dept_paths(merged)
         self._set_cmv_status(
-            f"{len(normalized)} archivo(s) de departamento seleccionado(s) para procesar."
+            f"{len(merged)} archivo(s) de departamento seleccionado(s) para procesar."
         )
 
     def select_sales_master_file(self):
