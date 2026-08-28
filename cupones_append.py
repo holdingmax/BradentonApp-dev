@@ -773,11 +773,21 @@ def _stretch_column_b_width(worksheet, max_text_length):
 
 
 def find_last_cupones_row(worksheet, start_row=CUPONES_SCAN_START_ROW):
-    """Return the true last occupied row scanning column A bottom-up."""
+    """
+    Return the true last occupied row scanning bottom-up.
+
+    Checks column A (date) first, but falls back to column B (coupon) so a
+    row whose date failed to parse and was left blank still counts as
+    occupied -- otherwise the next append starts one row too early and
+    overwrites that row's already-written coupon/gross/fees/net data.
+    """
     max_row = max(worksheet.max_row, start_row)
     for row in range(max_row, start_row - 1, -1):
         value_a = worksheet.cell(row=row, column=CUPONES_COL_DATE).value
-        if value_a is not None and _strip_cell(value_a) != "":
+        value_b = worksheet.cell(row=row, column=CUPONES_COL_COUPON).value
+        if (value_a is not None and _strip_cell(value_a) != "") or (
+            value_b is not None and _strip_cell(value_b) != ""
+        ):
             return row
     return start_row - 1
 
