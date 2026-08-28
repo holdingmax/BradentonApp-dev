@@ -1541,10 +1541,13 @@ def _append_invoice_row(sheet, style_ref_row, last_row, last_color, last_date, i
     sheet.cell(row=target_row, column=COL_COMPROB, value="invoice")
     sheet.cell(row=target_row, column=COL_NUMERO, value=invoice["invoice_no"])
     sheet.cell(row=target_row, column=COL_DEBE, value=invoice["amount"])
+    # La fila anterior a target_row puede ser el separador en blanco entre
+    # meses (sin fórmula de balance) -- siempre referenciar last_row, la
+    # última fila real con saldo, para no perder el arrastre al cambiar de mes.
     sheet.cell(
         row=target_row,
         column=COL_BALANCE,
-        value=f"=+{sheet.cell(row=target_row - 1, column=COL_BALANCE).coordinate}"
+        value=f"=+{sheet.cell(row=last_row, column=COL_BALANCE).coordinate}"
         f"+{sheet.cell(row=target_row, column=COL_DEBE).coordinate}"
         f"-{sheet.cell(row=target_row, column=COL_HABER).coordinate}",
     )
