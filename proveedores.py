@@ -1485,6 +1485,9 @@ def _update_sheet_tab_color(sheet):
 def _existing_invoice_numbers(sheet):
     numbers = set()
     for row in range(1, sheet.max_row + 1):
+        comprob = sheet.cell(row=row, column=COL_COMPROB).value
+        if not (isinstance(comprob, str) and comprob.strip().lower() == "invoice"):
+            continue
         value = sheet.cell(row=row, column=COL_NUMERO).value
         if isinstance(value, (int, float)):
             numbers.add(int(value))
