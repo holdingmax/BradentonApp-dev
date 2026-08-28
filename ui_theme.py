@@ -263,16 +263,20 @@ def create_scrollable_tab_frame(notebook):
     canvas.bind("<Configure>", _sync_inner_width)
 
     def _on_mousewheel(event):
+        if not canvas.winfo_ismapped():
+            return
         canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
-    def _bind_mousewheel(_event):
-        canvas.bind_all("<MouseWheel>", _on_mousewheel)
-
-    def _unbind_mousewheel(_event):
-        canvas.unbind_all("<MouseWheel>")
-
-    canvas.bind("<Enter>", _bind_mousewheel)
-    canvas.bind("<Leave>", _unbind_mousewheel)
+    # bind_all (not a per-widget bind) so the wheel keeps scrolling this tab
+    # no matter which child widget -- a button, entry, the log panel's Text
+    # -- is under the cursor. A canvas-level <Enter>/<Leave> toggle breaks
+    # the moment the pointer crosses into any of those embedded children,
+    # since each is a real window, not canvas-drawn content, so the canvas
+    # sees a spurious <Leave> and stops listening. add="+" lets every
+    # scrollable tab's own binding coexist instead of the last one bound
+    # clobbering the rest; the winfo_ismapped() guard keeps each handler
+    # acting only while its own tab is the one actually selected/visible.
+    canvas.bind_all("<MouseWheel>", _on_mousewheel, add="+")
 
     return outer, inner
 
