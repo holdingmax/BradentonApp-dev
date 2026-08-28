@@ -1178,7 +1178,7 @@ def _extract_swisher_invoice(pdf_path):
     else:
         date_match = re.search(r"(\d{4}-\d{2}-\d{2})", text)
         invoice_date = datetime.strptime(date_match.group(1), "%Y-%m-%d") if date_match else None
-    amount_match = re.search(r"Cash:\s*/?\s*\$-\s*([\d,]+\.?\d{0,2})", text, re.IGNORECASE)
+    amount_match = re.search(r"Cash:\s*/?\s*\$-\s*([\d,]+\.\d{2})", text, re.IGNORECASE)
 
     if not (invoice_match and date_match and amount_match):
         raise ValueError(
