@@ -91,7 +91,6 @@ DEPARTMENT_SHEETS = (
     "HBA",
     "PROPANE",
 )
-FIRST_DEPARTMENT_SHEET_INDEX = 4  # 0-based index of first department sheet
 
 ELISTAR_SUMMARY_MARKERS = (
     "dept ",
@@ -615,13 +614,9 @@ def _get_department_sheet(workbook, sheet_lookup, canonical_name):
         if name_flat == target_flat:
             return workbook[sheet_name]
 
-    for index, expected in enumerate(DEPARTMENT_SHEETS):
-        if _normalize_label(expected) != target:
-            continue
-        sheet_index = FIRST_DEPARTMENT_SHEET_INDEX + index
-        if sheet_index < len(workbook.worksheets):
-            return workbook.worksheets[sheet_index]
-
+    # No positional fallback here on purpose: sheets resolve by tab title,
+    # never by physical order (see docstring above) -- a renamed/reordered
+    # tab must raise instead of silently writing into the wrong sheet.
     available = ", ".join(workbook.sheetnames)
     raise ValueError(
         f'Hoja de departamento "{canonical_name}" no encontrada. Disponibles: {available}'
