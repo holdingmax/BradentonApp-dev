@@ -215,8 +215,16 @@ def _parse_decimal(value):
     if not text:
         return None
     text = text.replace("$", "").replace(" ", "")
-    if text.count(",") == 1 and text.count(".") == 0:
-        text = text.replace(",", ".")
+    if text.count(",") == 1 and "." not in text:
+        # Un unico "," sin punto es ambiguo: decimal europeo ("12,50") vs.
+        # separador de miles US ("1,200"). Un costo/precio en moneda usa 1-2
+        # decimales -- 3 digitos despues de la coma es la senal de que es
+        # agrupamiento de miles (1,200 = mil doscientos, no 1.2).
+        _, _, after_comma = text.partition(",")
+        if len(after_comma) == 3:
+            text = text.replace(",", "")
+        else:
+            text = text.replace(",", ".")
     else:
         text = text.replace(",", "")
     try:
