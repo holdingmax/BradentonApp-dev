@@ -40,12 +40,14 @@ except ImportError:  # pragma: no cover - environment guard
 try:
     from openpyxl import load_workbook
     from openpyxl.styles import Font, PatternFill
+    from openpyxl.worksheet.cell_range import CellRange
 
     OPENPYXL_AVAILABLE = True
 except ImportError:  # pragma: no cover - environment guard
     load_workbook = None  # type: ignore[assignment,misc]
     Font = None  # type: ignore[assignment,misc]
     PatternFill = None  # type: ignore[assignment,misc]
+    CellRange = None  # type: ignore[assignment,misc]
     OPENPYXL_AVAILABLE = False
 
 try:
@@ -1437,10 +1439,19 @@ def _get_supplier_sheet(workbook, sheet_name):
 
 
 def _find_last_real_row(sheet):
-    """Última fila con una fecha real cargada en la columna A."""
+    """
+    Última fila con una fecha real (datetime) cargada en la columna A.
+
+    Chequea el tipo, no solo que no esté vacía: el encabezado fijo de
+    cada hoja real (filas 1-7: título, "PROVEEDOR:", "DESCRIPCION:", los
+    nombres de columna) trae texto en columna A, y algunas hojas tienen
+    sueltos años como entero (ej. 2025, 2026) marcando el cambio de año
+    -- ninguno de los dos es una fecha real, y "not in (None, '')" no los
+    filtraba.
+    """
     last_real_row = None
     for row in range(1, sheet.max_row + 1):
-        if sheet.cell(row=row, column=COL_DATE).value not in (None, ""):
+        if isinstance(sheet.cell(row=row, column=COL_DATE).value, datetime):
             last_real_row = row
     return last_real_row
 
@@ -1722,16 +1733,34 @@ def _read_bank_payment_candidates(bank_path):
     return candidates
 
 
-def _nearest_real_row_at_or_above(sheet, row):
+def _nearest_balance_row_at_or_above(sheet, row):
     """
-    Camina hacia arriba desde row (inclusive) hasta encontrar una fila con
-    fecha real -- para no referenciar la fila separadora en blanco entre
-    meses como fila "anterior" (mismo tipo de bug que el ya corregido en
-    _append_invoice_row, generalizado acá porque un pago puede insertarse
-    en cualquier punto de la hoja, no solo al final).
+    Camina hacia arriba desde row (inclusive) hasta encontrar una fila
+    cuya columna F (BALANCE) tenga un valor -- fórmula o número -- para
+    usar como referencia de saldo anterior.
+
+    Ojo: NO busca por fecha real (columna A). En el libro real, las filas
+    separadoras en blanco entre meses SÍ llevan su propia fórmula de
+    arrastre de saldo (con D/E vacíos, simplemente repite el balance de
+    la fila de arriba) aunque su columna A esté vacía -- confirmado
+    inspeccionando el archivo real, no es una suposición. Referenciarlas
+    directo es válido y es la misma convención que ya usa el resto de la
+    hoja (cada fila real referencia la fila físicamente anterior, sea
+    cual sea su tipo). Solo hace falta seguir subiendo cuando la fila de
+    arriba está genuinamente vacía en F también (una hoja nueva, o un
+    separador que todavía no tiene ninguna fórmula prellenada).
+
+    El valor tiene que ser número o fórmula, no alcanza con "no vacío":
+    la fila 7 del encabezado fijo de cada hoja trae el texto "Balance"
+    literal en esta misma columna (es el título de la columna F), y
+    algunas hojas reales tienen un tramo de facturas viejas cargadas sin
+    ninguna fórmula de balance en absoluto (ej. AIRGAS entre 2023-10 y
+    2023-12) -- en ninguno de los dos casos hay un saldo previo real del
+    cual partir.
     """
     while row >= 1:
-        if sheet.cell(row=row, column=COL_DATE).value not in (None, ""):
+        value = sheet.cell(row=row, column=COL_BALANCE).value
+        if isinstance(value, (int, float)) or (isinstance(value, str) and value.startswith("=")):
             return row
         row -= 1
     return None
@@ -1747,8 +1776,8 @@ def _find_payment_insertion_point(sheet, payment_date):
       la hoja (respetando el separador de mes existente), igual que
       _append_invoice_row -- no hace falta mover nada.
     - needs_shift=True: target_row ya tiene una fila real cargada -- hay
-      que abrir espacio con sheet.insert_rows(target_row), escribir el
-      pago con _append_payment_row, y recién ahí llamar a
+      que abrir espacio con _insert_row_preserving_merges(target_row),
+      escribir el pago con _append_payment_row, y recién ahí llamar a
       _reformulate_rows_below para las filas que quedaron abajo.
     - previous_balance_row es siempre la fila real más cercana hacia
       arriba desde target_row (nunca un separador en blanco), lista para
@@ -1766,20 +1795,61 @@ def _find_payment_insertion_point(sheet, payment_date):
 
     for row in range(1, last_row + 1):
         row_date = sheet.cell(row=row, column=COL_DATE).value
-        if row_date in (None, ""):
+        # No alcanza con chequear None/"": el encabezado fijo de la hoja
+        # (título, "PROVEEDOR:", nombres de columna) trae texto en esta
+        # misma columna, y algunas hojas marcan el cambio de año con un
+        # entero suelto (ej. 2025) -- comparar cualquiera de los dos
+        # contra payment_date rompe con TypeError.
+        if not isinstance(row_date, datetime):
             continue
         if row_date > payment_date:
-            previous_balance_row = _nearest_real_row_at_or_above(sheet, row - 1)
+            previous_balance_row = _nearest_balance_row_at_or_above(sheet, row - 1)
             if previous_balance_row is None:
                 raise ValueError(
-                    f"El pago del {payment_date:%d/%m/%Y} es anterior a la primera fila "
-                    "cargada en esta hoja -- no hay saldo previo del cual partir, hay que "
-                    "cargarlo a mano."
+                    f"El pago del {payment_date:%d/%m/%Y} caería antes de que la hoja "
+                    "tenga ninguna fila con un balance calculable (fórmula o número) de "
+                    "la cual partir -- puede ser anterior a la primera factura, o caer "
+                    "en un tramo viejo cargado sin fórmula de arrastre. Hay que cargarlo "
+                    "a mano."
                 )
             return row, True, previous_balance_row, last_row
 
     # No debería llegar acá dado el chequeo de arriba, pero por las dudas.
     return last_row + 1, False, last_row, last_row
+
+
+def _insert_row_preserving_merges(sheet, insert_at_row):
+    """
+    Abre una fila en insert_at_row igual que sheet.insert_rows(), pero
+    sin dejar celdas combinadas "fantasma" en la posición equivocada.
+
+    Las hojas reales de proveedores usan una celda combinada A:E de una
+    sola fila como separador visual entre meses (con la etiqueta del mes
+    en la celda ancla) -- en TODA la hoja, no solo en el punto donde
+    justo cambia de mes al final. openpyxl.Worksheet.insert_rows mueve
+    los valores de celda pero NO actualiza sheet.merged_cells, así que
+    sin este paso cualquier separador debajo del punto de inserción
+    queda combinado sobre la fila equivocada tras el corrimiento, y
+    escribir ahí con _append_payment_row revienta con
+    "MergedCell object attribute 'value' is read-only".
+    """
+    ranges_to_shift = [
+        mcr.coord for mcr in list(sheet.merged_cells.ranges) if mcr.min_row >= insert_at_row
+    ]
+    for coord in ranges_to_shift:
+        sheet.unmerge_cells(coord)
+
+    sheet.insert_rows(insert_at_row, amount=1)
+
+    for coord in ranges_to_shift:
+        shifted = CellRange(coord)
+        shifted.shift(row_shift=1)
+        sheet.merge_cells(
+            start_row=shifted.min_row,
+            start_column=shifted.min_col,
+            end_row=shifted.max_row,
+            end_column=shifted.max_col,
+        )
 
 
 def _reformulate_rows_below(sheet, insert_at_row, last_row):
@@ -1799,14 +1869,18 @@ def _reformulate_rows_below(sheet, insert_at_row, last_row):
     debe correr DESPUÉS de escribir la fila nueva, no antes: si insert_at_row
     todavía estuviera en blanco, "la fila real más cercana hacia arriba"
     la saltearía a ella también.
+
+    No se salta las filas separadoras en blanco: en el libro real, esas
+    filas también llevan su propia fórmula de BALANCE (arrastra el saldo
+    sin sumar/restar nada, ya que D/E quedan vacíos) y esa fórmula queda
+    igual de desactualizada tras el corrimiento. El chequeo real acá no
+    es "tiene fecha" sino "tiene una fórmula en la columna F" -- eso
+    cubre tanto facturas/pagos como separadores por igual.
     """
     for row in range(insert_at_row + 1, last_row + 2):
-        date_value = sheet.cell(row=row, column=COL_DATE).value
-        if date_value in (None, ""):
-            continue
         cell = sheet.cell(row=row, column=COL_BALANCE)
         if isinstance(cell.value, str) and cell.value.startswith("="):
-            previous_row = _nearest_real_row_at_or_above(sheet, row - 1)
+            previous_row = _nearest_balance_row_at_or_above(sheet, row - 1)
             cell.value = (
                 f"=+{sheet.cell(row=previous_row, column=COL_BALANCE).coordinate}"
                 f"+{sheet.cell(row=row, column=COL_DEBE).coordinate}"
@@ -1945,7 +2019,7 @@ def append_supplier_payments(ledger_path, bank_path):
                     sheet, payment["date"]
                 )
                 if needs_shift:
-                    sheet.insert_rows(target_row, amount=1)
+                    _insert_row_preserving_merges(sheet, target_row)
                 _append_payment_row(sheet, target_row, previous_balance_row, payment)
                 if needs_shift:
                     _reformulate_rows_below(sheet, target_row, last_row)
