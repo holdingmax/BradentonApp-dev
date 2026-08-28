@@ -1770,6 +1770,12 @@ def _find_payment_insertion_point(sheet, payment_date):
             continue
         if row_date > payment_date:
             previous_balance_row = _nearest_real_row_at_or_above(sheet, row - 1)
+            if previous_balance_row is None:
+                raise ValueError(
+                    f"El pago del {payment_date:%d/%m/%Y} es anterior a la primera fila "
+                    "cargada en esta hoja -- no hay saldo previo del cual partir, hay que "
+                    "cargarlo a mano."
+                )
             return row, True, previous_balance_row, last_row
 
     # No debería llegar acá dado el chequeo de arriba, pero por las dudas.
@@ -1808,20 +1814,30 @@ def _reformulate_rows_below(sheet, insert_at_row, last_row):
             )
 
 
-def _payment_already_recorded(sheet, date, amount):
+def _existing_payment_keys(sheet):
     """
-    Evita duplicar un pago si se reprocesa el mismo período bancario:
-    misma fecha y mismo monto ya cargados en una fila "OP" de esta hoja.
+    Devuelve el conjunto de (fecha, monto) de las filas "OP" ya cargadas en
+    la hoja -- para evitar duplicar un pago si se reprocesa el mismo
+    período bancario.
+
+    Se calcula UNA SOLA VEZ antes de procesar el lote entero de esa hoja,
+    nunca fila por fila durante el loop: si se recalculara contra el
+    estado ya mutado de la hoja en cada pago, un pago recién insertado en
+    esta misma corrida contaminaría el chequeo del siguiente -- dos pagos
+    legítimos y distintos que coinciden en fecha y monto (ej. dos cheques
+    de $300 el mismo día, a facturas distintas) harían que el segundo se
+    descarte como si fuera un duplicado del primero.
     """
+    keys = set()
     for row in range(1, sheet.max_row + 1):
         comprob = sheet.cell(row=row, column=COL_COMPROB).value
         if not (isinstance(comprob, str) and comprob.strip().lower() == "op"):
             continue
         row_date = sheet.cell(row=row, column=COL_DATE).value
         row_amount = sheet.cell(row=row, column=COL_HABER).value
-        if row_date == date and isinstance(row_amount, (int, float)) and abs(row_amount - amount) < 0.005:
-            return True
-    return False
+        if isinstance(row_amount, (int, float)):
+            keys.add((row_date, round(row_amount, 2)))
+    return keys
 
 
 def _append_payment_row(sheet, target_row, previous_balance_row, payment):
@@ -1907,19 +1923,35 @@ def append_supplier_payments(ledger_path, bank_path):
 
         appended = 0
         duplicates_skipped = []
+        # Congelado ANTES del loop -- ver el docstring de _existing_payment_keys
+        # sobre por qué no se puede recalcular fila por fila dentro del loop.
+        existing_keys = _existing_payment_keys(sheet)
         for payment in payments:
-            if _payment_already_recorded(sheet, payment["date"], payment["amount"]):
+            key = (payment["date"], round(payment["amount"], 2))
+            if key in existing_keys:
                 duplicates_skipped.append(payment["description"])
                 continue
 
-            target_row, needs_shift, previous_balance_row, last_row = _find_payment_insertion_point(
-                sheet, payment["date"]
-            )
-            if needs_shift:
-                sheet.insert_rows(target_row, amount=1)
-            _append_payment_row(sheet, target_row, previous_balance_row, payment)
-            if needs_shift:
-                _reformulate_rows_below(sheet, target_row, last_row)
+            # Aislado por pago con una excepción amplia a propósito: hojas
+            # cargadas a mano durante años pueden traer de todo debajo del
+            # punto de inserción -- una fecha tipeada como texto en vez de
+            # datetime (TypeError al comparar), una celda combinada que
+            # insert_rows corre sin avisar (AttributeError al escribir en
+            # una MergedCell), etc. Sin esto, cualquiera de esos casos
+            # aborta append_supplier_payments entero ANTES de workbook.save,
+            # perdiendo también el trabajo ya hecho en otras hojas del lote.
+            try:
+                target_row, needs_shift, previous_balance_row, last_row = _find_payment_insertion_point(
+                    sheet, payment["date"]
+                )
+                if needs_shift:
+                    sheet.insert_rows(target_row, amount=1)
+                _append_payment_row(sheet, target_row, previous_balance_row, payment)
+                if needs_shift:
+                    _reformulate_rows_below(sheet, target_row, last_row)
+            except (ValueError, TypeError, AttributeError) as exc:
+                unmatched.append(f"{payment['description']!r} ({sheet_title}): {exc}")
+                continue
             appended += 1
 
         _update_sheet_tab_color(sheet)
