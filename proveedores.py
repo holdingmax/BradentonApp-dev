@@ -48,6 +48,13 @@ except ImportError:  # pragma: no cover - environment guard
     PatternFill = None  # type: ignore[assignment,misc]
     OPENPYXL_AVAILABLE = False
 
+try:
+    import pandas as pd
+except ImportError:  # pragma: no cover - environment guard
+    pd = None  # type: ignore[assignment]
+
+from proveedores_pago_rules import match_supplier_sheet
+
 _OSD_ROTATE_TO_TRANSPOSE = {
     90: Image.ROTATE_270 if Image is not None else None,
     180: Image.ROTATE_180 if Image is not None else None,
@@ -1459,14 +1466,11 @@ def _find_last_month_color(sheet, from_row):
     return None
 
 
-def _update_sheet_tab_color(sheet):
+def _compute_sheet_balance(sheet):
     """
-    Pinta la pestaña de la hoja de celeste si el proveedor tiene saldo
-    pendiente (le debemos), y la despinta si el saldo llega a 0 (ej. al
-    cargar un pago desde Chase en la Fase 2 del módulo). El saldo se
-    calcula sumando DEBE y HABER directamente en vez de leer la fórmula de
-    BALANCE, porque openpyxl no evalúa fórmulas y la fila recién agregada
-    todavía no tiene un valor calculado en caché.
+    Suma DEBE y HABER directamente en vez de leer la fórmula de BALANCE,
+    porque openpyxl no evalúa fórmulas y una fila recién agregada todavía
+    no tiene un valor calculado en caché.
     """
     last_row = _find_last_real_row(sheet)
     total_debe = 0.0
@@ -1478,7 +1482,16 @@ def _update_sheet_tab_color(sheet):
             total_debe += debe
         if isinstance(haber, (int, float)):
             total_haber += haber
-    balance = total_debe - total_haber
+    return total_debe - total_haber
+
+
+def _update_sheet_tab_color(sheet):
+    """
+    Pinta la pestaña de la hoja de celeste si el proveedor tiene saldo
+    pendiente (le debemos), y la despinta si el saldo llega a 0 (ej. al
+    cargar un pago desde Chase en la Fase 2 del módulo).
+    """
+    balance = _compute_sheet_balance(sheet)
     sheet.sheet_properties.tabColor = DEBT_TAB_COLOR if balance > 0.005 else None
 
 
@@ -1633,5 +1646,303 @@ def append_supplier_invoices(ledger_path, pdf_paths):
         "files_processed": len(pdf_paths),
         "invoices_appended": total_appended,
         "batch_results": batch_results,
+    }
+    return temp_path, summary
+
+
+# ---- Pagos (Fase 2, vía Chase) ----
+
+# Columnas que se copian de estilo para una fila de pago (A,B,C,E,F,G) --
+# a diferencia de INVOICE_ROW_COLUMNS, acá se copia E (HABER) en vez de D
+# (DEBE), porque un pago escribe en HABER.
+PAYMENT_ROW_COLUMNS = (1, 2, 3, 5, 6, 7)
+
+
+def _find_bank_column(df, name_hint, fallback_index):
+    """
+    Ubica una columna del Excel del banco por nombre de encabezado
+    (case-insensitive), con un índice fijo de respaldo si no aparece por
+    nombre -- mismo patrón que find_chase_column en app.py.
+    """
+    hint = str(name_hint).strip().lower()
+    for col in df.columns:
+        if str(col).strip().lower() == hint:
+            return col
+    if 0 <= fallback_index < len(df.columns):
+        return df.columns[fallback_index]
+    raise ValueError(f'No se encontró la columna "{name_hint}" en el Excel del banco.')
+
+
+def _read_bank_payment_candidates(bank_path):
+    """
+    Lee el Excel/CSV del banco -- ya categorizado por la pestaña Chase Bank,
+    con la columna Detalle ya rellenada -- y devuelve una lista de
+    {"date", "amount", "description"} para cada fila cuyo Detalle sea
+    "PROVEEDORES". date/amount quedan en None si no se pudieron leer; el
+    llamador decide qué hacer con esas filas, nunca se descartan en
+    silencio.
+    """
+    if pd is None:
+        raise ImportError("Proveedores requiere pandas. Instale con: pip install pandas")
+
+    ext = os.path.splitext(bank_path)[1].lower()
+    if ext == ".csv":
+        df = pd.read_csv(bank_path, dtype=str, keep_default_na=False)
+    else:
+        df = pd.read_excel(bank_path, dtype=str, keep_default_na=False)
+
+    description_col = _find_bank_column(df, "Description", 2)
+    posting_col = _find_bank_column(df, "Posting Date", 1)
+    amount_col = _find_bank_column(df, "Amount", 3)
+    detalle_col = _find_bank_column(df, "Detalle", 7)
+
+    candidates = []
+    for _, row in df.iterrows():
+        detalle = str(row.get(detalle_col, "")).strip().lower()
+        if detalle != "proveedores":
+            continue
+
+        description = str(row.get(description_col, "")).strip()
+
+        amount_text = str(row.get(amount_col, "")).strip().replace("$", "").replace(",", "")
+        try:
+            amount = abs(float(amount_text))
+        except ValueError:
+            amount = None
+
+        date_text = str(row.get(posting_col, "")).strip()
+        date_value = None
+        if date_text:
+            parsed_date = pd.to_datetime(date_text, errors="coerce")
+            if not pd.isna(parsed_date):
+                date_value = parsed_date.to_pydatetime()
+
+        candidates.append({"date": date_value, "amount": amount, "description": description})
+
+    return candidates
+
+
+def _nearest_real_row_at_or_above(sheet, row):
+    """
+    Camina hacia arriba desde row (inclusive) hasta encontrar una fila con
+    fecha real -- para no referenciar la fila separadora en blanco entre
+    meses como fila "anterior" (mismo tipo de bug que el ya corregido en
+    _append_invoice_row, generalizado acá porque un pago puede insertarse
+    en cualquier punto de la hoja, no solo al final).
+    """
+    while row >= 1:
+        if sheet.cell(row=row, column=COL_DATE).value not in (None, ""):
+            return row
+        row -= 1
+    return None
+
+
+def _find_payment_insertion_point(sheet, payment_date):
+    """
+    Determina dónde debe ir un pago con fecha payment_date para mantener la
+    hoja en orden cronológico.
+
+    Devuelve (target_row, needs_shift, previous_balance_row, last_row):
+    - needs_shift=False: target_row es el próximo lugar libre al final de
+      la hoja (respetando el separador de mes existente), igual que
+      _append_invoice_row -- no hace falta mover nada.
+    - needs_shift=True: target_row ya tiene una fila real cargada -- hay
+      que abrir espacio con sheet.insert_rows(target_row), escribir el
+      pago con _append_payment_row, y recién ahí llamar a
+      _reformulate_rows_below para las filas que quedaron abajo.
+    - previous_balance_row es siempre la fila real más cercana hacia
+      arriba desde target_row (nunca un separador en blanco), lista para
+      usarse como referencia de estilo y de balance anterior.
+    """
+    last_row = _find_last_real_row(sheet)
+    if last_row is None:
+        raise ValueError("La hoja no tiene ninguna fila real cargada.")
+    last_date = sheet.cell(row=last_row, column=COL_DATE).value
+
+    if payment_date >= last_date:
+        month_changed = (payment_date.year, payment_date.month) != (last_date.year, last_date.month)
+        target_row = last_row + 2 if month_changed else last_row + 1
+        return target_row, False, last_row, last_row
+
+    for row in range(1, last_row + 1):
+        row_date = sheet.cell(row=row, column=COL_DATE).value
+        if row_date in (None, ""):
+            continue
+        if row_date > payment_date:
+            previous_balance_row = _nearest_real_row_at_or_above(sheet, row - 1)
+            return row, True, previous_balance_row, last_row
+
+    # No debería llegar acá dado el chequeo de arriba, pero por las dudas.
+    return last_row + 1, False, last_row, last_row
+
+
+def _reformulate_rows_below(sheet, insert_at_row, last_row):
+    """
+    Después de insertar una fila nueva en insert_at_row -- y de haber
+    escrito ya sus datos ahí, con _append_payment_row -- reconstruye la
+    fórmula de BALANCE de cada fila real que quedó debajo, para que siga
+    apuntando a la fila real inmediata anterior en su nueva posición.
+
+    No alcanza con trasladar la fórmula vieja +1 fila (ej. con
+    Translator): una fila justo después de un cambio de mes referencia la
+    última fila real ANTES del separador, no la fila físicamente anterior
+    -- ese salto tiene que recalcularse contra la nueva posición de la
+    hoja, no simplemente correrse, o terminaría apuntando a la fila
+    separadora en blanco (u otra fila equivocada) en vez de a la fila real
+    que ahora quedó inmediatamente arriba. Por eso además esta función
+    debe correr DESPUÉS de escribir la fila nueva, no antes: si insert_at_row
+    todavía estuviera en blanco, "la fila real más cercana hacia arriba"
+    la saltearía a ella también.
+    """
+    for row in range(insert_at_row + 1, last_row + 2):
+        date_value = sheet.cell(row=row, column=COL_DATE).value
+        if date_value in (None, ""):
+            continue
+        cell = sheet.cell(row=row, column=COL_BALANCE)
+        if isinstance(cell.value, str) and cell.value.startswith("="):
+            previous_row = _nearest_real_row_at_or_above(sheet, row - 1)
+            cell.value = (
+                f"=+{sheet.cell(row=previous_row, column=COL_BALANCE).coordinate}"
+                f"+{sheet.cell(row=row, column=COL_DEBE).coordinate}"
+                f"-{sheet.cell(row=row, column=COL_HABER).coordinate}"
+            )
+
+
+def _payment_already_recorded(sheet, date, amount):
+    """
+    Evita duplicar un pago si se reprocesa el mismo período bancario:
+    misma fecha y mismo monto ya cargados en una fila "OP" de esta hoja.
+    """
+    for row in range(1, sheet.max_row + 1):
+        comprob = sheet.cell(row=row, column=COL_COMPROB).value
+        if not (isinstance(comprob, str) and comprob.strip().lower() == "op"):
+            continue
+        row_date = sheet.cell(row=row, column=COL_DATE).value
+        row_amount = sheet.cell(row=row, column=COL_HABER).value
+        if row_date == date and isinstance(row_amount, (int, float)) and abs(row_amount - amount) < 0.005:
+            return True
+    return False
+
+
+def _append_payment_row(sheet, target_row, previous_balance_row, payment):
+    """
+    Escribe una fila "OP" (pago) en target_row. A diferencia de
+    _append_invoice_row: usa HABER (columna E) en vez de DEBE, no fuerza
+    negrita ni aplica el fill mensual en la columna N° (un pago no tiene
+    número de factura real), y el estilo se copia de previous_balance_row
+    -- la fila real más cercana hacia arriba, sea "invoice" u "OP".
+    """
+    for col in PAYMENT_ROW_COLUMNS:
+        ref_cell = sheet.cell(row=previous_balance_row, column=col)
+        new_cell = sheet.cell(row=target_row, column=col)
+        new_cell.font = copy(ref_cell.font)
+        new_cell.border = copy(ref_cell.border)
+        new_cell.alignment = copy(ref_cell.alignment)
+        new_cell.number_format = ref_cell.number_format
+
+    sheet.cell(row=target_row, column=COL_DATE, value=payment["date"])
+    sheet.cell(row=target_row, column=COL_COMPROB, value="OP")
+    sheet.cell(row=target_row, column=COL_HABER, value=payment["amount"])
+    sheet.cell(
+        row=target_row,
+        column=COL_BALANCE,
+        value=f"=+{sheet.cell(row=previous_balance_row, column=COL_BALANCE).coordinate}"
+        f"+{sheet.cell(row=target_row, column=COL_DEBE).coordinate}"
+        f"-{sheet.cell(row=target_row, column=COL_HABER).coordinate}",
+    )
+    sheet.cell(row=target_row, column=COL_DETALLE).value = None
+
+
+def append_supplier_payments(ledger_path, bank_path):
+    """
+    Lee el Excel del banco (ya categorizado por la pestaña Chase Bank),
+    identifica los pagos a proveedores (Detalle="PROVEEDORES"), determina a
+    qué hoja corresponde cada uno por la Descripción bancaria (reglas de
+    proveedores_pago_rules.py) e inserta una fila "OP" en la posición
+    cronológica correcta de esa hoja -- corriendo filas hacia abajo y
+    trasladando fórmulas de BALANCE si el pago cae antes de facturas ya
+    cargadas. Guarda una copia temporal y la abre; el usuario la revisa y
+    hace "Guardar como" como en el resto de los módulos.
+    """
+    if not OPENPYXL_AVAILABLE:
+        raise ImportError("Proveedores requiere openpyxl. Instale con: pip install openpyxl")
+
+    ledger_path = os.path.abspath(ledger_path)
+    if not os.path.isfile(ledger_path):
+        raise FileNotFoundError(f"Excel no encontrado: {ledger_path}")
+
+    candidates = _read_bank_payment_candidates(bank_path)
+
+    workbook = load_workbook(ledger_path, data_only=False)
+
+    by_sheet = {}
+    unmatched = []
+    for candidate in candidates:
+        description = candidate["description"]
+        if candidate["date"] is None or candidate["amount"] is None:
+            unmatched.append(f"{description!r}: no se pudo leer la fecha o el monto.")
+            continue
+
+        sheet_name = match_supplier_sheet(description)
+        if not sheet_name:
+            unmatched.append(f"{description!r}: ningún proveedor conocido matchea esta descripción.")
+            continue
+
+        try:
+            sheet = _get_supplier_sheet(workbook, sheet_name)
+        except ValueError:
+            unmatched.append(
+                f'{description!r}: la regla apunta a la hoja "{sheet_name}", que no existe en el libro.'
+            )
+            continue
+
+        bucket = by_sheet.setdefault(sheet.title, {"sheet": sheet, "payments": []})
+        bucket["payments"].append(candidate)
+
+    batch_results = []
+    total_appended = 0
+    for sheet_title, bucket in by_sheet.items():
+        sheet = bucket["sheet"]
+        payments = sorted(bucket["payments"], key=lambda p: p["date"])
+
+        appended = 0
+        duplicates_skipped = []
+        for payment in payments:
+            if _payment_already_recorded(sheet, payment["date"], payment["amount"]):
+                duplicates_skipped.append(payment["description"])
+                continue
+
+            target_row, needs_shift, previous_balance_row, last_row = _find_payment_insertion_point(
+                sheet, payment["date"]
+            )
+            if needs_shift:
+                sheet.insert_rows(target_row, amount=1)
+            _append_payment_row(sheet, target_row, previous_balance_row, payment)
+            if needs_shift:
+                _reformulate_rows_below(sheet, target_row, last_row)
+            appended += 1
+
+        _update_sheet_tab_color(sheet)
+
+        total_appended += appended
+        batch_results.append(
+            {
+                "sheet_name": sheet_title,
+                "payments_appended": appended,
+                "duplicates_skipped": duplicates_skipped,
+            }
+        )
+
+    temp_path = _create_temp_workbook_path()
+    workbook.save(os.path.abspath(temp_path))
+    workbook.close()
+
+    _launch_temp_workbook(temp_path)
+
+    summary = {
+        "candidates_found": len(candidates),
+        "payments_appended": total_appended,
+        "batch_results": batch_results,
+        "unmatched": unmatched,
     }
     return temp_path, summary

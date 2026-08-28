@@ -1,0 +1,92 @@
+{
+  "rules": [
+    {
+      "keyword": "hackneyrectampa",
+      "sheet_name": "HT Hackney"
+    },
+    {
+      "keyword": "cec distributing",
+      "sheet_name": "Chinook CEC"
+    },
+    {
+      "keyword": "colonial",
+      "sheet_name": "Colonial"
+    },
+    {
+      "keyword": "gold coast eagle",
+      "sheet_name": "GOLDCE"
+    },
+    {
+      "keyword": "frito-la",
+      "sheet_name": "FRITO-LAY"
+    },
+    {
+      "keyword": "king",
+      "sheet_name": "KING'S"
+    },
+    {
+      "keyword": "redbull",
+      "sheet_name": "RED BULL"
+    },
+    {
+      "keyword": "SWEETHEART-ICE CREAM",
+      "sheet_name": "SWEETHEART-ICE CREAM"
+    },
+    {
+      "keyword": "BIMBO",
+      "sheet_name": "BIMBO"
+    },
+    {
+      "keyword": "midtown",
+      "sheet_name": "MIDTOWN"
+    },
+    {
+      "keyword": "johnson brothers",
+      "sheet_name": "JOHNSON"
+    },
+    {
+      "keyword": "FLORI-GAS",
+      "sheet_name": "FLORI-GAS"
+    },
+    {
+      "keyword": "airgas",
+      "sheet_name": "AIRGAS"
+    },
+    {
+      "keyword": "AZ Sout",
+      "sheet_name": "AZ Sout"
+    },
+    {
+      "keyword": "EXPRESS",
+      "sheet_name": "EXPRESS"
+    },
+    {
+      "keyword": "KOOLER",
+      "sheet_name": "KOOLER ICE"
+    },
+    {
+      "keyword": "SAM'S",
+      "sheet_name": "SAM'S"
+    },
+    {
+      "keyword": "FS WHOLESALE",
+      "sheet_name": "FS WHOLESALE"
+    },
+    {
+      "keyword": "LMT",
+      "sheet_name": "LMT"
+    },
+    {
+      "keyword": "OVERFLOW",
+      "sheet_name": "OVERFLOW"
+    },
+    {
+      "keyword": "SWISHER",
+      "sheet_name": "SWISHER"
+    },
+    {
+      "keyword": "SIGNARAMA",
+      "sheet_name": "SIGNARAMA"
+    }
+  ]
+}

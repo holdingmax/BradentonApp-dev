@@ -126,12 +126,27 @@ else:
     _GETTEL_TOYOTA_IMPORT_ERROR = None
 
 try:
-    from proveedores import append_supplier_invoices
+    from proveedores import append_supplier_invoices, append_supplier_payments
 except ImportError as _proveedores_exc:
     append_supplier_invoices = None
+    append_supplier_payments = None
     _PROVEEDORES_IMPORT_ERROR = _proveedores_exc
 else:
     _PROVEEDORES_IMPORT_ERROR = None
+
+try:
+    from proveedores_pago_rules import (
+        add_dynamic_rule as add_proveedores_pago_rule,
+        delete_dynamic_rule_by_index as delete_proveedores_pago_rule_by_index,
+        load_dynamic_rules as load_proveedores_pago_rules,
+    )
+except ImportError as _proveedores_pago_rules_exc:
+    add_proveedores_pago_rule = None
+    delete_proveedores_pago_rule_by_index = None
+    load_proveedores_pago_rules = None
+    _PROVEEDORES_PAGO_RULES_IMPORT_ERROR = _proveedores_pago_rules_exc
+else:
+    _PROVEEDORES_PAGO_RULES_IMPORT_ERROR = None
 
 from ui_theme import (
     ANALISIS_MASTER_FILETYPES,
@@ -1608,6 +1623,9 @@ class EFTExtractorApp:
         self.gettel_pagos_pdf_paths = tk.StringVar(value="")
         self.proveedores_ledger_path = tk.StringVar(value="")
         self.proveedores_invoice_pdf_paths = tk.StringVar(value="")
+        self.proveedores_bank_path = tk.StringVar(value="")
+        self.proveedores_pago_rule_keyword = tk.StringVar(value="")
+        self.proveedores_pago_rule_sheet = tk.StringVar(value="")
         self.chase_path = tk.StringVar(value="")
         self.chase_rule_keyword = tk.StringVar(value="")
         self.chase_rule_detail = tk.StringVar(value="")
@@ -1630,6 +1648,9 @@ class EFTExtractorApp:
         )
         self.proveedores_status_text = tk.StringVar(
             value="Listo — seleccione el Excel Ledger y el/los PDF de facturas."
+        )
+        self.proveedores_pagos_status_text = tk.StringVar(
+            value="Listo — seleccione el Excel Ledger y el extracto de Chase ya categorizado."
         )
         self.chase_status_text = tk.StringVar(value="Listo — seleccione un extracto de Chase.")
         self.cmv_status_text = tk.StringVar(value="Listo — seleccione los archivos de departamento y el maestro CMV.")
@@ -1991,6 +2012,38 @@ class EFTExtractorApp:
             left, self.proveedores_status_text, section_theme=PROVEEDORES_THEME
         )
 
+        payments_card = create_card(left, section_theme=PROVEEDORES_THEME)
+        create_panel_label(payments_card, "Cargar Pagos (Chase) → fila \"OP\" por proveedor", PROVEEDORES_THEME)
+        self.proveedores_bank_entry = create_file_row(
+            payments_card,
+            "Extracto Chase",
+            self.proveedores_bank_path,
+            self.select_proveedores_bank_file,
+            section_theme=PROVEEDORES_THEME,
+            label_width=13,
+            browse_label="Examinar…",
+        )
+        payments_actions = tk.Frame(payments_card, bg=PROVEEDORES_THEME.card_tint)
+        payments_actions.pack(fill=tk.X, pady=(4, 0))
+        create_primary_button(
+            payments_actions,
+            "Procesar Pagos",
+            self.process_proveedores_payments,
+            section_theme=PROVEEDORES_THEME,
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        create_secondary_button(
+            payments_actions,
+            "Limpiar",
+            lambda: self._clear_field(self.proveedores_bank_path, "proveedores_bank_entry"),
+            section_theme=PROVEEDORES_THEME,
+        ).pack(side=tk.LEFT)
+
+        self.proveedores_pagos_status_label, self.proveedores_pagos_status_dot = create_status_bar(
+            left, self.proveedores_pagos_status_text, section_theme=PROVEEDORES_THEME
+        )
+
+        self._build_proveedores_pago_rules_manager(right)
+
         create_info_panel(
             right,
             "Cómo funciona",
@@ -2003,10 +2056,183 @@ class EFTExtractorApp:
                 "Una factura ya cargada (mismo N°) se omite automáticamente",
                 "El BALANCE se recalcula solo — no hace falta tocarlo",
                 "Abre copia temp del Excel — guarde manualmente con Guardar como",
-                "Los pagos (Chase) se cargan aparte, en una etapa siguiente",
+                "Pagos: el extracto de Chase debe venir ya categorizado (columna Detalle) "
+                "desde la pestaña Chase Bank",
+                "Un pago se ubica cronológicamente en su hoja, aunque caiga antes de una "
+                "factura ya cargada",
+                "Un pago sin proveedor identificado se omite y se avisa al final — agregue "
+                "la regla que falta y reprocese",
             ],
             section_theme=PROVEEDORES_THEME,
         )
+
+    def _build_proveedores_pago_rules_manager(self, parent):
+        """Keyword-to-sheet-name rule manager for routing Chase payments (persistent JSON + grid UI)."""
+        rules_card = create_card(
+            parent,
+            section_theme=PROVEEDORES_THEME,
+            padx=6,
+            pady=6,
+        )
+        create_panel_label(rules_card, "Reglas de Proveedores (Pagos)", PROVEEDORES_THEME)
+
+        create_compact_entry(
+            rules_card,
+            self.proveedores_pago_rule_keyword,
+            section_theme=PROVEEDORES_THEME,
+            label="Palabra clave a detectar",
+        )
+        create_compact_entry(
+            rules_card,
+            self.proveedores_pago_rule_sheet,
+            section_theme=PROVEEDORES_THEME,
+            label="Hoja de proveedor",
+        )
+
+        btn_row = tk.Frame(rules_card, bg=PROVEEDORES_THEME.card_tint)
+        btn_row.pack(fill=tk.X, pady=(4, 4))
+        create_primary_button(
+            btn_row,
+            "Crear Regla",
+            self._add_proveedores_pago_rule,
+            section_theme=PROVEEDORES_THEME,
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        create_secondary_button(
+            btn_row,
+            "Eliminar Regla",
+            self._delete_proveedores_pago_rule,
+            section_theme=PROVEEDORES_THEME,
+        ).pack(side=tk.LEFT)
+
+        tk.Label(
+            rules_card,
+            text="Reglas Cargadas",
+            font=(FONT, 8, "bold"),
+            fg=THEME.TEXT_SOFT,
+            bg=PROVEEDORES_THEME.card_tint,
+            anchor=tk.W,
+        ).pack(anchor=tk.W, pady=(2, 2))
+
+        list_host = tk.Frame(
+            rules_card,
+            bg=THEME.SURFACE_ALT,
+            highlightbackground=PROVEEDORES_THEME.accent_soft,
+            highlightthickness=1,
+        )
+        list_host.pack(fill=tk.BOTH, expand=True, pady=(0, 4))
+        list_host.grid_columnconfigure(0, weight=1)
+        list_host.grid_rowconfigure(0, weight=1)
+
+        style = ttk.Style()
+        style.configure(
+            "ProveedoresPagoRules.Treeview",
+            font=(FONT, 9),
+            rowheight=22,
+            background=THEME.SURFACE_ALT,
+            fieldbackground=THEME.SURFACE_ALT,
+            foreground=THEME.TEXT,
+        )
+        style.configure(
+            "ProveedoresPagoRules.Treeview.Heading",
+            font=(FONT, 9, "bold"),
+            background=PROVEEDORES_THEME.card_tint,
+            foreground=THEME.TEXT,
+        )
+        style.map(
+            "ProveedoresPagoRules.Treeview",
+            background=[("selected", PROVEEDORES_THEME.accent)],
+            foreground=[("selected", "#FFFFFF")],
+        )
+
+        columns = ("keyword", "sheet_name")
+        self.proveedores_pago_rules_tree = ttk.Treeview(
+            list_host,
+            columns=columns,
+            show="headings",
+            style="ProveedoresPagoRules.Treeview",
+            height=8,
+            selectmode="browse",
+        )
+        self.proveedores_pago_rules_tree.heading("keyword", text="Palabra Clave")
+        self.proveedores_pago_rules_tree.heading("sheet_name", text="Hoja de Proveedor")
+        self.proveedores_pago_rules_tree.column("keyword", width=180, anchor=tk.W, stretch=True)
+        self.proveedores_pago_rules_tree.column("sheet_name", width=140, anchor=tk.W, stretch=True)
+
+        scrollbar = ttk.Scrollbar(
+            list_host, orient=tk.VERTICAL, command=self.proveedores_pago_rules_tree.yview
+        )
+        self.proveedores_pago_rules_tree.configure(yscrollcommand=scrollbar.set)
+        self.proveedores_pago_rules_tree.grid(row=0, column=0, sticky="nsew")
+        scrollbar.grid(row=0, column=1, sticky="ns")
+
+        self._refresh_proveedores_pago_rules_listbox()
+
+    def _refresh_proveedores_pago_rules_listbox(self):
+        if not hasattr(self, "proveedores_pago_rules_tree"):
+            return
+        for item in self.proveedores_pago_rules_tree.get_children():
+            self.proveedores_pago_rules_tree.delete(item)
+        if load_proveedores_pago_rules is None:
+            self._proveedores_pago_rules_cache = []
+            return
+        self._proveedores_pago_rules_cache = load_proveedores_pago_rules()
+        for rule in self._proveedores_pago_rules_cache:
+            self.proveedores_pago_rules_tree.insert(
+                "", tk.END, values=(rule["keyword"], rule["sheet_name"])
+            )
+
+    def _add_proveedores_pago_rule(self):
+        if add_proveedores_pago_rule is None:
+            self._set_proveedores_pagos_status(
+                f"Reglas de pagos no disponibles: {_PROVEEDORES_PAGO_RULES_IMPORT_ERROR}",
+                is_error=True,
+            )
+            return
+        keyword = self.proveedores_pago_rule_keyword.get().strip()
+        sheet_name = self.proveedores_pago_rule_sheet.get().strip()
+        try:
+            add_proveedores_pago_rule(keyword, sheet_name)
+            self.proveedores_pago_rule_keyword.set("")
+            self.proveedores_pago_rule_sheet.set("")
+            self._refresh_proveedores_pago_rules_listbox()
+            self._set_proveedores_pagos_status(f"Regla creada: \"{keyword}\" → \"{sheet_name}\".")
+        except ValueError as exc:
+            messagebox.showwarning("Regla incompleta", str(exc))
+            self._set_proveedores_pagos_status(str(exc), is_error=True)
+
+    def _delete_proveedores_pago_rule(self):
+        if delete_proveedores_pago_rule_by_index is None:
+            self._set_proveedores_pagos_status(
+                f"Reglas de pagos no disponibles: {_PROVEEDORES_PAGO_RULES_IMPORT_ERROR}",
+                is_error=True,
+            )
+            return
+        selection = self.proveedores_pago_rules_tree.selection()
+        if not selection:
+            messagebox.showwarning(
+                "Sin selección",
+                "Seleccione una regla de la lista antes de eliminar.",
+            )
+            return
+        item_id = selection[0]
+        index = self.proveedores_pago_rules_tree.index(item_id)
+        if index >= len(self._proveedores_pago_rules_cache):
+            messagebox.showwarning(
+                "Selección inválida",
+                "La regla seleccionada ya no existe. La lista se actualizará.",
+            )
+            self._refresh_proveedores_pago_rules_listbox()
+            return
+        rule = self._proveedores_pago_rules_cache[index]
+        try:
+            delete_proveedores_pago_rule_by_index(index)
+            self._refresh_proveedores_pago_rules_listbox()
+            self._set_proveedores_pagos_status(
+                f"Regla eliminada: \"{rule['keyword']}\" → \"{rule['sheet_name']}\"."
+            )
+        except ValueError as exc:
+            messagebox.showwarning("No se pudo eliminar", str(exc))
+            self._set_proveedores_pagos_status(str(exc), is_error=True)
 
     def _build_chase_rules_manager(self, parent):
         """Keyword-to-Detalle rule manager (persistent JSON + grid UI)."""
@@ -2782,6 +3008,17 @@ class EFTExtractorApp:
             completed=completed,
         )
 
+    def _set_proveedores_pagos_status(self, message, is_error=False, completed=False):
+        self.proveedores_pagos_status_text.set(message)
+        set_status_style(
+            self.proveedores_pagos_status_label,
+            self.proveedores_pagos_status_dot,
+            message,
+            section_theme=PROVEEDORES_THEME,
+            is_error=is_error,
+            completed=completed,
+        )
+
     def _set_chase_status(self, message, is_error=False, completed=False):
         self.chase_status_text.set(message)
         set_status_style(
@@ -3271,6 +3508,81 @@ class EFTExtractorApp:
                 )
         except Exception as exc:
             self._set_proveedores_status(f"Error: {exc}", is_error=True)
+        finally:
+            self.root.config(cursor="")
+            self.root.update_idletasks()
+
+    def select_proveedores_bank_file(self):
+        path = filedialog.askopenfilename(
+            title="Seleccionar Extracto de Chase (ya categorizado)",
+            filetypes=[
+                ("Archivos Chase", "*.csv *.xlsx *.xlsm *.xls"),
+                ("Archivos CSV", "*.csv"),
+                ("Archivos Excel", "*.xlsx *.xlsm"),
+                ("Todos los archivos", "*.*"),
+            ],
+        )
+        if path:
+            self.proveedores_bank_path.set(os.path.abspath(path))
+            if hasattr(self, "proveedores_bank_entry"):
+                self.proveedores_bank_entry.delete(0, tk.END)
+                self.proveedores_bank_entry.insert(0, os.path.abspath(path))
+            self._set_proveedores_pagos_status("Extracto de Chase seleccionado.")
+
+    def process_proveedores_payments(self):
+        if append_supplier_payments is None:
+            self._set_proveedores_pagos_status(
+                f"Proveedores no disponible: {_PROVEEDORES_IMPORT_ERROR}",
+                is_error=True,
+            )
+            return
+
+        ledger_path = self.proveedores_ledger_path.get().strip()
+        bank_path = self.proveedores_bank_path.get().strip()
+
+        if not ledger_path:
+            self._set_proveedores_pagos_status(
+                "Seleccione el Excel Ledger.", is_error=True
+            )
+            return
+        if not bank_path:
+            self._set_proveedores_pagos_status(
+                "Seleccione el extracto de Chase.", is_error=True
+            )
+            return
+
+        self._set_proveedores_pagos_status("Procesando pagos del extracto de Chase...")
+        self.root.config(cursor="watch")
+        self.root.update_idletasks()
+        start_time = time.time()
+
+        try:
+            _preview_path, summary = append_supplier_payments(ledger_path, bank_path)
+            self._clear_field(self.proveedores_ledger_path, "proveedores_ledger_entry")
+            elapsed = format_elapsed_duration(time.time() - start_time)
+            self._set_proveedores_pagos_status(
+                f"Completado en {elapsed} ({summary['payments_appended']} pago(s) agregado(s)).",
+                completed=True,
+            )
+            warnings = [
+                f"{batch['sheet_name']}: {len(batch['duplicates_skipped'])} pago(s) ya "
+                f"cargado(s), omitido(s) — {', '.join(batch['duplicates_skipped'])}"
+                for batch in summary.get("batch_results", [])
+                if batch.get("duplicates_skipped")
+            ]
+            unmatched = summary.get("unmatched") or []
+            if unmatched:
+                warnings.append(
+                    f"{len(unmatched)} pago(s) sin proveedor identificado:\n"
+                    + "\n".join(unmatched)
+                )
+            if warnings:
+                messagebox.showwarning(
+                    "Revisar Pagos de Proveedores",
+                    "Se completó el proceso, pero hay avisos:\n\n" + "\n\n".join(warnings),
+                )
+        except Exception as exc:
+            self._set_proveedores_pagos_status(f"Error: {exc}", is_error=True)
         finally:
             self.root.config(cursor="")
             self.root.update_idletasks()
