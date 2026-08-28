@@ -29,7 +29,7 @@ DEFAULT_RULES = [
     {"keyword": "colonial", "sheet_name": "Colonial"},
     {"keyword": "gold coast eagle", "sheet_name": "GOLDCE"},
     {"keyword": "frito-la", "sheet_name": "FRITO-LAY"},
-    {"keyword": "king", "sheet_name": "KING'S"},
+    {"keyword": "wholesale florists", "sheet_name": "KING'S"},
     {"keyword": "redbull", "sheet_name": "RED BULL"},
     {"keyword": "SWEETHEART-ICE CREAM", "sheet_name": "SWEETHEART-ICE CREAM"},
     {"keyword": "BIMBO", "sheet_name": "BIMBO"},
