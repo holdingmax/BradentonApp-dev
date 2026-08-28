@@ -127,14 +127,23 @@ def match_dynamic_detalle(description):
     """
     Case-insensitive substring match against saved keyword rules.
 
+    Among every rule whose keyword appears in the description, the LONGEST
+    keyword wins -- rules are stored in add order (add_dynamic_rule always
+    appends), so matching by insertion order instead would let a generic
+    rule added early ("KOOLER") permanently shadow a more specific one
+    added later ("KOOLER FARMS LLC").
+
     Returns Target Detail text or None.
     """
     desc = normalize_rule_text(description)
     if not desc:
         return None
 
+    best_rule = None
+    best_keyword = ""
     for rule in load_dynamic_rules():
         keyword = normalize_rule_text(rule.get("keyword", ""))
-        if keyword and keyword in desc:
-            return rule.get("detail")
-    return None
+        if keyword and keyword in desc and len(keyword) > len(best_keyword):
+            best_rule = rule
+            best_keyword = keyword
+    return best_rule.get("detail") if best_rule else None
