@@ -50,6 +50,30 @@ Nunca se sobrescribe el archivo original del usuario. Cada proceso: abre el work
   Se commitea apenas el usuario confirma que algo anda bien ("guarda esto", "anda bien", "carga bien").
 - Solo se pushea a `produccion` cuando el usuario lo pide explícitamente. A `origin` se puede pushear apenas se confirma un fix (con aviso, no autopilot silencioso).
 
+## Sesión de auditoría de bugs (2026-08-28)
+
+El usuario pidió una revisión rápida (no específica de Proveedores) buscando bugs en todo el código. Se lanzaron 5 agentes en paralelo cubriendo: lógica core de `proveedores.py`, los 22 extractores de proveedores, `app.py` (UI), `reporte_diario.py`/`gettel_toyota_parser.py`, y el resto de módulos (`cupones_append.py`, `monthly_sales.py`, `cmv_costo.py`, `chase_rules.py`). Encontraron 15 bugs reales; se corrigieron 14, cada uno verificado con un script de test reproducible (no solo lectura de código) en el scratchpad de la sesión — esos scripts no persisten entre conversaciones, si hace falta revalidar algo hay que rehacerlos.
+
+**IMPORTANTE — estado al cierre de esta sesión**: los 14 fixes quedaron en el working tree **sin commitear**. Esta PC (post-mudanza del usuario) no tiene identidad de git configurada (`git config user.name`/`user.email` vacíos, tanto local como `--global`) y Claude no puede correr `git config` por política de seguridad — **el usuario tiene que correrlo él mismo** antes de poder commitear:
+```bash
+git config --global user.name "Alfonso"
+git config --global user.email "alfonsocg04@gmail.com"
+```
+Si en la próxima sesión `git status` sigue mostrando `app.py`, `chase_rules.py`, `cupones_append.py`, `gettel_toyota_parser.py`, `monthly_sales.py`, `proveedores.py` y `reporte_diario.py` modificados sin commitear, retomar desde ahí — commitear cada fix por separado (ver convención de commits arriba), no agrupar.
+
+### Bugs corregidos
+- **`proveedores.py`** — `_append_invoice_row`: la fórmula de BALANCE del primer asiento de cada mes nuevo referenciaba la fila separadora en blanco en vez de `last_row`, perdiendo el saldo arrastrado en TODO cambio de mes (bug crítico y silencioso, no un caso raro). `_existing_invoice_numbers`: ahora filtra por `COMPROB == "invoice"` — antes un N° de cheque en una fila "OP" podía bloquear una factura real como "ya cargada".
+- **`proveedores.py` (extractores)** — Swisher: el regex de monto ahora exige 2 decimales (antes aceptaba montos sin centavos y no fallaba, violando la regla de oro de OCR). AZ Southeast: el N° de factura ahora prioriza el ancla "DELIVERY NO." antes de caer al `(\d{9})` suelto (evita confundir con el CUST# fijo). Bimbo: el `footer_match` de fecha/monto ahora se ancla al N° de invoice ya confirmado, no a cualquier fecha+número suelto del texto. Hackney/Colonial/Johnson Brothers: nuevo helper compartido `_parse_mmdd_year_flexible` — el regex de fecha permitía año de 2-4 dígitos pero `strptime` estaba fijo a `%y`, rompiendo con un `ValueError` críptico de la librería estándar ante un año de 4 dígitos en vez del mensaje propio de la función.
+- **`reporte_diario.py`** — Store Info: el `to_date` real parseado del PDF se descartaba; la columna TO_DATE quedaba hardcodeada a `from_date + 2 días` (sólo coincidía por casualidad cuando el período dura exactamente 24hs).
+- **`gettel_toyota_parser.py`** — `_PAGOS_TOTAL_RE` matcheaba "TOTAL" dentro de "SUBTOTAL" (sin `\b`), cargando el subtotal en vez del total real en el submódulo Pagos.
+- **`cupones_append.py`** — `find_last_cupones_row` ahora también chequea la columna Cupón (B), no solo Fecha (A): una fila con fecha vacía/ilegible pero datos reales ya escritos ya no se saltea, evitando que la próxima carga la sobrescriba. `_aggregate_cta_totals_for_coupon_id` ahora usa `CTA_SCAN_START_ROW` (era `2` hardcodeado vs. `5` en `build_cta_coupon_index`, rango inconsistente entre ambas).
+- **`monthly_sales.py`** — `_write_sales_rows` ahora falla con un `ValueError` claro (indicando fila/UPC) en vez de tragarse cualquier excepción a mitad de fila y dejarla incompleta sin ningún aviso. `_get_department_sheet`: se eliminó el fallback por posición física de pestaña (contradecía el propio contrato documentado de "nunca por orden físico, siempre por nombre") — también se eliminó `FIRST_DEPARTMENT_SHEET_INDEX`, que quedó sin uso.
+- **`chase_rules.py`** — `match_dynamic_detalle` ahora elige la regla con el keyword más largo entre todas las que matchean, en vez de la primera por orden de inserción (antes una regla genérica agregada antes, ej. "KOOLER", bloqueaba para siempre una más específica agregada después, ej. "KOOLER FARMS LLC").
+- **`app.py`** — Proveedores era el único flujo de toda la app que limpiaba el campo de PDFs tras éxito en vez del Excel Ledger — invertía el patrón de UI documentado arriba, con riesgo real de reprocesar un segundo lote de facturas sobre un ledger desactualizado si no se guardó el temporal del primer lote.
+
+### No corregido (decisión deliberada, no olvido)
+- **Ningún botón "Procesar" corre en background thread** — toda la app bloquea el hilo principal de Tkinter durante el OCR (Windows marca la ventana "No responde" con PDFs escaneados grandes/multi-página). No se tocó: arreglarlo bien implica refactorizar ~12 métodos `process_*` en `app.py` con un patrón de hilo+queue (Tkinter no es thread-safe para llamadas directas desde un worker thread — no alcanza con `Thread(...).start()` a secas), y no hay forma de probarlo en vivo contra cada pestaña sin arriesgar meter una condición de carrera silenciosa sobre el libro real. Si se retoma: helper genérico con `threading.Thread` + `queue.Queue` + polling vía `root.after`, deshabilitar el botón "Procesar" mientras corre (para evitar doble click == dos hilos escribiendo el mismo archivo), y probar cada pestaña una por una en la app real antes de dar por terminado.
+
 ## Módulos existentes (estado: completos, no requieren acción salvo pedido nuevo)
 
 - **Cupones y EFT**: PDF de EFT bancario → Cta Cte J.H.Williams; reporte mensual → Cupones. Excel Ledger compartido en cuadro propio (antes se pedía duplicado en cada sub-flujo).
