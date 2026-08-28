@@ -513,7 +513,17 @@ def _extract_bimbo_invoice(pdf_path):
         )
     invoice_no = int(re.sub(r"\s+", "", invoice_match.group(1)))
 
-    footer_match = re.search(r"(\d{1,2}/\d{1,2}/\d{4})[:.]*\s*([\d,]+)[.\s]+(\d{2})\b", text)
+    # Anclar la línea de confirmación al pie ("{invoice} {fecha} {total}",
+    # ver docstring) al propio N° de invoice ya confirmado -- sin esto, el
+    # patrón "fecha seguida de números" no tiene ninguna palabra ancla y
+    # puede matchear una fecha/monto de la tabla de ítems antes de llegar
+    # a la línea real de confirmación. Se toleran espacios sueltos de OCR
+    # entre los dígitos del invoice, como en el resto del texto.
+    invoice_digits_pattern = r"\s*".join(re.escape(digit) for digit in str(invoice_no))
+    footer_match = re.search(
+        invoice_digits_pattern + r"\s*(\d{1,2}/\d{1,2}/\d{4})[:.]*\s*([\d,]+)[.\s]+(\d{2})\b",
+        text,
+    )
     if footer_match:
         invoice_date = datetime.strptime(footer_match.group(1), "%m/%d/%Y")
         amount = float(f"{footer_match.group(2).replace(',', '')}.{footer_match.group(3)}")
