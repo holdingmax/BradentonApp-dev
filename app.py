@@ -3188,13 +3188,32 @@ class EFTExtractorApp:
         )
         if not filenames:
             return
-        paths = [os.path.abspath(path) for path in filenames]
-        display_value = join_paths(paths) if join_paths is not None else "; ".join(paths)
+
+        # Cada proveedor vive en su propia carpeta del Drive, así que el
+        # diálogo nativo (que solo multi-selecciona dentro de UNA carpeta)
+        # no alcanza para armar un lote de varios proveedores de una vez.
+        # Se acumula lo ya elegido con lo nuevo -- "Limpiar" sigue
+        # vaciando el campo para arrancar un lote nuevo de cero.
+        existing_text = self.proveedores_invoice_pdf_paths.get().strip()
+        if split_paths is not None:
+            existing_paths = split_paths(existing_text)
+        else:
+            existing_paths = [existing_text] if existing_text else []
+
+        combined_paths = list(existing_paths)
+        for path in filenames:
+            abs_path = os.path.abspath(path)
+            if abs_path not in combined_paths:
+                combined_paths.append(abs_path)
+
+        display_value = (
+            join_paths(combined_paths) if join_paths is not None else "; ".join(combined_paths)
+        )
         self.proveedores_invoice_pdf_paths.set(display_value)
         if hasattr(self, "proveedores_invoice_entry"):
             self.proveedores_invoice_entry.delete(0, tk.END)
             self.proveedores_invoice_entry.insert(0, display_value)
-        count = len(paths)
+        count = len(combined_paths)
         self._set_proveedores_status(
             f"{count} PDF(s) de facturas seleccionado(s)." if count != 1 else "1 PDF de factura seleccionado."
         )
