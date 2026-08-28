@@ -782,7 +782,14 @@ def _extract_az_invoice(pdf_path):
 
     top_crop = _remove_grid_lines(_crop_relative(image, 0.0, 0.0, 0.25, 0.10), upscale=4)
     top_text = pytesseract.image_to_string(top_crop)
-    invoice_match = re.search(r"(\d{9})", top_text)
+    # Preferir el número anclado a la etiqueta "DELIVERY NO." -- el CUST#
+    # (siempre el mismo número, no es la factura) convive en la misma
+    # cajita recortada, así que un (\d{9}) suelto puede tomar cualquiera
+    # de los dos según el orden de lectura del OCR. Si la etiqueta no se
+    # lee (ruido/grapas), se cae al primer número de 9 dígitos como antes.
+    invoice_match = re.search(r"DELIVERY\s*NO\.?\s*[:.]?\s*(\d{9})", top_text, re.IGNORECASE)
+    if not invoice_match:
+        invoice_match = re.search(r"(\d{9})", top_text)
 
     date_match = re.search(r"\b(\d{1,2})/(\d{1,2})/(\d{4})\b", full_text)
     if not date_match:
