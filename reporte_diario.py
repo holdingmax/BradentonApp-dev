@@ -2017,6 +2017,7 @@ def _extract_store_info_fields(lines):
     return {
         "from_date": period["from_date"],
         "from_time": period["from_time"],
+        "to_date": period["to_date"],
         "to_time": period["to_time"],
         "volume": volume,
         "sales_fuel": sales_fuel,
@@ -2119,7 +2120,9 @@ def _build_credit_terms_formula(amounts):
 def write_store_info_row(sheet, fields):
     """Write one Store Info row on the row matching this report's calendar day."""
     from_date = fields["from_date"]
+    to_date = fields["to_date"]
     col_a_date = datetime(from_date.year, from_date.month, from_date.day) + timedelta(days=1)
+    col_c_date = datetime(to_date.year, to_date.month, to_date.day) + timedelta(days=1)
     row = _store_info_row_for_day(col_a_date.day)
 
     sheet.cell(row=row, column=STORE_INFO_COL_FROM_DATE, value=col_a_date)
@@ -2127,7 +2130,7 @@ def write_store_info_row(sheet, fields):
     sheet.cell(
         row=row,
         column=STORE_INFO_COL_TO_DATE,
-        value=datetime(from_date.year, from_date.month, from_date.day) + timedelta(days=2),
+        value=col_c_date,
     )
     sheet.cell(row=row, column=STORE_INFO_COL_TO_TIME, value=fields["to_time"])
     sheet.cell(row=row, column=STORE_INFO_COL_VOLUME, value=fields["volume"])
