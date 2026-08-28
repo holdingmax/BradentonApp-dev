@@ -468,7 +468,7 @@ def _row_amounts_are_zero(cupones_sheet, row):
 
 
 def _aggregate_cta_totals_for_coupon_id(cta_sheet, coupon_id):
-    """Sum all Cta Cte D/E/F amounts for one coupon ID (scan row 2..max)."""
+    """Sum all Cta Cte D/E/F amounts for one coupon ID (scan CTA_SCAN_START_ROW..max)."""
     target = _strip_cell(coupon_id).upper()
     if not target:
         return 0.0, 0.0, 0.0
@@ -476,9 +476,9 @@ def _aggregate_cta_totals_for_coupon_id(cta_sheet, coupon_id):
     total_gross = 0.0
     total_fees = 0.0
     total_net = 0.0
-    max_row = max(cta_sheet.max_row, 2)
+    max_row = max(cta_sheet.max_row, CTA_SCAN_START_ROW)
 
-    for scan_row in range(2, max_row + 1):
+    for scan_row in range(CTA_SCAN_START_ROW, max_row + 1):
         invoice_text = cta_sheet.cell(row=scan_row, column=CTA_COL_INVOICE).value
         row_coupon_ids = _extract_ddc_ids(invoice_text)
         if target not in row_coupon_ids:
