@@ -1395,7 +1395,7 @@ PAGO_COL_EMPRESA = 5  # E
 
 _PAGOS_FILENAME_RE = re.compile(r"pagos?\s*(\d+)\s*\(([^)]+)\)", re.IGNORECASE)
 _PAGOS_TRANS_RE = re.compile(r"trans\s*#\s*[:;,.]*\s*(\d+)", re.IGNORECASE)
-_PAGOS_TOTAL_RE = re.compile(r"total\s*=?\s*\$?\s*([\d,]+\.\d{2})", re.IGNORECASE)
+_PAGOS_TOTAL_RE = re.compile(r"\btotal\s*=?\s*\$?\s*([\d,]+\.\d{2})", re.IGNORECASE)
 _PAGOS_DATE_RE = re.compile(r"(\d{1,2}/\d{1,2}/\d{2,4})")
 
 _PAGO_ROW_STYLE_SPEC = {
