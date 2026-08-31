@@ -1,6 +1,30 @@
 {
   "rules": [
     {
+      "keyword": "operating acct + chevron",
+      "detail": "REBATE COMBUSTIBLE"
+    },
+    {
+      "keyword": "operating acct + monthly",
+      "detail": "REBATE COMBUSTIBLE"
+    },
+    {
+      "keyword": "operating acct + payment",
+      "detail": "EFT RCV-"
+    },
+    {
+      "keyword": "chek + florida",
+      "detail": "ADMINISTRATION FEE"
+    },
+    {
+      "keyword": "chek + coca|coke|midtown|king|liu|icecream|ice cream",
+      "detail": "PROVEEDORES"
+    },
+    {
+      "keyword": "chek - flori",
+      "detail": "PROVEEDORES"
+    },
+    {
       "keyword": "frito-la",
       "detail": "PROVEEDORES"
     },

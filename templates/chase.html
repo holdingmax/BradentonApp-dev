@@ -22,7 +22,7 @@
   <h2>Motor de Reglas Chase</h2>
   <p class="muted">
     Palabra clave (sin importar mayúsculas/acentos) → Detalle a asignar en filas sin categorizar. Si varias reglas matchean, gana la palabra clave más larga.
-    {% if current_user.is_admin %}Podés editar o eliminar cualquier regla, incluidas las Maestras — las Combinadas (más de una condición a la vez) son de solo lectura.{% else %}Solo un administrador puede crear, editar o eliminar reglas.{% endif %}
+    {% if current_user.is_admin %}Podés editar o eliminar cualquier regla, incluidas las Maestras.{% else %}Solo un administrador puede crear, editar o eliminar reglas.{% endif %}
   </p>
 
   {% if current_user.is_admin %}
@@ -40,36 +40,7 @@
     <button type="submit" id="chase-rule-submit" style="margin-top: 0;">Crear Regla</button>
     <button type="button" id="chase-rule-cancel" class="btn-secondary" style="display: none; margin-top: 0;">Cancelar edición</button>
   </form>
-  {% endif %}
 
-  <table style="width: 100%; border-collapse: collapse; font-size: 13.5px; margin-top: 18px;">
-    <thead>
-      <tr style="text-align: left; border-bottom: 1px solid var(--border);">
-        {% if current_user.is_admin %}<th style="padding: 8px 6px; width: 26px;"></th>{% endif %}
-        <th style="padding: 8px 6px;">Palabra Clave</th>
-        <th style="padding: 8px 6px;">Detalle</th>
-        <th style="padding: 8px 6px;">Tipo</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for rule in chase_rules %}
-      <tr style="border-bottom: 1px solid var(--border);">
-        {% if current_user.is_admin %}
-        <td style="padding: 8px 6px;">
-          {% if rule.rule_type %}
-          <input type="radio" name="chase_rule_radio" value="{{ rule.rule_type }}:{{ rule.index }}" data-keyword="{{ rule.keyword }}" data-detail="{{ rule.detail }}">
-          {% endif %}
-        </td>
-        {% endif %}
-        <td style="padding: 8px 6px;">{{ rule.keyword }}</td>
-        <td style="padding: 8px 6px;">{{ rule.detail }}</td>
-        <td style="padding: 8px 6px;" class="muted">{{ rule.source }}</td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-
-  {% if current_user.is_admin %}
   <div style="display: flex; gap: 10px; margin-top: 14px;">
     <button type="button" id="chase-rule-edit-btn" class="btn-secondary" style="margin-top: 0;" disabled>Editar seleccionada</button>
     <form method="post" action="{{ url_for('chase_rules_delete') }}" onsubmit="return confirm('¿Eliminar la regla seleccionada?');">
@@ -78,12 +49,40 @@
       <button type="submit" id="chase-rule-delete-btn" class="btn-danger-soft" style="margin-top: 0;" disabled>Eliminar seleccionada</button>
     </form>
   </div>
+  {% endif %}
+
+  <table style="width: 100%; border-collapse: collapse; font-size: 13.5px; margin-top: 18px;">
+    <thead>
+      <tr style="text-align: left; border-bottom: 1px solid var(--border);">
+        <th style="padding: 8px 6px;">Palabra Clave</th>
+        <th style="padding: 8px 6px;">Detalle</th>
+        <th style="padding: 8px 6px;">Tipo</th>
+        {% if current_user.is_admin %}<th style="padding: 8px 6px; width: 26px;"></th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for rule in chase_rules %}
+      <tr style="border-bottom: 1px solid var(--border);">
+        <td style="padding: 8px 6px;">{{ rule.keyword }}</td>
+        <td style="padding: 8px 6px;">{{ rule.detail }}</td>
+        <td style="padding: 8px 6px;" class="muted">{{ rule.source }}</td>
+        {% if current_user.is_admin %}
+        <td style="padding: 8px 6px; text-align: right;">
+          <input type="radio" name="chase_rule_radio" value="{{ rule.rule_type }}:{{ rule.index }}" data-keyword="{{ rule.keyword }}" data-detail="{{ rule.detail }}">
+        </td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if current_user.is_admin %}
   <script>
-    // Row selection for the rules grid: a radio per Maestra/Personalizada
-    // row (Combinada rows have no rule_type/index -- not selectable, they
-    // aren't stored as a simple keyword) feeds two things -- the "Eliminar
-    // seleccionada" form's hidden fields, and (via "Editar seleccionada")
-    // pre-filling the create/edit form above in edit mode.
+    // Row selection for the rules grid: a radio per row (every rule is
+    // Maestra or Personalizada now, both live in an editable JSON file)
+    // feeds two things -- the "Eliminar seleccionada" form's hidden
+    // fields, and (via "Editar seleccionada") pre-filling the create/edit
+    // form above in edit mode.
     (function () {
       var radios = document.querySelectorAll('input[name="chase_rule_radio"]');
       var editBtn = document.getElementById('chase-rule-edit-btn');

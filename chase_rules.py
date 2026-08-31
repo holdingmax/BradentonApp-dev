@@ -184,12 +184,40 @@ def delete_master_rule_by_index(index):
     return _delete_rule_by_index(MASTER_RULES_FILENAME, index, seed=_DEFAULT_MASTER_RULES)
 
 
-def _match_longest_keyword(desc, rules):
+def _rule_and_terms(keyword):
     """
-    Among every rule whose keyword appears in the (already normalized) desc,
-    the LONGEST keyword wins -- a generic rule ("KOOLER") never permanently
-    shadows a more specific one ("KOOLER FARMS LLC") just because it was
-    added earlier or lives in a different rules file.
+    Split a normalized keyword into its AND-terms: "a + b" -> ["a", "b"].
+    A plain keyword with no " + " is just one AND-term -- the common case.
+    """
+    return [term.strip() for term in keyword.split(" + ") if term.strip()]
+
+
+def _rule_matches(desc, keyword):
+    """
+    True when every AND-term of `keyword` (already normalized) appears in
+    desc. Each AND-term may itself be an OR-group of alternatives separated
+    by "|" (e.g. "coca|coke|midtown"), matching if ANY alternative is
+    present -- lets a rule like "chek + coca|coke|midtown" express "CHECK
+    (or CHEQUE) combined with any of these vendor names".
+    """
+    for term in _rule_and_terms(keyword):
+        alternatives = [alt for alt in term.split("|") if alt]
+        if not any(alt in desc for alt in alternatives):
+            return False
+    return True
+
+
+def _match_rules(desc, rules):
+    """
+    Evaluate keyword->detail rules against desc (already normalized).
+
+    A compound rule (keyword contains " + ", i.e. more than one AND-term)
+    is checked first, in list order, and wins immediately if it matches --
+    there's no length to rank it by the way a single keyword has. Among
+    the remaining flat (single-term) rules, the LONGEST keyword wins, so a
+    specific rule ("KOOLER FARMS LLC") is never permanently shadowed by a
+    broader one ("KOOLER") added earlier or living in a different rules
+    file.
 
     Returns Detail text or None.
     """
@@ -197,28 +225,26 @@ def _match_longest_keyword(desc, rules):
     best_len = 0
     for rule in rules:
         keyword = normalize_rule_text(rule.get("keyword", ""))
-        if keyword and keyword in desc and len(keyword) > best_len:
+        if not keyword:
+            continue
+        if " + " in keyword:
+            if _rule_matches(desc, keyword):
+                return rule.get("detail")
+            continue
+        if keyword in desc and len(keyword) > best_len:
             best_detail = rule.get("detail")
             best_len = len(keyword)
     return best_detail
 
 
-def match_dynamic_detalle(description):
-    """Longest-keyword match against saved Personalizada rules only. Returns Detail text or None."""
-    desc = normalize_rule_text(description)
-    if not desc:
-        return None
-    return _match_longest_keyword(desc, load_dynamic_rules())
-
-
 def list_display_rules():
     """
-    Full rule list for the UI grid: Maestra (chase_master_rules.json,
-    admin-editable) + Personalizada (chase_rules.json, admin-editable) +
-    Combinada (hardcoded multi-condition rules, read-only -- see
-    ALFONSO_COMPOUND_DISPLAY_RULES). Maestra/Personalizada rows carry
-    rule_type + index so the caller can edit/delete them; Combinada rows
-    carry neither since they aren't stored as a simple keyword.
+    Full rule list for the UI grid: Maestra (chase_master_rules.json) +
+    Personalizada (chase_rules.json), both admin-editable -- including the
+    handful of Maestra rules whose keyword combines more than one
+    condition (e.g. "chek + florida"), selectable and editable exactly
+    like any other rule. Every row carries rule_type + index so the caller
+    can edit/delete it.
     """
     merged = []
     for idx, rule in enumerate(load_master_rules()):
@@ -241,16 +267,6 @@ def list_display_rules():
                 "index": idx,
             }
         )
-    for keyword, detail in ALFONSO_COMPOUND_DISPLAY_RULES:
-        merged.append(
-            {
-                "keyword": keyword,
-                "detail": detail,
-                "source": "Combinada",
-                "rule_type": None,
-                "index": None,
-            }
-        )
     return merged
 
 
@@ -266,7 +282,22 @@ EFT_RCV_RED_FONT = Font(color="FF0000", bold=True)
 # kept here as frozen historical data; the categorization engine never reads
 # these tuples directly after that first seed, only the JSON file itself, so
 # an admin edit made afterward always takes effect.
+#
+# The first 5 combine more than one condition ("a + b") -- see
+# _rule_matches -- so they're checked before any single-term rule, exactly
+# like they were as hardcoded if-checks before this file became editable.
+# "chek - flori" right after them is a single term, just kept in the same
+# spot it always had in the old sequential if-chain.
 _DEFAULT_MASTER_RULES = (
+    {"keyword": "operating acct + chevron", "detail": "REBATE COMBUSTIBLE"},
+    {"keyword": "operating acct + monthly", "detail": "REBATE COMBUSTIBLE"},
+    {"keyword": "operating acct + payment", "detail": "EFT RCV-"},
+    {"keyword": "chek + florida", "detail": "ADMINISTRATION FEE"},
+    {
+        "keyword": "chek + coca|coke|midtown|king|liu|icecream|ice cream",
+        "detail": "PROVEEDORES",
+    },
+    {"keyword": "chek - flori", "detail": "PROVEEDORES"},
     {"keyword": "frito-la", "detail": "PROVEEDORES"},
     {"keyword": "hackneyrectampa", "detail": "PROVEEDORES"},
     {"keyword": "cec distributing", "detail": "PROVEEDORES"},
@@ -314,50 +345,8 @@ _DEFAULT_MASTER_RULES = (
     {"keyword": "mvnt", "detail": "REBATE"},
 )
 
-# Keywords used only inside the CHECK/CHEQUE/CHEK + vendor compound rule
-# below -- not a flat keyword->detail rule, so it can't live in
-# chase_master_rules.json / be edited from the UI.
-CHASE_CHECK_PROVEEDORES_KEYWORDS = (
-    "coca",
-    "coke",
-    "midtown",
-    "king",
-    "liu",
-    "icecream",
-    "ice cream",
-)
-
-# Multi-condition rules (AND'd together) -- can't be expressed as a single
-# keyword, so they stay hardcoded and read-only. Shown in the UI grid as
-# "Combinada" purely for visibility; matched procedurally in
-# categorize_chase_description below, never through the flat rules list.
-ALFONSO_COMPOUND_DISPLAY_RULES = (
-    ("OPERATING ACCT + PAYMENT", "EFT RCV-"),
-    ("OPERATING ACCT + CHEVRON", "REBATE COMBUSTIBLE"),
-    ("OPERATING ACCT + MONTHLY", "REBATE COMBUSTIBLE"),
-    (
-        "CHECK/CHEQUE/CHEK + COCA|COKE|MIDTOWN|KING|LIU|ICECREAM",
-        "PROVEEDORES",
-    ),
-    ("CHECK/CHEQUE/CHEK + FLORIDA", "ADMINISTRATION FEE"),
-    ("CHECK - FLORI", "PROVEEDORES"),
-)
-
-
-def _desc_has_check_keyword(desc):
-    """True when description contains CHECK, CHEQUE, or CHEK (normalized to chek)."""
-    return "chek" in desc
-
-
-def _is_check_proveedores(desc):
-    """CHECK/CHEQUE/CHEK combined with vendor keywords -> PROVEEDORES."""
-    return _desc_has_check_keyword(desc) and any(
-        keyword in desc for keyword in CHASE_CHECK_PROVEEDORES_KEYWORDS
-    )
-
-
 def _is_deposit_id_number(desc):
-    """DEPOSIT ID NUMBER with flexible spacing."""
+    """DEPOSIT ID NUMBER with flexible spacing -- last-resort fallback, not a UI-editable rule."""
     return "deposit  id number" in desc or (
         "deposit" in desc and "id number" in desc
     )
@@ -365,14 +354,11 @@ def _is_deposit_id_number(desc):
 
 def categorize_chase_description(description):
     """
-    Map Chase Description text to Detalle category.
-
-    Multi-condition rules (OPERATING ACCT/CHECK combos) are checked first --
-    they can't be expressed as a flat keyword. Everything else is a single
-    longest-keyword-wins match across Maestra (chase_master_rules.json) and
-    Personalizada (chase_rules.json) rules together, so an admin-edited or
-    newly added rule can override a broader one regardless of which file it
-    lives in.
+    Map Chase Description text to Detalle category: a single match across
+    Maestra (chase_master_rules.json) and Personalizada (chase_rules.json)
+    rules together (see _match_rules for the compound-first/longest-wins
+    precedence), with one last-resort fallback for a DEPOSIT ID NUMBER
+    variant too fuzzy to express as a rule.
 
     Returns category string or None when no rule matches.
     """
@@ -380,23 +366,7 @@ def categorize_chase_description(description):
     if not desc:
         return None
 
-    if "operating acct" in desc and "chevron" in desc:
-        return "REBATE COMBUSTIBLE"
-    if "operating acct" in desc and "monthly" in desc:
-        return "REBATE COMBUSTIBLE"
-    if "operating acct" in desc and "payment" in desc:
-        return "EFT RCV-"
-
-    if _desc_has_check_keyword(desc) and "florida" in desc:
-        return "ADMINISTRATION FEE"
-
-    if "chek - flori" in desc:
-        return "PROVEEDORES"
-
-    if _is_check_proveedores(desc):
-        return "PROVEEDORES"
-
-    matched_detail = _match_longest_keyword(desc, load_master_rules() + load_dynamic_rules())
+    matched_detail = _match_rules(desc, load_master_rules() + load_dynamic_rules())
     if matched_detail:
         return matched_detail
 
