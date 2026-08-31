@@ -17,6 +17,13 @@ from flask import Flask, flash, redirect, render_template, request, send_file, u
 
 from chase_rules import process_chase_categorization
 from cmv_costo import update_master_costo_todos_bulk
+from cupones_append import (
+    MonthlyReportFullyDuplicateError,
+    NoPendingCouponsError,
+    append_monthly_cupones,
+    resync_cupones_only,
+)
+from eft_cta_cte import EFT_DUPLICATE_ALERT, eft_already_loaded_in_workbook, extract_eft_data, update_excel_workbook
 from gettel_toyota_parser import (
     merge_gettel_toyota_into_master,
     merge_gettel_toyota_pdf_into_master,
@@ -53,6 +60,11 @@ TOOLS = [
         "label": "Lottery",
         "url": "/lottery",
         "description": "Daily Sales Report y PDF Diario hacia el Excel de Lottery.",
+    },
+    {
+        "label": "Cupones y EFT",
+        "url": "/eft",
+        "description": "PDF de EFT bancario a Cta Cte, y reporte mensual de Cupones.",
     },
 ]
 
@@ -359,6 +371,70 @@ def lottery_department():
         return redirect(url_for("lottery"))
 
     return send_file(temp_path, as_attachment=True, download_name=master_filename)
+
+
+@app.route("/eft")
+def eft():
+    return render_template("eft.html")
+
+
+@app.route("/eft/cta-cte", methods=["POST"])
+def eft_cta_cte_route():
+    pdf_upload = request.files.get("pdf_file")
+    master_upload = request.files.get("master_file")
+    if pdf_upload is None or not pdf_upload.filename:
+        flash("Seleccioná un archivo PDF de EFT.", "error")
+        return redirect(url_for("eft"))
+    if master_upload is None or not master_upload.filename:
+        flash("Seleccioná el Excel Ledger.", "error")
+        return redirect(url_for("eft"))
+
+    try:
+        workdir = _new_workspace_dir()
+        pdf_path, _pdf_filename = _save_upload_to_workspace(pdf_upload, workdir=workdir)
+        master_path, master_filename = _save_upload_to_workspace(master_upload, workdir=workdir)
+
+        header_data, paid_invoices, credit_coupons = extract_eft_data(pdf_path)
+        if eft_already_loaded_in_workbook(master_path, header_data, credit_coupons):
+            flash(EFT_DUPLICATE_ALERT, "error")
+            return redirect(url_for("eft"))
+
+        update_excel_workbook(master_path, header_data, paid_invoices, credit_coupons)
+    except Exception as exc:
+        flash(f"Error: {exc}", "error")
+        return redirect(url_for("eft"))
+
+    return send_file(master_path, as_attachment=True, download_name=master_filename)
+
+
+@app.route("/eft/cupones", methods=["POST"])
+def eft_cupones():
+    master_upload = request.files.get("master_file")
+    monthly_upload = request.files.get("monthly_report_file")
+    if master_upload is None or not master_upload.filename:
+        flash("Seleccioná el Excel Ledger.", "error")
+        return redirect(url_for("eft"))
+
+    try:
+        workdir = _new_workspace_dir()
+        master_path, master_filename = _save_upload_to_workspace(master_upload, workdir=workdir)
+
+        if monthly_upload is not None and monthly_upload.filename:
+            monthly_path, _monthly_filename = _save_upload_to_workspace(monthly_upload, workdir=workdir)
+            saved_path, _summary = append_monthly_cupones(master_path, monthly_path)
+        else:
+            saved_path, _summary = resync_cupones_only(master_path)
+    except NoPendingCouponsError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("eft"))
+    except MonthlyReportFullyDuplicateError as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("eft"))
+    except Exception as exc:
+        flash(f"Error: {exc}", "error")
+        return redirect(url_for("eft"))
+
+    return send_file(saved_path, as_attachment=True, download_name=master_filename)
 
 
 if __name__ == "__main__":
