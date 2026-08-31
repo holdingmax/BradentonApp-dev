@@ -21,6 +21,7 @@ Working directory: `C:\BradentonApp`.
 - Cada `<form>` de sub-flujo tiene sus propios `<input type="file">` (con `label.muted` arriba de cada uno) y un botón "Procesar" al final — sin equivalente al "Excel maestro compartido sin botón propio" del desktop: en la web cada formulario pide su propio Excel Ledger, aunque dos formularios de la misma página apunten al mismo tipo de archivo (más simple de razonar sin manejar estado entre requests).
 - El GET de cada ruta pasa el tema del módulo a `render_template(..., **THEME_BY_KEY["clave"])` — `THEME_BY_KEY` se arma solo desde `TOOLS`, nunca hace falta declararlo aparte.
 - **Botón de cuenta** (`base.html`, header): dropdown en CSS/JS puro (sin backend para el toggle en sí), pero desde el 2026-08-31 ya muestra sesión real — ver "Autenticación (Login)" más abajo.
+- **Identidad visual del shell** (header, fondo, `login.html`) — desde el 2026-08-31 usa el logo real de Chevron Food Mart (`static/logo.png`, derivado de `BradentonApp_logo.jpeg` quitándole el fondo y recortando al contenido) y una paleta clara/profesional (`--accent: #0B6FAE` por default). **Esto es solo el shell** (topbar, fondo, botón de cuenta, pantalla de login) — las páginas de cada módulo y sus acentos de color (`accent`/`accent_soft` por módulo, ver arriba) **no se tocan**, siguen siendo el color de identidad histórico de cada uno. Pedido explícito del usuario: "quiero que cambies la estetica de la pagina, No de los modulos, esos ya estan bien".
 
 ### Patrón de guardado (aplicado a TODOS los módulos)
 

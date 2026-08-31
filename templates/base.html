@@ -6,18 +6,18 @@
   <title>{% block title %}Bradenton App{% endblock %}</title>
   <style>
     :root {
-      --bg: #F3F4F8;
-      --brand: #111827;
+      --bg: #F2F6F9;
+      --brand: #FFFFFF;
       --brand-soft: #1F2937;
       --surface: #FFFFFF;
       --surface-alt: #F8FAFC;
       --border: #E5E7EB;
       --text: #111827;
       --text-soft: #6B7280;
-      --text-on-brand: #F9FAFB;
-      --text-muted-on-brand: #9CA3AF;
-      --accent: {{ accent|default('#4F46E5') }};
-      --accent-soft: {{ accent_soft|default('#EEF2FF') }};
+      --text-on-brand: #111827;
+      --text-muted-on-brand: #6B7280;
+      --accent: {{ accent|default('#0B6FAE') }};
+      --accent-soft: {{ accent_soft|default('#E0F2FB') }};
       --error: #DC2626;
       --error-soft: #FEF2F2;
       --success: #15803D;
@@ -43,7 +43,7 @@
       position: sticky;
       top: 0;
       z-index: 10;
-      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06);
+      border-bottom: 1px solid var(--border);
     }
     .topbar-inner {
       max-width: 1080px;
@@ -60,17 +60,10 @@
       text-decoration: none;
     }
     .brand-mark {
-      width: 30px;
-      height: 30px;
-      border-radius: 8px;
-      background: linear-gradient(135deg, var(--accent), #818CF8);
-      color: #fff;
-      font-weight: 800;
-      font-size: 14px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
+      height: 32px;
+      width: auto;
       flex-shrink: 0;
+      display: block;
     }
     .brand-word {
       color: var(--text-on-brand);
@@ -88,7 +81,7 @@
       gap: 8px;
       margin-left: 18px;
       padding-left: 18px;
-      border-left: 1px solid rgba(255, 255, 255, 0.12);
+      border-left: 1px solid var(--border);
       font-size: 13px;
       color: var(--text-muted-on-brand);
     }
@@ -104,8 +97,8 @@
       display: flex;
       align-items: center;
       gap: 8px;
-      background: rgba(255, 255, 255, 0.06);
-      border: 1px solid rgba(255, 255, 255, 0.1);
+      background: rgba(17, 24, 39, 0.04);
+      border: 1px solid var(--border);
       border-radius: 999px;
       padding: 5px 12px 5px 5px;
       cursor: pointer;
@@ -113,7 +106,7 @@
       font: inherit;
       font-size: 13px;
     }
-    .account-button:hover { background: rgba(255, 255, 255, 0.12); }
+    .account-button:hover { background: rgba(17, 24, 39, 0.08); }
     .account-avatar {
       width: 24px;
       height: 24px;
@@ -314,7 +307,7 @@
     <div class="topbar-inner">
       <div style="display: flex; align-items: center;">
         <a class="brand" href="{{ url_for('index') }}">
-          <span class="brand-mark">B</span>
+          <img class="brand-mark" src="{{ url_for('static', filename='logo.png') }}" alt="Bradenton">
           <span class="brand-word">Bradenton <span>App</span></span>
         </a>
         {% block crumbs %}{% endblock %}
