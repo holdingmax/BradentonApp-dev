@@ -157,6 +157,7 @@
       font-size: 13px;
       color: var(--text-soft);
     }
+    a.account-dropdown-item:hover { background: var(--surface-alt); color: var(--text); }
     .account-dropdown-item .soon {
       font-size: 10px;
       text-transform: uppercase;
@@ -254,7 +255,7 @@
       margin: 14px 0 6px;
     }
     label.muted:first-child { margin-top: 0; }
-    input[type=file] {
+    input[type=file], input[type=text], input[type=password] {
       display: block;
       padding: 9px 10px;
       border: 1px solid var(--border);
@@ -262,8 +263,15 @@
       border-radius: 8px;
       width: 100%;
       font-size: 13px;
+      font-family: inherit;
+      color: var(--text);
     }
-    input[type=file]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+    input[type=file]:focus-visible, input[type=text]:focus-visible, input[type=password]:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 1px;
+    }
+    input[type=checkbox] { width: 16px; height: 16px; accent-color: var(--accent); }
+    table th, table td { text-align: left; }
     button {
       background: var(--accent);
       color: #fff;
@@ -312,23 +320,24 @@
         {% block crumbs %}{% endblock %}
       </div>
       <div class="topbar-right">
-        <!-- Account button: UI shell only — no auth wired up yet. Wire real
-             session/user data here once login exists (Toolbox integration). -->
         <div class="account-menu" id="account-menu">
           <button type="button" class="account-button" onclick="document.getElementById('account-menu').classList.toggle('open')">
             <span class="account-avatar">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
             </span>
-            <span>Cuenta</span>
+            <span>{{ current_user.id if current_user.is_authenticated else "Cuenta" }}</span>
             <svg class="account-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
           </button>
           <div class="account-dropdown">
             <div class="account-dropdown-header">
-              <div class="name">Sin iniciar sesión</div>
-              <div class="hint">Bradenton Gas Station USA LLC</div>
+              <div class="name">{{ current_user.id if current_user.is_authenticated else "Sin iniciar sesión" }}</div>
+              <div class="hint">{{ "Administrador" if current_user.is_authenticated and current_user.is_admin else "Bradenton Gas Station USA LLC" }}</div>
             </div>
+            {% if current_user.is_authenticated and current_user.is_admin %}
+            <a class="account-dropdown-item" href="{{ url_for('admin_users') }}" style="text-decoration: none; cursor: pointer;">Gestionar usuarios</a>
+            {% endif %}
             <div class="account-dropdown-item">Mi perfil <span class="soon">Próximamente</span></div>
-            <div class="account-dropdown-item">Cerrar sesión <span class="soon">Próximamente</span></div>
+            <a class="account-dropdown-item" href="{{ url_for('logout') }}" style="text-decoration: none; cursor: pointer;">Cerrar sesión</a>
           </div>
         </div>
       </div>

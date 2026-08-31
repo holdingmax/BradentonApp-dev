@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Usuarios — Bradenton App{% endblock %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ url_for('index') }}">Herramientas</a><span>/</span><span class="current">Usuarios</span></nav>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <span class="eyebrow">Administración</span>
+  <h1>Usuarios</h1>
+  <p class="page-subtitle">Solo un administrador puede crear cuentas nuevas o resetear una contraseña. Por ahora esto reemplaza al mail de "olvidé mi contraseña" — pedile al admin que te la resetee acá.</p>
+</div>
+
+<div class="card">
+  <h2>Crear usuario</h2>
+  <form method="post">
+    <input type="hidden" name="action" value="create">
+    <label class="muted">Usuario</label>
+    <input type="text" name="username" required>
+    <label class="muted">Contraseña</label>
+    <input type="password" name="password" required>
+    <label style="display: flex; align-items: center; gap: 8px; margin-top: 14px; font-size: 13px; color: var(--text-soft); text-transform: none; font-weight: 500;">
+      <input type="checkbox" name="is_admin" style="width: auto;">
+      Es administrador (puede crear/eliminar otros usuarios)
+    </label>
+    <button type="submit">Crear usuario</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Usuarios existentes</h2>
+  <table style="width: 100%; border-collapse: collapse; font-size: 13.5px;">
+    <thead>
+      <tr style="text-align: left; border-bottom: 1px solid var(--border);">
+        <th style="padding: 8px 6px;">Usuario</th>
+        <th style="padding: 8px 6px;">Rol</th>
+        <th style="padding: 8px 6px;">Resetear contraseña</th>
+        <th style="padding: 8px 6px;"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for user in users %}
+      <tr style="border-bottom: 1px solid var(--border);">
+        <td style="padding: 8px 6px; font-weight: 600;">{{ user.username }}{% if user.username == current_user.id %} <span class="muted">(vos)</span>{% endif %}</td>
+        <td style="padding: 8px 6px;">{{ "Administrador" if user.is_admin else "Usuario" }}</td>
+        <td style="padding: 8px 6px;">
+          <form method="post" style="display: flex; gap: 6px; align-items: center;">
+            <input type="hidden" name="action" value="reset_password">
+            <input type="hidden" name="username" value="{{ user.username }}">
+            <input type="password" name="new_password" placeholder="Nueva contraseña" required style="width: auto; padding: 6px 8px; font-size: 12.5px;">
+            <button type="submit" style="margin-top: 0; padding: 6px 12px; font-size: 12.5px;">Resetear</button>
+          </form>
+        </td>
+        <td style="padding: 8px 6px;">
+          {% if user.username != current_user.id %}
+          <form method="post" onsubmit="return confirm('¿Eliminar el usuario {{ user.username }}?');">
+            <input type="hidden" name="action" value="delete">
+            <input type="hidden" name="username" value="{{ user.username }}">
+            <button type="submit" style="margin-top: 0; padding: 6px 12px; font-size: 12.5px; background: var(--error);">Eliminar</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

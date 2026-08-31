@@ -14,7 +14,16 @@ import os
 import tempfile
 
 from flask import Flask, flash, redirect, render_template, request, send_file, url_for
+from flask_login import (
+    LoginManager,
+    UserMixin,
+    current_user,
+    login_required,
+    login_user,
+    logout_user,
+)
 
+import auth
 from chase_rules import process_chase_categorization
 from cmv_costo import update_master_costo_todos_bulk
 from cupones_append import (
@@ -32,8 +41,121 @@ from gettel_toyota_parser import (
 from monthly_sales import process_monthly_sales
 from reporte_diario import process_lottery, process_reporte_diario, process_store_info
 
+def _load_or_create_secret_key():
+    """
+    Persist the session secret key on disk (gitignored) instead of
+    regenerating it on every restart — otherwise every reload of the dev
+    server (Flask's debug reloader restarts often) would log everyone out.
+    """
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".flask_secret_key")
+    if os.path.isfile(path):
+        with open(path, "rb") as handle:
+            key = handle.read()
+        if key:
+            return key
+    key = os.urandom(32)
+    with open(path, "wb") as handle:
+        handle.write(key)
+    return key
+
+
 app = Flask(__name__)
-app.secret_key = os.urandom(24)
+app.secret_key = _load_or_create_secret_key()
+
+login_manager = LoginManager(app)
+login_manager.login_view = "login"
+login_manager.login_message = "Iniciá sesión para continuar."
+login_manager.login_message_category = "error"
+
+
+class WebUser(UserMixin):
+    def __init__(self, username, is_admin):
+        self.id = username
+        self.is_admin = is_admin
+
+
+@login_manager.user_loader
+def load_user(username):
+    user = auth.get_user(username)
+    if user is None:
+        return None
+    return WebUser(username, user.get("is_admin", False))
+
+
+def _is_safe_next_url(target):
+    """Only allow redirecting to an in-app relative path after login."""
+    return bool(target) and target.startswith("/") and not target.startswith("//")
+
+
+@app.before_request
+def require_login():
+    if request.endpoint in ("login", "static") or request.endpoint is None:
+        return None
+    if not current_user.is_authenticated:
+        return redirect(url_for("login", next=request.path))
+    return None
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    if current_user.is_authenticated:
+        return redirect(url_for("index"))
+
+    if request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        user = auth.verify_user(username, password)
+        if user is None:
+            flash("Usuario o contraseña incorrectos.", "error")
+        else:
+            login_user(WebUser(username, user.get("is_admin", False)))
+            next_url = request.args.get("next")
+            return redirect(next_url if _is_safe_next_url(next_url) else url_for("index"))
+
+    return render_template("login.html")
+
+
+@app.route("/logout")
+@login_required
+def logout():
+    logout_user()
+    return redirect(url_for("login"))
+
+
+@app.route("/admin/users", methods=["GET", "POST"])
+@login_required
+def admin_users():
+    if not current_user.is_admin:
+        flash("No tenés permiso para acceder a esta página.", "error")
+        return redirect(url_for("index"))
+
+    if request.method == "POST":
+        action = request.form.get("action")
+        try:
+            if action == "create":
+                auth.create_user(
+                    request.form.get("username", ""),
+                    request.form.get("password", ""),
+                    is_admin=request.form.get("is_admin") == "on",
+                )
+                flash("Usuario creado.", "success")
+            elif action == "reset_password":
+                auth.set_password(
+                    request.form.get("username", "").strip(),
+                    request.form.get("new_password", ""),
+                )
+                flash("Contraseña actualizada.", "success")
+            elif action == "delete":
+                auth.delete_user(
+                    request.form.get("username", "").strip(),
+                    current_username=current_user.id,
+                )
+                flash("Usuario eliminado.", "success")
+        except ValueError as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("admin_users"))
+
+    return render_template("admin_users.html", users=auth.list_users())
 
 # Same per-module accent colors the desktop app used (ui_theme.py SectionTheme,
 # now retired) — kept here purely as brand identity/wayfinding across pages.

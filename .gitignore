@@ -1,3 +1,6 @@
 __pycache__/
 *.pyc
 .claude/settings.local.json
+users.json
+.flask_secret_key
+.env

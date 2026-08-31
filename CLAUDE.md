@@ -20,7 +20,7 @@ Working directory: `C:\BradentonApp`.
 - Cada página de módulo extiende `base.html`, define `{% block crumbs %}` (breadcrumb "Herramientas / Nombre") y `{% block content %}` con un `page-header` (eyebrow + h1 + subtítulo) seguido de un `<div class="card">` por sub-flujo — mismo espíritu que los "cuadros" del desktop, ahora en HTML.
 - Cada `<form>` de sub-flujo tiene sus propios `<input type="file">` (con `label.muted` arriba de cada uno) y un botón "Procesar" al final — sin equivalente al "Excel maestro compartido sin botón propio" del desktop: en la web cada formulario pide su propio Excel Ledger, aunque dos formularios de la misma página apunten al mismo tipo de archivo (más simple de razonar sin manejar estado entre requests).
 - El GET de cada ruta pasa el tema del módulo a `render_template(..., **THEME_BY_KEY["clave"])` — `THEME_BY_KEY` se arma solo desde `TOOLS`, nunca hace falta declararlo aparte.
-- **Botón de cuenta** (`base.html`, header): shell visual únicamente — placeholder para cuando exista login real (integración a Toolbox). Dropdown funcional en CSS/JS puro (sin backend), items marcados "Próximamente". No inventar un usuario logueado ni datos de sesión falsos — cuando haya auth de verdad, cablear ahí.
+- **Botón de cuenta** (`base.html`, header): dropdown en CSS/JS puro (sin backend para el toggle en sí), pero desde el 2026-08-31 ya muestra sesión real — ver "Autenticación (Login)" más abajo.
 
 ### Patrón de guardado (aplicado a TODOS los módulos)
 
@@ -90,9 +90,29 @@ Procesar un archivo **.csv** de Chase (no `.xlsx`) falla con un `TypeError` por 
 
 ### Infraestructura
 - **La app de escritorio se borró del todo el 2026-08-31** (`app.py`, `ui_theme.py`, `install_requirements.bat`) — pedido explícito del usuario, una vez que confirmó tener una copia aparte del proyecto original por las dudas. `requirements.txt` ya no tiene `tkinterdnd2` ni `pywin32` (eran Windows-only, solo los usaba el desktop). Si algún módulo nuevo pareciera necesitar algo de esos dos, es señal de que se está reintroduciendo una dependencia de escritorio por error.
-- `webapp.py` (raíz del proyecto) es la app Flask. `templates/` tiene el HTML (`base.html` con el layout compartido — header, tema por módulo, botón de cuenta placeholder — más un template por módulo).
-- No hay autenticación ni nada de seguridad puesta todavía — es local, de un solo usuario, para probar. El botón de cuenta en el header es solo un shell visual (ver "Patrón de UI web" arriba), no un login real. Antes de que esto llegue a un servicio de Testing en Render hay que revisarlo con Jorge.
+- `webapp.py` (raíz del proyecto) es la app Flask. `templates/` tiene el HTML (`base.html` con el layout compartido — header, tema por módulo, botón de cuenta — más un template por módulo). Ver "Autenticación (Login)" abajo — ya no es solo un shell visual, hay login real.
 - Tesseract/OCR sigue haciendo falta para Reporte Diario, Lottery, Gettel Pagos, y (cuando se migre) Proveedores — funciona igual en local para la web que como funcionaba para el desktop (mismo Tesseract instalado en la PC de Alfonso). Instalarlo en Render es un problema aparte (paso 5 del plan de la jefa, todavía sin resolver con Jorge) que no bloquea probar en local.
+
+## Autenticación (Login) — EN CURSO (empezada 2026-08-31)
+
+### Contexto y decisión
+Pedido explícito del usuario: solo quien tenga una cuenta puede entrar a la app. Las cuentas las crea **solo un administrador**, desde una pantalla en su perfil — no hay auto-registro. Además pidió que "olvidé mi contraseña" mande un mail para resetearla, pero eso necesita decidir un mecanismo de envío de correo (SMTP) — el usuario eligió **Gmail con contraseña de aplicación** para cuando se implemente, pero **todavía no está armado** (ver Pendiente abajo). Mientras tanto, un admin puede resetear la contraseña de cualquiera a mano desde el panel de usuarios.
+
+### Qué se armó (fase 1, funcionando y verificado)
+- **`auth.py`** (nuevo módulo, sin dependencia de Tkinter ni de Flask) — capa de datos pura: `users.json` (gitignored — tiene hashes de contraseña, nunca al repo) con `{usuario: {password_hash, is_admin}}`, hasheo con `werkzeug.security` (ya viene con Flask, no es una dependencia nueva). Funciones: `create_user`, `verify_user`, `set_password`, `delete_user` (rechaza borrarte a vos mismo o al último admin), `list_users`, `get_user`. Mismo patrón de escritura atómica (`.tmp` + `os.replace`) que `chase_rules.json`.
+- **`Flask-Login`** (nueva dependencia, agregada a `requirements.txt`) — maneja la sesión. `WebUser` en `webapp.py` es un wrapper mínimo (`UserMixin`) sobre lo que devuelve `auth.py`.
+- **Bloqueo global**: `@app.before_request` en `webapp.py` exige sesión iniciada para CUALQUIER ruta salvo `/login` y `static` — no hace falta decorar cada ruta con `@login_required` una por una (se probó que decorar todo a mano es más fácil de olvidar en alguna).
+- **`/login`** (`templates/login.html`, página standalone que NO extiende `base.html` — no tiene sentido mostrar el header con botón de cuenta antes de loguearse) y **`/logout`**.
+- **`/admin/users`** (`templates/admin_users.html`, extiende `base.html`) — solo accesible si `current_user.is_admin` (si no, redirige con un flash). Permite crear usuario (con checkbox "Es administrador"), resetear la contraseña de cualquiera, y eliminar usuarios (con las mismas protecciones que `auth.delete_user`).
+- **Botón de cuenta** (`base.html`, header) — dejó de ser shell visual: muestra el usuario real logueado (`current_user.id`) y su rol, "Gestionar usuarios" aparece solo para admins y linkea a `/admin/users`, "Cerrar sesión" es un link real a `/logout`. "Mi perfil" sigue como placeholder ("Próximamente") — no hay pantalla de perfil individual todavía.
+- **Clave de sesión persistente**: antes `app.secret_key = os.urandom(24)` se regeneraba en cada reinicio del server (con el reloader de Flask reiniciando seguido, eso deslogueaba a todos constantemente). Ahora se guarda en `.flask_secret_key` (gitignored, se genera solo la primera vez) y se reusa entre reinicios.
+- **Cuenta admin inicial**: usuario `admin` (contraseña elegida por el usuario en el chat, cargada directo con `auth.create_user` — **nunca escribir la contraseña real en este archivo ni en ningún otro archivo del repo**, `CLAUDE.md` se sube a GitHub). Si hace falta resetearla y no se recuerda, usar `auth.set_password("admin", "...")` desde una consola Python en el proyecto, o pedírsela al usuario de nuevo.
+- **Verificado de punta a punta, no solo por código**: login correcto/incorrecto, bloqueo de `/` sin sesión, logout invalidando la sesión, creación de usuario no-admin y que efectivamente NO puede entrar a `/admin/users`, reset de contraseña, protección contra auto-eliminación y contra eliminar al último admin — todo probado con requests reales (`curl` con cookies) y en el navegador real (Chrome vía Claude Browser).
+
+### Pendiente
+- **Mail de "olvidé mi contraseña"** — falta armar la cuenta de Gmail dedicada + contraseña de aplicación (la genera el usuario desde la configuración de seguridad de Google) y guardarla en un `.env` local (gitignored, agregado ya al `.gitignore` junto con `users.json` y `.flask_secret_key`) — **nunca pedirle la contraseña de aplicación por chat**, que la ponga él mismo en el archivo. Después: `Flask-Mail` o `smtplib` directo + un token de reseteo con expiración (ej. `itsdangerous`, que ya viene con Flask) + una página `/reset-password/<token>`.
+- **"Mi perfil"** sigue sin pantalla propia (cambiar tu propia contraseña sin pasar por un admin, ver tu info) — placeholder nada más.
+- Sin decidir si esto se re-arma distinto cuando llegue la integración real a Toolbox (capaz Toolbox ya tiene su propio SSO y este login casero se reemplaza en vez de convivir) — no bloquea seguir usándolo mientras tanto.
 
 ## Sesión de auditoría de bugs (2026-08-28)
 
