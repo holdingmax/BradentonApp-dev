@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Chase Bank — Bradenton App{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>Chase Bank</h2>
+  <p class="muted">Sube el extracto de Chase (CSV o Excel) y descargá el archivo ya categorizado en la columna Detalle.</p>
+  <form method="post" enctype="multipart/form-data">
+    <input type="file" name="chase_file" accept=".csv,.xlsx,.xlsm" required>
+    <button type="submit">Procesar</button>
+  </form>
+</div>
+{% endblock %}

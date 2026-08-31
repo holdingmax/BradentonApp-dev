@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}Bradenton App — Herramientas{% endblock %}
+{% block content %}
+<div class="card">
+  <h1>Herramientas disponibles</h1>
+  <p class="muted">Versión web — prueba de concepto. Se van sumando módulos de a poco.</p>
+  {% for tool in tools %}
+    <a class="tool-link" href="{{ tool.url }}">{{ tool.label }}</a>
+  {% endfor %}
+</div>
+{% endblock %}

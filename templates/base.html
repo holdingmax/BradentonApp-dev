@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>{% block title %}BradentonApp{% endblock %}</title>
+  <style>
+    :root {
+      --bg: #F4F6F9;
+      --bg-deep: #16233F;
+      --surface: #FFFFFF;
+      --border: #E1E5EB;
+      --text: #1F2A3D;
+      --text-soft: #5B6472;
+      --accent: #16A34A;
+      --accent-hover: #128038;
+      --error: #DC2626;
+      --success: #15803D;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    header {
+      background: var(--bg-deep);
+      color: #fff;
+      padding: 18px 28px;
+    }
+    header a { color: #fff; text-decoration: none; font-weight: 700; font-size: 18px; }
+    main {
+      max-width: 720px;
+      margin: 32px auto;
+      padding: 0 20px;
+    }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px;
+      margin-bottom: 20px;
+    }
+    h1 { font-size: 20px; }
+    h2 { font-size: 16px; margin-top: 0; }
+    a.tool-link {
+      display: block;
+      padding: 14px 16px;
+      margin-bottom: 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      text-decoration: none;
+      font-weight: 600;
+    }
+    a.tool-link:hover { border-color: var(--accent); background: #F6FBF8; }
+    input[type=file] {
+      display: block;
+      margin: 12px 0;
+      padding: 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      width: 100%;
+    }
+    button {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      padding: 10px 18px;
+      border-radius: 6px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    button:hover { background: var(--accent-hover); }
+    .flash-error {
+      background: #FDECEC;
+      border: 1px solid var(--error);
+      color: var(--error);
+      padding: 12px 14px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+      white-space: pre-wrap;
+    }
+    .flash-success {
+      background: #EAF7EE;
+      border: 1px solid var(--success);
+      color: var(--success);
+      padding: 12px 14px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+    }
+    .muted { color: var(--text-soft); font-size: 13px; }
+  </style>
+</head>
+<body>
+  <header><a href="{{ url_for('index') }}">Bradenton App</a></header>
+  <main>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}
+        <div class="flash-{{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endwith %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
+</html>
