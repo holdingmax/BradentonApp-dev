@@ -44,6 +44,7 @@ from gettel_toyota_parser import (
     process_gettel_pagos,
 )
 from monthly_sales import process_monthly_sales
+from proveedores import append_supplier_invoices, append_supplier_payments
 from reporte_diario import process_lottery, process_reporte_diario, process_store_info
 
 def _load_or_create_secret_key():
@@ -220,6 +221,15 @@ TOOLS = [
         "description": "PDF de EFT bancario a Cta Cte, y reporte mensual de Cupones.",
         "accent": "#3B5BDB",
         "accent_soft": "#DDE3FA",
+    },
+    {
+        "key": "proveedores",
+        "code": "PR",
+        "label": "Proveedores",
+        "url": "/proveedores",
+        "description": "Facturas de compra por proveedor y pagos vía Chase al Cta Cte.",
+        "accent": "#DB2777",
+        "accent_soft": "#FBD9EA",
     },
 ]
 
@@ -617,6 +627,57 @@ def eft_cupones():
         return redirect(url_for("eft"))
 
     return send_file(saved_path, as_attachment=True, download_name=master_filename)
+
+
+@app.route("/proveedores")
+def proveedores():
+    return render_template("proveedores.html", **THEME_BY_KEY["proveedores"])
+
+
+@app.route("/proveedores/facturas", methods=["POST"])
+def proveedores_facturas():
+    master_upload = request.files.get("master_file")
+    pdf_uploads = request.files.getlist("pdf_files")
+    if master_upload is None or not master_upload.filename:
+        flash("Seleccioná el Excel Ledger.", "error")
+        return redirect(url_for("proveedores"))
+    if not pdf_uploads or not any(u.filename for u in pdf_uploads):
+        flash("Seleccioná uno o más PDF de facturas.", "error")
+        return redirect(url_for("proveedores"))
+
+    try:
+        workdir = _new_workspace_dir()
+        master_path, master_filename = _save_upload_to_workspace(master_upload, workdir=workdir)
+        pdf_paths = _save_uploads_to_workspace(pdf_uploads, workdir=workdir)
+        temp_path, _summary = append_supplier_invoices(master_path, pdf_paths)
+    except Exception as exc:
+        flash(f"Error: {exc}", "error")
+        return redirect(url_for("proveedores"))
+
+    return send_file(temp_path, as_attachment=True, download_name=master_filename)
+
+
+@app.route("/proveedores/pagos", methods=["POST"])
+def proveedores_pagos():
+    master_upload = request.files.get("master_file")
+    bank_upload = request.files.get("bank_file")
+    if master_upload is None or not master_upload.filename:
+        flash("Seleccioná el Excel Ledger.", "error")
+        return redirect(url_for("proveedores"))
+    if bank_upload is None or not bank_upload.filename:
+        flash("Seleccioná el extracto de Chase ya categorizado.", "error")
+        return redirect(url_for("proveedores"))
+
+    try:
+        workdir = _new_workspace_dir()
+        master_path, master_filename = _save_upload_to_workspace(master_upload, workdir=workdir)
+        bank_path, _bank_filename = _save_upload_to_workspace(bank_upload, workdir=workdir)
+        temp_path, _summary = append_supplier_payments(master_path, bank_path)
+    except Exception as exc:
+        flash(f"Error: {exc}", "error")
+        return redirect(url_for("proveedores"))
+
+    return send_file(temp_path, as_attachment=True, download_name=master_filename)
 
 
 if __name__ == "__main__":
