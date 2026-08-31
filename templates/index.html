@@ -1,13 +1,19 @@
 {% extends "base.html" %}
 {% block title %}Bradenton App — Herramientas{% endblock %}
 {% block content %}
-<h1>Herramientas</h1>
-<p class="muted" style="margin-top: -8px;">Versión web — se van sumando módulos de a poco, probando cada uno antes de seguir con el próximo.</p>
+<div class="page-header">
+  <span class="eyebrow">Toolbox</span>
+  <h1>Herramientas</h1>
+  <p class="page-subtitle">Automatización contable de Bradenton Gas Station USA LLC. Se van sumando módulos de a poco, probando cada uno antes de seguir con el próximo.</p>
+</div>
 <div class="tool-grid">
   {% for tool in tools %}
-    <a class="tool-card" href="{{ tool.url }}">
-      <span class="tool-card-label">{{ tool.label }}</span>
-      <span class="tool-card-desc">{{ tool.description }}</span>
+    <a class="tool-card" href="{{ tool.url }}" style="--tool-accent: {{ tool.accent }};">
+      <span class="tool-card-badge">{{ tool.code }}</span>
+      <span class="tool-card-body">
+        <span class="tool-card-label">{{ tool.label }}</span>
+        <span class="tool-card-desc">{{ tool.description }}</span>
+      </span>
     </a>
   {% endfor %}
 </div>

@@ -1,6 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Lottery — Bradenton App{% endblock %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ url_for('index') }}">Herramientas</a><span>/</span><span class="current">Lottery</span></nav>
+{% endblock %}
 {% block content %}
+<div class="page-header">
+  <span class="eyebrow">Lottery</span>
+  <h1>Daily Sales Report y PDF Diario</h1>
+  <p class="page-subtitle">Dos flujos independientes sobre el mismo Excel de Lottery — cada uno con su propio PDF, no hace falta cargar los dos juntos.</p>
+</div>
 <div class="card">
   <h2>Daily Sales Report → F/G/H/I/K, P/Q/R/S</h2>
   <p class="muted">Uno o más Daily Sales Report (PDF) + Excel de Lottery.</p>

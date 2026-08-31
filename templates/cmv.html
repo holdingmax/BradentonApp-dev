@@ -1,6 +1,14 @@
 {% extends "base.html" %}
 {% block title %}CMV — Bradenton App{% endblock %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ url_for('index') }}">Herramientas</a><span>/</span><span class="current">CMV</span></nav>
+{% endblock %}
 {% block content %}
+<div class="page-header">
+  <span class="eyebrow">CMV</span>
+  <h1>Costo y Ventas</h1>
+  <p class="page-subtitle">Dos flujos independientes sobre el mismo Excel maestro CMV — Costo actualiza COSTO.TODOS por UPC, Ventas actualiza las hojas de departamento con el POS.</p>
+</div>
 <div class="card">
   <h2>CMV Costo</h2>
   <p class="muted">Excel maestro CMV + uno o más archivos de departamento de Elistar. Actualiza Costo y Precio en COSTO.TODOS.</p>

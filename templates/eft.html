@@ -1,6 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Cupones y EFT — Bradenton App{% endblock %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ url_for('index') }}">Herramientas</a><span>/</span><span class="current">Cupones y EFT</span></nav>
+{% endblock %}
 {% block content %}
+<div class="page-header">
+  <span class="eyebrow">Cupones y EFT</span>
+  <h1>Cta Cte y Cupones</h1>
+  <p class="page-subtitle">Dos flujos independientes sobre el mismo Excel Ledger — el PDF de EFT bancario actualiza Cta Cte, el reporte mensual de J.H. Williams agrega y cruza Cupones.</p>
+</div>
 <div class="card">
   <h2>Paso 1 — Pipeline Cta Cte (PDF EFT)</h2>
   <p class="muted">PDF de EFT bancario + Excel Ledger. Actualiza la hoja Cta Cte J.H.Williams.</p>

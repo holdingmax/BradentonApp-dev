@@ -1,6 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Reporte Diario — Bradenton App{% endblock %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ url_for('index') }}">Herramientas</a><span>/</span><span class="current">Reporte Diario</span></nav>
+{% endblock %}
 {% block content %}
+<div class="page-header">
+  <span class="eyebrow">Reporte Diario</span>
+  <h1>Ventas y Store Info</h1>
+  <p class="page-subtitle">Un mismo PDF de cierre diario alimenta dos destinos distintos — Ventas por Departamento y Store Info, cada uno con su propio Excel.</p>
+</div>
 <div class="card">
   <h2>Ventas por Departamento → CARGA AQUI</h2>
   <p class="muted">Uno o más PDF diarios + Excel Bradenton. Análisis C-Store. Ventas.</p>

@@ -1,10 +1,18 @@
 {% extends "base.html" %}
 {% block title %}Chase Bank — Bradenton App{% endblock %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ url_for('index') }}">Herramientas</a><span>/</span><span class="current">Chase Bank</span></nav>
+{% endblock %}
 {% block content %}
+<div class="page-header">
+  <span class="eyebrow">Chase Bank</span>
+  <h1>Categorización de movimientos</h1>
+  <p class="page-subtitle">Sube el extracto de Chase (CSV o Excel) y descargá el archivo con la columna Detalle ya categorizada según las reglas.</p>
+</div>
 <div class="card">
-  <h2>Chase Bank</h2>
-  <p class="muted">Sube el extracto de Chase (CSV o Excel) y descargá el archivo ya categorizado en la columna Detalle.</p>
+  <h2>Procesar extracto</h2>
   <form method="post" enctype="multipart/form-data">
+    <label class="muted">Extracto de Chase</label>
     <input type="file" name="chase_file" accept=".csv,.xlsx,.xlsm" required>
     <button type="submit">Procesar</button>
   </form>

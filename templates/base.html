@@ -2,108 +2,338 @@
 <html lang="es">
 <head>
   <meta charset="utf-8">
-  <title>{% block title %}BradentonApp{% endblock %}</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Bradenton App{% endblock %}</title>
   <style>
     :root {
-      --bg: #F4F6F9;
-      --bg-deep: #16233F;
+      --bg: #F3F4F8;
+      --brand: #111827;
+      --brand-soft: #1F2937;
       --surface: #FFFFFF;
-      --border: #E1E5EB;
-      --text: #1F2A3D;
-      --text-soft: #5B6472;
-      --accent: #16A34A;
-      --accent-hover: #128038;
+      --surface-alt: #F8FAFC;
+      --border: #E5E7EB;
+      --text: #111827;
+      --text-soft: #6B7280;
+      --text-on-brand: #F9FAFB;
+      --text-muted-on-brand: #9CA3AF;
+      --accent: {{ accent|default('#4F46E5') }};
+      --accent-soft: {{ accent_soft|default('#EEF2FF') }};
       --error: #DC2626;
+      --error-soft: #FEF2F2;
       --success: #15803D;
+      --success-soft: #F0FDF4;
+      --radius: 10px;
+      --shadow-sm: 0 1px 2px rgba(17, 24, 39, 0.06);
+      --shadow-md: 0 4px 14px rgba(17, 24, 39, 0.08);
     }
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+      font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
       background: var(--bg);
       color: var(--text);
+      -webkit-font-smoothing: antialiased;
     }
-    header {
-      background: var(--bg-deep);
+    a { color: inherit; }
+
+    /* ---------- Header ---------- */
+    header.topbar {
+      background: var(--brand);
+      padding: 0 24px;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06);
+    }
+    .topbar-inner {
+      max-width: 1080px;
+      margin: 0 auto;
+      height: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      text-decoration: none;
+    }
+    .brand-mark {
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      background: linear-gradient(135deg, var(--accent), #818CF8);
       color: #fff;
-      padding: 18px 28px;
+      font-weight: 800;
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
     }
-    header a { color: #fff; text-decoration: none; font-weight: 700; font-size: 18px; }
-    main {
-      max-width: 880px;
-      margin: 32px auto;
-      padding: 0 20px;
+    .brand-word {
+      color: var(--text-on-brand);
+      font-weight: 700;
+      font-size: 15px;
+      letter-spacing: 0.01em;
     }
-    .card {
+    .brand-word span {
+      color: var(--text-muted-on-brand);
+      font-weight: 500;
+    }
+    nav.crumbs {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: 18px;
+      padding-left: 18px;
+      border-left: 1px solid rgba(255, 255, 255, 0.12);
+      font-size: 13px;
+      color: var(--text-muted-on-brand);
+    }
+    nav.crumbs a { text-decoration: none; color: var(--text-muted-on-brand); }
+    nav.crumbs a:hover { color: var(--text-on-brand); }
+    nav.crumbs .current { color: var(--text-on-brand); font-weight: 600; }
+
+    .topbar-right { display: flex; align-items: center; gap: 14px; }
+
+    /* Account button — UI shell only, no auth wired up yet */
+    .account-menu { position: relative; }
+    .account-button {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 999px;
+      padding: 5px 12px 5px 5px;
+      cursor: pointer;
+      color: var(--text-on-brand);
+      font: inherit;
+      font-size: 13px;
+    }
+    .account-button:hover { background: rgba(255, 255, 255, 0.12); }
+    .account-avatar {
+      width: 24px;
+      height: 24px;
+      border-radius: 50%;
+      background: var(--accent-soft);
+      color: var(--accent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .account-avatar svg { width: 14px; height: 14px; }
+    .account-caret { color: var(--text-muted-on-brand); transition: transform 0.15s ease; }
+    .account-menu.open .account-caret { transform: rotate(180deg); }
+    .account-dropdown {
+      position: absolute;
+      right: 0;
+      top: calc(100% + 8px);
+      width: 220px;
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 10px;
-      padding: 24px;
-      margin-bottom: 20px;
+      box-shadow: var(--shadow-md);
+      padding: 8px;
+      display: none;
     }
-    h1 { font-size: 20px; }
-    h2 { font-size: 16px; margin-top: 0; }
+    .account-menu.open .account-dropdown { display: block; }
+    .account-dropdown-header {
+      padding: 8px 10px 10px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 6px;
+    }
+    .account-dropdown-header .name { font-weight: 600; font-size: 13px; }
+    .account-dropdown-header .hint { font-size: 11px; color: var(--text-soft); margin-top: 2px; }
+    .account-dropdown-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      color: var(--text-soft);
+    }
+    .account-dropdown-item .soon {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      background: var(--surface-alt);
+      border: 1px solid var(--border);
+      color: var(--text-soft);
+      padding: 2px 6px;
+      border-radius: 999px;
+    }
+
+    /* ---------- Layout ---------- */
+    main {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 36px 24px 64px;
+    }
+    .page-header { margin-bottom: 24px; }
+    .eyebrow {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: var(--accent);
+      background: var(--accent-soft);
+      padding: 3px 10px;
+      border-radius: 999px;
+      margin-bottom: 10px;
+    }
+    h1 { font-size: 24px; margin: 0 0 6px; letter-spacing: -0.01em; }
+    h2 { font-size: 16px; margin: 0 0 4px; }
+    .page-subtitle { color: var(--text-soft); font-size: 14px; margin: 0; max-width: 620px; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-sm);
+      padding: 22px 24px;
+      margin-bottom: 18px;
+    }
+
+    /* ---------- Home grid ---------- */
     .tool-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
       gap: 14px;
-      margin-top: 20px;
+      margin-top: 22px;
     }
     a.tool-card {
       display: flex;
-      flex-direction: column;
-      gap: 6px;
+      align-items: flex-start;
+      gap: 12px;
       background: var(--surface);
       border: 1px solid var(--border);
-      border-left: 4px solid var(--accent);
-      border-radius: 8px;
-      padding: 16px 18px;
-      color: var(--text);
+      border-radius: var(--radius);
+      padding: 16px 16px;
       text-decoration: none;
+      box-shadow: var(--shadow-sm);
+      transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
     }
-    a.tool-card:hover { border-color: var(--accent); box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
-    .tool-card-label { font-weight: 700; font-size: 15px; }
-    .tool-card-desc { font-size: 12px; color: var(--text-soft); }
+    a.tool-card:hover {
+      border-color: var(--tool-accent, var(--accent));
+      box-shadow: var(--shadow-md);
+      transform: translateY(-1px);
+    }
+    .tool-card-badge {
+      min-width: 34px;
+      height: 34px;
+      padding: 0 6px;
+      border-radius: 9px;
+      background: var(--tool-accent, var(--accent));
+      color: #fff;
+      font-weight: 700;
+      font-size: 12px;
+      letter-spacing: 0.01em;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .tool-card-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+    .tool-card-label { font-weight: 700; font-size: 14.5px; color: var(--text); }
+    .tool-card-desc { font-size: 12px; color: var(--text-soft); line-height: 1.4; }
+
+    /* ---------- Forms ---------- */
+    label.muted {
+      display: block;
+      color: var(--text-soft);
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.02em;
+      margin: 14px 0 6px;
+    }
+    label.muted:first-child { margin-top: 0; }
     input[type=file] {
       display: block;
-      margin: 12px 0;
-      padding: 10px;
+      padding: 9px 10px;
       border: 1px solid var(--border);
-      border-radius: 6px;
+      background: var(--surface-alt);
+      border-radius: 8px;
       width: 100%;
+      font-size: 13px;
     }
+    input[type=file]:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
     button {
       background: var(--accent);
       color: #fff;
       border: none;
-      padding: 10px 18px;
-      border-radius: 6px;
+      padding: 10px 20px;
+      border-radius: 8px;
       font-weight: 700;
+      font-size: 14px;
       cursor: pointer;
+      margin-top: 18px;
+      transition: filter 0.12s ease;
     }
-    button:hover { background: var(--accent-hover); }
+    button:hover { filter: brightness(0.92); }
+
+    /* ---------- Flash ---------- */
     .flash-error {
-      background: #FDECEC;
-      border: 1px solid var(--error);
+      background: var(--error-soft);
+      border: 1px solid #FCA5A5;
       color: var(--error);
       padding: 12px 14px;
-      border-radius: 6px;
-      margin-bottom: 16px;
+      border-radius: 8px;
+      margin-bottom: 18px;
       white-space: pre-wrap;
+      font-size: 13.5px;
     }
     .flash-success {
-      background: #EAF7EE;
-      border: 1px solid var(--success);
+      background: var(--success-soft);
+      border: 1px solid #86EFAC;
       color: var(--success);
       padding: 12px 14px;
-      border-radius: 6px;
-      margin-bottom: 16px;
+      border-radius: 8px;
+      margin-bottom: 18px;
+      font-size: 13.5px;
     }
     .muted { color: var(--text-soft); font-size: 13px; }
   </style>
 </head>
 <body>
-  <header><a href="{{ url_for('index') }}">Bradenton App</a></header>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div style="display: flex; align-items: center;">
+        <a class="brand" href="{{ url_for('index') }}">
+          <span class="brand-mark">B</span>
+          <span class="brand-word">Bradenton <span>App</span></span>
+        </a>
+        {% block crumbs %}{% endblock %}
+      </div>
+      <div class="topbar-right">
+        <!-- Account button: UI shell only — no auth wired up yet. Wire real
+             session/user data here once login exists (Toolbox integration). -->
+        <div class="account-menu" id="account-menu">
+          <button type="button" class="account-button" onclick="document.getElementById('account-menu').classList.toggle('open')">
+            <span class="account-avatar">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            </span>
+            <span>Cuenta</span>
+            <svg class="account-caret" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+          </button>
+          <div class="account-dropdown">
+            <div class="account-dropdown-header">
+              <div class="name">Sin iniciar sesión</div>
+              <div class="hint">Bradenton Gas Station USA LLC</div>
+            </div>
+            <div class="account-dropdown-item">Mi perfil <span class="soon">Próximamente</span></div>
+            <div class="account-dropdown-item">Cerrar sesión <span class="soon">Próximamente</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </header>
   <main>
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% for category, message in messages %}

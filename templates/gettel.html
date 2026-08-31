@@ -1,6 +1,14 @@
 {% extends "base.html" %}
 {% block title %}Gettel / Toyota — Bradenton App{% endblock %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ url_for('index') }}">Herramientas</a><span>/</span><span class="current">Gettel / Toyota</span></nav>
+{% endblock %}
 {% block content %}
+<div class="page-header">
+  <span class="eyebrow">Gettel / Toyota</span>
+  <h1>Cupones y Pagos</h1>
+  <p class="page-subtitle">Resume el Excel diario de Gettel/Toyota por día y lo fusiona en el master Cierre. Los pagos van aparte, hacia la hoja PAGO Cupones.</p>
+</div>
 <div class="card">
   <h2>Cupones Diarios → hoja Gettel-Toyota</h2>
   <p class="muted">Excel de cupones diarios (o PDF/foto escaneada) + Excel Maestro (Master Cierre).</p>

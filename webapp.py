@@ -35,38 +35,69 @@ from reporte_diario import process_lottery, process_reporte_diario, process_stor
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
+# Same per-module accent colors the desktop app used (ui_theme.py SectionTheme,
+# now retired) — kept here purely as brand identity/wayfinding across pages.
 TOOLS = [
     {
+        "key": "chase",
+        "code": "CH",
         "label": "Chase Bank",
         "url": "/chase",
         "description": "Categoriza movimientos bancarios contra las reglas de Detalle.",
+        "accent": "#16A34A",
+        "accent_soft": "#DCF3E3",
     },
     {
+        "key": "cmv",
+        "code": "CMV",
         "label": "CMV",
         "url": "/cmv",
         "description": "Costo por UPC (COSTO.TODOS) y ventas del POS por departamento.",
+        "accent": "#7C3AED",
+        "accent_soft": "#E9E0FC",
     },
     {
+        "key": "gettel",
+        "code": "GT",
         "label": "Gettel / Toyota",
         "url": "/gettel",
         "description": "Cupones diarios (Excel o PDF) y pagos hacia el master Cierre.",
+        "accent": "#0D9488",
+        "accent_soft": "#D6F1EE",
     },
     {
+        "key": "reporte",
+        "code": "RD",
         "label": "Reporte Diario",
         "url": "/reporte",
         "description": "Ventas por Departamento y Store Info desde el PDF de cierre diario.",
+        "accent": "#0284C7",
+        "accent_soft": "#D7EFFB",
     },
     {
+        "key": "lottery",
+        "code": "LT",
         "label": "Lottery",
         "url": "/lottery",
         "description": "Daily Sales Report y PDF Diario hacia el Excel de Lottery.",
+        "accent": "#0284C7",
+        "accent_soft": "#D7EFFB",
     },
     {
+        "key": "eft",
+        "code": "EFT",
         "label": "Cupones y EFT",
         "url": "/eft",
         "description": "PDF de EFT bancario a Cta Cte, y reporte mensual de Cupones.",
+        "accent": "#3B5BDB",
+        "accent_soft": "#DDE3FA",
     },
 ]
+
+THEME_BY_KEY = {
+    tool["key"]: {"accent": tool["accent"], "accent_soft": tool["accent_soft"]}
+    for tool in TOOLS
+}
 
 
 def _new_workspace_dir():
@@ -115,7 +146,7 @@ def index():
 @app.route("/chase", methods=["GET", "POST"])
 def chase():
     if request.method == "GET":
-        return render_template("chase.html")
+        return render_template("chase.html", **THEME_BY_KEY["chase"])
 
     upload = request.files.get("chase_file")
     if upload is None or not upload.filename:
@@ -138,7 +169,7 @@ def chase():
 
 @app.route("/cmv")
 def cmv():
-    return render_template("cmv.html")
+    return render_template("cmv.html", **THEME_BY_KEY["cmv"])
 
 
 @app.route("/cmv/costo", methods=["POST"])
@@ -199,7 +230,7 @@ def cmv_ventas():
 
 @app.route("/gettel")
 def gettel():
-    return render_template("gettel.html")
+    return render_template("gettel.html", **THEME_BY_KEY["gettel"])
 
 
 @app.route("/gettel/cupones", methods=["POST"])
@@ -267,7 +298,7 @@ def gettel_pagos():
 
 @app.route("/reporte")
 def reporte():
-    return render_template("reporte.html")
+    return render_template("reporte.html", **THEME_BY_KEY["reporte"])
 
 
 def _reporte_pdf_upload():
@@ -321,7 +352,7 @@ def reporte_store_info():
 
 @app.route("/lottery")
 def lottery():
-    return render_template("lottery.html")
+    return render_template("lottery.html", **THEME_BY_KEY["lottery"])
 
 
 def _lottery_pdf_upload():
@@ -375,7 +406,7 @@ def lottery_department():
 
 @app.route("/eft")
 def eft():
-    return render_template("eft.html")
+    return render_template("eft.html", **THEME_BY_KEY["eft"])
 
 
 @app.route("/eft/cta-cte", methods=["POST"])
