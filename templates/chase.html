@@ -17,4 +17,48 @@
     <button type="submit">Procesar</button>
   </form>
 </div>
+
+<div class="card">
+  <h2>Motor de Reglas Chase</h2>
+  <p class="muted">Palabra clave (sin importar mayúsculas/acentos) → Detalle a asignar en filas sin categorizar. Si varias reglas matchean, gana la palabra clave más larga. Las reglas Maestras son las de Alfonso, están protegidas y no se pueden borrar.</p>
+  <form method="post" action="{{ url_for('chase_rules_add') }}" style="display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;">
+    <div style="flex: 1; min-width: 160px;">
+      <label class="muted">Palabra clave</label>
+      <input type="text" name="keyword" required>
+    </div>
+    <div style="flex: 1; min-width: 160px;">
+      <label class="muted">Detalle</label>
+      <input type="text" name="detail" required>
+    </div>
+    <button type="submit" style="margin-top: 0;">Crear Regla</button>
+  </form>
+
+  <table style="width: 100%; border-collapse: collapse; font-size: 13.5px; margin-top: 18px;">
+    <thead>
+      <tr style="text-align: left; border-bottom: 1px solid var(--border);">
+        <th style="padding: 8px 6px;">Palabra Clave</th>
+        <th style="padding: 8px 6px;">Detalle</th>
+        <th style="padding: 8px 6px;">Tipo</th>
+        <th style="padding: 8px 6px;"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for rule in chase_rules %}
+      <tr style="border-bottom: 1px solid var(--border);">
+        <td style="padding: 8px 6px;">{{ rule.keyword }}</td>
+        <td style="padding: 8px 6px;">{{ rule.detail }}</td>
+        <td style="padding: 8px 6px;" class="muted">{{ rule.source }}</td>
+        <td style="padding: 8px 6px;">
+          {% if rule.source == "Personalizada" %}
+          <form method="post" action="{{ url_for('chase_rules_delete') }}" onsubmit="return confirm('¿Eliminar la regla &quot;{{ rule.keyword }}&quot; → &quot;{{ rule.detail }}&quot;?');">
+            <input type="hidden" name="dynamic_index" value="{{ rule.dynamic_index }}">
+            <button type="submit" style="margin-top: 0; padding: 6px 12px; font-size: 12.5px; background: var(--error);">Eliminar</button>
+          </form>
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
 {% endblock %}

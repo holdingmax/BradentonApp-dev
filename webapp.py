@@ -24,7 +24,12 @@ from flask_login import (
 )
 
 import auth
-from chase_rules import process_chase_categorization
+from chase_rules import (
+    add_dynamic_rule as add_chase_rule,
+    delete_dynamic_rule_by_index as delete_chase_rule_by_index,
+    list_display_rules as list_chase_display_rules,
+    process_chase_categorization,
+)
 from cmv_costo import update_master_costo_todos_bulk
 from cupones_append import (
     MonthlyReportFullyDuplicateError,
@@ -270,7 +275,9 @@ def index():
 @app.route("/chase", methods=["GET", "POST"])
 def chase():
     if request.method == "GET":
-        return render_template("chase.html", **THEME_BY_KEY["chase"])
+        return render_template(
+            "chase.html", chase_rules=list_chase_display_rules(), **THEME_BY_KEY["chase"]
+        )
 
     upload = request.files.get("chase_file")
     if upload is None or not upload.filename:
@@ -289,6 +296,26 @@ def chase():
         as_attachment=True,
         download_name=filename,
     )
+
+
+@app.route("/chase/rules/add", methods=["POST"])
+def chase_rules_add():
+    try:
+        add_chase_rule(request.form.get("keyword", ""), request.form.get("detail", ""))
+        flash("Regla creada.", "success")
+    except ValueError as exc:
+        flash(str(exc), "error")
+    return redirect(url_for("chase"))
+
+
+@app.route("/chase/rules/delete", methods=["POST"])
+def chase_rules_delete():
+    try:
+        delete_chase_rule_by_index(request.form.get("dynamic_index"))
+        flash("Regla eliminada.", "success")
+    except ValueError as exc:
+        flash(str(exc), "error")
+    return redirect(url_for("chase"))
 
 
 @app.route("/cmv")

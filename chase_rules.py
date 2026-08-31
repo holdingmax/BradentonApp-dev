@@ -252,6 +252,67 @@ ALFONSO_COMPOUND_DISPLAY_RULES = (
 )
 
 
+def builtin_display_rules():
+    """Hardcoded Alfonso master rules mirrored from categorize_chase_description, for UI display only."""
+    rules = []
+
+    def add_keywords(keywords, detail):
+        for keyword in keywords:
+            rules.append({"keyword": keyword, "detail": detail, "source": "Maestra"})
+
+    add_keywords(CHASE_PROVEEDORES_KEYWORDS, "PROVEEDORES")
+    add_keywords(CHASE_GASTOS_BANCARIOS_KEYWORDS, "GASTOS BANCARIOS")
+    add_keywords(CHASE_REBATE_KEYWORDS, "REBATE")
+    add_keywords(CHASE_AGUA_KEYWORDS, "AGUA")
+    add_keywords(CHASE_ALARMA_KEYWORDS, "ALARMA")
+    add_keywords(CHASE_ENERGIA_KEYWORDS, "ENERGIA ELECTRICA")
+    add_keywords(CHASE_TELEFONO_KEYWORDS, "TELEFONO")
+    add_keywords(CHASE_ELISTAR_KEYWORDS, "ELISTAR")
+    add_keywords(CHASE_SEGURO_KEYWORDS, "SEGURO")
+    add_keywords(CHASE_SALE_TAX_KEYWORDS, "SALE TAX")
+    add_keywords(CHASE_ALG_DISTR_KEYWORDS, "REBATE")
+    add_keywords(CHASE_ADMIN_FEE_KEYWORDS, "ADMINISTRATION FEE")
+
+    for keyword, detail in ALFONSO_MASTER_SINGLE_RULES:
+        rules.append({"keyword": keyword, "detail": detail, "source": "Maestra"})
+
+    for keyword, detail in ALFONSO_COMPOUND_DISPLAY_RULES:
+        rules.append({"keyword": keyword, "detail": detail, "source": "Maestra"})
+
+    return rules
+
+
+def list_display_rules():
+    """
+    Merge built-in Alfonso master rules and persisted JSON rules for the UI
+    grid -- "Maestra" rules are read-only/protected, "Personalizada" rules
+    carry a dynamic_index so the caller can delete them via
+    delete_dynamic_rule_by_index.
+    """
+    merged = []
+    seen = set()
+
+    for rule in builtin_display_rules():
+        key = (rule["keyword"].lower(), rule["detail"])
+        if key not in seen:
+            seen.add(key)
+            merged.append(rule)
+
+    for idx, rule in enumerate(load_dynamic_rules()):
+        entry = {
+            "keyword": rule["keyword"],
+            "detail": rule["detail"],
+            "source": "Personalizada",
+            "dynamic_index": idx,
+        }
+        key = (entry["keyword"].lower(), entry["detail"])
+        if key not in seen:
+            seen.add(key)
+            merged.append(entry)
+
+    return merged
+
+
 def _is_check_proveedores(desc):
     """CHECK/CHEQUE/CHEK combined with vendor keywords -> PROVEEDORES."""
     return _desc_has_check_keyword(desc) and _desc_contains_any(
