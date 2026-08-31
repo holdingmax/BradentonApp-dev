@@ -53,6 +53,38 @@ Nunca se sobrescribe el archivo original del usuario. Cada proceso: abre el work
   Se commitea apenas el usuario confirma que algo anda bien ("guarda esto", "anda bien", "carga bien"). Si varios pedidos seguidos terminan pisando las mismas líneas sin que haya habido un commit en el medio, no vale la pena reconstruir a mano un historial separado — mejor un solo commit prolijo con cada cambio detallado en el cuerpo del mensaje, que arriesgar romper algo por separarlos.
 - Push a `origin`: apenas se confirma un fix (con aviso, no autopilot silencioso). Push a `produccion`: solo cuando el usuario lo pide explícitamente — hoy no es una opción hasta que recupere el acceso.
 
+## Migración a Web (Flask) — EN CURSO (empezada 2026-08-31)
+
+### Contexto y decisión
+La nueva jefa del usuario quiere meter BradentonApp en "Toolbox" (catálogo de herramientas del holding, cada una una app web corriendo en Render). Una app de escritorio Tkinter no puede entrar ahí — no corre en un servidor sin pantalla. Ella dio dos caminos: **Opción A** (sumar Flask, quedarse en Python, reusar la lógica ya escrita) u **Opción B** (reescribir todo de cero en Next.js/TypeScript, el stack que usa el resto del holding). **El usuario eligió la Opción A.**
+
+Metodología pedida explícitamente por el usuario (calca el paso a paso que le dio su jefa): **migrar un módulo a la vez, completo, hasta que ande igual que en el desktop, antes de arrancar el siguiente — nunca todos en paralelo.** El usuario prueba cada módulo en su propio navegador con datos reales; si hace falta que él cambie algo del Excel real para que encaje, lo dice él mismo.
+
+### Hallazgo clave (invalida un supuesto del plan de la jefa)
+El mensaje de la jefa asume que `app.py` es "solo las ventanas" y que toda la lógica real ya vive en archivos separados (`cmv_costo.py`, `chase_rules.py`, etc.). **Eso no es así en varios módulos** — el motor completo de Chase (categorización, parseo, escritura de Excel/CSV) y el motor completo de EFT/Cupones (parseo de PDF, fórmulas de balance) viven como funciones sueltas a nivel de módulo dentro de `app.py`, mezcladas con `import tkinter`. Como Render (Linux, sin pantalla) probablemente ni siquiera tiene el paquete `tk` instalado, ese código **no se puede importar tal cual** en un proceso de servidor — hay que extraerlo primero a un archivo sin ninguna dependencia de Tkinter, y recién ahí Flask lo importa. Este patrón de extracción hay que repetirlo para cada módulo que todavía tenga lógica atrapada en `app.py` (revisar con `grep '^def |^class '` antes de asumir que ya está separado).
+
+### Patrón para migrar cada módulo (repetir con cada uno)
+1. Mapear qué funciones de ese flujo viven sueltas en `app.py` (no como método de `EFTExtractorApp`) — esas son candidatas a extraer.
+2. Mover esas funciones al archivo de lógica del dominio ya existente (`chase_rules.py`, `cmv_costo.py`, etc.) — nunca crear un `utils.py` compartido, sigue sin ser el patrón del repo.
+3. En `app.py`, reemplazar las definiciones movidas por un import desde ese archivo, envuelto en el mismo patrón `try/except ImportError` que ya usan todos los demás módulos opcionales (para que la UI de escritorio siga mostrando "módulo no disponible" en vez de crashear si algo falta).
+4. **Verificar que el desktop sigue andando igual** después de mover código — instanciar `EFTExtractorApp` headless y ejercitar el flujo, no alcanza con que compile.
+5. Agregar la ruta Flask correspondiente en `webapp.py` + su template en `templates/`. Nunca reimplementar la lógica ahí — solo el pegamento (recibir archivo subido, llamar a la función ya extraída, devolver el resultado para descargar).
+6. **Diferencia clave desktop vs. web**: el desktop abre el Excel resultado solo (`os.startfile`, patrón `_launch_temp_workbook`); la web no puede hacer eso en un servidor — en su lugar el navegador **descarga** el archivo procesado. Esto no es un bug, es la naturaleza de una app web; avisarle al usuario la primera vez que prueba cada módulo nuevo para que no piense que algo se rompió.
+7. Probar con datos sintéticos primero (rápido, sin arriesgar nada real), después pedirle al usuario que lo pruebe él con un archivo real desde su propio navegador en `http://localhost:5000` (el server se levanta con `mcp__Claude_Browser__preview_start` usando `.claude/launch.json`, configuración `"webapp"` — ya está creada).
+8. Recién cuando el usuario confirme que ese módulo anda igual que el desktop, commitear y pasar al siguiente.
+
+### Progreso
+- ✅ **Chase Bank** (2026-08-31): motor extraído a `chase_rules.py`, verificado idéntico contra la versión anterior de `app.py` con los mismos datos, probado por el usuario en su navegador con un extracto real — anduvo igual que el desktop.
+- Pendientes: EFT/Cupones (el más grande — parseo de PDF completo vive en `app.py`, no en `cupones_append.py`), Gettel/Toyota, Reporte Diario, Lottery, CMV, Proveedores. Varios de estos usan OCR (`pytesseract`/`opencv-python`) — instalar Tesseract en Render es un problema aparte (paso 5 del plan de la jefa, todavía sin resolver) que probablemente bloquee esos módulos hasta que se resuelva con Jorge.
+
+### Hallazgo aparte, no corregido (no es parte de la migración)
+Procesar un archivo **.csv** de Chase (no `.xlsx`) falla con un `TypeError` por un cambio de comportamiento de pandas 3.0 (`write_chase_csv_file` intenta escribir un float en una columna de dtype string). **Confirmado que ya fallaba en la versión de `app.py` anterior a esta sesión** — no es una regresión de la migración. Afecta tanto al desktop como a la versión web. Pendiente de arreglar cuando el usuario lo pida.
+
+### Infraestructura
+- `requirements.txt` tiene `Flask` agregado. `tkinterdnd2` y `pywin32` (Windows-only) siguen ahí porque el desktop todavía los necesita — antes de desplegar a Render habrá que separar en un requirements propio del servidor (sin esos dos), pero no es urgente hasta que se hable con Jorge (pasos 7-8 del plan de la jefa).
+- `webapp.py` (raíz del proyecto) es la app Flask. `templates/` tiene el HTML (`base.html` con el layout compartido, uno por módulo).
+- No hay autenticación ni nada de seguridad puesta todavía — es local, de un solo usuario, para probar. Antes de que esto llegue a un servicio de Testing en Render hay que revisarlo con Jorge.
+
 ## Sesión de auditoría de bugs (2026-08-28)
 
 El usuario pidió una revisión rápida (no específica de Proveedores) buscando bugs en todo el código. Se lanzaron 5 agentes en paralelo cubriendo: lógica core de `proveedores.py`, los 22 extractores de proveedores, `app.py` (UI), `reporte_diario.py`/`gettel_toyota_parser.py`, y el resto de módulos (`cupones_append.py`, `monthly_sales.py`, `cmv_costo.py`, `chase_rules.py`). Encontraron 15 bugs reales; se corrigieron 14, cada uno verificado con un script de test reproducible (no solo lectura de código) en el scratchpad de la sesión — esos scripts no persisten entre conversaciones, si hace falta revalidar algo hay que rehacerlos.
@@ -204,7 +236,7 @@ El usuario pidió explícitamente trabajar en **lotes de 5 proveedores**: Claude
 
 ## Otro contexto de fondo
 
-- **Posible migración a web**: pausada, pendiente de una reunión con el equipo de automatización de la empresa (Vigo, Mamaní, Artigas) que estaba prevista para el 2026-08-26. Repos de GitHub ya conectados y funcionando (`origin`/`produccion` de arriba). Si el usuario menciona que la reunión ya pasó, preguntar qué se definió antes de asumir que se sigue sin la metodología web.
+- **Migración a web**: en curso — ver sección dedicada "Migración a Web (Flask)" más abajo. Ya no está pausada.
 - El usuario **no es programador profesional pero entiende de programación** (técnico universitario) — está bien dar explicaciones técnicas, no hace falta simplificar en exceso.
 
 ## Convenciones de trabajo con el usuario (aplican a todo el proyecto, no solo Proveedores)
