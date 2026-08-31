@@ -119,12 +119,7 @@ Pedido explícito del usuario: solo quien tenga una cuenta puede entrar a la app
 
 El usuario pidió una revisión rápida (no específica de Proveedores) buscando bugs en todo el código. Se lanzaron 5 agentes en paralelo cubriendo: lógica core de `proveedores.py`, los 22 extractores de proveedores, `app.py` (UI), `reporte_diario.py`/`gettel_toyota_parser.py`, y el resto de módulos (`cupones_append.py`, `monthly_sales.py`, `cmv_costo.py`, `chase_rules.py`). Encontraron 15 bugs reales; se corrigieron 14, cada uno verificado con un script de test reproducible (no solo lectura de código) en el scratchpad de la sesión — esos scripts no persisten entre conversaciones, si hace falta revalidar algo hay que rehacerlos.
 
-**IMPORTANTE — estado al cierre de esta sesión**: los 14 fixes quedaron en el working tree **sin commitear**. Esta PC (post-mudanza del usuario) no tiene identidad de git configurada (`git config user.name`/`user.email` vacíos, tanto local como `--global`) y Claude no puede correr `git config` por política de seguridad — **el usuario tiene que correrlo él mismo** antes de poder commitear:
-```bash
-git config --global user.name "Alfonso"
-git config --global user.email "alfonsocg04@gmail.com"
-```
-Si en la próxima sesión `git status` sigue mostrando `app.py`, `chase_rules.py`, `cupones_append.py`, `gettel_toyota_parser.py`, `monthly_sales.py`, `proveedores.py` y `reporte_diario.py` modificados sin commitear, retomar desde ahí — commitear cada fix por separado (ver convención de commits arriba), no agrupar.
+Los 14 fixes ya quedaron commiteados (la identidad de git en esta PC se configuró correctamente después: `git config user.name`/`user.email` → `Alfonso`/`alfonsocg04@gmail.com`) — nada pendiente de esta sesión puntual.
 
 ### Bugs corregidos
 - **`proveedores.py`** — `_append_invoice_row`: la fórmula de BALANCE del primer asiento de cada mes nuevo referenciaba la fila separadora en blanco en vez de `last_row`, perdiendo el saldo arrastrado en TODO cambio de mes (bug crítico y silencioso, no un caso raro). `_existing_invoice_numbers`: ahora filtra por `COMPROB == "invoice"` — antes un N° de cheque en una fila "OP" podía bloquear una factura real como "ya cargada".
