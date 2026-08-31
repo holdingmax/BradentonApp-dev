@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}CMV — Bradenton App{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>CMV Costo</h2>
+  <p class="muted">Excel maestro CMV + uno o más archivos de departamento de Elistar. Actualiza Costo y Precio en COSTO.TODOS.</p>
+  <form method="post" action="{{ url_for('cmv_costo') }}" enctype="multipart/form-data">
+    <label class="muted">Excel Maestro CMV</label>
+    <input type="file" name="master_file" accept=".xls,.xlsx,.xlsm" required>
+    <label class="muted">Archivos de Departamento</label>
+    <input type="file" name="dept_files" accept=".csv,.xls,.xlsx,.xlsm" multiple required>
+    <button type="submit">Procesar</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>CMV Ventas</h2>
+  <p class="muted">Excel maestro CMV + uno o más reportes de ventas del POS. Actualiza las hojas de departamento.</p>
+  <form method="post" action="{{ url_for('cmv_ventas') }}" enctype="multipart/form-data">
+    <label class="muted">Excel Maestro CMV</label>
+    <input type="file" name="master_file" accept=".xls,.xlsx,.xlsm" required>
+    <label class="muted">POS Reports</label>
+    <input type="file" name="sales_files" accept=".csv,.xls,.xlsx,.xlsm" multiple required>
+    <button type="submit">Procesar</button>
+  </form>
+</div>
+{% endblock %}
