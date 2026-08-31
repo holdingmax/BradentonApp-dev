@@ -23,6 +23,7 @@ from gettel_toyota_parser import (
     process_gettel_pagos,
 )
 from monthly_sales import process_monthly_sales
+from reporte_diario import process_lottery, process_reporte_diario, process_store_info
 
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
@@ -42,6 +43,16 @@ TOOLS = [
         "label": "Gettel / Toyota",
         "url": "/gettel",
         "description": "Cupones diarios (Excel o PDF) y pagos hacia el master Cierre.",
+    },
+    {
+        "label": "Reporte Diario",
+        "url": "/reporte",
+        "description": "Ventas por Departamento y Store Info desde el PDF de cierre diario.",
+    },
+    {
+        "label": "Lottery",
+        "url": "/lottery",
+        "description": "Daily Sales Report y PDF Diario hacia el Excel de Lottery.",
     },
 ]
 
@@ -240,6 +251,114 @@ def gettel_pagos():
         as_attachment=True,
         download_name=master_filename,
     )
+
+
+@app.route("/reporte")
+def reporte():
+    return render_template("reporte.html")
+
+
+def _reporte_pdf_upload():
+    """Shared validation + upload-saving for the two Reporte Diario forms."""
+    master_upload = request.files.get("master_file")
+    pdf_uploads = request.files.getlist("pdf_files")
+    if not pdf_uploads or not any(u.filename for u in pdf_uploads):
+        flash("Seleccioná uno o más PDF diarios.", "error")
+        return None
+    if master_upload is None or not master_upload.filename:
+        flash("Seleccioná el Excel de destino.", "error")
+        return None
+
+    workdir = _new_workspace_dir()
+    master_path, master_filename = _save_upload_to_workspace(master_upload, workdir=workdir)
+    pdf_paths = _save_uploads_to_workspace(pdf_uploads, workdir=workdir)
+    return master_path, master_filename, pdf_paths
+
+
+@app.route("/reporte/ventas", methods=["POST"])
+def reporte_ventas():
+    saved = _reporte_pdf_upload()
+    if saved is None:
+        return redirect(url_for("reporte"))
+    master_path, master_filename, pdf_paths = saved
+
+    try:
+        temp_path, _summary = process_reporte_diario(master_path, pdf_paths)
+    except Exception as exc:
+        flash(f"Error: {exc}", "error")
+        return redirect(url_for("reporte"))
+
+    return send_file(temp_path, as_attachment=True, download_name=master_filename)
+
+
+@app.route("/reporte/store-info", methods=["POST"])
+def reporte_store_info():
+    saved = _reporte_pdf_upload()
+    if saved is None:
+        return redirect(url_for("reporte"))
+    master_path, master_filename, pdf_paths = saved
+
+    try:
+        temp_path, _summary = process_store_info(master_path, pdf_paths)
+    except Exception as exc:
+        flash(f"Error: {exc}", "error")
+        return redirect(url_for("reporte"))
+
+    return send_file(temp_path, as_attachment=True, download_name=master_filename)
+
+
+@app.route("/lottery")
+def lottery():
+    return render_template("lottery.html")
+
+
+def _lottery_pdf_upload():
+    """Shared validation + upload-saving for the two Lottery forms."""
+    master_upload = request.files.get("master_file")
+    pdf_uploads = request.files.getlist("pdf_files")
+    if not pdf_uploads or not any(u.filename for u in pdf_uploads):
+        flash("Seleccioná uno o más PDF.", "error")
+        return None
+    if master_upload is None or not master_upload.filename:
+        flash("Seleccioná el Excel de Lottery.", "error")
+        return None
+
+    workdir = _new_workspace_dir()
+    master_path, master_filename = _save_upload_to_workspace(master_upload, workdir=workdir)
+    pdf_paths = _save_uploads_to_workspace(pdf_uploads, workdir=workdir)
+    return master_path, master_filename, pdf_paths
+
+
+@app.route("/lottery/sales-report", methods=["POST"])
+def lottery_sales_report():
+    saved = _lottery_pdf_upload()
+    if saved is None:
+        return redirect(url_for("lottery"))
+    master_path, master_filename, pdf_paths = saved
+
+    try:
+        temp_path, _summary = process_lottery(master_path, [], pdf_paths)
+    except Exception as exc:
+        flash(f"Error: {exc}", "error")
+        return redirect(url_for("lottery"))
+
+    return send_file(temp_path, as_attachment=True, download_name=master_filename)
+
+
+@app.route("/lottery/department", methods=["POST"])
+def lottery_department():
+    saved = _lottery_pdf_upload()
+    if saved is None:
+        return redirect(url_for("lottery"))
+    master_path, master_filename, pdf_paths = saved
+
+    try:
+        temp_path, _summary = process_lottery(master_path, pdf_paths, [])
+    except Exception as exc:
+        flash(f"Error: {exc}", "error")
+        return redirect(url_for("lottery"))
+
+    return send_file(temp_path, as_attachment=True, download_name=master_filename)
 
 
 if __name__ == "__main__":

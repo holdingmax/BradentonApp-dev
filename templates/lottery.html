@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Lottery — Bradenton App{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>Daily Sales Report → F/G/H/I/K, P/Q/R/S</h2>
+  <p class="muted">Uno o más Daily Sales Report (PDF) + Excel de Lottery.</p>
+  <form method="post" action="{{ url_for('lottery_sales_report') }}" enctype="multipart/form-data">
+    <label class="muted">PDF(s)</label>
+    <input type="file" name="pdf_files" accept=".pdf" multiple required>
+    <label class="muted">Excel Ledger (LOTTERY. Análisis)</label>
+    <input type="file" name="master_file" accept=".xlsx,.xlsm" required>
+    <button type="submit">Procesar</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>PDF Diario → D/E/N/O</h2>
+  <p class="muted">Uno o más PDF diario(s) (Department Sales Report) + Excel de Lottery.</p>
+  <form method="post" action="{{ url_for('lottery_department') }}" enctype="multipart/form-data">
+    <label class="muted">PDF(s)</label>
+    <input type="file" name="pdf_files" accept=".pdf" multiple required>
+    <label class="muted">Excel Ledger (LOTTERY. Análisis)</label>
+    <input type="file" name="master_file" accept=".xlsx,.xlsm" required>
+    <button type="submit">Procesar</button>
+  </form>
+</div>
+{% endblock %}
