@@ -133,10 +133,12 @@ def admin_users():
         action = request.form.get("action")
         try:
             if action == "create":
+                # Nuevas cuentas siempre no-admin — solo la cuenta admin
+                # inicial tiene ese rol por ahora, sin UI para promover otras.
                 auth.create_user(
                     request.form.get("username", ""),
                     request.form.get("password", ""),
-                    is_admin=request.form.get("is_admin") == "on",
+                    is_admin=False,
                 )
                 flash("Usuario creado.", "success")
             elif action == "reset_password":
