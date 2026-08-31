@@ -25,8 +25,16 @@ app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
 TOOLS = [
-    {"label": "Chase Bank", "url": "/chase"},
-    {"label": "CMV", "url": "/cmv"},
+    {
+        "label": "Chase Bank",
+        "url": "/chase",
+        "description": "Categoriza movimientos bancarios contra las reglas de Detalle.",
+    },
+    {
+        "label": "CMV",
+        "url": "/cmv",
+        "description": "Costo por UPC (COSTO.TODOS) y ventas del POS por departamento.",
+    },
 ]
 
 
