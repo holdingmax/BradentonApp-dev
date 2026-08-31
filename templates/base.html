@@ -278,6 +278,21 @@
       transition: filter 0.12s ease;
     }
     button:hover { filter: brightness(0.92); }
+    button:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
+    button.btn-secondary {
+      background: var(--surface-alt);
+      color: var(--text);
+      border: 1px solid var(--border);
+      font-weight: 600;
+    }
+    button.btn-secondary:hover { background: var(--border); filter: none; }
+    button.btn-danger-soft {
+      background: var(--error-soft);
+      color: var(--error);
+      border: 1px solid #FCA5A5;
+      font-weight: 600;
+    }
+    button.btn-danger-soft:hover { background: #FEE2E2; filter: none; }
 
     /* ---------- Flash ---------- */
     .flash-error {

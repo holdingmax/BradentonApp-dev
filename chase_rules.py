@@ -13,11 +13,12 @@ import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.styles import Font
 
-RULES_FILENAME = "chase_rules.json"
+RULES_FILENAME = "chase_rules.json"  # Personalizadas -- added by an admin via the UI.
+MASTER_RULES_FILENAME = "chase_master_rules.json"  # Maestra -- seeded once from Alfonso's original hardcoded rules, then admin-editable.
 
 
-def _rules_file_path():
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), RULES_FILENAME)
+def _rules_file_path(filename):
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
 
 
 def normalize_rule_text(value):
@@ -39,11 +40,18 @@ def _normalize_rule_entry(keyword, detail):
     return {"keyword": keyword_text, "detail": detail_text}
 
 
-def load_dynamic_rules():
-    """Return all persisted rule dicts: {"keyword": str, "detail": str}."""
-    path = _rules_file_path()
+def _load_rules_file(filename, seed=None):
+    """
+    Read a keyword/detail rules JSON file, shared by the Maestra and
+    Personalizada storage below. If the file doesn't exist yet and `seed`
+    is given, it's created with that seed data first -- used once, the
+    first time chase_master_rules.json is read.
+    """
+    path = _rules_file_path(filename)
     if not os.path.isfile(path):
-        return []
+        if seed is None:
+            return []
+        _save_rules_file(filename, list(seed))
 
     try:
         with open(path, encoding="utf-8") as handle:
@@ -69,12 +77,12 @@ def load_dynamic_rules():
     return cleaned
 
 
-def save_dynamic_rules(rules):
-    """Persist the full rules list atomically without dropping unrelated entries."""
+def _save_rules_file(filename, rules):
+    """Persist a full rules list atomically without dropping unrelated entries."""
     if not isinstance(rules, list):
         raise TypeError("Rules must be a list.")
 
-    path = _rules_file_path()
+    path = _rules_file_path(filename)
     directory = os.path.dirname(path)
     os.makedirs(directory, exist_ok=True)
 
@@ -87,37 +95,35 @@ def save_dynamic_rules(rules):
     os.replace(temp_path, path)
 
 
-def add_dynamic_rule(keyword, detail):
-    """Append or update one rule while preserving every other saved rule."""
+def _add_rule(filename, keyword, detail, seed=None):
+    """Append or update one rule (by keyword collision) while preserving every other saved rule."""
     entry = _normalize_rule_entry(keyword, detail)
-    rules = load_dynamic_rules()
+    rules = _load_rules_file(filename, seed=seed)
     keyword_key = entry["keyword"].lower()
     rules = [rule for rule in rules if rule["keyword"].lower() != keyword_key]
     rules.append(entry)
-    save_dynamic_rules(rules)
+    _save_rules_file(filename, rules)
     return entry
 
 
-def delete_dynamic_rule(keyword, detail):
-    """Remove one matching rule and leave all other saved rules untouched."""
-    keyword_key = str(keyword).strip().lower()
-    detail_key = str(detail).strip()
-    rules = load_dynamic_rules()
-    filtered = [
-        rule
-        for rule in rules
-        if not (
-            rule["keyword"].lower() == keyword_key and rule["detail"] == detail_key
-        )
-    ]
-    if len(filtered) == len(rules):
+def _edit_rule_by_index(filename, index, keyword, detail, seed=None):
+    """Replace one persisted rule in place, keeping its position in the list."""
+    entry = _normalize_rule_entry(keyword, detail)
+    rules = _load_rules_file(filename, seed=seed)
+    try:
+        idx = int(index)
+    except (TypeError, ValueError):
+        raise ValueError("Índice de regla inválido.") from None
+    if idx < 0 or idx >= len(rules):
         raise ValueError("La regla seleccionada no se encontró en el almacenamiento.")
-    save_dynamic_rules(filtered)
+    rules[idx] = entry
+    _save_rules_file(filename, rules)
+    return entry
 
 
-def delete_dynamic_rule_by_index(index):
-    """Remove one persisted rule by index in chase_rules.json."""
-    rules = load_dynamic_rules()
+def _delete_rule_by_index(filename, index, seed=None):
+    """Remove one persisted rule by index."""
+    rules = _load_rules_file(filename, seed=seed)
     try:
         idx = int(index)
     except (TypeError, ValueError):
@@ -125,87 +131,192 @@ def delete_dynamic_rule_by_index(index):
     if idx < 0 or idx >= len(rules):
         raise ValueError("La regla seleccionada no se encontró en el almacenamiento.")
     removed = rules.pop(idx)
-    save_dynamic_rules(rules)
+    _save_rules_file(filename, rules)
     return removed
 
 
+def load_dynamic_rules():
+    """Return all persisted Personalizada rule dicts: {"keyword": str, "detail": str}."""
+    return _load_rules_file(RULES_FILENAME)
+
+
+def save_dynamic_rules(rules):
+    _save_rules_file(RULES_FILENAME, rules)
+
+
+def add_dynamic_rule(keyword, detail):
+    """Append or update one Personalizada rule while preserving every other saved rule."""
+    return _add_rule(RULES_FILENAME, keyword, detail)
+
+
+def edit_dynamic_rule_by_index(index, keyword, detail):
+    """Replace one Personalizada rule in place by index in chase_rules.json."""
+    return _edit_rule_by_index(RULES_FILENAME, index, keyword, detail)
+
+
+def delete_dynamic_rule_by_index(index):
+    """Remove one Personalizada rule by index in chase_rules.json."""
+    return _delete_rule_by_index(RULES_FILENAME, index)
+
+
+def load_master_rules():
+    """
+    Return all Maestra rule dicts: {"keyword": str, "detail": str}.
+
+    Seeded once from Alfonso's original hardcoded categorization rules (see
+    _DEFAULT_MASTER_RULES below) the first time chase_master_rules.json is
+    read -- from then on this file is the live source
+    categorize_chase_description reads from, so an admin edit takes effect
+    immediately.
+    """
+    return _load_rules_file(MASTER_RULES_FILENAME, seed=_DEFAULT_MASTER_RULES)
+
+
+def edit_master_rule_by_index(index, keyword, detail):
+    """Replace one Maestra rule in place by index in chase_master_rules.json."""
+    return _edit_rule_by_index(
+        MASTER_RULES_FILENAME, index, keyword, detail, seed=_DEFAULT_MASTER_RULES
+    )
+
+
+def delete_master_rule_by_index(index):
+    """Remove one Maestra rule by index in chase_master_rules.json."""
+    return _delete_rule_by_index(MASTER_RULES_FILENAME, index, seed=_DEFAULT_MASTER_RULES)
+
+
+def _match_longest_keyword(desc, rules):
+    """
+    Among every rule whose keyword appears in the (already normalized) desc,
+    the LONGEST keyword wins -- a generic rule ("KOOLER") never permanently
+    shadows a more specific one ("KOOLER FARMS LLC") just because it was
+    added earlier or lives in a different rules file.
+
+    Returns Detail text or None.
+    """
+    best_detail = None
+    best_len = 0
+    for rule in rules:
+        keyword = normalize_rule_text(rule.get("keyword", ""))
+        if keyword and keyword in desc and len(keyword) > best_len:
+            best_detail = rule.get("detail")
+            best_len = len(keyword)
+    return best_detail
+
+
 def match_dynamic_detalle(description):
-    """
-    Case-insensitive substring match against saved keyword rules.
-
-    Among every rule whose keyword appears in the description, the LONGEST
-    keyword wins -- rules are stored in add order (add_dynamic_rule always
-    appends), so matching by insertion order instead would let a generic
-    rule added early ("KOOLER") permanently shadow a more specific one
-    added later ("KOOLER FARMS LLC").
-
-    Returns Target Detail text or None.
-    """
+    """Longest-keyword match against saved Personalizada rules only. Returns Detail text or None."""
     desc = normalize_rule_text(description)
     if not desc:
         return None
+    return _match_longest_keyword(desc, load_dynamic_rules())
 
-    best_rule = None
-    best_keyword = ""
-    for rule in load_dynamic_rules():
-        keyword = normalize_rule_text(rule.get("keyword", ""))
-        if keyword and keyword in desc and len(keyword) > len(best_keyword):
-            best_rule = rule
-            best_keyword = keyword
-    return best_rule.get("detail") if best_rule else None
+
+def list_display_rules():
+    """
+    Full rule list for the UI grid: Maestra (chase_master_rules.json,
+    admin-editable) + Personalizada (chase_rules.json, admin-editable) +
+    Combinada (hardcoded multi-condition rules, read-only -- see
+    ALFONSO_COMPOUND_DISPLAY_RULES). Maestra/Personalizada rows carry
+    rule_type + index so the caller can edit/delete them; Combinada rows
+    carry neither since they aren't stored as a simple keyword.
+    """
+    merged = []
+    for idx, rule in enumerate(load_master_rules()):
+        merged.append(
+            {
+                "keyword": rule["keyword"],
+                "detail": rule["detail"],
+                "source": "Maestra",
+                "rule_type": "master",
+                "index": idx,
+            }
+        )
+    for idx, rule in enumerate(load_dynamic_rules()):
+        merged.append(
+            {
+                "keyword": rule["keyword"],
+                "detail": rule["detail"],
+                "source": "Personalizada",
+                "rule_type": "custom",
+                "index": idx,
+            }
+        )
+    for keyword, detail in ALFONSO_COMPOUND_DISPLAY_RULES:
+        merged.append(
+            {
+                "keyword": keyword,
+                "detail": detail,
+                "source": "Combinada",
+                "rule_type": None,
+                "index": None,
+            }
+        )
+    return merged
 
 
 # ---------------------------------------------------------------------------
-# Categorization engine: hardcoded keyword groups (Alfonso's baseline rules)
+# Categorization engine
 # ---------------------------------------------------------------------------
 
 EFT_RCV_EXACT_LABEL = "EFT RCV-"
 EFT_RCV_RED_FONT = Font(color="FF0000", bold=True)
 
-CHASE_CHECK_WORDS = ("chek",)
-
-
-def _desc_has_check_keyword(desc):
-    """True when description contains CHECK, CHEQUE, or CHEK (normalized to chek)."""
-    return "chek" in desc
-
-
-def _desc_contains_any(desc, keywords):
-    """Return True if any keyword appears in normalized description text."""
-    return any(keyword in desc for keyword in keywords)
-
-
-# Alfonso master keyword groups (case-insensitive via normalize_rule_text).
-CHASE_PROVEEDORES_KEYWORDS = (
-    "frito-la",
-    "hackneyrectampa",
-    "cec distributing",
-    "gold coast eagle",
-    "jj taylor distri",
-    "pbg",
-    "colonial",
-    "redbull",
-    "airgas",
-    "johnson brothers",
+# Alfonso's original hardcoded rules, flattened into one seed list the first
+# time chase_master_rules.json gets created (see load_master_rules above) --
+# kept here as frozen historical data; the categorization engine never reads
+# these tuples directly after that first seed, only the JSON file itself, so
+# an admin edit made afterward always takes effect.
+_DEFAULT_MASTER_RULES = (
+    {"keyword": "frito-la", "detail": "PROVEEDORES"},
+    {"keyword": "hackneyrectampa", "detail": "PROVEEDORES"},
+    {"keyword": "cec distributing", "detail": "PROVEEDORES"},
+    {"keyword": "gold coast eagle", "detail": "PROVEEDORES"},
+    {"keyword": "jj taylor distri", "detail": "PROVEEDORES"},
+    {"keyword": "pbg", "detail": "PROVEEDORES"},
+    {"keyword": "colonial", "detail": "PROVEEDORES"},
+    {"keyword": "redbull", "detail": "PROVEEDORES"},
+    {"keyword": "airgas", "detail": "PROVEEDORES"},
+    {"keyword": "johnson brothers", "detail": "PROVEEDORES"},
+    {"keyword": "low value", "detail": "GASTOS BANCARIOS"},
+    {"keyword": "initial fee", "detail": "GASTOS BANCARIOS"},
+    {"keyword": "cash deposit immediate", "detail": "GASTOS BANCARIOS"},
+    {"keyword": "monthly service fee", "detail": "GASTOS BANCARIOS"},
+    {"keyword": "helix ucp", "detail": "REBATE"},
+    {"keyword": "ussmokless", "detail": "REBATE"},
+    {"keyword": "njoy", "detail": "REBATE"},
+    {"keyword": "itg brands", "detail": "REBATE"},
+    {"keyword": "john middleton", "detail": "REBATE"},
+    {"keyword": "mucs", "detail": "AGUA"},
+    {"keyword": "manatee", "detail": "AGUA"},
+    {"keyword": "slomin's", "detail": "ALARMA"},
+    {"keyword": "slomins", "detail": "ALARMA"},
+    {"keyword": "slomin", "detail": "ALARMA"},
+    {"keyword": "fpl", "detail": "ENERGIA ELECTRICA"},
+    {"keyword": "text me", "detail": "TELEFONO"},
+    {"keyword": "innov", "detail": "ELISTAR"},
+    {"keyword": "ipf", "detail": "SEGURO"},
+    {"keyword": "fla dept", "detail": "SALE TAX"},
+    {"keyword": "alg distr", "detail": "REBATE"},
+    {"keyword": "finova", "detail": "ADMINISTRATION FEE"},
+    {"keyword": "orig co name:mvnt", "detail": "REBATE"},
+    {"keyword": "orig co name:fla lottery", "detail": "LOTTERY"},
+    {"keyword": "orig co name:cantaloupe", "detail": "VENTA ICE"},
+    {"keyword": "online realtime vendor payment", "detail": "SUELDOS"},
+    {"keyword": "online realtime payroll payment", "detail": "SUELDOS"},
+    {"keyword": "deposit  id number", "detail": "DEPOSITO"},
+    {"keyword": "spectrum", "detail": "INTERNET"},
+    {"keyword": "jeffrey's lawn", "detail": "REPARACION Y MANTENIMIENTO"},
+    {"keyword": "jeffreys lawn", "detail": "REPARACION Y MANTENIMIENTO"},
+    {"keyword": "merchant bank", "detail": "COMISIONES Y GASTOS BANCARIOS"},
+    {"keyword": "reynolds", "detail": "REBATE"},
+    {"keyword": "fla lottery", "detail": "LOTTERY"},
+    {"keyword": "cantaloupe", "detail": "VENTA ICE"},
+    {"keyword": "mvnt", "detail": "REBATE"},
 )
-CHASE_GASTOS_BANCARIOS_KEYWORDS = (
-    "low value",
-    "initial fee",
-    "cash deposit immediate",
-    "monthly service fee",
-)
-CHASE_REBATE_KEYWORDS = (
-    "helix ucp",
-    "ussmokless",
-    "njoy",
-    "itg brands",
-    "john middleton",
-)
-CHASE_AGUA_KEYWORDS = ("mucs", "manatee")
-CHASE_ALARMA_KEYWORDS = ("slomin's", "slomins", "slomin")
-CHASE_ENERGIA_KEYWORDS = ("fpl",)
-CHASE_TELEFONO_KEYWORDS = ("text me",)
-CHASE_ELISTAR_KEYWORDS = ("innov",)
+
+# Keywords used only inside the CHECK/CHEQUE/CHEK + vendor compound rule
+# below -- not a flat keyword->detail rule, so it can't live in
+# chase_master_rules.json / be edited from the UI.
 CHASE_CHECK_PROVEEDORES_KEYWORDS = (
     "coca",
     "coke",
@@ -215,30 +326,11 @@ CHASE_CHECK_PROVEEDORES_KEYWORDS = (
     "icecream",
     "ice cream",
 )
-CHASE_SEGURO_KEYWORDS = ("ipf",)
-CHASE_SALE_TAX_KEYWORDS = ("fla dept",)
-CHASE_ALG_DISTR_KEYWORDS = ("alg distr",)
-CHASE_ADMIN_FEE_KEYWORDS = ("finova",)
 
-# Alfonso single-string master rules (keyword substring -> Detalle).
-ALFONSO_MASTER_SINGLE_RULES = (
-    ("orig co name:mvnt", "REBATE"),
-    ("orig co name:fla lottery", "LOTTERY"),
-    ("orig co name:cantaloupe", "VENTA ICE"),
-    ("online realtime vendor payment", "SUELDOS"),
-    ("online realtime payroll payment", "SUELDOS"),
-    ("deposit  id number", "DEPOSITO"),
-    ("spectrum", "INTERNET"),
-    ("jeffrey's lawn", "REPARACION Y MANTENIMIENTO"),
-    ("jeffreys lawn", "REPARACION Y MANTENIMIENTO"),
-    ("merchant bank", "COMISIONES Y GASTOS BANCARIOS"),
-    ("reynolds", "REBATE"),
-    ("fla lottery", "LOTTERY"),
-    ("cantaloupe", "VENTA ICE"),
-    ("mvnt", "REBATE"),
-)
-
-# Alfonso compound rules for UI display (read-only baseline).
+# Multi-condition rules (AND'd together) -- can't be expressed as a single
+# keyword, so they stay hardcoded and read-only. Shown in the UI grid as
+# "Combinada" purely for visibility; matched procedurally in
+# categorize_chase_description below, never through the flat rules list.
 ALFONSO_COMPOUND_DISPLAY_RULES = (
     ("OPERATING ACCT + PAYMENT", "EFT RCV-"),
     ("OPERATING ACCT + CHEVRON", "REBATE COMBUSTIBLE"),
@@ -252,71 +344,15 @@ ALFONSO_COMPOUND_DISPLAY_RULES = (
 )
 
 
-def builtin_display_rules():
-    """Hardcoded Alfonso master rules mirrored from categorize_chase_description, for UI display only."""
-    rules = []
-
-    def add_keywords(keywords, detail):
-        for keyword in keywords:
-            rules.append({"keyword": keyword, "detail": detail, "source": "Maestra"})
-
-    add_keywords(CHASE_PROVEEDORES_KEYWORDS, "PROVEEDORES")
-    add_keywords(CHASE_GASTOS_BANCARIOS_KEYWORDS, "GASTOS BANCARIOS")
-    add_keywords(CHASE_REBATE_KEYWORDS, "REBATE")
-    add_keywords(CHASE_AGUA_KEYWORDS, "AGUA")
-    add_keywords(CHASE_ALARMA_KEYWORDS, "ALARMA")
-    add_keywords(CHASE_ENERGIA_KEYWORDS, "ENERGIA ELECTRICA")
-    add_keywords(CHASE_TELEFONO_KEYWORDS, "TELEFONO")
-    add_keywords(CHASE_ELISTAR_KEYWORDS, "ELISTAR")
-    add_keywords(CHASE_SEGURO_KEYWORDS, "SEGURO")
-    add_keywords(CHASE_SALE_TAX_KEYWORDS, "SALE TAX")
-    add_keywords(CHASE_ALG_DISTR_KEYWORDS, "REBATE")
-    add_keywords(CHASE_ADMIN_FEE_KEYWORDS, "ADMINISTRATION FEE")
-
-    for keyword, detail in ALFONSO_MASTER_SINGLE_RULES:
-        rules.append({"keyword": keyword, "detail": detail, "source": "Maestra"})
-
-    for keyword, detail in ALFONSO_COMPOUND_DISPLAY_RULES:
-        rules.append({"keyword": keyword, "detail": detail, "source": "Maestra"})
-
-    return rules
-
-
-def list_display_rules():
-    """
-    Merge built-in Alfonso master rules and persisted JSON rules for the UI
-    grid -- "Maestra" rules are read-only/protected, "Personalizada" rules
-    carry a dynamic_index so the caller can delete them via
-    delete_dynamic_rule_by_index.
-    """
-    merged = []
-    seen = set()
-
-    for rule in builtin_display_rules():
-        key = (rule["keyword"].lower(), rule["detail"])
-        if key not in seen:
-            seen.add(key)
-            merged.append(rule)
-
-    for idx, rule in enumerate(load_dynamic_rules()):
-        entry = {
-            "keyword": rule["keyword"],
-            "detail": rule["detail"],
-            "source": "Personalizada",
-            "dynamic_index": idx,
-        }
-        key = (entry["keyword"].lower(), entry["detail"])
-        if key not in seen:
-            seen.add(key)
-            merged.append(entry)
-
-    return merged
+def _desc_has_check_keyword(desc):
+    """True when description contains CHECK, CHEQUE, or CHEK (normalized to chek)."""
+    return "chek" in desc
 
 
 def _is_check_proveedores(desc):
     """CHECK/CHEQUE/CHEK combined with vendor keywords -> PROVEEDORES."""
-    return _desc_has_check_keyword(desc) and _desc_contains_any(
-        desc, CHASE_CHECK_PROVEEDORES_KEYWORDS
+    return _desc_has_check_keyword(desc) and any(
+        keyword in desc for keyword in CHASE_CHECK_PROVEEDORES_KEYWORDS
     )
 
 
@@ -329,7 +365,14 @@ def _is_deposit_id_number(desc):
 
 def categorize_chase_description(description):
     """
-    Map Chase Description text to Detalle category using Alfonso's keyword rules.
+    Map Chase Description text to Detalle category.
+
+    Multi-condition rules (OPERATING ACCT/CHECK combos) are checked first --
+    they can't be expressed as a flat keyword. Everything else is a single
+    longest-keyword-wins match across Maestra (chase_master_rules.json) and
+    Personalizada (chase_rules.json) rules together, so an admin-edited or
+    newly added rule can override a broader one regardless of which file it
+    lives in.
 
     Returns category string or None when no rule matches.
     """
@@ -337,7 +380,6 @@ def categorize_chase_description(description):
     if not desc:
         return None
 
-    # Double Rule 1: OPERATING ACCT + PAYMENT (after Chevron/Monthly checks).
     if "operating acct" in desc and "chevron" in desc:
         return "REBATE COMBUSTIBLE"
     if "operating acct" in desc and "monthly" in desc:
@@ -345,52 +387,21 @@ def categorize_chase_description(description):
     if "operating acct" in desc and "payment" in desc:
         return "EFT RCV-"
 
-    # Double Rule 5: CHECK/CHEQUE/CHEK + FLORIDA.
     if _desc_has_check_keyword(desc) and "florida" in desc:
         return "ADMINISTRATION FEE"
 
-    # Single Rule: CHECK - FLORI.
     if "chek - flori" in desc:
         return "PROVEEDORES"
 
-    # Double Rule 4: CHECK/CHEQUE/CHEK + vendor keywords.
     if _is_check_proveedores(desc):
         return "PROVEEDORES"
 
-    if _desc_contains_any(desc, CHASE_GASTOS_BANCARIOS_KEYWORDS):
-        return "GASTOS BANCARIOS"
-    if _desc_contains_any(desc, CHASE_PROVEEDORES_KEYWORDS):
-        return "PROVEEDORES"
-    if _desc_contains_any(desc, CHASE_REBATE_KEYWORDS):
-        return "REBATE"
-    if _desc_contains_any(desc, CHASE_AGUA_KEYWORDS):
-        return "AGUA"
-    if _desc_contains_any(desc, CHASE_ALARMA_KEYWORDS):
-        return "ALARMA"
-    if _desc_contains_any(desc, CHASE_ENERGIA_KEYWORDS):
-        return "ENERGIA ELECTRICA"
-    if _desc_contains_any(desc, CHASE_TELEFONO_KEYWORDS):
-        return "TELEFONO"
-    if _desc_contains_any(desc, CHASE_ELISTAR_KEYWORDS):
-        return "ELISTAR"
-    if _desc_contains_any(desc, CHASE_SEGURO_KEYWORDS):
-        return "SEGURO"
-    if _desc_contains_any(desc, CHASE_SALE_TAX_KEYWORDS):
-        return "SALE TAX"
-    if _desc_contains_any(desc, CHASE_ALG_DISTR_KEYWORDS):
-        return "REBATE"
-    if _desc_contains_any(desc, CHASE_ADMIN_FEE_KEYWORDS):
-        return "ADMINISTRATION FEE"
+    matched_detail = _match_longest_keyword(desc, load_master_rules() + load_dynamic_rules())
+    if matched_detail:
+        return matched_detail
 
-    for keyword, detail in ALFONSO_MASTER_SINGLE_RULES:
-        if keyword in desc:
-            return detail
     if _is_deposit_id_number(desc):
         return "DEPOSITO"
-
-    dynamic_detail = match_dynamic_detalle(description)
-    if dynamic_detail:
-        return dynamic_detail
 
     return None
 

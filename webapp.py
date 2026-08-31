@@ -26,7 +26,10 @@ from flask_login import (
 import auth
 from chase_rules import (
     add_dynamic_rule as add_chase_rule,
-    delete_dynamic_rule_by_index as delete_chase_rule_by_index,
+    delete_dynamic_rule_by_index as delete_chase_custom_rule,
+    delete_master_rule_by_index as delete_chase_master_rule,
+    edit_dynamic_rule_by_index as edit_chase_custom_rule,
+    edit_master_rule_by_index as edit_chase_master_rule,
     list_display_rules as list_chase_display_rules,
     process_chase_categorization,
 )
@@ -308,11 +311,35 @@ def chase():
     )
 
 
-@app.route("/chase/rules/add", methods=["POST"])
-def chase_rules_add():
+def _require_admin_for_chase_rules():
+    if not current_user.is_admin:
+        flash("Solo un administrador puede gestionar las reglas de Chase.", "error")
+        return False
+    return True
+
+
+@app.route("/chase/rules/save", methods=["POST"])
+def chase_rules_save():
+    if not _require_admin_for_chase_rules():
+        return redirect(url_for("chase"))
+
+    keyword = request.form.get("keyword", "")
+    detail = request.form.get("detail", "")
+    rule_type = request.form.get("rule_type", "").strip()
+    index = request.form.get("index", "").strip()
+
     try:
-        add_chase_rule(request.form.get("keyword", ""), request.form.get("detail", ""))
-        flash("Regla creada.", "success")
+        if not rule_type or not index:
+            add_chase_rule(keyword, detail)
+            flash("Regla creada.", "success")
+        elif rule_type == "master":
+            edit_chase_master_rule(index, keyword, detail)
+            flash("Regla Maestra actualizada.", "success")
+        elif rule_type == "custom":
+            edit_chase_custom_rule(index, keyword, detail)
+            flash("Regla actualizada.", "success")
+        else:
+            flash("Tipo de regla inválido.", "error")
     except ValueError as exc:
         flash(str(exc), "error")
     return redirect(url_for("chase"))
@@ -320,9 +347,21 @@ def chase_rules_add():
 
 @app.route("/chase/rules/delete", methods=["POST"])
 def chase_rules_delete():
+    if not _require_admin_for_chase_rules():
+        return redirect(url_for("chase"))
+
+    rule_type = request.form.get("rule_type", "").strip()
+    index = request.form.get("index", "").strip()
+
     try:
-        delete_chase_rule_by_index(request.form.get("dynamic_index"))
-        flash("Regla eliminada.", "success")
+        if rule_type == "master":
+            delete_chase_master_rule(index)
+            flash("Regla Maestra eliminada.", "success")
+        elif rule_type == "custom":
+            delete_chase_custom_rule(index)
+            flash("Regla eliminada.", "success")
+        else:
+            flash("Seleccioná una regla de la tabla antes de eliminar.", "error")
     except ValueError as exc:
         flash(str(exc), "error")
     return redirect(url_for("chase"))

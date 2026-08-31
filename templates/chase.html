@@ -20,45 +20,126 @@
 
 <div class="card">
   <h2>Motor de Reglas Chase</h2>
-  <p class="muted">Palabra clave (sin importar mayúsculas/acentos) → Detalle a asignar en filas sin categorizar. Si varias reglas matchean, gana la palabra clave más larga. Las reglas Maestras son las de Alfonso, están protegidas y no se pueden borrar.</p>
-  <form method="post" action="{{ url_for('chase_rules_add') }}" style="display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;">
+  <p class="muted">
+    Palabra clave (sin importar mayúsculas/acentos) → Detalle a asignar en filas sin categorizar. Si varias reglas matchean, gana la palabra clave más larga.
+    {% if current_user.is_admin %}Podés editar o eliminar cualquier regla, incluidas las Maestras — las Combinadas (más de una condición a la vez) son de solo lectura.{% else %}Solo un administrador puede crear, editar o eliminar reglas.{% endif %}
+  </p>
+
+  {% if current_user.is_admin %}
+  <form method="post" action="{{ url_for('chase_rules_save') }}" id="chase-rule-form" style="display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;">
+    <input type="hidden" name="rule_type" id="chase-rule-type" value="">
+    <input type="hidden" name="index" id="chase-rule-index" value="">
     <div style="flex: 1; min-width: 160px;">
       <label class="muted">Palabra clave</label>
-      <input type="text" name="keyword" required>
+      <input type="text" name="keyword" id="chase-rule-keyword" required>
     </div>
     <div style="flex: 1; min-width: 160px;">
       <label class="muted">Detalle</label>
-      <input type="text" name="detail" required>
+      <input type="text" name="detail" id="chase-rule-detail" required>
     </div>
-    <button type="submit" style="margin-top: 0;">Crear Regla</button>
+    <button type="submit" id="chase-rule-submit" style="margin-top: 0;">Crear Regla</button>
+    <button type="button" id="chase-rule-cancel" class="btn-secondary" style="display: none; margin-top: 0;">Cancelar edición</button>
   </form>
+  {% endif %}
 
   <table style="width: 100%; border-collapse: collapse; font-size: 13.5px; margin-top: 18px;">
     <thead>
       <tr style="text-align: left; border-bottom: 1px solid var(--border);">
+        {% if current_user.is_admin %}<th style="padding: 8px 6px; width: 26px;"></th>{% endif %}
         <th style="padding: 8px 6px;">Palabra Clave</th>
         <th style="padding: 8px 6px;">Detalle</th>
         <th style="padding: 8px 6px;">Tipo</th>
-        <th style="padding: 8px 6px;"></th>
       </tr>
     </thead>
     <tbody>
       {% for rule in chase_rules %}
       <tr style="border-bottom: 1px solid var(--border);">
+        {% if current_user.is_admin %}
+        <td style="padding: 8px 6px;">
+          {% if rule.rule_type %}
+          <input type="radio" name="chase_rule_radio" value="{{ rule.rule_type }}:{{ rule.index }}" data-keyword="{{ rule.keyword }}" data-detail="{{ rule.detail }}">
+          {% endif %}
+        </td>
+        {% endif %}
         <td style="padding: 8px 6px;">{{ rule.keyword }}</td>
         <td style="padding: 8px 6px;">{{ rule.detail }}</td>
         <td style="padding: 8px 6px;" class="muted">{{ rule.source }}</td>
-        <td style="padding: 8px 6px;">
-          {% if rule.source == "Personalizada" %}
-          <form method="post" action="{{ url_for('chase_rules_delete') }}" onsubmit="return confirm('¿Eliminar la regla &quot;{{ rule.keyword }}&quot; → &quot;{{ rule.detail }}&quot;?');">
-            <input type="hidden" name="dynamic_index" value="{{ rule.dynamic_index }}">
-            <button type="submit" style="margin-top: 0; padding: 6px 12px; font-size: 12.5px; background: var(--error);">Eliminar</button>
-          </form>
-          {% endif %}
-        </td>
       </tr>
       {% endfor %}
     </tbody>
   </table>
+
+  {% if current_user.is_admin %}
+  <div style="display: flex; gap: 10px; margin-top: 14px;">
+    <button type="button" id="chase-rule-edit-btn" class="btn-secondary" style="margin-top: 0;" disabled>Editar seleccionada</button>
+    <form method="post" action="{{ url_for('chase_rules_delete') }}" onsubmit="return confirm('¿Eliminar la regla seleccionada?');">
+      <input type="hidden" name="rule_type" id="chase-delete-type" value="">
+      <input type="hidden" name="index" id="chase-delete-index" value="">
+      <button type="submit" id="chase-rule-delete-btn" class="btn-danger-soft" style="margin-top: 0;" disabled>Eliminar seleccionada</button>
+    </form>
+  </div>
+  <script>
+    // Row selection for the rules grid: a radio per Maestra/Personalizada
+    // row (Combinada rows have no rule_type/index -- not selectable, they
+    // aren't stored as a simple keyword) feeds two things -- the "Eliminar
+    // seleccionada" form's hidden fields, and (via "Editar seleccionada")
+    // pre-filling the create/edit form above in edit mode.
+    (function () {
+      var radios = document.querySelectorAll('input[name="chase_rule_radio"]');
+      var editBtn = document.getElementById('chase-rule-edit-btn');
+      var deleteBtn = document.getElementById('chase-rule-delete-btn');
+      var deleteType = document.getElementById('chase-delete-type');
+      var deleteIndex = document.getElementById('chase-delete-index');
+      var form = document.getElementById('chase-rule-form');
+      var typeField = document.getElementById('chase-rule-type');
+      var indexField = document.getElementById('chase-rule-index');
+      var keywordField = document.getElementById('chase-rule-keyword');
+      var detailField = document.getElementById('chase-rule-detail');
+      var submitBtn = document.getElementById('chase-rule-submit');
+      var cancelBtn = document.getElementById('chase-rule-cancel');
+
+      function selectedRadio() {
+        for (var i = 0; i < radios.length; i++) {
+          if (radios[i].checked) return radios[i];
+        }
+        return null;
+      }
+
+      radios.forEach(function (radio) {
+        radio.addEventListener('change', function () {
+          var selected = selectedRadio();
+          var parts = selected ? selected.value.split(':') : ['', ''];
+          editBtn.disabled = !selected;
+          deleteBtn.disabled = !selected;
+          deleteType.value = parts[0];
+          deleteIndex.value = parts[1];
+        });
+      });
+
+      editBtn.addEventListener('click', function () {
+        var selected = selectedRadio();
+        if (!selected) return;
+        var parts = selected.value.split(':');
+        typeField.value = parts[0];
+        indexField.value = parts[1];
+        keywordField.value = selected.dataset.keyword;
+        detailField.value = selected.dataset.detail;
+        submitBtn.textContent = 'Guardar Cambios';
+        cancelBtn.style.display = '';
+        keywordField.focus();
+        form.scrollIntoView({behavior: 'smooth', block: 'center'});
+      });
+
+      cancelBtn.addEventListener('click', function () {
+        typeField.value = '';
+        indexField.value = '';
+        keywordField.value = '';
+        detailField.value = '';
+        submitBtn.textContent = 'Crear Regla';
+        cancelBtn.style.display = 'none';
+      });
+    })();
+  </script>
+  {% endif %}
 </div>
 {% endblock %}

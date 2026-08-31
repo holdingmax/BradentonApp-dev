@@ -1,0 +1,184 @@
+{
+  "rules": [
+    {
+      "keyword": "frito-la",
+      "detail": "PROVEEDORES"
+    },
+    {
+      "keyword": "hackneyrectampa",
+      "detail": "PROVEEDORES"
+    },
+    {
+      "keyword": "cec distributing",
+      "detail": "PROVEEDORES"
+    },
+    {
+      "keyword": "gold coast eagle",
+      "detail": "PROVEEDORES"
+    },
+    {
+      "keyword": "jj taylor distri",
+      "detail": "PROVEEDORES"
+    },
+    {
+      "keyword": "pbg",
+      "detail": "PROVEEDORES"
+    },
+    {
+      "keyword": "colonial",
+      "detail": "PROVEEDORES"
+    },
+    {
+      "keyword": "redbull",
+      "detail": "PROVEEDORES"
+    },
+    {
+      "keyword": "airgas",
+      "detail": "PROVEEDORES"
+    },
+    {
+      "keyword": "johnson brothers",
+      "detail": "PROVEEDORES"
+    },
+    {
+      "keyword": "low value",
+      "detail": "GASTOS BANCARIOS"
+    },
+    {
+      "keyword": "initial fee",
+      "detail": "GASTOS BANCARIOS"
+    },
+    {
+      "keyword": "cash deposit immediate",
+      "detail": "GASTOS BANCARIOS"
+    },
+    {
+      "keyword": "monthly service fee",
+      "detail": "GASTOS BANCARIOS"
+    },
+    {
+      "keyword": "helix ucp",
+      "detail": "REBATE"
+    },
+    {
+      "keyword": "ussmokless",
+      "detail": "REBATE"
+    },
+    {
+      "keyword": "njoy",
+      "detail": "REBATE"
+    },
+    {
+      "keyword": "itg brands",
+      "detail": "REBATE"
+    },
+    {
+      "keyword": "john middleton",
+      "detail": "REBATE"
+    },
+    {
+      "keyword": "mucs",
+      "detail": "AGUA"
+    },
+    {
+      "keyword": "manatee",
+      "detail": "AGUA"
+    },
+    {
+      "keyword": "slomin's",
+      "detail": "ALARMA"
+    },
+    {
+      "keyword": "slomins",
+      "detail": "ALARMA"
+    },
+    {
+      "keyword": "slomin",
+      "detail": "ALARMA"
+    },
+    {
+      "keyword": "fpl",
+      "detail": "ENERGIA ELECTRICA"
+    },
+    {
+      "keyword": "text me",
+      "detail": "TELEFONO"
+    },
+    {
+      "keyword": "innov",
+      "detail": "ELISTAR"
+    },
+    {
+      "keyword": "ipf",
+      "detail": "SEGURO"
+    },
+    {
+      "keyword": "fla dept",
+      "detail": "SALE TAX"
+    },
+    {
+      "keyword": "alg distr",
+      "detail": "REBATE"
+    },
+    {
+      "keyword": "finova",
+      "detail": "ADMINISTRATION FEE"
+    },
+    {
+      "keyword": "orig co name:mvnt",
+      "detail": "REBATE"
+    },
+    {
+      "keyword": "orig co name:fla lottery",
+      "detail": "LOTTERY"
+    },
+    {
+      "keyword": "orig co name:cantaloupe",
+      "detail": "VENTA ICE"
+    },
+    {
+      "keyword": "online realtime vendor payment",
+      "detail": "SUELDOS"
+    },
+    {
+      "keyword": "online realtime payroll payment",
+      "detail": "SUELDOS"
+    },
+    {
+      "keyword": "deposit  id number",
+      "detail": "DEPOSITO"
+    },
+    {
+      "keyword": "spectrum",
+      "detail": "INTERNET"
+    },
+    {
+      "keyword": "jeffrey's lawn",
+      "detail": "REPARACION Y MANTENIMIENTO"
+    },
+    {
+      "keyword": "jeffreys lawn",
+      "detail": "REPARACION Y MANTENIMIENTO"
+    },
+    {
+      "keyword": "merchant bank",
+      "detail": "COMISIONES Y GASTOS BANCARIOS"
+    },
+    {
+      "keyword": "reynolds",
+      "detail": "REBATE"
+    },
+    {
+      "keyword": "fla lottery",
+      "detail": "LOTTERY"
+    },
+    {
+      "keyword": "cantaloupe",
+      "detail": "VENTA ICE"
+    },
+    {
+      "keyword": "mvnt",
+      "detail": "REBATE"
+    }
+  ]
+}
