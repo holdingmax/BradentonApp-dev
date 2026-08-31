@@ -10,23 +10,28 @@
   <p class="page-subtitle">Dos flujos independientes sobre el mismo Excel Ledger — el PDF de EFT bancario actualiza Cta Cte, el reporte mensual de J.H. Williams agrega y cruza Cupones.</p>
 </div>
 <div class="card">
+  <h2>Excel Ledger</h2>
+  <p class="muted">Compartido por los dos cuadros de abajo — se completa una sola vez.</p>
+  <label class="muted">Excel Ledger</label>
+  <input type="file" id="eft-shared-master" class="shared-master-input" accept=".xlsx,.xlsm" required>
+</div>
+
+<div class="card">
   <h2>Paso 1 — Pipeline Cta Cte (PDF EFT)</h2>
-  <p class="muted">PDF de EFT bancario + Excel Ledger. Actualiza la hoja Cta Cte J.H.Williams.</p>
-  <form method="post" action="{{ url_for('eft_cta_cte_route') }}" enctype="multipart/form-data">
+  <p class="muted">PDF de EFT bancario. Actualiza la hoja Cta Cte J.H.Williams.</p>
+  <form method="post" action="{{ url_for('eft_cta_cte_route') }}" enctype="multipart/form-data" class="needs-shared-master">
+    <input type="file" name="master_file" class="hidden-master-mirror" style="display:none">
     <label class="muted">EFT PDF</label>
     <input type="file" name="pdf_file" accept=".pdf" required>
-    <label class="muted">Excel Ledger</label>
-    <input type="file" name="master_file" accept=".xlsx,.xlsm" required>
     <button type="submit">Procesar</button>
   </form>
 </div>
 
 <div class="card">
   <h2>Paso 2 — Pipeline Cupones (Excel J.H. Mensual)</h2>
-  <p class="muted">Excel Ledger + Reporte Mensual (opcional). Sin reporte mensual, solo actualiza cupones pendientes/$0.</p>
-  <form method="post" action="{{ url_for('eft_cupones') }}" enctype="multipart/form-data">
-    <label class="muted">Excel Ledger</label>
-    <input type="file" name="master_file" accept=".xlsx,.xlsm" required>
+  <p class="muted">Reporte Mensual (opcional). Sin reporte mensual, solo actualiza cupones pendientes/$0.</p>
+  <form method="post" action="{{ url_for('eft_cupones') }}" enctype="multipart/form-data" class="needs-shared-master">
+    <input type="file" name="master_file" class="hidden-master-mirror" style="display:none">
     <label class="muted">Reporte Mensual (opcional)</label>
     <input type="file" name="monthly_report_file" accept=".xlsx,.xlsm,.xls,.csv">
     <button type="submit">Procesar</button>

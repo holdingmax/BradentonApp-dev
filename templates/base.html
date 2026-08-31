@@ -342,5 +342,33 @@
     {% endwith %}
     {% block content %}{% endblock %}
   </main>
+  <script>
+    // Lets one file input feed several independent <form> submits — mirrors
+    // the desktop app's "shared Excel maestro, cuadros de sub-flujo abajo"
+    // layout, where the same file didn't need to be picked twice. Each
+    // sub-flow form keeps a hidden file input (class="hidden-master-mirror")
+    // whose .files gets set to match the shared visible input whenever it
+    // changes, so the browser sends the same file along with that form's
+    // own fields on submit.
+    (function () {
+      function mirrorSharedFiles(sharedInput) {
+        document.querySelectorAll('.hidden-master-mirror').forEach(function (mirror) {
+          mirror.files = sharedInput.files;
+        });
+      }
+      document.querySelectorAll('.shared-master-input').forEach(function (input) {
+        input.addEventListener('change', function () { mirrorSharedFiles(input); });
+      });
+      document.querySelectorAll('form.needs-shared-master').forEach(function (form) {
+        form.addEventListener('submit', function (event) {
+          var mirror = form.querySelector('.hidden-master-mirror');
+          if (mirror && mirror.files.length === 0) {
+            event.preventDefault();
+            alert('Completá el campo compartido de arriba antes de procesar.');
+          }
+        });
+      });
+    })();
+  </script>
 </body>
 </html>

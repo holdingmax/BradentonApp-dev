@@ -10,11 +10,17 @@
   <p class="page-subtitle">Un mismo PDF de cierre diario alimenta dos destinos distintos — Ventas por Departamento y Store Info, cada uno con su propio Excel.</p>
 </div>
 <div class="card">
+  <h2>PDF Diario</h2>
+  <p class="muted">Compartido por los dos cuadros de abajo — se completa una sola vez.</p>
+  <label class="muted">PDF(s) Diario(s)</label>
+  <input type="file" id="reporte-shared-pdf" class="shared-master-input" accept=".pdf" multiple required>
+</div>
+
+<div class="card">
   <h2>Ventas por Departamento → CARGA AQUI</h2>
-  <p class="muted">Uno o más PDF diarios + Excel Bradenton. Análisis C-Store. Ventas.</p>
-  <form method="post" action="{{ url_for('reporte_ventas') }}" enctype="multipart/form-data">
-    <label class="muted">PDF(s) Diario(s)</label>
-    <input type="file" name="pdf_files" accept=".pdf" multiple required>
+  <p class="muted">Excel Bradenton. Análisis C-Store. Ventas.</p>
+  <form method="post" action="{{ url_for('reporte_ventas') }}" enctype="multipart/form-data" class="needs-shared-master">
+    <input type="file" name="pdf_files" class="hidden-master-mirror" multiple style="display:none">
     <label class="muted">Excel Ledger (Bradenton. Análisis C-Store. Ventas)</label>
     <input type="file" name="master_file" accept=".xlsx,.xlsm" required>
     <button type="submit">Procesar</button>
@@ -23,10 +29,9 @@
 
 <div class="card">
   <h2>Store Info (Fechas, Fuel, Cash/TC)</h2>
-  <p class="muted">Uno o más PDF diarios + Excel de Cierre (hoja Store Info).</p>
-  <form method="post" action="{{ url_for('reporte_store_info') }}" enctype="multipart/form-data">
-    <label class="muted">PDF(s) Diario(s)</label>
-    <input type="file" name="pdf_files" accept=".pdf" multiple required>
+  <p class="muted">Excel de Cierre (hoja Store Info).</p>
+  <form method="post" action="{{ url_for('reporte_store_info') }}" enctype="multipart/form-data" class="needs-shared-master">
+    <input type="file" name="pdf_files" class="hidden-master-mirror" multiple style="display:none">
     <label class="muted">Excel Ledger (Cierre)</label>
     <input type="file" name="master_file" accept=".xlsx,.xlsm" required>
     <button type="submit">Procesar</button>
