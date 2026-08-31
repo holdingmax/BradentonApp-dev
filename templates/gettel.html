@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+{% block title %}Gettel / Toyota — Bradenton App{% endblock %}
+{% block content %}
+<div class="card">
+  <h2>Cupones Diarios → hoja Gettel-Toyota</h2>
+  <p class="muted">Excel de cupones diarios (o PDF/foto escaneada) + Excel Maestro (Master Cierre).</p>
+  <form method="post" action="{{ url_for('gettel_cupones') }}" enctype="multipart/form-data">
+    <label class="muted">Excel o PDF/Foto de Origen (Cupones Diarios)</label>
+    <input type="file" name="source_file" accept=".xlsx,.pdf" required>
+    <label class="muted">Excel Maestro (Master Cierre)</label>
+    <input type="file" name="master_file" accept=".xlsx" required>
+    <button type="submit">Procesar</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Pagos (Cupones) → hoja PAGO Cupones</h2>
+  <p class="muted">Excel Maestro (Master Cierre) + uno o más PDF de recibos de pago.</p>
+  <form method="post" action="{{ url_for('gettel_pagos') }}" enctype="multipart/form-data">
+    <label class="muted">Excel Maestro (Master Cierre)</label>
+    <input type="file" name="master_file" accept=".xlsx" required>
+    <label class="muted">PDF(s) de Pagos</label>
+    <input type="file" name="pdf_files" accept=".pdf" multiple required>
+    <button type="submit">Procesar</button>
+  </form>
+</div>
+{% endblock %}
