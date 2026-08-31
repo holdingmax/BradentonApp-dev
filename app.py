@@ -1,6 +1,7 @@
 import os
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import time
@@ -161,7 +162,6 @@ from ui_theme import (
     PROVEEDORES_THEME,
     REPORTE_DIARIO_THEME,
     SALES_FILETYPES,
-    SALES_THEME,
     THEME,
     WINDOW_GEOMETRY,
     WINDOW_MINSIZE,
@@ -180,9 +180,7 @@ from ui_theme import (
     create_scrollable_body,
     create_scrollable_tab_frame,
     create_secondary_button,
-    create_status_bar,
     make_tab_icon,
-    set_status_style,
 )
 
 SHEET_NAME = "Cta Cte J.H.Williams"
@@ -1632,7 +1630,6 @@ class EFTExtractorApp:
         self.cmv_path = tk.StringVar(value="")
         self.cmv_master_path = tk.StringVar(value="")
         self.sales_path = tk.StringVar(value="")
-        self.sales_master_path = tk.StringVar(value="")
         self.reporte_master_path = tk.StringVar(value="")
         self.reporte_pdf_path = tk.StringVar(value="")
         self.store_info_master_path = tk.StringVar(value="")
@@ -1669,7 +1666,6 @@ class EFTExtractorApp:
         self.lottery_department_status_text = tk.StringVar(
             value="Listo — seleccione el Excel de Lottery y el/los PDF diario(s)."
         )
-        self._cmv_dnd_card = None
         self._chase_display_rules_cache = []
         self._build_ui()
         self._setup_drag_and_drop()
@@ -1679,7 +1675,7 @@ class EFTExtractorApp:
         shell = tk.Frame(self.root, bg=THEME.BG)
         shell.pack(fill=tk.BOTH, expand=True)
 
-        create_header_banner(shell)
+        create_header_banner(shell, on_reload=self._reload_app)
         body = create_scrollable_body(shell)
 
         style = ttk.Style(self.root)
@@ -1691,7 +1687,6 @@ class EFTExtractorApp:
                 CHASE_THEME,
                 REPORTE_DIARIO_THEME,
                 CMV_THEME,
-                SALES_THEME,
             ],
         )
 
@@ -1712,7 +1707,6 @@ class EFTExtractorApp:
         reporte_tab, reporte_content = create_scrollable_tab_frame(notebook)
         lottery_tab, lottery_content = create_scrollable_tab_frame(notebook)
         cmv_tab = tk.Frame(notebook, bg=THEME.BG)
-        sales_tab = tk.Frame(notebook, bg=THEME.BG)
 
         # Kept alive on the instance — Tkinter drops PhotoImages with no
         # surviving Python reference, which would blank the tab icons.
@@ -1724,7 +1718,6 @@ class EFTExtractorApp:
             make_tab_icon(REPORTE_DIARIO_THEME.accent),
             make_tab_icon(REPORTE_DIARIO_THEME.accent),
             make_tab_icon(CMV_THEME.accent),
-            make_tab_icon(SALES_THEME.accent),
         ]
         tabs = [
             (eft_tab, "  Cupones y EFT  "),
@@ -1733,8 +1726,7 @@ class EFTExtractorApp:
             (chase_tab, "  Chase Bank  "),
             (reporte_tab, "  Reporte Diario  "),
             (lottery_tab, "  Lottery  "),
-            (cmv_tab, "  CMV Costo  "),
-            (sales_tab, "  CMV Ventas  "),
+            (cmv_tab, "  CMV  "),
         ]
         for (tab, label), icon in zip(tabs, self._tab_icons):
             notebook.add(tab, text=label, image=icon, compound=tk.LEFT)
@@ -1746,7 +1738,21 @@ class EFTExtractorApp:
         self._build_reporte_diario_tab(reporte_content)
         self._build_lottery_tab(lottery_content)
         self._build_cmv_tab(cmv_tab)
-        self._build_sales_tab(sales_tab)
+
+    def _reload_app(self):
+        """
+        Relaunch the app from scratch (new process, same script) so any edited
+        .py file takes effect immediately, without the user closing and
+        reopening it by hand. A live in-process module reload can't safely
+        replace already-built Tkinter widgets and bound methods, so a full
+        process restart is the only option that's correct for any kind of
+        code change, including edits to app.py itself.
+        """
+        script_path = os.path.abspath(__file__)
+        subprocess.Popen(
+            [sys.executable, script_path], cwd=os.path.dirname(script_path)
+        )
+        self.root.destroy()
 
     def _select_next_tab(self, event=None):
         self._cycle_tab(1)
@@ -1771,7 +1777,7 @@ class EFTExtractorApp:
         )
 
         ledger_card = create_card(left, section_theme=EFT_THEME)
-        create_panel_label(ledger_card, "Excel Ledger", EFT_THEME)
+        create_panel_label(ledger_card, "Excel Ledger (Aplicacion TC y EFT)", EFT_THEME)
         self.excel_entry = create_file_row(
             ledger_card,
             "Excel Ledger",
@@ -1796,13 +1802,13 @@ class EFTExtractorApp:
         cta_actions.pack(fill=tk.X, pady=(4, 0))
         create_primary_button(
             cta_actions,
-            "Actualizar Cta Cte (Procesar PDF EFT)",
+            "Procesar",
             self.process_and_update,
             section_theme=EFT_THEME,
         ).pack(side=tk.LEFT, padx=(0, 8))
         create_secondary_button(
             cta_actions,
-            "Limpiar PDF",
+            "Limpiar",
             lambda: self._clear_field(self.pdf_path, "pdf_entry"),
             section_theme=EFT_THEME,
         ).pack(side=tk.LEFT)
@@ -1827,13 +1833,13 @@ class EFTExtractorApp:
         actions.pack(fill=tk.X, pady=(4, 0))
         create_primary_button(
             actions,
-            "Cargar Reporte Mensual / Actualizar Cupones",
+            "Procesar",
             self.process_monthly_coupon_append,
             section_theme=EFT_THEME,
         ).pack(side=tk.LEFT, padx=(0, 8))
         create_secondary_button(
             actions,
-            "Limpiar Reporte",
+            "Limpiar",
             lambda: self._clear_field(self.monthly_coupon_path, "monthly_coupon_entry"),
             section_theme=EFT_THEME,
         ).pack(side=tk.LEFT)
@@ -1845,10 +1851,6 @@ class EFTExtractorApp:
             bg=EFT_THEME.card_tint,
             anchor=tk.W,
         ).pack(fill=tk.X, pady=(2, 0))
-
-        self.status_label, self.status_dot = create_status_bar(
-            left, self.status_text, section_theme=EFT_THEME
-        )
 
         create_info_panel(
             right,
@@ -1872,7 +1874,7 @@ class EFTExtractorApp:
         )
 
         master_card = create_card(left, section_theme=GETTEL_THEME)
-        create_panel_label(master_card, "Excel Maestro (Master Cierre)", GETTEL_THEME)
+        create_panel_label(master_card, "Excel Ledger (Cierre)", GETTEL_THEME)
         self.gettel_destination_excel_entry = create_file_row(
             master_card,
             "Excel Maestro",
@@ -1898,7 +1900,7 @@ class EFTExtractorApp:
         gettel_actions.pack(fill=tk.X, pady=(4, 0))
         create_primary_button(
             gettel_actions,
-            "Procesar Reporte Gettel/Toyota",
+            "Procesar",
             self.process_gettel_toyota_report,
             section_theme=GETTEL_THEME,
         ).pack(side=tk.LEFT, padx=(0, 8))
@@ -1909,10 +1911,6 @@ class EFTExtractorApp:
             section_theme=GETTEL_THEME,
         ).pack(side=tk.LEFT)
 
-        self.gettel_status_label, self.gettel_status_dot = create_status_bar(
-            left, self.gettel_status_text, section_theme=GETTEL_THEME
-        )
-
         pagos_card = create_card(left, section_theme=GETTEL_THEME)
         create_panel_label(pagos_card, "Pagos (Cupones) → hoja PAGO Cupones", GETTEL_THEME)
         self.gettel_pagos_entry = create_file_row(
@@ -1921,14 +1919,14 @@ class EFTExtractorApp:
             self.gettel_pagos_pdf_paths,
             self.select_gettel_pagos_files,
             section_theme=GETTEL_THEME,
-            label_width=32,
+            label_width=13,
             browse_label="Examinar…",
         )
         pagos_actions = tk.Frame(pagos_card, bg=GETTEL_THEME.card_tint)
         pagos_actions.pack(fill=tk.X, pady=(4, 0))
         create_primary_button(
             pagos_actions,
-            "Procesar Pagos",
+            "Procesar",
             self.process_gettel_pagos_file,
             section_theme=GETTEL_THEME,
         ).pack(side=tk.LEFT, padx=(0, 8))
@@ -1938,10 +1936,6 @@ class EFTExtractorApp:
             lambda: self._clear_field(self.gettel_pagos_pdf_paths, "gettel_pagos_entry"),
             section_theme=GETTEL_THEME,
         ).pack(side=tk.LEFT)
-
-        self.gettel_pagos_status_label, self.gettel_pagos_status_dot = create_status_bar(
-            left, self.gettel_pagos_status_text, section_theme=GETTEL_THEME
-        )
 
         create_info_panel(
             right,
@@ -1997,7 +1991,7 @@ class EFTExtractorApp:
         invoices_actions.pack(fill=tk.X, pady=(4, 0))
         create_primary_button(
             invoices_actions,
-            "Procesar Facturas",
+            "Procesar",
             self.process_proveedores_invoices,
             section_theme=PROVEEDORES_THEME,
         ).pack(side=tk.LEFT, padx=(0, 8))
@@ -2007,10 +2001,6 @@ class EFTExtractorApp:
             lambda: self._clear_field(self.proveedores_invoice_pdf_paths, "proveedores_invoice_entry"),
             section_theme=PROVEEDORES_THEME,
         ).pack(side=tk.LEFT)
-
-        self.proveedores_status_label, self.proveedores_status_dot = create_status_bar(
-            left, self.proveedores_status_text, section_theme=PROVEEDORES_THEME
-        )
 
         payments_card = create_card(left, section_theme=PROVEEDORES_THEME)
         create_panel_label(payments_card, "Cargar Pagos (Chase) → fila \"OP\" por proveedor", PROVEEDORES_THEME)
@@ -2027,7 +2017,7 @@ class EFTExtractorApp:
         payments_actions.pack(fill=tk.X, pady=(4, 0))
         create_primary_button(
             payments_actions,
-            "Procesar Pagos",
+            "Procesar",
             self.process_proveedores_payments,
             section_theme=PROVEEDORES_THEME,
         ).pack(side=tk.LEFT, padx=(0, 8))
@@ -2037,10 +2027,6 @@ class EFTExtractorApp:
             lambda: self._clear_field(self.proveedores_bank_path, "proveedores_bank_entry"),
             section_theme=PROVEEDORES_THEME,
         ).pack(side=tk.LEFT)
-
-        self.proveedores_pagos_status_label, self.proveedores_pagos_status_dot = create_status_bar(
-            left, self.proveedores_pagos_status_text, section_theme=PROVEEDORES_THEME
-        )
 
         self._build_proveedores_pago_rules_manager(right)
 
@@ -2508,6 +2494,7 @@ class EFTExtractorApp:
         )
 
         card = create_card(left, section_theme=CHASE_THEME)
+        create_panel_label(card, "Excel Ledger (CHASE)", CHASE_THEME)
         self.chase_entry = create_file_row(
             card,
             "Archivo Chase",
@@ -2517,18 +2504,20 @@ class EFTExtractorApp:
             label_width=11,
         )
 
-        actions = tk.Frame(left, bg=THEME.BG)
+        actions = tk.Frame(card, bg=CHASE_THEME.card_tint)
         actions.pack(fill=tk.X, pady=(4, 0))
         create_primary_button(
             actions,
-            "Procesar y Categorizar Chase",
+            "Procesar",
             self.process_chase_data,
             section_theme=CHASE_THEME,
-        ).pack(anchor=tk.W)
-
-        self.chase_status_label, self.chase_status_dot = create_status_bar(
-            left, self.chase_status_text, section_theme=CHASE_THEME
-        )
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        create_secondary_button(
+            actions,
+            "Limpiar",
+            lambda: self._clear_field(self.chase_path, "chase_entry"),
+            section_theme=CHASE_THEME,
+        ).pack(side=tk.LEFT)
 
         self._build_chase_rules_manager(right)
 
@@ -2542,7 +2531,7 @@ class EFTExtractorApp:
             REPORTE_DIARIO_THEME,
         )
 
-        pdf_card = create_card(left, section_theme=REPORTE_DIARIO_THEME, padx=4, pady=4)
+        pdf_card = create_card(left, section_theme=REPORTE_DIARIO_THEME)
         create_panel_label(pdf_card, "PDF Diario", REPORTE_DIARIO_THEME)
         self.reporte_pdf_entry = create_file_row(
             pdf_card,
@@ -2557,13 +2546,13 @@ class EFTExtractorApp:
         pdf_actions.pack(fill=tk.X, pady=(4, 0))
         create_secondary_button(
             pdf_actions,
-            "Limpiar PDF",
+            "Limpiar",
             self.clear_reporte_pdf,
             section_theme=REPORTE_DIARIO_THEME,
-        ).pack(anchor=tk.W)
+        ).pack(side=tk.LEFT)
 
-        ventas_card = create_card(left, section_theme=REPORTE_DIARIO_THEME, padx=4, pady=4)
-        create_panel_label(ventas_card, "Ventas por Departamento → CARGA AQUI", REPORTE_DIARIO_THEME)
+        ventas_card = create_card(left, section_theme=REPORTE_DIARIO_THEME)
+        create_panel_label(ventas_card, "Excel Ledger (Bradenton. Análisis C-Store. Ventas)", REPORTE_DIARIO_THEME)
         self.reporte_master_entry = create_file_row(
             ventas_card,
             "Excel Ventas",
@@ -2576,17 +2565,19 @@ class EFTExtractorApp:
         ventas_actions.pack(fill=tk.X, pady=(4, 0))
         create_primary_button(
             ventas_actions,
-            "Procesar Ventas",
+            "Procesar",
             self.process_reporte_diario_file,
             section_theme=REPORTE_DIARIO_THEME,
-        ).pack(anchor=tk.W)
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        create_secondary_button(
+            ventas_actions,
+            "Limpiar",
+            lambda: self._clear_field(self.reporte_master_path, "reporte_master_entry"),
+            section_theme=REPORTE_DIARIO_THEME,
+        ).pack(side=tk.LEFT)
 
-        self.reporte_status_label, self.reporte_status_dot = create_status_bar(
-            left, self.reporte_status_text, section_theme=REPORTE_DIARIO_THEME
-        )
-
-        store_info_card = create_card(left, section_theme=REPORTE_DIARIO_THEME, padx=4, pady=4)
-        create_panel_label(store_info_card, "Store Info (Fechas, Fuel, Cash/TC)", REPORTE_DIARIO_THEME)
+        store_info_card = create_card(left, section_theme=REPORTE_DIARIO_THEME)
+        create_panel_label(store_info_card, "Excel Ledger (Cierre)", REPORTE_DIARIO_THEME)
         self.store_info_master_entry = create_file_row(
             store_info_card,
             "Excel Store Info",
@@ -2599,21 +2590,23 @@ class EFTExtractorApp:
         store_info_actions.pack(fill=tk.X, pady=(4, 0))
         create_primary_button(
             store_info_actions,
-            "Procesar Store Info",
+            "Procesar",
             self.process_store_info_file,
             section_theme=REPORTE_DIARIO_THEME,
-        ).pack(anchor=tk.W)
-
-        self.store_info_status_label, self.store_info_status_dot = create_status_bar(
-            left, self.store_info_status_text, section_theme=REPORTE_DIARIO_THEME
-        )
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        create_secondary_button(
+            store_info_actions,
+            "Limpiar",
+            lambda: self._clear_field(self.store_info_master_path, "store_info_master_entry"),
+            section_theme=REPORTE_DIARIO_THEME,
+        ).pack(side=tk.LEFT)
 
         create_info_panel(
             right,
             "Cómo funciona",
             [
                 "Un solo PDF alimenta los dos destinos de abajo",
-                "El PDF queda cargado entre procesos — se limpia con \"Limpiar PDF\"",
+                "El PDF queda cargado entre procesos — se limpia con \"Limpiar\"",
                 "Cada Excel se limpia solo apenas termina de procesarse",
                 "Podés elegir varios PDF a la vez (Ctrl/Shift + clic en el diálogo)",
                 "Cada PDF se ubica por su propia fecha — no hace falta que sean días seguidos",
@@ -2638,8 +2631,8 @@ class EFTExtractorApp:
             REPORTE_DIARIO_THEME,
         )
 
-        master_card = create_card(left, section_theme=REPORTE_DIARIO_THEME, padx=4, pady=4)
-        create_panel_label(master_card, "Excel Lottery", REPORTE_DIARIO_THEME)
+        master_card = create_card(left, section_theme=REPORTE_DIARIO_THEME)
+        create_panel_label(master_card, "Excel Ledger (LOTTERY. Análisis)", REPORTE_DIARIO_THEME)
         self.lottery_master_entry = create_file_row(
             master_card,
             "Excel Lottery",
@@ -2649,7 +2642,7 @@ class EFTExtractorApp:
             label_width=13,
         )
 
-        sales_report_card = create_card(left, section_theme=REPORTE_DIARIO_THEME, padx=4, pady=4)
+        sales_report_card = create_card(left, section_theme=REPORTE_DIARIO_THEME)
         create_panel_label(
             sales_report_card, "Daily Sales Report → F/G/H/I/K, P/Q/R/S", REPORTE_DIARIO_THEME
         )
@@ -2666,7 +2659,7 @@ class EFTExtractorApp:
         sales_report_actions.pack(fill=tk.X, pady=(4, 0))
         create_primary_button(
             sales_report_actions,
-            "Procesar Daily Sales Report",
+            "Procesar",
             self.process_lottery_sales_report_file,
             section_theme=REPORTE_DIARIO_THEME,
         ).pack(side=tk.LEFT, padx=(0, 8))
@@ -2677,11 +2670,7 @@ class EFTExtractorApp:
             section_theme=REPORTE_DIARIO_THEME,
         ).pack(side=tk.LEFT)
 
-        self.lottery_sales_report_status_label, self.lottery_sales_report_status_dot = create_status_bar(
-            left, self.lottery_sales_report_status_text, section_theme=REPORTE_DIARIO_THEME
-        )
-
-        department_card = create_card(left, section_theme=REPORTE_DIARIO_THEME, padx=4, pady=4)
+        department_card = create_card(left, section_theme=REPORTE_DIARIO_THEME)
         create_panel_label(department_card, "PDF Diario → D/E/N/O", REPORTE_DIARIO_THEME)
         self.lottery_department_pdf_entry = create_file_row(
             department_card,
@@ -2696,7 +2685,7 @@ class EFTExtractorApp:
         department_actions.pack(fill=tk.X, pady=(4, 0))
         create_primary_button(
             department_actions,
-            "Procesar PDF Diario",
+            "Procesar",
             self.process_lottery_department_file,
             section_theme=REPORTE_DIARIO_THEME,
         ).pack(side=tk.LEFT, padx=(0, 8))
@@ -2706,10 +2695,6 @@ class EFTExtractorApp:
             lambda: self._clear_field(self.lottery_department_pdf_paths, "lottery_department_pdf_entry"),
             section_theme=REPORTE_DIARIO_THEME,
         ).pack(side=tk.LEFT)
-
-        self.lottery_department_status_label, self.lottery_department_status_dot = create_status_bar(
-            left, self.lottery_department_status_text, section_theme=REPORTE_DIARIO_THEME
-        )
 
         create_info_panel(
             right,
@@ -2734,25 +2719,17 @@ class EFTExtractorApp:
         header, left, right = create_dual_column_tab(parent)
         create_compact_section_header(
             header,
-            "CMV Costo",
-            "Selecciona uno o varios archivos de departamento de Elistar; se emparejan por UPC "
-            "en la hoja COSTO.TODOS, actualizando solo Costo y Precio.",
+            "CMV",
+            "Dos flujos independientes sobre el mismo Excel maestro CMV — (1) archivos de "
+            "departamento de Elistar → actualizan Costo/Precio por UPC en COSTO.TODOS, "
+            "(2) reportes de ventas del POS → actualizan las hojas de departamento.",
             CMV_THEME,
         )
 
-        card = create_card(left, section_theme=CMV_THEME)
-        self._cmv_dnd_card = card
-        self.cmv_entry = create_file_row(
-            card,
-            "Archivos Depto.",
-            self.cmv_path,
-            self.select_cmv_file,
-            section_theme=CMV_THEME,
-            label_width=11,
-            browse_label="Examinar…",
-        )
+        master_card = create_card(left, section_theme=CMV_THEME)
+        create_panel_label(master_card, "Excel Ledger (BGS. CMV)", CMV_THEME)
         self.cmv_master_entry = create_file_row(
-            card,
+            master_card,
             "Maestro CMV",
             self.cmv_master_path,
             self.select_cmv_master_file,
@@ -2760,99 +2737,82 @@ class EFTExtractorApp:
             label_width=11,
         )
 
-        actions = tk.Frame(left, bg=THEME.BG)
-        actions.pack(fill=tk.X, pady=(4, 0))
+        costo_card = create_card(left, section_theme=CMV_THEME)
+        create_panel_label(
+            costo_card, "CMV Costo → actualiza Costo y Precio en COSTO.TODOS", CMV_THEME
+        )
+        self.cmv_entry = create_file_row(
+            costo_card,
+            "Archivos Depto.",
+            self.cmv_path,
+            self.select_cmv_file,
+            section_theme=CMV_THEME,
+            label_width=11,
+            browse_label="Examinar…",
+        )
+        costo_actions = tk.Frame(costo_card, bg=CMV_THEME.card_tint)
+        costo_actions.pack(fill=tk.X, pady=(4, 0))
         create_primary_button(
-            actions,
-            "Transformar Excel",
+            costo_actions,
+            "Procesar",
             self.process_cmv_department,
             section_theme=CMV_THEME,
         ).pack(side=tk.LEFT, padx=(0, 8))
         create_secondary_button(
-            actions,
-            "Limpiar Archivos",
+            costo_actions,
+            "Limpiar",
             lambda: self._clear_field(self.cmv_path, "cmv_entry"),
             section_theme=CMV_THEME,
         ).pack(side=tk.LEFT)
 
-        self.cmv_status_label, self.cmv_status_dot = create_status_bar(
-            left, self.cmv_status_text, section_theme=CMV_THEME
+        ventas_card = create_card(left, section_theme=CMV_THEME)
+        create_panel_label(
+            ventas_card, "CMV Ventas → actualiza hojas de departamento", CMV_THEME
         )
+        self.sales_entry = create_file_row(
+            ventas_card,
+            "POS Reports",
+            self.sales_path,
+            self.select_sales_file,
+            section_theme=CMV_THEME,
+            label_width=11,
+            browse_label="Examinar…",
+        )
+        ventas_actions = tk.Frame(ventas_card, bg=CMV_THEME.card_tint)
+        ventas_actions.pack(fill=tk.X, pady=(4, 0))
+        create_primary_button(
+            ventas_actions,
+            "Procesar",
+            self.process_monthly_sales_file,
+            section_theme=CMV_THEME,
+        ).pack(side=tk.LEFT, padx=(0, 8))
+        create_secondary_button(
+            ventas_actions,
+            "Limpiar",
+            lambda: self._clear_field(self.sales_path, "sales_entry"),
+            section_theme=CMV_THEME,
+        ).pack(side=tk.LEFT)
 
         create_info_panel(
             right,
             "Cómo funciona",
             [
-                "Varios archivos de departamento → se fusionan en una sola COSTO.TODOS",
-                "El emparejamiento por UPC actualiza solo Costo (D) y Precio (E)",
-                "Abre automáticamente una copia temporal al terminar",
+                "El Maestro CMV es compartido — se carga una sola vez arriba para ambos flujos",
+                "Costo: varios archivos de departamento → se fusionan en una sola COSTO.TODOS",
+                "Costo: el emparejamiento por UPC actualiza solo Costo (D) y Precio (E)",
+                "Ventas: enruta por el nombre exacto del departamento (E-GIGARETTE, FOUTAIN, COFFE, etc.)",
+                "Ventas: las filas de resumen al final del reporte Elistar se excluyen",
+                "Ventas: desplaza la fila TOTAL y recalcula las fórmulas SUM en E/F/H",
+                "Ventas: RESUMEN A5→Total: enlaza B y E a autosumas E/F de cada hoja",
+                "Abre copia temp del master — guarde manualmente con Guardar como",
             ],
             section_theme=CMV_THEME,
         )
 
-        if TKINTER_DND_AVAILABLE and self._cmv_dnd_card is not None:
-            self._cmv_dnd_card.drop_target_register(DND_FILES)
-            self._cmv_dnd_card.dnd_bind("<<Drop>>", self._on_cmv_file_drop)
-
-    def _build_sales_tab(self, parent):
-        header, left, right = create_dual_column_tab(parent)
-        create_compact_section_header(
-            header,
-            "CMV Ventas",
-            "Selecciona el Excel maestro CMV y uno o más reportes de ventas del POS (CSV/Excel) para actualizar las hojas de departamento.",
-            SALES_THEME,
-        )
-
-        card = create_card(left, section_theme=SALES_THEME)
-        self.sales_master_entry = create_file_row(
-            card,
-            "Maestro CMV",
-            self.sales_master_path,
-            self.select_sales_master_file,
-            section_theme=SALES_THEME,
-            label_width=11,
-        )
-        self.sales_entry = create_file_row(
-            card,
-            "POS Reports",
-            self.sales_path,
-            self.select_sales_file,
-            section_theme=SALES_THEME,
-            label_width=11,
-            browse_label="Examinar…",
-        )
-
-        actions = tk.Frame(left, bg=THEME.BG)
-        actions.pack(fill=tk.X, pady=(4, 0))
-        create_primary_button(
-            actions,
-            "Procesar Ventas",
-            self.process_monthly_sales_file,
-            section_theme=SALES_THEME,
-        ).pack(side=tk.LEFT, padx=(0, 8))
-        create_secondary_button(
-            actions,
-            "Limpiar POS Reports",
-            lambda: self._clear_field(self.sales_path, "sales_entry"),
-            section_theme=SALES_THEME,
-        ).pack(side=tk.LEFT)
-
-        self.sales_status_label, self.sales_status_dot = create_status_bar(
-            left, self.sales_status_text, section_theme=SALES_THEME
-        )
-
-        create_info_panel(
-            right,
-            "Cómo funciona",
-            [
-                "Enruta por el nombre exacto del departamento (E-GIGARETTE, FOUTAIN, COFFE, etc.)",
-                "Las filas de resumen al final del reporte Elistar se excluyen",
-                "Desplaza la fila TOTAL y recalcula las fórmulas SUM en E/F/H",
-                "RESUMEN A5→Total: enlaza B y E a autosumas E/F de cada hoja",
-                "Vista previa temp — guarde el master manualmente con Guardar como",
-            ],
-            section_theme=SALES_THEME,
-        )
+        if TKINTER_DND_AVAILABLE:
+            for dnd_card in (master_card, costo_card):
+                dnd_card.drop_target_register(DND_FILES)
+                dnd_card.dnd_bind("<<Drop>>", self._on_cmv_file_drop)
 
     def _setup_drag_and_drop(self):
         """Register the main window as a global drag-and-drop file target."""
@@ -2966,69 +2926,21 @@ class EFTExtractorApp:
 
     def _set_status(self, message, is_error=False, completed=False):
         self.status_text.set(message)
-        set_status_style(
-            self.status_label,
-            self.status_dot,
-            message,
-            section_theme=EFT_THEME,
-            is_error=is_error,
-            completed=completed,
-        )
 
     def _set_gettel_status(self, message, is_error=False, completed=False):
         self.gettel_status_text.set(message)
-        set_status_style(
-            self.gettel_status_label,
-            self.gettel_status_dot,
-            message,
-            section_theme=EFT_THEME,
-            is_error=is_error,
-            completed=completed,
-        )
 
     def _set_gettel_pagos_status(self, message, is_error=False, completed=False):
         self.gettel_pagos_status_text.set(message)
-        set_status_style(
-            self.gettel_pagos_status_label,
-            self.gettel_pagos_status_dot,
-            message,
-            section_theme=GETTEL_THEME,
-            is_error=is_error,
-            completed=completed,
-        )
 
     def _set_proveedores_status(self, message, is_error=False, completed=False):
         self.proveedores_status_text.set(message)
-        set_status_style(
-            self.proveedores_status_label,
-            self.proveedores_status_dot,
-            message,
-            section_theme=PROVEEDORES_THEME,
-            is_error=is_error,
-            completed=completed,
-        )
 
     def _set_proveedores_pagos_status(self, message, is_error=False, completed=False):
         self.proveedores_pagos_status_text.set(message)
-        set_status_style(
-            self.proveedores_pagos_status_label,
-            self.proveedores_pagos_status_dot,
-            message,
-            section_theme=PROVEEDORES_THEME,
-            is_error=is_error,
-            completed=completed,
-        )
 
     def _set_chase_status(self, message, is_error=False, completed=False):
         self.chase_status_text.set(message)
-        set_status_style(
-            self.chase_status_label,
-            self.chase_status_dot,
-            message,
-            section_theme=CHASE_THEME,
-            is_error=is_error,
-            completed=completed,
-        )
 
     def _set_cmv_dept_paths(self, paths):
         """Store and display one or more department file paths in the Entry field."""
@@ -3042,69 +2954,21 @@ class EFTExtractorApp:
 
     def _set_cmv_status(self, message, is_error=False, completed=False):
         self.cmv_status_text.set(message)
-        set_status_style(
-            self.cmv_status_label,
-            self.cmv_status_dot,
-            message,
-            section_theme=CMV_THEME,
-            is_error=is_error,
-            completed=completed,
-        )
 
     def _set_sales_status(self, message, is_error=False, completed=False):
         self.sales_status_text.set(message)
-        set_status_style(
-            self.sales_status_label,
-            self.sales_status_dot,
-            message,
-            section_theme=SALES_THEME,
-            is_error=is_error,
-            completed=completed,
-        )
 
     def _set_reporte_status(self, message, is_error=False, completed=False):
         self.reporte_status_text.set(message)
-        set_status_style(
-            self.reporte_status_label,
-            self.reporte_status_dot,
-            message,
-            section_theme=REPORTE_DIARIO_THEME,
-            is_error=is_error,
-            completed=completed,
-        )
 
     def _set_store_info_status(self, message, is_error=False, completed=False):
         self.store_info_status_text.set(message)
-        set_status_style(
-            self.store_info_status_label,
-            self.store_info_status_dot,
-            message,
-            section_theme=REPORTE_DIARIO_THEME,
-            is_error=is_error,
-            completed=completed,
-        )
 
     def _set_lottery_sales_report_status(self, message, is_error=False, completed=False):
         self.lottery_sales_report_status_text.set(message)
-        set_status_style(
-            self.lottery_sales_report_status_label,
-            self.lottery_sales_report_status_dot,
-            message,
-            section_theme=REPORTE_DIARIO_THEME,
-            is_error=is_error,
-            completed=completed,
-        )
 
     def _set_lottery_department_status(self, message, is_error=False, completed=False):
         self.lottery_department_status_text.set(message)
-        set_status_style(
-            self.lottery_department_status_label,
-            self.lottery_department_status_dot,
-            message,
-            section_theme=REPORTE_DIARIO_THEME,
-            is_error=is_error,
-            completed=completed,
-        )
 
     def clear_reporte_pdf(self):
         """
@@ -3753,16 +3617,6 @@ class EFTExtractorApp:
             f"{len(merged)} archivo(s) de departamento seleccionado(s) para procesar."
         )
 
-    def select_sales_master_file(self):
-        filename = filedialog.askopenfilename(
-            title="Seleccionar Excel Maestro CMV",
-            filetypes=EXCEL_FILETYPES_MASTER,
-        )
-        if not filename:
-            return
-        self.sales_master_path.set(os.path.abspath(filename))
-        self._set_sales_status("Excel maestro CMV seleccionado.")
-
     def select_reporte_master_file(self):
         filename = filedialog.askopenfilename(
             title="Seleccionar Master Bradenton Análisis C-Store",
@@ -4113,7 +3967,7 @@ class EFTExtractorApp:
             return
 
         sales_files = split_paths(self.sales_path.get())
-        master_path = self.sales_master_path.get().strip()
+        master_path = self.cmv_master_path.get().strip()
         if not master_path:
             messagebox.showwarning(
                 "Archivo requerido",
@@ -4142,7 +3996,7 @@ class EFTExtractorApp:
         try:
             frame, _preview_path = process_monthly_sales(sales_files, master_path)
             dept_count = frame["Dept Name"].nunique()
-            self._clear_field(self.sales_master_path, "sales_master_entry")
+            self._clear_field(self.cmv_master_path, "cmv_master_entry")
             self._set_sales_status(
                 f"Se actualizaron {len(frame)} fila(s) de {len(sales_files)} archivo(s) "
                 f"en {dept_count} departamento(s). Vista previa del master abierta.",

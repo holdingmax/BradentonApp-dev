@@ -11,14 +11,16 @@ Working directory: `C:\BradentonApp`.
 ## Arquitectura general
 
 - **app.py** — UI principal Tkinter. Un `ttk.Notebook` con una pestaña por módulo. `Ctrl+RePag`/`Ctrl+AvPag` cicla entre pestañas (como un navegador).
-- **ui_theme.py** — temas de color por módulo (`SectionTheme`) y componentes UI reutilizables (`create_card`, `create_dual_column_tab`, `create_file_row`, `create_status_bar`, etc.).
+- **ui_theme.py** — temas de color por módulo (`SectionTheme`) y componentes UI reutilizables (`create_card`, `create_dual_column_tab`, `create_file_row`, etc.).
 - Un módulo de lógica de negocio por dominio, cada uno con sus propios helpers duplicados (no hay un `utils.py` compartido — es el patrón establecido del repo): `reporte_diario.py`, `gettel_toyota_parser.py`, `cupones_append.py`, `monthly_sales.py`, `cmv_costo.py`, `proveedores.py`.
 
 ### Patrón de UI (aplicado a TODOS los módulos)
 
 Cada pestaña tiene "cuadros" (cards):
 - Un cuadro para el Excel maestro/destino, compartido por los sub-flujos de esa pestaña, **sin botón de proceso propio**. Se limpia solo automáticamente al terminar cualquier proceso con éxito.
-- Un cuadro por cada sub-flujo (ej. "Cargar Facturas", "Procesar Ventas"), con su propio selector de archivo(s), botón "Procesar", botón "Limpiar" (solo limpia ESE campo, no todo), y su propia barra de estado.
+- Un cuadro por cada sub-flujo (ej. "Cargar Facturas", "Procesar Ventas"), con su propio selector de archivo(s), botón "Procesar" y botón "Limpiar" (solo limpia ESE campo, no todo) — sin barra de estado (se quitó de todos los módulos, 2026-08-31; el feedback de éxito/error queda solo en el popup y en que se abra o no la copia temporal).
+- Los botones de cada sub-flujo dicen SIEMPRE solo "Procesar" y "Limpiar" (nunca "Procesar Facturas", "Limpiar PDF", etc.) — convención fijada 2026-08-31 para que todos los módulos se vean iguales.
+- El cuadro del Excel maestro/destino de cada pestaña titula con `create_panel_label` como "Excel Ledger (Nombre real del archivo)" (ej. "Excel Ledger (Cta Cte Proveedores)", "Excel Ledger (CHASE)") — mismo patrón en los 8 módulos, fijado 2026-08-31.
 
 Este patrón se aplicó parejo en Cupones y EFT, Gettel/Toyota, Reporte Diario, Lottery, y Proveedores durante esta sesión — si se agrega un módulo nuevo, seguir el mismo esquema.
 

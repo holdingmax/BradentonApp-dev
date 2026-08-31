@@ -112,15 +112,6 @@ CMV_THEME = SectionTheme(
     border_focus="#7C3AED",
 )
 
-# CMV Ventas — orange
-SALES_THEME = SectionTheme(
-    accent="#EA580C",
-    accent_hover="#C2440A",
-    accent_soft="#FCE4D6",
-    card_tint="#FFFFFF",
-    border_focus="#EA580C",
-)
-
 # Proveedores — pink
 PROVEEDORES_THEME = SectionTheme(
     accent="#DB2777",
@@ -185,12 +176,37 @@ def make_tab_icon(color, size=10):
     return image
 
 
-def create_header_banner(parent, subtitle=None):
+def create_header_banner(parent, subtitle=None, on_reload=None):
     banner = tk.Frame(parent, bg=THEME.BG_DEEP, padx=20, pady=14)
     banner.pack(fill=tk.X)
 
     top = tk.Frame(banner, bg=THEME.BG_DEEP)
     top.pack(fill=tk.X)
+
+    if on_reload is not None:
+        reload_hover = "#22345C"
+        reload_btn = tk.Button(
+            top,
+            text="⟳  Recargar App",
+            font=(FONT, 9, "bold"),
+            fg=THEME.TEXT_ON_DARK,
+            bg=THEME.BG_DEEP,
+            activebackground=reload_hover,
+            activeforeground=THEME.TEXT_ON_DARK,
+            relief=tk.FLAT,
+            overrelief=tk.FLAT,
+            cursor="hand2",
+            padx=14,
+            pady=8,
+            borderwidth=1,
+            highlightthickness=1,
+            highlightbackground="#2C3E63",
+            highlightcolor="#2C3E63",
+            command=on_reload,
+        )
+        reload_btn.pack(side=tk.RIGHT, anchor=tk.E)
+        reload_btn.bind("<Enter>", lambda _e: reload_btn.configure(bg=reload_hover))
+        reload_btn.bind("<Leave>", lambda _e: reload_btn.configure(bg=THEME.BG_DEEP))
 
     left = tk.Frame(top, bg=THEME.BG_DEEP)
     left.pack(side=tk.LEFT, anchor=tk.W)
@@ -529,37 +545,6 @@ def create_compact_entry(parent, textvariable, section_theme=None, label=None):
     return entry
 
 
-def create_status_bar(parent, textvariable, section_theme=None, wraplength=460):
-    section_theme = section_theme or EFT_THEME
-    bar = tk.Frame(
-        parent,
-        bg=THEME.SURFACE_ALT,
-        highlightbackground=THEME.BORDER,
-        highlightthickness=1,
-        padx=10,
-        pady=8,
-    )
-    bar.pack(fill=tk.X, pady=(8, 0))
-
-    dot = tk.Label(
-        bar, text="●", font=(FONT, 9), fg=section_theme.accent, bg=THEME.SURFACE_ALT
-    )
-    dot.pack(side=tk.LEFT)
-
-    label = tk.Label(
-        bar,
-        textvariable=textvariable,
-        font=(FONT, 9),
-        fg=THEME.TEXT_SOFT,
-        bg=THEME.SURFACE_ALT,
-        anchor=tk.W,
-        wraplength=wraplength,
-        justify=tk.LEFT,
-    )
-    label.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(8, 0))
-    return label, dot
-
-
 def create_info_panel(parent, title, lines, section_theme=None):
     """Compact read-only notes block for the right column."""
     section_theme = section_theme or EFT_THEME
@@ -638,23 +623,6 @@ def create_log_panel(parent, title, section_theme=None, height=10):
     log.grid(row=0, column=0, sticky="nsew")
     scrollbar.config(command=log.yview)
     return log, card
-
-
-def set_status_style(label, dot, message, section_theme=None, is_error=False, completed=False):
-    section_theme = section_theme or EFT_THEME
-    lowered = message.lower()
-    is_success = completed or "completed" in lowered or "updated" in lowered
-    if is_error:
-        color = THEME.ERROR
-        prefix = "✗ "
-    elif is_success:
-        color = THEME.SUCCESS
-        prefix = "✓ "
-    else:
-        color = section_theme.accent
-        prefix = "● "
-    dot.configure(text=prefix.strip(), fg=color)
-    label.configure(fg=THEME.TEXT if not is_error and not is_success else color)
 
 
 def bind_hover(button, normal_color, hover_color):
