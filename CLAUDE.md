@@ -42,15 +42,16 @@ Nunca se sobrescribe el archivo original del usuario. Cada proceso: abre el work
 
 ## Git / GitHub
 
-- Dos remotos: `origin` = `https://github.com/holdingmax/BradentonApp-dev.git` (sandbox/dev), `produccion` = `https://github.com/holdingmax/BradentonApp.git` (producción). Org `holdingmax`. Contacto de infra: Jorge Artigas.
+- Dos remotos históricamente: `origin` = `https://github.com/holdingmax/BradentonApp-dev.git` (sandbox/dev), `produccion` = `https://github.com/holdingmax/BradentonApp.git` (producción). Org `holdingmax`. Contacto de infra: Jorge Artigas.
+- **Acceso actual (desde 2026-08-31): al usuario le sacaron el acceso a `produccion`** — solo puede trabajar contra `origin` (dev). En este entorno el remoto `produccion` ni siquiera está configurado (`git remote -v` solo lista `origin`). No intentar pushear ni configurar ese remoto salvo que el usuario avise que le devolvieron el acceso.
 - Rama `main` en ambos.
 - `.claude/settings.local.json` (gitignored) tiene `{"permissions": {"allow": ["Bash(git push*)"]}}` — permite pushear sin el bloqueo del clasificador de Claude Code. Ya está configurado y probado.
 - **Convención de commits**: mensajes descriptivos en español, **uno por cada instrucción/fix resuelto** (nunca agrupar cambios no relacionados en un mismo commit), terminando con:
   ```
   Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
   ```
-  Se commitea apenas el usuario confirma que algo anda bien ("guarda esto", "anda bien", "carga bien").
-- Solo se pushea a `produccion` cuando el usuario lo pide explícitamente. A `origin` se puede pushear apenas se confirma un fix (con aviso, no autopilot silencioso).
+  Se commitea apenas el usuario confirma que algo anda bien ("guarda esto", "anda bien", "carga bien"). Si varios pedidos seguidos terminan pisando las mismas líneas sin que haya habido un commit en el medio, no vale la pena reconstruir a mano un historial separado — mejor un solo commit prolijo con cada cambio detallado en el cuerpo del mensaje, que arriesgar romper algo por separarlos.
+- Push a `origin`: apenas se confirma un fix (con aviso, no autopilot silencioso). Push a `produccion`: solo cuando el usuario lo pide explícitamente — hoy no es una opción hasta que recupere el acceso.
 
 ## Sesión de auditoría de bugs (2026-08-28)
 
