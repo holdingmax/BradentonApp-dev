@@ -87,6 +87,12 @@ RIGHT_ALIGNMENT = Alignment(horizontal="right") if Alignment is not None else No
 HEADER_FONT = Font(bold=True) if Font is not None else None
 
 
+from ocr_utils import (
+    ensure_pytesseract as _shared_ensure_pytesseract,
+    extract_largest_page_image as _extract_page_image,
+)
+
+
 def _ensure_pdfplumber():
     if pdfplumber is None:
         raise ImportError(
@@ -94,42 +100,14 @@ def _ensure_pdfplumber():
         )
 
 
-_TESSERACT_CANDIDATE_PATHS = (
-    r"C:\Program Files\Tesseract-OCR\tesseract.exe",
-    r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
-)
-_TESSERACT_CONFIGURED = False
-
-
 def _ensure_pytesseract():
-    global _TESSERACT_CONFIGURED
-    if pytesseract is None or Image is None:
-        raise ImportError(
-            "Leer reportes escaneados/fotografiados requiere pytesseract y Pillow. "
-            "Instale con: pip install pytesseract pillow"
-        )
+    """Auto-detect compartido con Proveedores/Reporte Diario, más el check propio de pandas."""
+    _shared_ensure_pytesseract()
     if pd is None:
         raise ImportError(
             "Leer reportes escaneados/fotografiados requiere pandas. "
             "Instale con: pip install pandas"
         )
-    if _TESSERACT_CONFIGURED:
-        return
-    try:
-        pytesseract.get_tesseract_version()
-        _TESSERACT_CONFIGURED = True
-        return
-    except Exception:
-        pass
-    for candidate in _TESSERACT_CANDIDATE_PATHS:
-        if os.path.isfile(candidate):
-            pytesseract.pytesseract.tesseract_cmd = candidate
-            _TESSERACT_CONFIGURED = True
-            return
-    raise ImportError(
-        "No se encontró el motor Tesseract OCR. Instálelo (ej. con 'winget install "
-        "UB-Mannheim.TesseractOCR') para poder leer reportes escaneados/fotografiados."
-    )
 
 
 def _ensure_openpyxl():
@@ -736,37 +714,6 @@ _OCR_ROW_HEIGHT_TOLERANCE_FACTOR = 0.6
 _OCR_COLUMNS_PER_BLOCK = 4  # Date, Amount, Tracking (dropped), Gallons
 
 
-_OSD_ROTATE_TO_TRANSPOSE = {
-    90: Image.ROTATE_270 if Image is not None else None,
-    180: Image.ROTATE_180 if Image is not None else None,
-    270: Image.ROTATE_90 if Image is not None else None,
-}
-
-
-def _correct_image_orientation(image):
-    """
-    Detect and undo whole-page rotation (phone photos taken upside-down or
-    sideways — common when a multi-page report is snapped in a hurry, and
-    inconsistent from page to page within the same PDF) via Tesseract's own
-    orientation/script detection, before the main OCR pass ever runs.
-
-    Uses Image.transpose (exact 90°-multiple remap, no interpolation)
-    instead of Image.rotate — .rotate() resamples every pixel even for
-    right-angle turns, which was blurring characters (especially the "/" in
-    dates) just enough to break column detection on rotated pages.
-    Never raises — a page OSD can't confidently read is left as-is.
-    """
-    try:
-        osd = pytesseract.image_to_osd(image, output_type=pytesseract.Output.DICT)
-        rotate = int(osd.get("rotate", 0) or 0)
-    except Exception:
-        return image
-    transpose_const = _OSD_ROTATE_TO_TRANSPOSE.get(rotate)
-    if transpose_const is not None:
-        image = image.transpose(transpose_const)
-    return image
-
-
 def _extract_pdf_page_images(pdf_path):
     """
     Return one PIL Image per PDF page — the largest embedded photo on that
@@ -778,12 +725,9 @@ def _extract_pdf_page_images(pdf_path):
     images = []
     with pdfplumber.open(pdf_path) as pdf:
         for page in pdf.pages:
-            if not page.images:
-                continue
-            biggest = max(page.images, key=lambda im: im["width"] * im["height"])
-            raw = biggest["stream"].get_data()
-            image = Image.open(io.BytesIO(raw)).convert("RGB")
-            images.append(_correct_image_orientation(image))
+            image = _extract_page_image(page)
+            if image is not None:
+                images.append(image)
     if not images:
         raise ValueError(f"No se encontraron imágenes embebidas en {pdf_path}.")
     return images

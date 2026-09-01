@@ -211,6 +211,12 @@ FUSED_DEPT_TRAILING_COUNT_RE = re.compile(
 )
 
 
+from ocr_utils import (
+    ensure_pytesseract as _ensure_pytesseract,
+    extract_largest_page_image as _extract_page_image,
+)
+
+
 def _ensure_pdfplumber():
     if pdfplumber is None:
         raise ImportError(
@@ -223,65 +229,6 @@ def _ensure_openpyxl():
         raise ImportError(
             "Reporte Diario requiere openpyxl. Instale con: pip install openpyxl"
         )
-
-
-_TESSERACT_CANDIDATE_PATHS = (
-    r"C:\Program Files\Tesseract-OCR\tesseract.exe",
-    r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe",
-)
-_TESSERACT_CONFIGURED = False
-
-
-def _ensure_pytesseract():
-    """Same auto-detection as the Gettel/Toyota OCR pipeline — no pandas needed here."""
-    global _TESSERACT_CONFIGURED
-    if pytesseract is None or Image is None:
-        raise ImportError(
-            "Leer reportes escaneados/fotografiados requiere pytesseract y Pillow. "
-            "Instale con: pip install pytesseract pillow"
-        )
-    if _TESSERACT_CONFIGURED:
-        return
-    try:
-        pytesseract.get_tesseract_version()
-        _TESSERACT_CONFIGURED = True
-        return
-    except Exception:
-        pass
-    for candidate in _TESSERACT_CANDIDATE_PATHS:
-        if os.path.isfile(candidate):
-            pytesseract.pytesseract.tesseract_cmd = candidate
-            _TESSERACT_CONFIGURED = True
-            return
-    raise ImportError(
-        "No se encontró el motor Tesseract OCR. Instálelo (ej. con 'winget install "
-        "UB-Mannheim.TesseractOCR') para poder leer reportes escaneados/fotografiados."
-    )
-
-
-_OSD_ROTATE_TO_TRANSPOSE = {
-    90: Image.ROTATE_270 if Image is not None else None,
-    180: Image.ROTATE_180 if Image is not None else None,
-    270: Image.ROTATE_90 if Image is not None else None,
-}
-
-
-def _correct_image_orientation(image):
-    """
-    Undo whole-page rotation (phone photos snapped sideways/upside-down) via
-    Tesseract's own orientation detection before OCR runs. Uses Image.transpose
-    (exact 90°-multiple remap) instead of Image.rotate to avoid blurring text.
-    Never raises — a page OSD can't confidently read is left as-is.
-    """
-    try:
-        osd = pytesseract.image_to_osd(image, output_type=pytesseract.Output.DICT)
-        rotate = int(osd.get("rotate", 0) or 0)
-    except Exception:
-        return image
-    transpose_const = _OSD_ROTATE_TO_TRANSPOSE.get(rotate)
-    if transpose_const is not None:
-        image = image.transpose(transpose_const)
-    return image
 
 
 class _LazyPdfPageImages:
@@ -312,13 +259,7 @@ class _LazyPdfPageImages:
         return self._cache[index]
 
     def _load(self, index):
-        page = self._pdf.pages[index]
-        if not page.images:
-            return None
-        biggest = max(page.images, key=lambda im: im["width"] * im["height"])
-        raw = biggest["stream"].get_data()
-        image = Image.open(io.BytesIO(raw)).convert("RGB")
-        return _correct_image_orientation(image)
+        return _extract_page_image(self._pdf.pages[index])
 
     def close(self):
         self._pdf.close()
