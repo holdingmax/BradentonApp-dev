@@ -688,10 +688,14 @@ def proveedores_facturas():
         workdir = _new_workspace_dir()
         master_path, master_filename = _save_upload_to_workspace(master_upload, workdir=workdir)
         pdf_paths = _save_uploads_to_workspace(pdf_uploads, workdir=workdir)
-        temp_path, _summary = append_supplier_invoices(master_path, pdf_paths)
+        temp_path, summary = append_supplier_invoices(master_path, pdf_paths)
     except Exception as exc:
         flash(f"Error: {exc}", "error")
         return redirect(url_for("proveedores"))
+
+    if summary["failed"]:
+        detail = "; ".join(f"{item['filename']}: {item['error']}" for item in summary["failed"])
+        flash(f"{len(summary['failed'])} factura(s) no se pudieron cargar y se omitieron: {detail}", "error")
 
     return send_file(temp_path, as_attachment=True, download_name=master_filename)
 

@@ -1601,11 +1601,20 @@ def append_supplier_invoices(ledger_path, pdf_paths):
         raise FileNotFoundError(f"Excel no encontrado: {ledger_path}")
 
     by_supplier = {}
+    failed = []
     for pdf_path in pdf_paths:
-        supplier_key = _detect_supplier(pdf_path)
-        invoice = SUPPLIER_REGISTRY[supplier_key]["extract"](pdf_path)
+        try:
+            supplier_key = _detect_supplier(pdf_path)
+            invoice = SUPPLIER_REGISTRY[supplier_key]["extract"](pdf_path)
+        except ValueError as exc:
+            failed.append({"filename": os.path.basename(pdf_path), "error": str(exc)})
+            continue
         invoice["filename"] = os.path.basename(pdf_path)
         by_supplier.setdefault(supplier_key, []).append(invoice)
+
+    if not by_supplier:
+        detail = "; ".join(f"{item['filename']}: {item['error']}" for item in failed)
+        raise ValueError(f"Ninguna factura se pudo procesar. {detail}")
 
     workbook = load_workbook(ledger_path, data_only=False)
 
@@ -1657,6 +1666,7 @@ def append_supplier_invoices(ledger_path, pdf_paths):
         "files_processed": len(pdf_paths),
         "invoices_appended": total_appended,
         "batch_results": batch_results,
+        "failed": failed,
     }
     return temp_path, summary
 
