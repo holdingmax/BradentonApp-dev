@@ -24,9 +24,9 @@
     <input type="file" name="master_file" class="hidden-master-mirror" style="display:none">
     <label class="muted">PDF(s) de Factura</label>
     <input type="file" name="pdf_files" id="proveedores-facturas-pdfs" accept=".pdf" multiple required>
-    <div style="display: flex; gap: 10px; align-items: center; margin-top: 18px;">
-      <button type="submit" style="margin-top: 0;">Procesar</button>
-      <button type="button" class="btn-secondary clear-file-btn" data-target="proveedores-facturas-pdfs" style="margin-top: 0;">Limpiar</button>
+    <div class="form-actions">
+      <button type="submit">Procesar</button>
+      <button type="button" class="btn-secondary clear-file-btn" data-target="proveedores-facturas-pdfs">Limpiar</button>
     </div>
   </form>
 </div>
@@ -38,9 +38,9 @@
     <input type="file" name="master_file" class="hidden-master-mirror" style="display:none">
     <label class="muted">Extracto de Chase (ya categorizado)</label>
     <input type="file" name="bank_file" id="proveedores-pagos-bank" accept=".csv,.xlsx,.xlsm" required>
-    <div style="display: flex; gap: 10px; align-items: center; margin-top: 18px;">
-      <button type="submit" style="margin-top: 0;">Procesar</button>
-      <button type="button" class="btn-secondary clear-file-btn" data-target="proveedores-pagos-bank" style="margin-top: 0;">Limpiar</button>
+    <div class="form-actions">
+      <button type="submit">Procesar</button>
+      <button type="button" class="btn-secondary clear-file-btn" data-target="proveedores-pagos-bank">Limpiar</button>
     </div>
   </form>
 </div>

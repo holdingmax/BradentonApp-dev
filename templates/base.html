@@ -197,18 +197,18 @@
     /* ---------- Home grid ---------- */
     .tool-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
-      gap: 14px;
+      grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+      gap: 16px;
       margin-top: 22px;
     }
     a.tool-card {
       display: flex;
       align-items: flex-start;
-      gap: 12px;
+      gap: 14px;
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: var(--radius);
-      padding: 16px 16px;
+      padding: 20px 20px;
       text-decoration: none;
       box-shadow: var(--shadow-sm);
       transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
@@ -219,10 +219,10 @@
       transform: translateY(-1px);
     }
     .tool-card-badge {
-      min-width: 34px;
-      height: 34px;
+      min-width: 42px;
+      height: 42px;
       padding: 0 6px;
-      border-radius: 9px;
+      border-radius: 10px;
       background: var(--tool-accent, var(--accent));
       color: #fff;
       font-weight: 700;
@@ -233,10 +233,33 @@
       justify-content: center;
       flex-shrink: 0;
     }
-    .tool-card-badge svg { width: 19px; height: 19px; }
-    .tool-card-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-    .tool-card-label { font-weight: 700; font-size: 14.5px; color: var(--text); }
-    .tool-card-desc { font-size: 12px; color: var(--text-soft); line-height: 1.4; }
+    .tool-card-badge svg { width: 23px; height: 23px; }
+    .tool-card-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+    .tool-card-label { font-weight: 700; font-size: 16px; color: var(--text); }
+    .tool-card-desc { font-size: 12.5px; color: var(--text-soft); line-height: 1.45; }
+
+    /* ---------- Form action rows (Procesar + Limpiar, etc.) ---------- */
+    .form-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-top: 18px;
+    }
+    .form-actions button { margin-top: 0; }
+
+    /* ---------- Responsive ---------- */
+    @media (max-width: 640px) {
+      .topbar-inner { height: auto; min-height: 56px; padding: 8px 0; flex-wrap: wrap; row-gap: 8px; }
+      nav.crumbs { margin-left: 10px; padding-left: 10px; font-size: 12px; }
+      .brand-word { font-size: 14px; }
+      .account-dropdown { right: -8px; width: min(220px, calc(100vw - 32px)); }
+      main { padding: 24px 16px 48px; }
+      h1 { font-size: 20px; }
+      .card { padding: 18px 16px; }
+      .tool-grid { grid-template-columns: 1fr; gap: 12px; }
+      a.tool-card { padding: 16px; }
+    }
 
     /* ---------- Forms ---------- */
     label.muted {
