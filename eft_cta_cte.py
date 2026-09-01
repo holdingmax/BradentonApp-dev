@@ -55,6 +55,7 @@ EFT_DATE_LABEL_PATTERN = re.compile(
     re.IGNORECASE,
 )
 CURRENCY_DECIMAL_PATTERN = re.compile(r"\.\d{1,2}\b|,\d{2}\b")
+CREDIT_TABLE_HEADER_WORDS = {"gross", "fees", "net", "paid"}
 
 
 def parse_amount(value):
@@ -272,6 +273,15 @@ def extract_last_three_financial_amounts(components):
     return amounts[0], amounts[1], amounts[2]
 
 
+def row_is_credit_table_header(cells):
+    """True for the 'Gross Fees Net Paid' header row that opens the credit table."""
+    try:
+        words = {cell.strip().lower() for cell in cells if cell}
+        return CREDIT_TABLE_HEADER_WORDS.issubset(words)
+    except Exception:
+        return False
+
+
 def row_contains_credit_coupon(cells):
     """True when the row is a coupon table row."""
     try:
@@ -312,18 +322,23 @@ def locate_coupon_combo(cells):
     if match:
         return match.group(1).upper(), match.group(2).upper(), 1
 
+    # Fila dentro de la tabla de créditos sin DDC- (no todos los pagos
+    # traen coupon combo) — se conserva igual, con coupon vacío.
+    if invoice:
+        return invoice, None, si_index or 0
+
     return None, None, None
 
 
 def extract_coupon_columns(cells, fallback_date=None):
     """Parse coupon row using last-three currency detection."""
     cells = normalize_row_cells(cells)
-    if not cells or not row_contains_credit_coupon(cells):
+    if not cells:
         return None
 
     try:
         invoice, coupon, combo_index = locate_coupon_combo(cells)
-        if not invoice or not coupon:
+        if not invoice:
             return None
 
         components = expand_row_components(cells)
@@ -505,6 +520,10 @@ def extract_eft_data(pdf_path):
 
     for cells in rows:
         try:
+            if row_is_credit_table_header(cells):
+                coupon_section_started = True
+                continue
+
             if row_contains_credit_coupon(cells):
                 coupon_section_started = True
 
