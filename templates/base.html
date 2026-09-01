@@ -233,6 +233,7 @@
       justify-content: center;
       flex-shrink: 0;
     }
+    .tool-card-badge svg { width: 19px; height: 19px; }
     .tool-card-body { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
     .tool-card-label { font-weight: 700; font-size: 14.5px; color: var(--text); }
     .tool-card-desc { font-size: 12px; color: var(--text-soft); line-height: 1.4; }
@@ -383,6 +384,21 @@
             event.preventDefault();
             alert('Completá el campo compartido de arriba antes de procesar.');
           }
+        });
+      });
+    })();
+
+    // Botón "Limpiar" genérico: vacía el <input type="file"> señalado por
+    // data-target (id) y dispara un evento "change" — así, si ese input es
+    // el compartido de arriba, el mismo listener de mirrorSharedFiles() de
+    // arriba propaga el vaciado a los formularios de sub-flujo automático.
+    (function () {
+      document.querySelectorAll('.clear-file-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var input = document.getElementById(btn.getAttribute('data-target'));
+          if (!input) return;
+          input.value = '';
+          input.dispatchEvent(new Event('change', { bubbles: true }));
         });
       });
     })();

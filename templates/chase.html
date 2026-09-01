@@ -13,8 +13,11 @@
   <h2>Procesar extracto</h2>
   <form method="post" enctype="multipart/form-data">
     <label class="muted">Extracto de Chase</label>
-    <input type="file" name="chase_file" accept=".csv,.xlsx,.xlsm" required>
-    <button type="submit">Procesar</button>
+    <input type="file" name="chase_file" id="chase-file-input" accept=".csv,.xlsx,.xlsm" required>
+    <div style="display: flex; gap: 10px; align-items: center; margin-top: 18px;">
+      <button type="submit" style="margin-top: 0;">Procesar</button>
+      <button type="button" class="btn-secondary clear-file-btn" data-target="chase-file-input" style="margin-top: 0;">Limpiar</button>
+    </div>
   </form>
 </div>
 

@@ -9,7 +9,7 @@
 <div class="tool-grid">
   {% for tool in tools %}
     <a class="tool-card" href="{{ tool.url }}" style="--tool-accent: {{ tool.accent }};">
-      <span class="tool-card-badge">{{ tool.code }}</span>
+      <span class="tool-card-badge">{{ tool.icon|safe }}</span>
       <span class="tool-card-body">
         <span class="tool-card-label">{{ tool.label }}</span>
         <span class="tool-card-desc">{{ tool.description }}</span>

@@ -14,16 +14,20 @@
   <p class="muted">Compartido por los dos cuadros de abajo — se completa una sola vez.</p>
   <label class="muted">Excel Cierre (hoja CAJA)</label>
   <input type="file" id="caja-shared-master" class="shared-master-input" accept=".xlsx,.xlsm" required>
+  <button type="button" class="btn-secondary clear-file-btn" data-target="caja-shared-master" style="margin-top: 10px;">Limpiar</button>
 </div>
 
 <div class="card">
   <h2>Chase → K (Depósitos) y S (Food Truck / Hielo)</h2>
-  <p class="muted">Extracto de Chase ya categorizado por la pestaña Chase Bank. Se toman las filas Type=DEPOSIT con Detalle "DEPOSITO" (columna K) o "FOOD TRUCK"/"VENTA ICE" (columna S), sumadas por día.</p>
+  <p class="muted">Extracto de Chase ya categorizado por la pestaña Chase Bank. Se toman las filas con Detalle "DEPOSITO"/"DEPOSITO GETTEL" (columna K) o "FOOD TRUCK"/"DEPOSITO VENTA ICE" (columna S), sumadas por día.</p>
   <form method="post" action="{{ url_for('caja_chase') }}" enctype="multipart/form-data" class="needs-shared-master">
     <input type="file" name="master_file" class="hidden-master-mirror" style="display:none">
     <label class="muted">Extracto de Chase (ya categorizado)</label>
-    <input type="file" name="chase_file" accept=".xlsx,.xlsm" required>
-    <button type="submit">Procesar</button>
+    <input type="file" name="chase_file" id="caja-chase-file" accept=".xlsx,.xlsm" required>
+    <div style="display: flex; gap: 10px; align-items: center; margin-top: 18px;">
+      <button type="submit" style="margin-top: 0;">Procesar</button>
+      <button type="button" class="btn-secondary clear-file-btn" data-target="caja-chase-file" style="margin-top: 0;">Limpiar</button>
+    </div>
   </form>
 </div>
 
@@ -33,8 +37,11 @@
   <form method="post" action="{{ url_for('caja_lottery') }}" enctype="multipart/form-data" class="needs-shared-master">
     <input type="file" name="master_file" class="hidden-master-mirror" style="display:none">
     <label class="muted">Excel de Lottery</label>
-    <input type="file" name="lottery_file" accept=".xlsx,.xlsm" required>
-    <button type="submit">Procesar</button>
+    <input type="file" name="lottery_file" id="caja-lottery-file" accept=".xlsx,.xlsm" required>
+    <div style="display: flex; gap: 10px; align-items: center; margin-top: 18px;">
+      <button type="submit" style="margin-top: 0;">Procesar</button>
+      <button type="button" class="btn-secondary clear-file-btn" data-target="caja-lottery-file" style="margin-top: 0;">Limpiar</button>
+    </div>
   </form>
 </div>
 {% endblock %}

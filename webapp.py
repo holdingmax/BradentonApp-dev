@@ -171,10 +171,25 @@ def admin_users():
 
 # Same per-module accent colors the desktop app used (ui_theme.py SectionTheme,
 # now retired) — kept here purely as brand identity/wayfinding across pages.
+# "icon" is inline SVG markup (rendered with |safe in index.html) chosen to
+# match each module's real-world subject, not just a generic placeholder —
+# e.g. a bank for Chase (a bank statement), a calendar for Reporte Diario
+# (a daily report). "code" is kept too: some templates/emails may still want
+# a compact text badge, but the Home grid now shows the icon instead.
+_ICON_BANK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10 12 4l9 6"/><path d="M4 10v9M9 10v9M15 10v9M20 10v9"/><path d="M2 21h20"/></svg>'
+_ICON_COINS = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>'
+_ICON_CAR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13l1.5-4.5A2 2 0 0 1 6.4 7h11.2a2 2 0 0 1 1.9 1.5L21 13"/><path d="M3 13v4a1 1 0 0 0 1 1h1a1 1 0 0 0 1-1v-1h12v1a1 1 0 0 0 1 1h1a1 1 0 0 0 1-1v-4"/><circle cx="7.5" cy="17" r="1.6"/><circle cx="16.5" cy="17" r="1.6"/></svg>'
+_ICON_CALENDAR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>'
+_ICON_TICKET = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4z"/><path d="M13 7v10" stroke-dasharray="2 2"/></svg>'
+_ICON_EXCHANGE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h13l-3-3M20 17H7l3 3"/></svg>'
+_ICON_TRUCK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="7" width="13" height="10" rx="1"/><path d="M14 10h4l3 3v4h-7z"/><circle cx="6" cy="18.5" r="1.6"/><circle cx="17.5" cy="18.5" r="1.6"/></svg>'
+_ICON_REGISTER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="10" width="18" height="10" rx="1"/><path d="M6 10V7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v3"/><path d="M9 15h6"/></svg>'
+
 TOOLS = [
     {
         "key": "chase",
         "code": "CH",
+        "icon": _ICON_BANK,
         "label": "Chase Bank",
         "url": "/chase",
         "description": "Categoriza movimientos bancarios contra las reglas de Detalle.",
@@ -184,6 +199,7 @@ TOOLS = [
     {
         "key": "cmv",
         "code": "CMV",
+        "icon": _ICON_COINS,
         "label": "CMV",
         "url": "/cmv",
         "description": "Costo por UPC (COSTO.TODOS) y ventas del POS por departamento.",
@@ -193,6 +209,7 @@ TOOLS = [
     {
         "key": "gettel",
         "code": "GT",
+        "icon": _ICON_CAR,
         "label": "Gettel / Toyota",
         "url": "/gettel",
         "description": "Cupones diarios (Excel o PDF) y pagos hacia el master Cierre.",
@@ -202,6 +219,7 @@ TOOLS = [
     {
         "key": "reporte",
         "code": "RD",
+        "icon": _ICON_CALENDAR,
         "label": "Reporte Diario",
         "url": "/reporte",
         "description": "Ventas por Departamento y Store Info desde el PDF de cierre diario.",
@@ -211,6 +229,7 @@ TOOLS = [
     {
         "key": "lottery",
         "code": "LT",
+        "icon": _ICON_TICKET,
         "label": "Lottery",
         "url": "/lottery",
         "description": "Daily Sales Report y PDF Diario hacia el Excel de Lottery.",
@@ -220,6 +239,7 @@ TOOLS = [
     {
         "key": "eft",
         "code": "EFT",
+        "icon": _ICON_EXCHANGE,
         "label": "Cupones y EFT",
         "url": "/eft",
         "description": "PDF de EFT bancario a Cta Cte, y reporte mensual de Cupones.",
@@ -229,6 +249,7 @@ TOOLS = [
     {
         "key": "proveedores",
         "code": "PR",
+        "icon": _ICON_TRUCK,
         "label": "Proveedores",
         "url": "/proveedores",
         "description": "Facturas de compra por proveedor y pagos vía Chase al Cta Cte.",
@@ -238,6 +259,7 @@ TOOLS = [
     {
         "key": "caja",
         "code": "CJ",
+        "icon": _ICON_REGISTER,
         "label": "Caja",
         "url": "/caja",
         "description": "Depósitos Chase y Cuenta Final Lottery hacia las columnas K/N/S de CAJA.",
@@ -764,13 +786,6 @@ def caja_chase():
         flash(f"Error: {exc}", "error")
         return redirect(url_for("caja"))
 
-    deposits_total = sum(summary["deposits_written"].values())
-    food_ice_total = sum(summary["food_ice_written"].values())
-    flash(
-        f"Depósitos (K): {len(summary['deposits_written'])} día(s), total ${deposits_total:,.2f}. "
-        f"Food Truck/Hielo (S): {len(summary['food_ice_written'])} día(s), total ${food_ice_total:,.2f}.",
-        "success",
-    )
     if summary["deposits_unmatched"]:
         flash(
             "Depósitos sin fecha en CAJA (no se cargaron): "
@@ -783,13 +798,6 @@ def caja_chase():
             + _format_date_amounts(summary["food_ice_unmatched"]),
             "error",
         )
-    if summary["gettel_days_written"]:
-        dias = ", ".join(d.strftime("%d/%m") for d in sorted(summary["gettel_days_written"]))
-        flash(
-            f"Incluye depósito de Gettel el {dias} (marcado con un comentario en la celda K).",
-            "success",
-        )
-
     return send_file(temp_path, as_attachment=True, download_name=master_filename)
 
 
@@ -813,11 +821,6 @@ def caja_lottery():
         flash(f"Error: {exc}", "error")
         return redirect(url_for("caja"))
 
-    written_total = sum(summary["written"].values())
-    flash(
-        f"Lottery (N): {len(summary['written'])} día(s) cargados, total ${written_total:,.2f}.",
-        "success",
-    )
     if summary["unmatched"]:
         flash(
             "Fechas de Lottery sin fila en CAJA (no se cargaron): "

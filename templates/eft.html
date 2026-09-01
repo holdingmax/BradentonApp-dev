@@ -14,6 +14,7 @@
   <p class="muted">Compartido por los dos cuadros de abajo — se completa una sola vez.</p>
   <label class="muted">Excel Ledger</label>
   <input type="file" id="eft-shared-master" class="shared-master-input" accept=".xlsx,.xlsm" required>
+  <button type="button" class="btn-secondary clear-file-btn" data-target="eft-shared-master" style="margin-top: 10px;">Limpiar</button>
 </div>
 
 <div class="card">
@@ -22,8 +23,11 @@
   <form method="post" action="{{ url_for('eft_cta_cte_route') }}" enctype="multipart/form-data" class="needs-shared-master">
     <input type="file" name="master_file" class="hidden-master-mirror" style="display:none">
     <label class="muted">EFT PDF</label>
-    <input type="file" name="pdf_file" accept=".pdf" required>
-    <button type="submit">Procesar</button>
+    <input type="file" name="pdf_file" id="eft-ctacte-pdf" accept=".pdf" required>
+    <div style="display: flex; gap: 10px; align-items: center; margin-top: 18px;">
+      <button type="submit" style="margin-top: 0;">Procesar</button>
+      <button type="button" class="btn-secondary clear-file-btn" data-target="eft-ctacte-pdf" style="margin-top: 0;">Limpiar</button>
+    </div>
   </form>
 </div>
 
@@ -33,8 +37,11 @@
   <form method="post" action="{{ url_for('eft_cupones') }}" enctype="multipart/form-data" class="needs-shared-master">
     <input type="file" name="master_file" class="hidden-master-mirror" style="display:none">
     <label class="muted">Reporte Mensual (opcional)</label>
-    <input type="file" name="monthly_report_file" accept=".xlsx,.xlsm,.xls,.csv">
-    <button type="submit">Procesar</button>
+    <input type="file" name="monthly_report_file" id="eft-cupones-monthly" accept=".xlsx,.xlsm,.xls,.csv">
+    <div style="display: flex; gap: 10px; align-items: center; margin-top: 18px;">
+      <button type="submit" style="margin-top: 0;">Procesar</button>
+      <button type="button" class="btn-secondary clear-file-btn" data-target="eft-cupones-monthly" style="margin-top: 0;">Limpiar</button>
+    </div>
   </form>
 </div>
 {% endblock %}

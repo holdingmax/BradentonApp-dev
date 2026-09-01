@@ -14,6 +14,7 @@
   <p class="muted">Compartido por los dos cuadros de abajo — se completa una sola vez.</p>
   <label class="muted">Excel Maestro (Master Cierre)</label>
   <input type="file" id="gettel-shared-master" class="shared-master-input" accept=".xlsx" required>
+  <button type="button" class="btn-secondary clear-file-btn" data-target="gettel-shared-master" style="margin-top: 10px;">Limpiar</button>
 </div>
 
 <div class="card">
@@ -22,8 +23,11 @@
   <form method="post" action="{{ url_for('gettel_cupones') }}" enctype="multipart/form-data" class="needs-shared-master">
     <input type="file" name="master_file" class="hidden-master-mirror" style="display:none">
     <label class="muted">Excel o PDF/Foto de Origen (Cupones Diarios)</label>
-    <input type="file" name="source_file" accept=".xlsx,.pdf" required>
-    <button type="submit">Procesar</button>
+    <input type="file" name="source_file" id="gettel-source-file" accept=".xlsx,.pdf" required>
+    <div style="display: flex; gap: 10px; align-items: center; margin-top: 18px;">
+      <button type="submit" style="margin-top: 0;">Procesar</button>
+      <button type="button" class="btn-secondary clear-file-btn" data-target="gettel-source-file" style="margin-top: 0;">Limpiar</button>
+    </div>
   </form>
 </div>
 
@@ -33,8 +37,11 @@
   <form method="post" action="{{ url_for('gettel_pagos') }}" enctype="multipart/form-data" class="needs-shared-master">
     <input type="file" name="master_file" class="hidden-master-mirror" style="display:none">
     <label class="muted">PDF(s) de Pagos</label>
-    <input type="file" name="pdf_files" accept=".pdf" multiple required>
-    <button type="submit">Procesar</button>
+    <input type="file" name="pdf_files" id="gettel-pagos-pdfs" accept=".pdf" multiple required>
+    <div style="display: flex; gap: 10px; align-items: center; margin-top: 18px;">
+      <button type="submit" style="margin-top: 0;">Procesar</button>
+      <button type="button" class="btn-secondary clear-file-btn" data-target="gettel-pagos-pdfs" style="margin-top: 0;">Limpiar</button>
+    </div>
   </form>
 </div>
 {% endblock %}
