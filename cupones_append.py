@@ -1,5 +1,6 @@
 """Append monthly J.H. Williams coupon reports to the Cupones worksheet."""
 
+import difflib
 import gc
 import os
 import re
@@ -214,6 +215,13 @@ def _get_sheet(workbook, target_name):
     for name in workbook.sheetnames:
         if name.strip().lower() == lowered:
             return workbook[name]
+    # Tolera variaciones menores de tipeo en el nombre real de la hoja (ej.
+    # "J.H.Williams" vs "J.H.Wiliams", con una sola "l") — nunca asumir que
+    # el nombre va a quedar exactamente igual para siempre. Cutoff alto para
+    # no matchear por error una hoja sin relación.
+    close = difflib.get_close_matches(target_name, workbook.sheetnames, n=1, cutoff=0.85)
+    if close:
+        return workbook[close[0]]
     raise ValueError(
         f'Hoja "{target_name}" no encontrada. Disponibles: {", ".join(workbook.sheetnames)}'
     )

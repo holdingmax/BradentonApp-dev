@@ -4,6 +4,7 @@ coupons and paid-invoice references) and writes the coupon block into the
 Cta Cte ledger with its summary row, balance formula, and borders.
 """
 
+import difflib
 import re
 from datetime import datetime
 
@@ -814,6 +815,13 @@ def get_worksheet(workbook):
     for name in workbook.sheetnames:
         if name.strip().lower() == SHEET_NAME.strip().lower():
             return workbook[name]
+    # Tolera variaciones menores de tipeo en el nombre real de la hoja (ej.
+    # "J.H.Williams" vs "J.H.Wiliams", con una sola "l") — nunca asumir que
+    # el nombre va a quedar exactamente igual para siempre. Cutoff alto para
+    # no matchear por error una hoja sin relación.
+    close = difflib.get_close_matches(SHEET_NAME, workbook.sheetnames, n=1, cutoff=0.85)
+    if close:
+        return workbook[close[0]]
     raise ValueError(
         f'Hoja "{SHEET_NAME}" no encontrada. Disponibles: {", ".join(workbook.sheetnames)}'
     )
