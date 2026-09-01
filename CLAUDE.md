@@ -169,6 +169,31 @@ Para el estado de la migración a web de cada uno, ver "Migración a Web (Flask)
 - **Lottery**: dos flujos (Daily Sales Report, PDF Diario) sobre el mismo Excel.
 - **CMV Costo** / **CMV Ventas**: costos por departamento / ventas del POS.
 - **Proveedores**: ver sección dedicada abajo.
+- **Caja**: módulo nuevo (2026-09-01), ver sección dedicada abajo.
+
+## Módulo Caja (nuevo, 2026-09-01 — probado por el usuario en el navegador y confirmado, ya commiteado)
+
+### Objetivo
+Completar las columnas **K, N, S y T** de la hoja **CAJA** dentro del Excel Cierre mensual (ej. `Cierre 08-26.xlsx`), desde la fila 4 hasta donde se extienda ese mes (se detecta por la primera fila sin fecha en columna A — no hay un largo fijo). Reemplaza carga manual.
+- **K** (Depósitos): suma por día de las filas del Excel de Chase con `Detalle` (columna H, ya categorizada por el módulo Chase Bank) `"DEPOSITO"` o `"DEPOSITO GETTEL"` — este último además marca la celda con un comentario ("Este día incluye el depósito de Gettel.") para que quede visible cuál es. **No se filtra por `Type`** (ver hallazgo de bug abajo).
+- **S/T** (Food Truck / máquina de hielo): igual que K pero `Detalle` en `{"FOOD TRUCK", "DEPOSITO VENTA ICE"}` — T se completa con la etiqueta correspondiente (`"Food Truck"` / `"ICE MACHINE"`, o ambas separadas por coma si un mismo día combina las dos, en ese orden fijo).
+- **N** (Cuenta Final Lottery): columna X del Excel de Lottery, matcheada por la fecha de la **columna B** de Lottery (la fecha "real" del día, no la A — mismo criterio ya usado en `reporte_diario.py` para Lottery).
+- En los tres casos la fila de CAJA se ubica por su **columna A** (no la C, que es esa misma fecha +1 día).
+
+### Reglas de filtrado (decididas explícitamente por el usuario, no asumidas)
+- Un `Detalle` "VENTA ICE" **sin** el prefijo "DEPOSITO" (venta electrónica de la máquina vía `ACH_CREDIT`/`MISC_CREDIT` de un procesador de tarjetas, no un depósito físico) **no cuenta** — no matchea ninguna clave conocida, queda afuera solo por eso.
+- Casos ambiguos — un Detalle `"VACCUMMS"`, o una fila sin Detalle asignado todavía — **se ignoran por completo**, nunca se asignan a K ni a S por default.
+
+### Bug real encontrado y corregido tras la primera prueba del usuario: no filtrar por `Type` del banco
+La primera versión filtraba por `Type == 'DEPOSIT'` antes de mirar el Detalle. El usuario probó contra el Chase real de agosto y notó que el total de K le daba ~$10,432 menos de lo esperado (~$82,200 reales vs. $71,768 escritos) y que faltaba un Food Truck. Se encontró la causa real: **Chase categoriza el mismo tipo de depósito físico real a veces como `Type=DEPOSIT` y a veces como `Type=MISC_CREDIT`** (confirmado con filas reales de "DEPOSITO"/"FOOD TRUCK"/"DEPOSITO GETTEL" del 10, 12 y 13/08/2026 que llegaron como `MISC_CREDIT`, todas con la Descripción cruda del banco = "DEPOSIT" — o sea, sí son depósitos físicos reales, el banco solo las etiquetó distinto). Se sacó el filtro por `Type` por completo: ahora **solo el Detalle** (ya categorizado por el módulo Chase Bank) decide inclusión, sin importar el `Type`. Verificado de nuevo contra el archivo real completo de agosto: total en K $82,202.09 (21 días) — coincide con lo que el usuario esperaba — y el Food Truck faltante del 10/08 ($1,000, en el mismo día que Gettel) ya aparece.
+
+### Archivos
+- **`C:\BradentonApp\caja.py`** — todo el módulo. Constantes de columnas/filas al principio (`CAJA_DATA_START_ROW = 4`, `CAJA_COL_DATE = 1` (A), `CAJA_COL_CHASE_DEPOSITS = 11` (K), `CAJA_COL_LOTTERY = 14` (N), `CAJA_COL_FOOD_ICE = 19` (S), `CAJA_COL_FOOD_ICE_LABEL = 20` (T), `CHASE_COL_POSTING_DATE = 2` (B), `CHASE_COL_AMOUNT = 4` (D), `CHASE_COL_DETALLE = 8` (H), `LOTTERY_COL_DATE_B = 2`, `LOTTERY_COL_CUENTA_FINAL = 24` (X)). Dos funciones públicas: `apply_chase_deposits(cierre_path, chase_path)` (escribe K, S y T) y `apply_lottery_cuenta_final(cierre_path, lottery_path)` (escribe N) — cada una devuelve `(temp_path, summary)` con fechas escritas y no-matcheadas para armar los mensajes flash (`apply_chase_deposits` además devuelve `gettel_days_written` para el flash que avisa qué día incluyó el depósito de Gettel). Ambas usan `openpyxl.load_workbook(..., data_only=True)` para leer Chase/Lottery (necesita **valores cacheados** de fórmulas — ej. la columna X de Lottery es `=-G{row}-Q{row}` — que solo existen si el archivo se abrió/guardó en Excel real alguna vez; copias `(testeo)` locales viejas pueden no tenerlos) y `data_only=False` para el Cierre (no se toca ninguna fórmula existente ahí, y el comentario de Gettel se agrega con `openpyxl.comments.Comment`).
+- **`webapp.py`** — import de `caja.py`, entrada en `TOOLS` (`key: "caja"`, `code: "CJ"`, accent naranja `#EA580C`/`#FCE3D2`), rutas `/caja` (GET), `/caja/chase` y `/caja/lottery` (POST) — mismo patrón que el resto: guardan el upload, llaman la función de negocio, arman mensajes flash en español con las fechas escritas/no-matcheadas/Gettel, sirven el resultado con `send_file`.
+- **`templates/caja.html`** — mismo patrón de `shared-master-input` que Proveedores/Lottery: el Excel Cierre se sube una sola vez arriba y se espeja a los dos formularios de abajo (Chase → K/S/T, Lottery → N).
+
+### Pendiente
+- `run_server.bat` (raíz del proyecto) quedó creado pero **el usuario decidió explícitamente no usarlo** — prefiere seguir pidiéndole a Claude que reinicie el servidor de vista previa cuando se cierra (pasa seguido tras un `/compact` u otro reseteo de sesión, porque el subproceso del servidor está atado al ciclo de vida de la sesión de Claude Code, no es un bug de `webapp.py`). No promover ni retomar el enfoque del `.bat`/terminal independiente salvo que el usuario lo pida de nuevo.
 
 ## Módulo Proveedores (en la web; se sigue sumando proveedores/funcionalidad de a poco)
 

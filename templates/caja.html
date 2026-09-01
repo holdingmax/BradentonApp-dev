@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Caja — Bradenton App{% endblock %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ url_for('index') }}">Herramientas</a><span>/</span><span class="current">Caja</span></nav>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <span class="eyebrow">Caja</span>
+  <h1>Depósitos Chase y Cuenta Final Lottery</h1>
+  <p class="page-subtitle">Dos flujos independientes sobre la hoja CAJA del mismo Excel Cierre — Chase completa K (Depósitos) y S (Food Truck / Máquina de Hielo), Lottery completa N (Cuenta Final). La fila se ubica por la fecha de la columna A.</p>
+</div>
+<div class="card">
+  <h2>Excel Cierre</h2>
+  <p class="muted">Compartido por los dos cuadros de abajo — se completa una sola vez.</p>
+  <label class="muted">Excel Cierre (hoja CAJA)</label>
+  <input type="file" id="caja-shared-master" class="shared-master-input" accept=".xlsx,.xlsm" required>
+</div>
+
+<div class="card">
+  <h2>Chase → K (Depósitos) y S (Food Truck / Hielo)</h2>
+  <p class="muted">Extracto de Chase ya categorizado por la pestaña Chase Bank. Se toman las filas Type=DEPOSIT con Detalle "DEPOSITO" (columna K) o "FOOD TRUCK"/"VENTA ICE" (columna S), sumadas por día.</p>
+  <form method="post" action="{{ url_for('caja_chase') }}" enctype="multipart/form-data" class="needs-shared-master">
+    <input type="file" name="master_file" class="hidden-master-mirror" style="display:none">
+    <label class="muted">Extracto de Chase (ya categorizado)</label>
+    <input type="file" name="chase_file" accept=".xlsx,.xlsm" required>
+    <button type="submit">Procesar</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Lottery → N (Cuenta Final)</h2>
+  <p class="muted">Excel de Lottery (columna X, "CUENTA FINAL"), matcheado por la fecha real de cada fila (columna B).</p>
+  <form method="post" action="{{ url_for('caja_lottery') }}" enctype="multipart/form-data" class="needs-shared-master">
+    <input type="file" name="master_file" class="hidden-master-mirror" style="display:none">
+    <label class="muted">Excel de Lottery</label>
+    <input type="file" name="lottery_file" accept=".xlsx,.xlsm" required>
+    <button type="submit">Procesar</button>
+  </form>
+</div>
+{% endblock %}

@@ -33,6 +33,7 @@ from chase_rules import (
     list_display_rules as list_chase_display_rules,
     process_chase_categorization,
 )
+from caja import apply_chase_deposits, apply_lottery_cuenta_final
 from cmv_costo import update_master_costo_todos_bulk
 from cupones_append import (
     MonthlyReportFullyDuplicateError,
@@ -233,6 +234,15 @@ TOOLS = [
         "description": "Facturas de compra por proveedor y pagos vía Chase al Cta Cte.",
         "accent": "#DB2777",
         "accent_soft": "#FBD9EA",
+    },
+    {
+        "key": "caja",
+        "code": "CJ",
+        "label": "Caja",
+        "url": "/caja",
+        "description": "Depósitos Chase y Cuenta Final Lottery hacia las columnas K/N/S de CAJA.",
+        "accent": "#EA580C",
+        "accent_soft": "#FCE3D2",
     },
 ]
 
@@ -719,6 +729,108 @@ def proveedores_pagos():
     except Exception as exc:
         flash(f"Error: {exc}", "error")
         return redirect(url_for("proveedores"))
+
+    return send_file(temp_path, as_attachment=True, download_name=master_filename)
+
+
+def _format_date_amounts(date_amounts):
+    return ", ".join(
+        f"{d.strftime('%d/%m')} (${amount:,.2f})" for d, amount in sorted(date_amounts.items())
+    )
+
+
+@app.route("/caja")
+def caja():
+    return render_template("caja.html", **THEME_BY_KEY["caja"])
+
+
+@app.route("/caja/chase", methods=["POST"])
+def caja_chase():
+    master_upload = request.files.get("master_file")
+    chase_upload = request.files.get("chase_file")
+    if master_upload is None or not master_upload.filename:
+        flash("Seleccioná el Excel Cierre.", "error")
+        return redirect(url_for("caja"))
+    if chase_upload is None or not chase_upload.filename:
+        flash("Seleccioná el Excel de Chase ya categorizado.", "error")
+        return redirect(url_for("caja"))
+
+    try:
+        workdir = _new_workspace_dir()
+        master_path, master_filename = _save_upload_to_workspace(master_upload, workdir=workdir)
+        chase_path, _chase_filename = _save_upload_to_workspace(chase_upload, workdir=workdir)
+        temp_path, summary = apply_chase_deposits(master_path, chase_path)
+    except Exception as exc:
+        flash(f"Error: {exc}", "error")
+        return redirect(url_for("caja"))
+
+    deposits_total = sum(summary["deposits_written"].values())
+    food_ice_total = sum(summary["food_ice_written"].values())
+    flash(
+        f"Depósitos (K): {len(summary['deposits_written'])} día(s), total ${deposits_total:,.2f}. "
+        f"Food Truck/Hielo (S): {len(summary['food_ice_written'])} día(s), total ${food_ice_total:,.2f}.",
+        "success",
+    )
+    if summary["deposits_unmatched"]:
+        flash(
+            "Depósitos sin fecha en CAJA (no se cargaron): "
+            + _format_date_amounts(summary["deposits_unmatched"]),
+            "error",
+        )
+    if summary["food_ice_unmatched"]:
+        flash(
+            "Food Truck/Hielo sin fecha en CAJA (no se cargaron): "
+            + _format_date_amounts(summary["food_ice_unmatched"]),
+            "error",
+        )
+    if summary["gettel_days_written"]:
+        dias = ", ".join(d.strftime("%d/%m") for d in sorted(summary["gettel_days_written"]))
+        flash(
+            f"Incluye depósito de Gettel el {dias} (marcado con un comentario en la celda K).",
+            "success",
+        )
+
+    return send_file(temp_path, as_attachment=True, download_name=master_filename)
+
+
+@app.route("/caja/lottery", methods=["POST"])
+def caja_lottery():
+    master_upload = request.files.get("master_file")
+    lottery_upload = request.files.get("lottery_file")
+    if master_upload is None or not master_upload.filename:
+        flash("Seleccioná el Excel Cierre.", "error")
+        return redirect(url_for("caja"))
+    if lottery_upload is None or not lottery_upload.filename:
+        flash("Seleccioná el Excel de Lottery.", "error")
+        return redirect(url_for("caja"))
+
+    try:
+        workdir = _new_workspace_dir()
+        master_path, master_filename = _save_upload_to_workspace(master_upload, workdir=workdir)
+        lottery_path, _lottery_filename = _save_upload_to_workspace(lottery_upload, workdir=workdir)
+        temp_path, summary = apply_lottery_cuenta_final(master_path, lottery_path)
+    except Exception as exc:
+        flash(f"Error: {exc}", "error")
+        return redirect(url_for("caja"))
+
+    written_total = sum(summary["written"].values())
+    flash(
+        f"Lottery (N): {len(summary['written'])} día(s) cargados, total ${written_total:,.2f}.",
+        "success",
+    )
+    if summary["unmatched"]:
+        flash(
+            "Fechas de Lottery sin fila en CAJA (no se cargaron): "
+            + _format_date_amounts(summary["unmatched"]),
+            "error",
+        )
+    if summary["missing_cached_value"]:
+        dates_str = ", ".join(d.strftime("%d/%m") for d in sorted(summary["missing_cached_value"]))
+        flash(
+            "Días sin CUENTA FINAL calculada en el Lottery (abrilo y guardalo en Excel para "
+            f"que recalcule las fórmulas, después volvé a intentar): {dates_str}",
+            "error",
+        )
 
     return send_file(temp_path, as_attachment=True, download_name=master_filename)
 
