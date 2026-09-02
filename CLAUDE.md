@@ -8,6 +8,8 @@ El usuario es bookkeeper de una gasolinera/tienda de conveniencia (Bradenton Gas
 
 Working directory: `C:\BradentonApp`.
 
+**Nota de continuidad (2026-09-02): el usuario va a cambiar de cuenta de Claude.** Este archivo (`CLAUDE.md`) vive en el repo, así que una sesión nueva desde la cuenta nueva lo va a leer igual y tener todo el contexto del proyecto. Lo que **no** se traslada solo es la memoria automática (`MEMORY.md` y los archivos en `memory/`, ligados a la cuenta/máquina anterior) — si en una sesión nueva falta contexto que debería estar ahí, probablemente sea por esto, no un error.
+
 ## Arquitectura general
 
 - **`webapp.py`** — la app Flask (única capa de UI del proyecto; **ya no existe una app de escritorio** — `app.py`/`ui_theme.py`/`install_requirements.bat` se borraron el 2026-08-31 una vez confirmado que ningún módulo migrado los necesitaba; el usuario guardó una copia aparte del proyecto original si hiciera falta consultarlo). Cada ruta es solo pegamento: recibe archivo(s) subido(s), llama a la función ya existente del módulo de dominio, sirve el resultado para descargar. Nunca reimplementa lógica de negocio ahí.
