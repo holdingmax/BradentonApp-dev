@@ -1943,6 +1943,22 @@ def _extract_store_info_fields(lines):
         raise ValueError('No se encontró "Network Revenue".')
     network_revenue = _force_positive(_sanitize_store_info_float(network_values[-1]))
 
+    # No se usa para escribir Store Info (esa fila sigue viniendo de
+    # cash+credit_terms+local_accounts, columna por columna) -- se agrega
+    # solo como dato adicional para el control de Cierre mensual
+    # (controles_cierre_mensual.py), que necesita el "Total Revenue" tal
+    # como lo imprime el propio POS para cruzarlo contra el total del mes
+    # ya cargado en la hoja, sin depender de si esta función terminó
+    # sumando exactamente lo mismo (ver _extract_store_info_fields arriba:
+    # credit_terms deja de sumar apenas llega a "LOCAL ACCOUNTS", así que
+    # cualquier categoría de pago rara que aparezca después -- Loyalty,
+    # Other, Overruns, etc. -- no entra ahí, pero sí está reflejada en el
+    # "Total Revenue" que imprime el reporte).
+    total_revenue_values = _find_label_values(lines, "Total Revenue")
+    if not total_revenue_values:
+        raise ValueError('No se encontró "Total Revenue".')
+    total_revenue = _force_positive(_sanitize_store_info_float(total_revenue_values[-1]))
+
     return {
         "from_date": period["from_date"],
         "from_time": period["from_time"],
@@ -1958,6 +1974,7 @@ def _extract_store_info_fields(lines):
         "credit_terms": credit_terms,
         "local_accounts": local_accounts,
         "network_revenue": network_revenue,
+        "total_revenue": total_revenue,
     }
 
 

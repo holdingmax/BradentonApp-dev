@@ -374,10 +374,12 @@
           <img class="brand-mark" src="{{ url_for('static', filename='logo.png') }}" alt="Bradenton">
           <span class="brand-word">Bradenton <span>App</span></span>
         </a>
+        {% if request.endpoint in ('index', 'controles') %}
         <nav class="section-switch">
-          <a class="section-switch-item{{ ' active' if not request.path.startswith('/controles') else '' }}" href="{{ url_for('index') }}">Herramientas</a>
-          <a class="section-switch-item{{ ' active' if request.path.startswith('/controles') else '' }}" href="{{ url_for('controles') }}">Controles</a>
+          <a class="section-switch-item{{ ' active' if request.endpoint == 'index' else '' }}" href="{{ url_for('index') }}">Herramientas</a>
+          <a class="section-switch-item{{ ' active' if request.endpoint == 'controles' else '' }}" href="{{ url_for('controles') }}">Controles</a>
         </nav>
+        {% endif %}
         {% block crumbs %}{% endblock %}
       </div>
       <div class="topbar-right">

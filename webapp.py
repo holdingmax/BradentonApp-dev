@@ -48,6 +48,8 @@ from gettel_toyota_parser import (
     merge_gettel_toyota_pdf_into_master,
     process_gettel_pagos,
 )
+from controles_cierre_mensual import check_store_info_monthly
+from controles_lottery_mensual import check_lottery_monthly
 from monthly_sales import process_monthly_sales
 from proveedores import append_supplier_invoices, append_supplier_payments
 from reporte_diario import process_lottery, process_reporte_diario, process_store_info
@@ -207,6 +209,7 @@ _ICON_TICKET = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strok
 _ICON_EXCHANGE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h13l-3-3M20 17H7l3 3"/></svg>'
 _ICON_TRUCK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="7" width="13" height="10" rx="1"/><path d="M14 10h4l3 3v4h-7z"/><circle cx="6" cy="18.5" r="1.6"/><circle cx="17.5" cy="18.5" r="1.6"/></svg>'
 _ICON_REGISTER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="10" width="18" height="10" rx="1"/><path d="M6 10V7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v3"/><path d="M9 15h6"/></svg>'
+_ICON_CHECKLIST = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6a1 1 0 0 1 1 1v1H8V4a1 1 0 0 1 1-1z"/><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M8.5 12.5l2 2 4-4"/></svg>'
 
 TOOLS = [
     {
@@ -293,9 +296,29 @@ TOOLS = [
 
 # Segunda sección de la app, hermana de Herramientas (TOOLS): cada entrada acá
 # es un módulo que recibe un Excel ya cerrado de fin de mes y verifica que
-# esté en orden, en vez de transformarlo. Vacía a propósito hasta que
-# Herramientas esté 100% terminado — ver CLAUDE.md, "Módulo Controles".
-CONTROLS = []
+# esté en orden, en vez de transformarlo. Ver CLAUDE.md, "Módulo Controles".
+CONTROLS = [
+    {
+        "key": "cierre_mensual",
+        "code": "CM",
+        "icon": _ICON_CHECKLIST,
+        "label": "Cierre Mensual",
+        "url": "/controles/cierre-mensual",
+        "description": "Cruza el Resumen de Ventas mensual del POS contra Store Info del Excel Cierre.",
+        "accent": "#334155",
+        "accent_soft": "#E2E8F0",
+    },
+    {
+        "key": "lottery_mensual",
+        "code": "LT",
+        "icon": _ICON_TICKET,
+        "label": "Lottery Mensual",
+        "url": "/controles/lottery-mensual",
+        "description": "Cruza el Monthly Sales Report de Florida Lottery contra el Excel de Lottery del mes.",
+        "accent": "#0284C7",
+        "accent_soft": "#D7EFFB",
+    },
+]
 
 THEME_BY_KEY = {
     tool["key"]: {"accent": tool["accent"], "accent_soft": tool["accent_soft"]}
@@ -428,6 +451,59 @@ def index():
 @app.route("/controles")
 def controles():
     return render_template("controles_index.html", controls=CONTROLS)
+
+
+@app.route("/controles/cierre-mensual", methods=["GET", "POST"])
+def control_cierre_mensual():
+    # A diferencia de Herramientas, este control nunca descarga un archivo
+    # -- solo lee los dos que suben y muestra el resultado en la misma
+    # página (ver CLAUDE.md, "Módulo Controles": reporte en pantalla,
+    # verde/rojo por chequeo) -- por eso no usa ajax-process-form ni
+    # _success_response, un submit normal alcanza.
+    result = None
+    if request.method == "POST":
+        cierre_upload = request.files.get("cierre_file")
+        pdf_upload = request.files.get("monthly_pdf")
+        if cierre_upload is None or not cierre_upload.filename:
+            flash("Seleccioná el Excel Cierre del mes.", "error")
+        elif pdf_upload is None or not pdf_upload.filename:
+            flash("Seleccioná el PDF de Resumen de Ventas del mes.", "error")
+        else:
+            try:
+                workdir = _new_workspace_dir()
+                cierre_path, _cierre_filename = _save_upload_to_workspace(cierre_upload, workdir=workdir)
+                pdf_path, _pdf_filename = _save_upload_to_workspace(pdf_upload, workdir=workdir)
+                result = check_store_info_monthly(cierre_path, pdf_path)
+            except Exception as exc:
+                flash(f"Error: {exc}", "error")
+    return render_template(
+        "control_cierre_mensual.html", result=result, **THEME_BY_KEY["cierre_mensual"]
+    )
+
+
+@app.route("/controles/lottery-mensual", methods=["GET", "POST"])
+def control_lottery_mensual():
+    # Mismo criterio que control_cierre_mensual: solo lectura, reporte en
+    # pantalla, sin ajax-process-form ni _success_response.
+    result = None
+    if request.method == "POST":
+        lottery_upload = request.files.get("lottery_file")
+        pdf_upload = request.files.get("monthly_pdf")
+        if lottery_upload is None or not lottery_upload.filename:
+            flash("Seleccioná el Excel de Lottery del mes.", "error")
+        elif pdf_upload is None or not pdf_upload.filename:
+            flash("Seleccioná el Monthly Sales Report (PDF) del mes.", "error")
+        else:
+            try:
+                workdir = _new_workspace_dir()
+                lottery_path, _lottery_filename = _save_upload_to_workspace(lottery_upload, workdir=workdir)
+                pdf_path, _pdf_filename = _save_upload_to_workspace(pdf_upload, workdir=workdir)
+                result = check_lottery_monthly(lottery_path, pdf_path)
+            except Exception as exc:
+                flash(f"Error: {exc}", "error")
+    return render_template(
+        "control_lottery_mensual.html", result=result, **THEME_BY_KEY["lottery_mensual"]
+    )
 
 
 @app.route("/chase", methods=["GET", "POST"])

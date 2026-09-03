@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Cierre Mensual — Controles — Bradenton App{% endblock %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ url_for('controles') }}">Controles</a><span>/</span><span class="current">Cierre Mensual</span></nav>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <span class="eyebrow">Controles</span>
+  <h1>Cierre Mensual</h1>
+  <p class="page-subtitle">Cruza el "Store Sales Summary Report" mensual del POS (páginas 1-2: Volume, Total Fuel Sales, Fuel Discounts, Total Non Fuel Sales, Other Discounts, Total Taxes Collected, Cash, tarjetas de crédito, Local Accounts, Network Revenue y Total Revenue) contra el total del mes ya cargado en la hoja Store Info del Excel Cierre — una fuente independiente de la que ya usa el chequeo diario "dif 1"/"dif 2" de la propia hoja, así que puede detectar un día salteado, cargado dos veces, o mal tipeado que ese chequeo no ve.</p>
+</div>
+
+<div class="card">
+  <h2>Archivos del mes</h2>
+  <p class="muted">No se descarga ni se modifica nada — solo se lee y se muestra el resultado acá abajo.</p>
+  <form method="post" enctype="multipart/form-data">
+    <label class="muted">Excel Cierre del mes</label>
+    <input type="file" name="cierre_file" accept=".xlsx,.xlsm" required>
+    <label class="muted">PDF "Store Sales Summary Report" del mes (Resumen de Ventas)</label>
+    <input type="file" name="monthly_pdf" accept=".pdf" required>
+    <div class="form-actions">
+      <button type="submit">Verificar</button>
+    </div>
+  </form>
+</div>
+
+{% if result %}
+<div class="card">
+  <h2>Resultado</h2>
+  <p class="muted">Período del PDF: {{ result.period_from.strftime('%d/%m/%Y') }} al {{ result.period_to.strftime('%d/%m/%Y') }}</p>
+
+  {% if result.period_mismatch %}
+  <div class="flash-warning">
+    Atención: el Excel cargado también tiene fila(s) de otro período: {{ result.period_mismatch|join(', ') }} — no pertenece(n) al período del PDF ({{ result.period_from.strftime('%m/%Y') }}). Si es una comparación intencional podés ignorar este aviso; si no, revisá que subiste los archivos correctos.
+  </div>
+  {% endif %}
+
+  {% if result.missing_days %}
+  <div class="flash-warning">
+    Día(s) del mes sin ninguna fecha cargada en Store Info: {{ result.missing_days|join(', ') }}. Los totales de abajo no los incluyen — cargalos y volvé a verificar.
+  </div>
+  {% endif %}
+
+  <div style="overflow-x: auto;">
+    <table style="width: 100%; border-collapse: collapse; font-size: 13.5px;">
+      <thead>
+        <tr style="text-align: left; border-bottom: 1px solid var(--border);">
+          <th style="padding: 8px 10px;">Chequeo</th>
+          <th style="padding: 8px 10px;">PDF (POS)</th>
+          <th style="padding: 8px 10px;">Excel (Store Info)</th>
+          <th style="padding: 8px 10px;">Diferencia</th>
+          <th style="padding: 8px 10px;">Estado</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for check in result.checks %}
+        <tr style="border-bottom: 1px solid var(--border);">
+          <td style="padding: 8px 10px; font-weight: 600;">{{ check.label }}</td>
+          <td style="padding: 8px 10px;">{% if check.unit == '$' %}${% endif %}{{ "{:,.2f}".format(check.pdf_value) }}{% if check.unit == 'gal' %} gal{% endif %}</td>
+          <td style="padding: 8px 10px;">{% if check.unit == '$' %}${% endif %}{{ "{:,.2f}".format(check.excel_value) }}{% if check.unit == 'gal' %} gal{% endif %}</td>
+          <td style="padding: 8px 10px;">{% if check.unit == '$' %}${% endif %}{{ "{:,.2f}".format(check.diff) }}{% if check.unit == 'gal' %} gal{% endif %}</td>
+          <td style="padding: 8px 10px;">
+            {% if check.ok %}
+            <span style="color: var(--success); font-weight: 600;">OK</span>
+            {% else %}
+            <span style="color: var(--error); font-weight: 600;">Diferencia</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if result.all_ok %}
+  <div class="flash-success" style="margin-top: 18px; margin-bottom: 0;">Todo coincide dentro del margen esperado (±$0.01).</div>
+  {% else %}
+  <div class="flash-error" style="margin-top: 18px; margin-bottom: 0;">Hay diferencias — revisar antes de dar el mes por cerrado.</div>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}

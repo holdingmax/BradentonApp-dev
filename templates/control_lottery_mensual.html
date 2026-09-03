@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Lottery Mensual — Controles — Bradenton App{% endblock %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ url_for('controles') }}">Controles</a><span>/</span><span class="current">Lottery Mensual</span></nav>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <span class="eyebrow">Controles</span>
+  <h1>Lottery Mensual</h1>
+  <p class="page-subtitle">Cruza el "Monthly Sales Report" del portal de Florida Lottery (Ventas y Pagos Terminal, Comisión Terminal, Prize/Promo Free Plays, Boletos Instantáneos Pagados, Pagos y Ventas Instantáneas, Comisión Instantánea) contra el total del mes ya cargado en la hoja de Lottery del Excel.</p>
+</div>
+
+<div class="card">
+  <h2>Archivos del mes</h2>
+  <p class="muted">No se descarga ni se modifica nada — solo se lee y se muestra el resultado acá abajo.</p>
+  <form method="post" enctype="multipart/form-data">
+    <label class="muted">Excel de Lottery del mes</label>
+    <input type="file" name="lottery_file" accept=".xlsx,.xlsm" required>
+    <label class="muted">PDF "Monthly Sales Report" de Florida Lottery</label>
+    <input type="file" name="monthly_pdf" accept=".pdf" required>
+    <div class="form-actions">
+      <button type="submit">Verificar</button>
+    </div>
+  </form>
+</div>
+
+{% if result %}
+<div class="card">
+  <h2>Resultado</h2>
+  <p class="muted">Período del PDF: {{ "%02d"|format(result.period_month) }}/{{ result.period_year }}</p>
+
+  {% if result.period_mismatch %}
+  <div class="flash-warning">
+    Atención: el Excel cargado también tiene fila(s) de otro período: {{ result.period_mismatch|join(', ') }} — no pertenece(n) al período del PDF ({{ "%02d"|format(result.period_month) }}/{{ result.period_year }}). Si es una comparación intencional podés ignorar este aviso; si no, revisá que subiste los archivos correctos.
+  </div>
+  {% endif %}
+
+  {% if result.missing_days %}
+  <div class="flash-warning">
+    Día(s) del mes sin ninguna fila cargada en la hoja de Lottery: {{ result.missing_days|join(', ') }}. Los totales de abajo no los incluyen — cargalos y volvé a verificar.
+  </div>
+  {% endif %}
+
+  <div style="overflow-x: auto;">
+    <table style="width: 100%; border-collapse: collapse; font-size: 13.5px;">
+      <thead>
+        <tr style="text-align: left; border-bottom: 1px solid var(--border);">
+          <th style="padding: 8px 10px;">Chequeo</th>
+          <th style="padding: 8px 10px;">PDF (Lottery)</th>
+          <th style="padding: 8px 10px;">Excel (mes)</th>
+          <th style="padding: 8px 10px;">Diferencia</th>
+          <th style="padding: 8px 10px;">Estado</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for check in result.checks %}
+        <tr style="border-bottom: 1px solid var(--border);">
+          <td style="padding: 8px 10px; font-weight: 600;">{{ check.label }}</td>
+          <td style="padding: 8px 10px;">{% if check.unit == '$' %}${% endif %}{{ "{:,.2f}".format(check.pdf_value) }}{% if check.unit == 'u' %} u{% endif %}</td>
+          <td style="padding: 8px 10px;">{% if check.unit == '$' %}${% endif %}{{ "{:,.2f}".format(check.excel_value) }}{% if check.unit == 'u' %} u{% endif %}</td>
+          <td style="padding: 8px 10px;">{% if check.unit == '$' %}${% endif %}{{ "{:,.2f}".format(check.diff) }}{% if check.unit == 'u' %} u{% endif %}</td>
+          <td style="padding: 8px 10px;">
+            {% if check.ok %}
+            <span style="color: var(--success); font-weight: 600;">OK</span>
+            {% else %}
+            <span style="color: var(--error); font-weight: 600;">Diferencia</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if result.all_ok %}
+  <div class="flash-success" style="margin-top: 18px; margin-bottom: 0;">Todo coincide dentro del margen esperado (±$0.01).</div>
+  {% else %}
+  <div class="flash-error" style="margin-top: 18px; margin-bottom: 0;">Hay diferencias — revisar antes de dar el mes por cerrado.</div>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}
