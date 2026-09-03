@@ -871,6 +871,29 @@ def _proveedores_error(message):
     return _error_response(message)
 
 
+def _group_by_supplier_message(prefix, items, unit_label):
+    """
+    Arma un aviso corto tipo "No se pudieron cargar 5 factura(s) de
+    Colonial, 3 factura(s) de Coca-Cola." -- agrupa por proveedor para que
+    el usuario sepa dónde mirar sin tener que abrir el Excel a buscar,
+    pero sin nombres de archivo (`items` es la lista `failed`/`unmatched`
+    de proveedores.py, cada uno un dict con clave "supplier" o None si no
+    se pudo identificar).
+    """
+    counts = {}
+    unknown = 0
+    for item in items:
+        supplier = item.get("supplier")
+        if supplier:
+            counts[supplier] = counts.get(supplier, 0) + 1
+        else:
+            unknown += 1
+    parts = [f"{n} {unit_label} de {name}" for name, n in sorted(counts.items())]
+    if unknown:
+        parts.append(f"{unknown} {unit_label} sin proveedor identificado")
+    return f"{prefix}: {', '.join(parts)}."
+
+
 def _proveedores_success(temp_path, download_name, notices):
     """
     `notices` es una lista de tuplas (level, message) -- level es
@@ -918,7 +941,7 @@ def proveedores_facturas():
     if summary["failed"]:
         notices.append((
             "error",
-            f"{len(summary['failed'])} factura(s) no se pudieron leer automáticamente. Revisalas a mano.",
+            _group_by_supplier_message("No se pudieron cargar", summary["failed"], "factura(s)"),
         ))
 
     resumen_warnings = summary.get("resumen_warnings") or []
@@ -969,7 +992,7 @@ def proveedores_pagos():
     if summary["unmatched"]:
         notices.append((
             "error",
-            f"{len(summary['unmatched'])} fila(s) del banco no se pudieron cargar. Revisalas a mano.",
+            _group_by_supplier_message("No se pudieron cargar", summary["unmatched"], "pago(s)"),
         ))
 
     return _proveedores_success(temp_path, master_filename, notices)

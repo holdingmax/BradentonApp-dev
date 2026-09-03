@@ -249,6 +249,16 @@ def _extract_gce_invoice(pdf_path):
     Gold Coast Eagle -- escaneo; con muchos ítems, la factura se corre a
     una segunda página y la línea de confirmación ("Inv# 657065
     $1,381.00", con invoice y total juntos) queda ahí, no en la primera.
+
+    La fecha real vive en una línea de confirmación tipo "Thu Aug 20,
+    2026" (día de semana + mes + día + año) -- bug real encontrado
+    2026-09-03: el regex viejo (\\w{3} suelto, sin exigir un día de semana
+    válido) matcheaba el TEXTO "...Expires Mar 31, 2027" del recuadro de
+    licencia que casi todas las facturas traen cerca del encabezado
+    ("License: ... Expires Mar 31, 2027" -> "res Mar 31, 2027" matcheaba
+    igual), leyendo una fecha completamente ajena a la factura sin ningún
+    aviso. Exigir un día de semana real (Mon/Tue/.../Sun) al principio
+    descarta ese falso positivo.
     """
     _ensure_pdfplumber()
     _ensure_pytesseract()
@@ -261,7 +271,7 @@ def _extract_gce_invoice(pdf_path):
     text = "\n".join(pages_text)
 
     confirm_match = re.search(r"Inv.{0,4}?(\d{5,7})\D{0,3}\$?\s*([\d,]+\.\d{2})", text)
-    date_match = re.search(r"(\w{3}\s+\w{3}\s+\d{1,2},\s*\d{4})", text)
+    date_match = re.search(r"\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+\w{3}\s+\d{1,2},\s*\d{4}\b", text)
 
     if not (confirm_match and date_match):
         raise ValueError(
@@ -270,7 +280,7 @@ def _extract_gce_invoice(pdf_path):
         )
 
     invoice_no = int(confirm_match.group(1))
-    invoice_date = datetime.strptime(date_match.group(1), "%a %b %d, %Y")
+    invoice_date = datetime.strptime(date_match.group(0), "%a %b %d, %Y")
     amount = float(confirm_match.group(2).replace(",", ""))
     return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
 
@@ -285,6 +295,15 @@ def _extract_frito_lay_invoice(pdf_path):
     "DATE: 27 Dec 2025" y "TOTAL DUE:") y "CHARGE SALES" (con la fecha
     suelta como "11/06/24" sin etiqueta, y "TOTAL DUE =" con igual en vez
     de dos puntos) -- se intentan ambos formatos.
+
+    Bug real encontrado 2026-09-03: en el encabezado, "INVOICE #" a veces
+    sale tan garbleado ("rvorce #; 96809721", con un dígito además mal
+    leído) que ni el texto ni el número matchean -- la etiqueta "Document
+    #:" del pie de página trae el mismo número de forma mucho más
+    confiable, se usa como respaldo SOLO cuando "INVOICE #" no matcheó
+    nada (se confirmó en una muestra real que "Document #:" puede leer un
+    dígito distinto cuando "INVOICE #" sí está limpio -- nunca preferirlo
+    por sobre uno que ya funcionó).
     """
     _ensure_pdfplumber()
     _ensure_pytesseract()
@@ -297,6 +316,8 @@ def _extract_frito_lay_invoice(pdf_path):
     text = "\n".join(pages_text)
 
     invoice_match = re.search(r"INVOICE\s*#\s*[:\s]*(\d+)", text, re.IGNORECASE)
+    if not invoice_match:
+        invoice_match = re.search(r"Document\s*#\s*:?\s*(\d+)", text, re.IGNORECASE)
     total_match = re.search(r"TOTAL DUE\s*[:=]\s*\$?\s*([\d,]+\.\d{2})", text, re.IGNORECASE)
 
     date_match = re.search(r"DATE:\s*(\d{1,2}\s+\w{3}\s+\d{4})", text, re.IGNORECASE)
@@ -316,12 +337,130 @@ def _extract_frito_lay_invoice(pdf_path):
     return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
 
 
+def _kings_find_amount(totals_crop):
+    """
+    El cuadro de totales de King's tiene bordes que confunden a Tesseract
+    -- según el escaneo, el OCR de la caja completa a veces mezcla el
+    bloque de etiquetas (Sub Total/Other Charges/.../Total) con el bloque
+    de importes en un orden que ya no coincide (columnas leídas por
+    separado), y a veces la etiqueta "Total:" ni se lee (tapada por el
+    sello de USDA que cae justo en esa fila) -- una búsqueda de texto tipo
+    "Total:\\s*(importe)" sobre el string plano falla en ambos casos.
+
+    Se ubica "Total" (no "Sub Total") por posición con
+    pytesseract.image_to_data, ignorando basura pegada al texto (acentos
+    mal leídos, "|", etc.), y se recorta+amplía esa fila sola para
+    releerla limpia -- mismo patrón ya usado para Signarama/Midtown. Si
+    ni el crudo ni la versión sin grilla tienen la etiqueta legible, el
+    importe de "Total" es siempre el último renglón de la caja -- se cae
+    a tomar el importe con mayor coordenada Y (más abajo) entre todos los
+    encontrados.
+    """
+    alpha_re = re.compile(r"[^a-zA-Z]")
+    money_re = re.compile(r"^[\d,]+\.\d{2}$")
+
+    for variant in (_remove_grid_lines(totals_crop), totals_crop):
+        data = pytesseract.image_to_data(variant, output_type=pytesseract.Output.DICT)
+        for i, word in enumerate(data["text"]):
+            if alpha_re.sub("", word).lower() != "total":
+                continue
+            prev_word = data["text"][i - 1] if i > 0 else ""
+            if alpha_re.sub("", prev_word).lower() == "sub":
+                continue
+            top, height, left = data["top"][i], data["height"][i], data["left"][i]
+            strip = variant.crop((left, max(0, top - 10), variant.width, top + height + 15))
+            strip = strip.resize((strip.width * 3, strip.height * 3), Image.LANCZOS)
+            match = re.search(r"([\d,]+\.\d{2})", pytesseract.image_to_string(strip, config="--psm 7"))
+            if match:
+                return float(match.group(1).replace(",", ""))
+
+    data = pytesseract.image_to_data(_remove_grid_lines(totals_crop), output_type=pytesseract.Output.DICT)
+    candidates = []
+    for i, word in enumerate(data["text"]):
+        cleaned = word.strip().lstrip("[|_").rstrip("])|_")
+        if money_re.match(cleaned):
+            candidates.append((data["top"][i], cleaned))
+    if candidates:
+        candidates.sort()
+        return float(candidates[-1][1].replace(",", ""))
+    return None
+
+
+def _kings_find_invoice_and_date(info_crop):
+    """
+    La tabla de arriba (Terms/PO-REF/Ship Via/Salesperson/Invoice Date/
+    Invoice #) también tiene grilla, y la fila de datos puede aparecer
+    con separadores de fecha perdidos ("8/4/2026" leído "84/2026") si se
+    intenta leer toda la franja de una -- pero casi siempre el N° de
+    factura (6 dígitos exactos) y la fecha completa salen limpios como
+    tokens sueltos en un primer pase de pytesseract.image_to_data. Si
+    alguno de los dos falta, se ubica la fila (por el otro dato ya
+    encontrado, o por cualquier token con dígitos+"/") y se recorta+
+    amplía sola para releerla con más resolución.
+    """
+    date_full_re = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")
+    date_loose_re = re.compile(r"(\d{1,2})/(\d{1,2})/(\d{4})")
+    invoice_exact_re = re.compile(r"^\d{6}$")
+    invoice_loose_re = re.compile(r"(?<!\d)(\d{6})(?!\d)")
+
+    data = pytesseract.image_to_data(info_crop, output_type=pytesseract.Output.DICT)
+    invoice_idx = date_idx = None
+    invoice_no = invoice_date = None
+    for i, word in enumerate(data["text"]):
+        cleaned = word.strip()
+        if invoice_idx is None and invoice_exact_re.match(cleaned):
+            invoice_idx = i
+            invoice_no = int(cleaned)
+        if date_idx is None:
+            match = date_full_re.match(cleaned)
+            if match:
+                date_idx = i
+                invoice_date = datetime(int(match.group(3)), int(match.group(1)), int(match.group(2)))
+
+    if invoice_no is not None and invoice_date is not None:
+        return invoice_no, invoice_date
+
+    # Preferir un token con pinta de fecha (aunque venga con el "/"
+    # perdido, ej. "84/2026") como ancla de fila -- su posición/alto
+    # suele recortar mejor esa fila que anclar en el N° de factura, que a
+    # veces cae en una franja distinta de la tabla.
+    anchor_idx = date_idx
+    if anchor_idx is None:
+        for i, word in enumerate(data["text"]):
+            cleaned = word.strip()
+            if re.search(r"\d", cleaned) and "/" in cleaned:
+                anchor_idx = i
+                break
+    if anchor_idx is None:
+        anchor_idx = invoice_idx
+    if anchor_idx is None:
+        return invoice_no, invoice_date
+
+    top, height = data["top"][anchor_idx], data["height"][anchor_idx]
+    row = info_crop.crop((0, max(0, top - 15), info_crop.width, top + height + 15))
+    row = row.resize((row.width * 4, row.height * 4), Image.LANCZOS)
+    row_text = pytesseract.image_to_string(row, config="--psm 6")
+
+    if invoice_no is None:
+        match = invoice_loose_re.search(row_text)
+        if match:
+            invoice_no = int(match.group(1))
+    if invoice_date is None:
+        match = date_loose_re.search(row_text)
+        if match:
+            invoice_date = datetime(int(match.group(3)), int(match.group(1)), int(match.group(2)))
+    return invoice_no, invoice_date
+
+
 def _extract_kings_invoice(pdf_path):
     """
     King's Wholesale Florists -- tanto la fecha/N° de invoice (tabla de
     arriba) como el total (cuadro "Total:" abajo a la derecha) viven en
-    tablas con bordes que Tesseract confunde con el texto -- ambas franjas
-    se recortan y se les quitan las líneas de grilla antes de OCR.
+    tablas con bordes que Tesseract confunde con el texto, y el orden de
+    lectura del cuadro de totales puede descolocar etiquetas de importes
+    -- ver _kings_find_amount/_kings_find_invoice_and_date, que anclan
+    por posición (pytesseract.image_to_data) en vez de buscar el texto
+    en un string plano.
     """
     _ensure_pdfplumber()
     _ensure_pytesseract()
@@ -332,25 +471,17 @@ def _extract_kings_invoice(pdf_path):
             f"{os.path.basename(pdf_path)}: no se encontró la imagen escaneada de la factura King's."
         )
 
-    info_crop = _crop_relative(image, 0.0, 0.29, 1.0, 0.35)
-    info_text = pytesseract.image_to_string(_remove_grid_lines(info_crop))
-    totals_crop = _crop_relative(image, 0.55, 0.72, 1.0, 0.97)
-    totals_text = pytesseract.image_to_string(_remove_grid_lines(totals_crop))
+    info_crop = _crop_relative(image, 0.0, 0.27, 1.0, 0.40)
+    totals_crop = _crop_relative(image, 0.55, 0.70, 1.0, 1.0)
 
-    invoice_match = re.search(r"(\d{6})", info_text)
-    date_match = re.search(r"(\d{1,2}/\d{1,2}/\d{4})", info_text)
-    # "Total:" también matchea dentro de "Sub Total:" -- el importe final
-    # siempre es la ÚLTIMA coincidencia (Sub Total, ..., Total, en ese orden).
-    total_matches = re.findall(r"Total:\s*([\d,]+\.\d{2})", totals_text)
+    invoice_no, invoice_date = _kings_find_invoice_and_date(info_crop)
+    amount = _kings_find_amount(totals_crop)
 
-    if not (invoice_match and date_match and total_matches):
+    if invoice_no is None or invoice_date is None or amount is None:
         raise ValueError(
             f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total del PDF de King's."
         )
 
-    invoice_no = int(invoice_match.group(1))
-    invoice_date = datetime.strptime(date_match.group(1), "%m/%d/%Y")
-    amount = float(total_matches[-1].replace(",", ""))
     return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
 
 
@@ -1838,7 +1969,7 @@ def _resumen_create_supplier_row(sheet, label):
     return insert_at
 
 
-def _shift_resumen_compras_refs(resumen_sheet, sheet_title, resumen_label, insert_at_row):
+def _shift_resumen_compras_refs(resumen_sheet, sheet_title, insert_at_row):
     """
     Corrige las referencias que RESUMEN COMPRAS ya tenía hacia esta hoja de
     proveedor después de insertar una fila en insert_at_row -- openpyxl no
@@ -1849,16 +1980,18 @@ def _shift_resumen_compras_refs(resumen_sheet, sheet_title, resumen_label, inser
     factura cronológicamente antes de otra ya cargada y verificando que
     RESUMEN COMPRAS seguía sumando el monto correcto después.
 
-    Solo la fila de este proveedor en RESUMEN COMPRAS puede tener
-    referencias a esta hoja (_update_resumen_compras siempre escribe ahí),
-    así que no hace falta escanear la hoja entera. No hace nada si el
-    proveedor todavía no tiene fila ahí o no tiene ninguna referencia
-    todavía -- es la situación normal, no un error.
+    Escanea TODAS las filas de RESUMEN COMPRAS (no solo la de un proveedor
+    puntual) buscando referencias a esta hoja -- necesario porque también
+    se llama desde Pagos (append_supplier_payments), que identifica al
+    proveedor por hoja de destino (proveedores_pago_rules.py), no por
+    SUPPLIER_REGISTRY, así que no siempre tiene a mano el resumen_label
+    para ubicar la fila de antemano. Segundo bug real encontrado el mismo
+    día: un pago de Chase insertado en medio de una hoja (empujando
+    facturas ya cargadas hacia abajo) dejaba estas mismas referencias
+    desactualizadas exactamente igual que una factura insertada en medio
+    -- Pagos nunca llamaba a este ajuste, solo Facturas.
     """
     if resumen_sheet is None:
-        return
-    row = _resumen_find_supplier_row(resumen_sheet, resumen_label)
-    if row is None:
         return
 
     quoted = _resumen_quote_sheet_ref(sheet_title)
@@ -1869,10 +2002,11 @@ def _shift_resumen_compras_refs(resumen_sheet, sheet_title, resumen_label, inser
         new_row = old_row + 1 if old_row >= insert_at_row else old_row
         return f"{quoted}!D{new_row}"
 
-    for col in range(RESUMEN_FIRST_MONTH_COL, resumen_sheet.max_column + 1):
-        cell = resumen_sheet.cell(row=row, column=col)
-        if isinstance(cell.value, str) and cell.value.strip().startswith("="):
-            cell.value = pattern.sub(_shift, cell.value)
+    for row in range(1, resumen_sheet.max_row + 1):
+        for col in range(RESUMEN_FIRST_MONTH_COL, resumen_sheet.max_column + 1):
+            cell = resumen_sheet.cell(row=row, column=col)
+            if isinstance(cell.value, str) and cell.value.strip().startswith("="):
+                cell.value = pattern.sub(_shift, cell.value)
 
 
 def _update_resumen_compras(resumen_sheet, sheet_title, resumen_label, invoice_row, invoice_date):
@@ -1956,11 +2090,13 @@ def append_supplier_invoices(ledger_path, pdf_paths):
     by_supplier = {}
     failed = []
     for pdf_path in pdf_paths:
+        supplier_key = None
         try:
             supplier_key = _detect_supplier(pdf_path)
             invoice = SUPPLIER_REGISTRY[supplier_key]["extract"](pdf_path)
         except ValueError as exc:
-            failed.append({"filename": os.path.basename(pdf_path), "error": str(exc)})
+            supplier_label = SUPPLIER_REGISTRY[supplier_key]["label"] if supplier_key else None
+            failed.append({"filename": os.path.basename(pdf_path), "error": str(exc), "supplier": supplier_label})
             continue
         invoice["filename"] = os.path.basename(pdf_path)
         by_supplier.setdefault(supplier_key, []).append(invoice)
@@ -1996,14 +2132,12 @@ def append_supplier_invoices(ledger_path, pdf_paths):
                 )
                 if needs_shift:
                     _insert_row_preserving_merges(sheet, target_row)
-                    _shift_resumen_compras_refs(
-                        resumen_sheet, sheet.title, config["resumen_label"], target_row
-                    )
+                    _shift_resumen_compras_refs(resumen_sheet, sheet.title, target_row)
                 _write_invoice_row(sheet, target_row, style_row, balance_ref_row, color, invoice)
                 if needs_shift:
                     _reformulate_rows_below(sheet, target_row, last_row)
             except (ValueError, TypeError, AttributeError) as exc:
-                failed.append({"filename": invoice["filename"], "error": str(exc)})
+                failed.append({"filename": invoice["filename"], "error": str(exc), "supplier": config["label"]})
                 continue
 
             existing_numbers.add(invoice["invoice_no"])
@@ -2147,12 +2281,36 @@ def _nearest_balance_row_at_or_above(sheet, row):
     return None
 
 
+def _nearest_real_payment_style_row(sheet, from_row):
+    """
+    Ubica la fila real (con fecha datetime, invoice u OP) más cercana a
+    from_row hacia arriba -- para copiarle el estilo a un pago nuevo.
+
+    Nunca hay que confundir esto con _nearest_balance_row_at_or_above:
+    esa función puede devolver una fila separadora de mes en blanco (que
+    sí lleva su propia fórmula de arrastre de BALANCE, aunque columna A
+    esté vacía), válida como referencia de saldo pero NO como referencia
+    de estilo -- un separador puede estar combinado A:E con el texto del
+    mes, o traer un number_format distinto en la columna de fecha. Bug
+    real corregido 2026-09-03: _append_payment_row copiaba estilo
+    directo de la misma fila que usaba para el balance, así que un pago
+    insertado justo después de un separador heredaba su formato --
+    causaba que la fecha del pago se pegara sin el formato de fecha
+    correcto (se mostraba como texto crudo tipo "2026-08-03 0:00:00" en
+    vez de con el formato esperado).
+    """
+    for row in range(from_row, 0, -1):
+        if isinstance(sheet.cell(row=row, column=COL_DATE).value, datetime):
+            return row
+    return from_row
+
+
 def _find_payment_insertion_point(sheet, payment_date):
     """
     Determina dónde debe ir un pago con fecha payment_date para mantener la
     hoja en orden cronológico.
 
-    Devuelve (target_row, needs_shift, previous_balance_row, last_row):
+    Devuelve (target_row, needs_shift, style_row, previous_balance_row, last_row):
     - needs_shift=False: target_row es el próximo lugar libre al final de
       la hoja (respetando el separador de mes existente), igual que
       _append_invoice_row -- no hace falta mover nada.
@@ -2160,9 +2318,11 @@ def _find_payment_insertion_point(sheet, payment_date):
       que abrir espacio con _insert_row_preserving_merges(target_row),
       escribir el pago con _append_payment_row, y recién ahí llamar a
       _reformulate_rows_below para las filas que quedaron abajo.
-    - previous_balance_row es siempre la fila real más cercana hacia
-      arriba desde target_row (nunca un separador en blanco), lista para
-      usarse como referencia de estilo y de balance anterior.
+    - previous_balance_row es la referencia para la fórmula de BALANCE --
+      puede ser una fila separadora en blanco (ver
+      _nearest_balance_row_at_or_above) -- nunca copiarle el estilo.
+    - style_row es siempre una fila con fecha real (nunca un separador),
+      para el estilo (ver _nearest_real_payment_style_row).
     """
     last_row = _find_last_real_row(sheet)
     if last_row is None:
@@ -2172,7 +2332,7 @@ def _find_payment_insertion_point(sheet, payment_date):
     if payment_date >= last_date:
         month_changed = (payment_date.year, payment_date.month) != (last_date.year, last_date.month)
         target_row = last_row + 2 if month_changed else last_row + 1
-        return target_row, False, last_row, last_row
+        return target_row, False, last_row, last_row, last_row
 
     for row in range(1, last_row + 1):
         row_date = sheet.cell(row=row, column=COL_DATE).value
@@ -2193,10 +2353,11 @@ def _find_payment_insertion_point(sheet, payment_date):
                     "en un tramo viejo cargado sin fórmula de arrastre. Hay que cargarlo "
                     "a mano."
                 )
-            return row, True, previous_balance_row, last_row
+            style_row = _nearest_real_payment_style_row(sheet, row - 1)
+            return row, True, style_row, previous_balance_row, last_row
 
     # No debería llegar acá dado el chequeo de arriba, pero por las dudas.
-    return last_row + 1, False, last_row, last_row
+    return last_row + 1, False, last_row, last_row, last_row
 
 
 def _insert_row_preserving_merges(sheet, insert_at_row):
@@ -2295,16 +2456,19 @@ def _existing_payment_keys(sheet):
     return keys
 
 
-def _append_payment_row(sheet, target_row, previous_balance_row, payment):
+def _append_payment_row(sheet, target_row, style_row, previous_balance_row, payment):
     """
     Escribe una fila "OP" (pago) en target_row. A diferencia de
     _append_invoice_row: usa HABER (columna E) en vez de DEBE, no fuerza
     negrita ni aplica el fill mensual en la columna N° (un pago no tiene
-    número de factura real), y el estilo se copia de previous_balance_row
-    -- la fila real más cercana hacia arriba, sea "invoice" u "OP".
+    número de factura real). El estilo se copia de style_row -- una fila
+    real con fecha, nunca un separador -- mientras que la fórmula de
+    BALANCE referencia previous_balance_row, que sí puede ser un
+    separador (ver _find_payment_insertion_point): son dos filas
+    distintas a propósito, nunca asumir que son la misma.
     """
     for col in PAYMENT_ROW_COLUMNS:
-        ref_cell = sheet.cell(row=previous_balance_row, column=col)
+        ref_cell = sheet.cell(row=style_row, column=col)
         new_cell = sheet.cell(row=target_row, column=col)
         new_cell.font = copy(ref_cell.font)
         new_cell.border = copy(ref_cell.border)
@@ -2346,26 +2510,28 @@ def append_supplier_payments(ledger_path, bank_path):
     candidates = _read_bank_payment_candidates(bank_path)
 
     workbook = load_workbook(ledger_path, data_only=False)
+    resumen_sheet = _get_resumen_sheet(workbook)
 
     by_sheet = {}
     unmatched = []
     for candidate in candidates:
         description = candidate["description"]
         if candidate["date"] is None or candidate["amount"] is None:
-            unmatched.append(f"{description!r}: no se pudo leer la fecha o el monto.")
+            unmatched.append({"supplier": None, "detail": f"{description!r}: no se pudo leer la fecha o el monto."})
             continue
 
         sheet_name = match_supplier_sheet(description)
         if not sheet_name:
-            unmatched.append(f"{description!r}: ningún proveedor conocido matchea esta descripción.")
+            unmatched.append({"supplier": None, "detail": f"{description!r}: ningún proveedor conocido matchea esta descripción."})
             continue
 
         try:
             sheet = _get_supplier_sheet(workbook, sheet_name)
         except ValueError:
-            unmatched.append(
-                f'{description!r}: la regla apunta a la hoja "{sheet_name}", que no existe en el libro.'
-            )
+            unmatched.append({
+                "supplier": sheet_name,
+                "detail": f'{description!r}: la regla apunta a la hoja "{sheet_name}", que no existe en el libro.',
+            })
             continue
 
         bucket = by_sheet.setdefault(sheet.title, {"sheet": sheet, "payments": []})
@@ -2397,16 +2563,17 @@ def append_supplier_payments(ledger_path, bank_path):
             # aborta append_supplier_payments entero ANTES de workbook.save,
             # perdiendo también el trabajo ya hecho en otras hojas del lote.
             try:
-                target_row, needs_shift, previous_balance_row, last_row = _find_payment_insertion_point(
+                target_row, needs_shift, style_row, previous_balance_row, last_row = _find_payment_insertion_point(
                     sheet, payment["date"]
                 )
                 if needs_shift:
                     _insert_row_preserving_merges(sheet, target_row)
-                _append_payment_row(sheet, target_row, previous_balance_row, payment)
+                    _shift_resumen_compras_refs(resumen_sheet, sheet.title, target_row)
+                _append_payment_row(sheet, target_row, style_row, previous_balance_row, payment)
                 if needs_shift:
                     _reformulate_rows_below(sheet, target_row, last_row)
             except (ValueError, TypeError, AttributeError) as exc:
-                unmatched.append(f"{payment['description']!r} ({sheet_title}): {exc}")
+                unmatched.append({"supplier": sheet_title, "detail": f"{payment['description']!r} ({sheet_title}): {exc}"})
                 continue
             appended += 1
 
