@@ -8,7 +8,6 @@ Phase 2: Inject sales rows into department sheets on the Master CMV workbook.
 import csv
 import os
 import re
-import sys
 import tempfile
 from copy import copy
 
@@ -53,6 +52,15 @@ TOTAL_SUM_COLUMNS = (5, 6, 8)  # E, F, H — dynamic =SUM targets on TOTAL row
 SALES_SPACER_ROWS = 1  # exactly one blank row above the TOTAL row
 DELIMITER_BLOCK_TAIL_ROWS = 2  # closing row + trailing footer rows
 
+COST_LOOKUP_COLUMN = 7  # G — "precio costo", VLOOKUP against COSTO.TODOS by UPC
+# Sheet names with a "." (like COSTO.TODOS) sometimes get single-quoted by
+# Excel in a formula and sometimes not (both are valid) -- real workbook data
+# confirmed both variants exist across sheets, so detection tolerates either.
+_COST_LOOKUP_PLAIN_RE = re.compile(
+    r"^=\+?VLOOKUP\([A-Za-z]+\d+,'?COSTO\.TODOS'?!\$A\$2:\$D\$8000,4,FALSE\)$",
+    re.IGNORECASE,
+)
+
 RESUMEN_SHEET_NAME = "RESUMEN"
 RESUMEN_FIRST_DATA_ROW = 5
 RESUMEN_DRIVER_COLUMN = 1  # A — department name driver
@@ -87,7 +95,7 @@ DEPARTMENT_SHEETS = (
     "WATER",
     "MILK",
     "COFFE",
-    "HOT DOG",
+    "HOT DOGS & SANDWICH",
     "HBA",
     "PROPANE",
 )
@@ -179,8 +187,8 @@ CSV_DEPARTMENT_TO_SHEET = {
     "foutain": "FOUTAIN",
     "coffee": "COFFE",
     "coffe": "COFFE",
-    "hot dog": "HOT DOG",
-    "hotdog": "HOT DOG",
+    "hot dog": "HOT DOGS & SANDWICH",
+    "hotdog": "HOT DOGS & SANDWICH",
     "hba": "HBA",
     "propane": "PROPANE",
     "prop hd": "PROPANE",
@@ -215,7 +223,7 @@ ORDERED_DEPARTMENT_TOKEN_ROUTES = (
     ("e-cigarette", "E-GIGARETTE"),
     ("e-cig", "E-GIGARETTE"),
     ("e cig", "E-GIGARETTE"),
-    ("hot dog", "HOT DOG"),
+    ("hot dog", "HOT DOGS & SANDWICH"),
     ("prop hd", "PROPANE"),
     ("prop-hd", "PROPANE"),
     ("propane", "PROPANE"),
@@ -543,7 +551,7 @@ def _resolve_title_sheet_aliases(key):
     if "coffee" in key or key == "coffe" or key.startswith("coffe "):
         return "COFFE"
     if "hot dog" in key or key.replace("-", "") == "hotdog":
-        return "HOT DOG"
+        return "HOT DOGS & SANDWICH"
     if "propane" in key or "prop hd" in key or "prop-hd" in key:
         return "PROPANE"
     return None
@@ -761,13 +769,33 @@ def _cell_contains_total(value):
     return bool(re.search(rf"\b{TOTAL_BOUNDARY_MARK}\b", text))
 
 
+def _cell_has_sum_formula(value):
+    return isinstance(value, str) and value.strip().upper().startswith("=SUM(")
+
+
 def _detect_total_row_index(sheet):
     """
-    Scan column B (and merged B:C:D) from row 5 for the TOTAL closing label.
+    Locate the TOTAL row anchored on its own =SUM(...) signature first.
 
-    Returns total_row_index — the absolute lower boundary of the sales grid.
+    The SUM formula in E/F/H (written by _rewrite_total_sum_formulas) is a
+    far more reliable signal than the "TOTAL" text label: a sheet that went
+    through the old move_range-based resize logic can end up with a total
+    row whose SUM formulas are intact but whose label text got stranded
+    elsewhere (seen on real data), so text-only detection can misdetect the
+    row and reintroduce drift on the next load. Falls back to the text
+    label, then to a merged-cell anchor, then to last-populated-row+1 for a
+    sheet this code has never written to yet.
     """
     scan_to = max(sheet.max_row or SALES_DATA_START_ROW, SALES_DATA_START_ROW)
+
+    for row_idx in range(SALES_DATA_START_ROW, scan_to + 1):
+        for col_idx in TOTAL_SUM_COLUMNS:
+            try:
+                value = _safe_read_cell_value(sheet, row_idx, col_idx)
+            except (AttributeError, TypeError, Exception):
+                continue
+            if _cell_has_sum_formula(value):
+                return row_idx
 
     for row_idx in range(SALES_DATA_START_ROW, scan_to + 1):
         for col_idx in TOTAL_LABEL_COLUMNS:
@@ -864,20 +892,110 @@ def _ensure_bcd_merge_on_total_row(sheet, total_row_index, prior_bounds=None):
         pass
 
 
-def _displace_total_row_block(sheet, total_row_index, row_offset):
-    """Shift the entire closing row slice (A:I) by row_offset (down or up)."""
+def _displace_total_row_block(sheet, total_row_index, row_offset, bcd_merge_bounds=None):
+    """
+    Reposition the TOTAL row -- and everything below it -- by row_offset rows.
+
+    Uses sheet.delete_rows/insert_rows so every row at or below
+    total_row_index (TOTAL's own formulas, footer rows, and critically any
+    stale product rows left dangling by an older bug) moves as one atomic
+    block; nothing can be stranded behind. The previous move_range-based
+    approach only relocated a narrow "closing block" slice (TOTAL + a
+    couple of footer rows) and left anything below that slice completely
+    untouched -- on a month with fewer items than the one before, that
+    silently left old product rows sitting below the new TOTAL row forever
+    (real data confirmed this: stray rows with stale UPCs and #N/D formulas
+    below the total, seen in production, 2026-09-02).
+
+    The old B:C:D "TOTAL" label merge is unmerged first so it doesn't
+    linger as a ghost at the vacated row -- openpyxl never shifts
+    merged_cells (or conditional_formatting) on insert/delete/move, so
+    leaving it in place accumulates one phantom merge per month the sheet
+    shrinks (confirmed on the real workbook: several department sheets
+    already carry one from past loads).
+    """
     if row_offset == 0:
         return total_row_index
 
-    start_row, end_row = _total_row_block_bounds(sheet, total_row_index)
-    cell_range = f"A{start_row}:I{end_row}"
+    if bcd_merge_bounds is not None:
+        min_row, max_row, min_col, max_col = bcd_merge_bounds
+        old_ref = (
+            f"{get_column_letter(min_col)}{min_row}:"
+            f"{get_column_letter(max_col)}{max_row}"
+        )
+        try:
+            sheet.unmerge_cells(old_ref)
+        except (AttributeError, TypeError, Exception):
+            pass
 
+    used_manual_shift = False
     try:
-        sheet.move_range(cell_range, rows=row_offset, cols=0, translate=True)
+        if row_offset < 0:
+            sheet.delete_rows(total_row_index + row_offset, -row_offset)
+        else:
+            sheet.insert_rows(total_row_index, row_offset)
     except (AttributeError, TypeError, Exception):
+        start_row, end_row = _total_row_block_bounds(sheet, total_row_index)
         _manual_shift_total_row_block(sheet, start_row, end_row, row_offset)
+        used_manual_shift = True
 
-    return total_row_index + row_offset
+    new_total_row_index = total_row_index + row_offset
+    if not used_manual_shift:
+        # delete_rows/insert_rows relocate cell objects (values, styles) but
+        # -- unlike move_range(translate=True), which _manual_shift_total_row_block
+        # mimics via _copy_cell_formula_and_style -- never rewrite formula
+        # text. The footer block's own relative formulas (TOTAL's margin %,
+        # the "diff" row below it) still literally point at the pre-shift
+        # row numbers unless retranslated here.
+        _retranslate_footer_formulas(sheet, new_total_row_index, row_offset)
+
+    return new_total_row_index
+
+
+def _retranslate_footer_formulas(sheet, new_total_row_index, row_offset):
+    """Re-point the footer block's relative formulas after delete_rows/insert_rows."""
+    scan_to = sheet.max_row or new_total_row_index
+    for row_idx in range(new_total_row_index, scan_to + 1):
+        for col_idx in range(1, SALES_SHEET_LAST_COLUMN + 1):
+            try:
+                cell = sheet.cell(row=row_idx, column=col_idx)
+            except (AttributeError, TypeError, Exception):
+                continue
+            value = cell.value
+            if not _cell_has_formula(value):
+                continue
+            try:
+                cell.value = Translator(
+                    value, origin=cell.coordinate
+                ).translate_formula(row_delta=row_offset, col_delta=0)
+            except (AttributeError, TypeError, Exception):
+                continue
+
+
+def _purge_stray_bcd_merges(sheet, keep_row):
+    """
+    Remove any leftover single-row B:C:D merge that isn't the active TOTAL row.
+
+    Self-heals ghost merges left behind by past runs of the old
+    move_range-based displacement (see _displace_total_row_block), and runs
+    unconditionally on every load -- not only when the sheet happens to
+    resize this time -- so a workbook that already carries a stray merge
+    from months ago gets cleaned up the next time it's loaded at all.
+    """
+    to_unmerge = []
+    for merged_range in list(sheet.merged_cells.ranges):
+        if merged_range.min_row != merged_range.max_row:
+            continue
+        if merged_range.min_row < SALES_DATA_START_ROW or merged_range.min_row == keep_row:
+            continue
+        if merged_range.min_col <= 4 and merged_range.max_col >= 2:
+            to_unmerge.append(str(merged_range))
+
+    for range_ref in to_unmerge:
+        try:
+            sheet.unmerge_cells(range_ref)
+        except (AttributeError, TypeError, Exception):
+            continue
 
 
 def _manual_shift_total_row_block(sheet, start_row, end_row, row_offset):
@@ -924,9 +1042,10 @@ def _ensure_sales_writing_capacity(sheet, record_count):
     row_offset = target_total_row - total_row_index
     if row_offset != 0:
         total_row_index = _displace_total_row_block(
-            sheet, total_row_index, row_offset
+            sheet, total_row_index, row_offset, bcd_merge_bounds
         )
 
+    _purge_stray_bcd_merges(sheet, total_row_index)
     _ensure_bcd_merge_on_total_row(sheet, total_row_index, bcd_merge_bounds)
     return total_row_index, original_formula_last
 
@@ -1055,6 +1174,73 @@ def _rewrite_total_sum_formulas(sheet, total_row_index, last_data_row):
         try:
             cell = sheet.cell(row=total_row_index, column=col_idx)
             cell.value = formula
+        except (AttributeError, TypeError, Exception):
+            continue
+
+
+MARGIN_CF_COLUMN = 9  # I — "MG %", the only column with conditional formatting
+
+
+def _rebuild_margin_conditional_formatting(sheet, last_data_row):
+    """
+    Rebuild column I's conditional formatting to exactly match the data extent.
+
+    insert_rows/delete_rows/move_range never adjust conditional_formatting
+    ranges (an openpyxl limitation -- unlike Excel, which keeps them in sync
+    automatically), so repeated monthly resizes leave the margin-color rules
+    increasingly fragmented: real rows can end up with no highlighting at
+    all, and empty rows past the data get painted red anyway (a blank cell
+    reads as 0 against the "< 10%" rule). Confirmed on the real workbook --
+    several department sheets already carry a fragmented, multi-area range
+    from past loads. Capturing whatever rule definitions currently exist on
+    column I and reapplying them on one clean range fixes both directions
+    on every load, not only when the sheet happens to resize this time.
+    """
+    existing_rules = []
+    seen_signatures = set()
+    stale_sqrefs = []
+
+    for cf in list(sheet.conditional_formatting):
+        touches_column_i = any(
+            cell_range.min_col <= MARGIN_CF_COLUMN <= cell_range.max_col
+            for cell_range in cf.sqref
+        )
+        if not touches_column_i:
+            continue
+        stale_sqrefs.append(cf.sqref)
+        for rule in cf.rules:
+            # dxfId intentionally excluded: repeated copy/paste of this same
+            # rule across sheets/months over the years registered visually
+            # identical fills under different dxf ids (confirmed on real
+            # data -- same two colors, different ids), so keying on it would
+            # keep true duplicates instead of collapsing them.
+            signature = (
+                rule.type,
+                tuple(rule.formula) if rule.formula else None,
+                rule.operator,
+            )
+            if signature in seen_signatures:
+                continue
+            seen_signatures.add(signature)
+            existing_rules.append(rule)
+
+    if not existing_rules:
+        return
+
+    for sqref in stale_sqrefs:
+        try:
+            del sheet.conditional_formatting[sqref]
+        except (KeyError, AttributeError, TypeError, Exception):
+            continue
+
+    if last_data_row < SALES_DATA_START_ROW:
+        return
+
+    column_letter = get_column_letter(MARGIN_CF_COLUMN)
+    new_range = f"{column_letter}{SALES_DATA_START_ROW}:{column_letter}{last_data_row}"
+    for rule in existing_rules:
+        try:
+            sheet.conditional_formatting.add(new_range, rule)
         except (AttributeError, TypeError, Exception):
             continue
 
@@ -1270,66 +1456,85 @@ def _inject_sales_into_master(master_path, file_paths):
 
     sheet_lookup = _build_sheet_lookup(workbook)
     sheet_batches = {}
-    unmapped = []
+    unmapped = set()
+    failed_files = []
 
+    # Un archivo que no se puede leer (formato inesperado, columnas de
+    # menos, etc.) se aísla y se sigue con el resto -- antes un solo
+    # archivo problemático en un lote grande abortaba la carga entera,
+    # perdiendo también los departamentos de los archivos que sí estaban
+    # bien (pedido explícito del usuario, 2026-09-02).
     for file_path in paths:
-        frame = parse_monthly_sales_file(file_path)
+        try:
+            frame = parse_monthly_sales_file(file_path)
+        except Exception as exc:
+            failed_files.append({"filename": os.path.basename(file_path), "error": str(exc)})
+            continue
         for dept_name, group in frame.groupby("Dept Name", sort=False):
             sheet_name = _resolve_sheet_name(dept_name)
             if sheet_name is None:
-                unmapped.append(_strip_cell(dept_name))
+                unmapped.add(_strip_cell(dept_name))
                 continue
             sheet_batches.setdefault(sheet_name, []).append(
                 group.reset_index(drop=True)
             )
 
-    if unmapped:
-        workbook.close()
-        raise ValueError(
-            "No se pudo mapear el/los departamento(s) a hojas del maestro: "
-            + ", ".join(sorted(set(unmapped)))
-        )
-
     if not sheet_batches:
         workbook.close()
-        raise ValueError("No se pudo mapear ninguna fila de departamento a hojas del maestro.")
+        detail_parts = []
+        if failed_files:
+            detail_parts.append(f"{len(failed_files)} archivo(s) no se pudieron leer")
+        if unmapped:
+            detail_parts.append(f"{len(unmapped)} departamento(s) sin hoja conocida")
+        detail = f": {', '.join(detail_parts)}" if detail_parts else ""
+        raise ValueError(f"No se pudo cargar ninguna fila de ventas{detail}.")
 
+    # Mismo criterio de aislamiento que arriba, ahora por hoja de destino:
+    # un departamento que falla al escribirse (ej. la hoja tiene una
+    # estructura vieja inesperada) no debe perder el resto de los
+    # departamentos que sí se pudieron escribir bien.
+    sheets_failed = []
     for sheet_name, batches in sheet_batches.items():
-        combined = pd.concat(batches, ignore_index=True)
-        sheet = _get_department_sheet(workbook, sheet_lookup, sheet_name)
-        record_count = len(combined)
-        total_row_index, original_formula_last = _ensure_sales_writing_capacity(
-            sheet, record_count
-        )
-        last_data_row = (
-            SALES_DATA_START_ROW + record_count - 1
-            if record_count > 0
-            else SALES_DATA_START_ROW - 1
-        )
-        if last_data_row >= SALES_DATA_START_ROW:
-            total_row_index = _purge_leftover_rows_before_total(
-                sheet, last_data_row, total_row_index
+        try:
+            combined = pd.concat(batches, ignore_index=True)
+            sheet = _get_department_sheet(workbook, sheet_lookup, sheet_name)
+            record_count = len(combined)
+            total_row_index, original_formula_last = _ensure_sales_writing_capacity(
+                sheet, record_count
             )
-            clear_through_row = max(
-                last_data_row,
-                total_row_index - SALES_SPACER_ROWS - 1,
+            last_data_row = (
+                SALES_DATA_START_ROW + record_count - 1
+                if record_count > 0
+                else SALES_DATA_START_ROW - 1
             )
-            _unmerge_sales_grid_ae(
-                sheet, SALES_DATA_START_ROW, clear_through_row
-            )
-        _clear_sales_data_block(sheet, total_row_index)
-        _write_sales_rows(sheet, combined)
-        if last_data_row >= SALES_DATA_START_ROW:
-            _extend_formula_rows_fi(
-                sheet,
-                original_formula_last,
-                last_data_row,
-            )
-            _rewrite_total_sum_formulas(sheet, total_row_index, last_data_row)
-            _ensure_bcd_merge_on_total_row(sheet, total_row_index)
-            _strip_spacer_row(sheet, total_row_index - SALES_SPACER_ROWS)
+            if last_data_row >= SALES_DATA_START_ROW:
+                total_row_index = _purge_leftover_rows_before_total(
+                    sheet, last_data_row, total_row_index
+                )
+                clear_through_row = max(
+                    last_data_row,
+                    total_row_index - SALES_SPACER_ROWS - 1,
+                )
+                _unmerge_sales_grid_ae(
+                    sheet, SALES_DATA_START_ROW, clear_through_row
+                )
+            _clear_sales_data_block(sheet, total_row_index)
+            _write_sales_rows(sheet, combined)
+            if last_data_row >= SALES_DATA_START_ROW:
+                _extend_formula_rows_fi(
+                    sheet,
+                    original_formula_last,
+                    last_data_row,
+                )
+                _rewrite_total_sum_formulas(sheet, total_row_index, last_data_row)
+                _ensure_bcd_merge_on_total_row(sheet, total_row_index)
+                _strip_spacer_row(sheet, total_row_index - SALES_SPACER_ROWS)
+                _rebuild_margin_conditional_formatting(sheet, last_data_row)
 
-        _purge_ghost_rows_below_summary(sheet, total_row_index)
+            _purge_ghost_rows_below_summary(sheet, total_row_index)
+        except (ValueError, TypeError, AttributeError, KeyError) as exc:
+            sheets_failed.append({"sheet": sheet_name, "error": str(exc)})
+            continue
 
     update_resumen_department_links(workbook)
 
@@ -1337,18 +1542,13 @@ def _inject_sales_into_master(master_path, file_paths):
     abs_temp_path = os.path.abspath(temp_path)
     workbook.save(abs_temp_path)
     workbook.close()
-    _launch_temp_workbook(abs_temp_path)
-    return temp_path
 
-
-def _launch_temp_workbook(temp_path):
-    """Open the transient master preview without success message boxes."""
-    if sys.platform == "win32":
-        os.startfile(temp_path)
-    elif sys.platform == "darwin":
-        os.system(f'open "{temp_path}"')
-    else:
-        os.system(f'xdg-open "{temp_path}"')
+    summary = {
+        "failed_files": failed_files,
+        "unmapped_departments": sorted(unmapped),
+        "sheets_failed": sheets_failed,
+    }
+    return temp_path, summary
 
 
 def _create_preview_csv_path():
@@ -1360,7 +1560,7 @@ def _create_preview_csv_path():
     return temp_path
 
 
-def _save_and_open_preview(frame):
+def _save_preview(frame):
     preview_path = _create_preview_csv_path()
     frame.to_csv(
         preview_path,
@@ -1369,7 +1569,6 @@ def _save_and_open_preview(frame):
         decimal=",",
         encoding="utf-8-sig",
     )
-    os.startfile(os.path.abspath(preview_path))
     return preview_path
 
 
@@ -1466,25 +1665,101 @@ def process_monthly_sales(file_paths, master_path=None):
     """
     Parse one or more POS sales files and inject rows into Master CMV sheets.
 
-    Loads the master workbook once, processes every selected file through the
-    routing and sheet pipeline, saves a single temp preview, and opens silently.
+    Loads the master workbook once and processes every selected file through
+    the routing and sheet pipeline, saving a single temp preview. Un archivo
+    o un departamento problemático se aísla (ver _inject_sales_into_master),
+    nunca aborta el resto del lote.
 
     Returns:
-        tuple: (combined DataFrame, optional temp master workbook path)
+        tuple: (optional combined DataFrame, optional temp master workbook
+        path, summary dict con failed_files/unmapped_departments/sheets_failed)
     """
     paths = _normalize_sales_file_paths(file_paths)
     if not paths:
         raise ValueError("No se proporcionaron archivos de reporte de ventas.")
 
-    frames = [parse_monthly_sales_file(path) for path in paths]
-    combined = pd.concat(frames, ignore_index=True)
-    temp_master_path = None
-
     if master_path and str(master_path).strip():
-        temp_master_path = _inject_sales_into_master(
+        temp_master_path, summary = _inject_sales_into_master(
             str(master_path).strip(), paths
         )
-    else:
-        _save_and_open_preview(combined)
+        return None, temp_master_path, summary
 
-    return combined, temp_master_path
+    frames = [parse_monthly_sales_file(path) for path in paths]
+    combined = pd.concat(frames, ignore_index=True)
+    _save_preview(combined)
+    return combined, None, {"failed_files": [], "unmapped_departments": [], "sheets_failed": []}
+
+
+def _cell_is_simple_cost_lookup(value):
+    """True when the cell holds the plain VLOOKUP-by-UPC cost formula (no name fallback yet)."""
+    if not isinstance(value, str):
+        return False
+    return bool(_COST_LOOKUP_PLAIN_RE.match(value.strip().replace(" ", "")))
+
+
+def _cost_lookup_formula_with_name_fallback(row_idx):
+    """
+    VLOOKUP by UPC (column A) against COSTO.TODOS, falling back to a lookup
+    by product name (column B) when the UPC doesn't match.
+
+    Some products with no real barcode (fountain drinks, generic "NOF
+    Merchandise" catch-alls, etc.) get a different internal UPC in the POS's
+    cost export than in its sales export for the same item -- see CLAUDE.md,
+    "CMV Ventas: UPC discordante entre ventas y costo" (2026-09-02). Falling
+    back to the product name lets those resolve on their own instead of
+    needing the cost typed in by hand, which never updates again afterward.
+    """
+    upc_lookup = f"VLOOKUP(A{row_idx},'COSTO.TODOS'!$A$2:$D$8000,4,FALSE)"
+    name_lookup = f"VLOOKUP(B{row_idx},'COSTO.TODOS'!$C$2:$D$8000,2,FALSE)"
+    return f"=+IFERROR({upc_lookup},{name_lookup})"
+
+
+def add_cost_lookup_name_fallback(master_path):
+    """
+    Upgrade every department sheet's "precio costo" column (G) to fall back
+    to a lookup by product name when the plain VLOOKUP-by-UPC formula can't
+    find the UPC in COSTO.TODOS.
+
+    One-time repair over what's already in the workbook: _write_sales_rows
+    never touches column G (it's a formula the template already carries,
+    propagated row to row by _extend_formula_rows_fi whenever a sheet grows),
+    so a UPC mismatch between the sales export and the cost export for the
+    same product stays broken forever, even after the correct cost gets
+    loaded into COSTO.TODOS. Touches both the plain VLOOKUP formula and any
+    value typed in by hand as a workaround for it; leaves anything else in
+    that column alone.
+
+    Returns:
+        tuple: (temp_master_path, {sheet_name: cells_updated})
+    """
+    _ensure_openpyxl_available()
+    master_path = os.path.abspath(master_path)
+    _validate_master_path(master_path)
+
+    extension = os.path.splitext(master_path)[1].lower()
+    workbook = load_workbook(master_path, data_only=False, keep_vba=extension == ".xlsm")
+
+    updated_by_sheet = {}
+    for sheet_name in DEPARTMENT_SHEETS:
+        if sheet_name not in workbook.sheetnames:
+            continue
+        sheet = workbook[sheet_name]
+        total_row = _detect_total_row_index(sheet)
+        if total_row is None:
+            continue
+        updated = 0
+        for row_idx in range(SALES_DATA_START_ROW, total_row):
+            upc = sheet.cell(row=row_idx, column=1).value
+            if upc in (None, ""):
+                continue
+            cell = sheet.cell(row=row_idx, column=COST_LOOKUP_COLUMN)
+            if _cell_is_simple_cost_lookup(cell.value) or isinstance(cell.value, (int, float)):
+                cell.value = _cost_lookup_formula_with_name_fallback(row_idx)
+                updated += 1
+        if updated:
+            updated_by_sheet[sheet_name] = updated
+
+    temp_path = _create_temp_master_path()
+    workbook.save(temp_path)
+    workbook.close()
+    return temp_path, updated_by_sheet
