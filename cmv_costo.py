@@ -7,7 +7,6 @@ Parses department files with pandas, updates the master workbook with openpyxl
 
 import logging
 import os
-import sys
 import tempfile
 
 import pandas as pd
@@ -549,6 +548,66 @@ def _snapshot_costo_prices(sheet):
     return prices
 
 
+def _read_existing_costo_rows(sheet):
+    """
+    Read every product row already in COSTO.TODOS before the grid is wiped.
+
+    Lets a partial upload (e.g. only FLOWER's export) replace just the
+    department(s) it contains, instead of the previous behavior of clearing
+    the whole grid and keeping only what came in that particular upload —
+    which silently dropped every other department's costs.
+    """
+    last_row = _find_last_costo_data_row(sheet)
+    records = []
+    for row_idx in range(DATA_START_ROW, last_row + 1):
+        upc = clean_upc(sheet.cell(row=row_idx, column=1).value)
+        if not upc:
+            continue
+        upc_mod = sheet.cell(row=row_idx, column=2).value
+        name = sheet.cell(row=row_idx, column=3).value
+        cost = sheet.cell(row=row_idx, column=4).value
+        price = sheet.cell(row=row_idx, column=5).value
+        dept_id = sheet.cell(row=row_idx, column=6).value
+        dept_name = sheet.cell(row=row_idx, column=7).value
+        records.append(
+            {
+                "UPC": upc,
+                "UPCMod": "" if _cell_is_empty(upc_mod) else str(upc_mod).strip(),
+                "Name": "" if name is None else str(name).strip(),
+                "Cost": cost if isinstance(cost, (int, float)) else _parse_decimal(cost),
+                "Price": price if isinstance(price, (int, float)) else _parse_decimal(price),
+                "DeptID": "" if _cell_is_empty(dept_id) else str(dept_id).strip(),
+                "DeptName": "" if dept_name is None else str(dept_name).strip(),
+            }
+        )
+    return pd.DataFrame(
+        records,
+        columns=["UPC", "UPCMod", "Name", "Cost", "Price", "DeptID", "DeptName"],
+    )
+
+
+def _merge_with_existing_departments(sheet, new_df):
+    """
+    Merge freshly-parsed department rows into what's already in COSTO.TODOS.
+
+    Only the department(s) present in new_df are replaced — every other
+    department's existing rows are carried over untouched, so uploading a
+    single department's export can never wipe out the rest of the grid.
+    """
+    existing_df = _read_existing_costo_rows(sheet)
+    if existing_df.empty:
+        return new_df
+
+    touched = set(new_df["DeptName"].astype(str).str.strip().str.casefold()) - {""}
+    if touched:
+        keep_mask = ~existing_df["DeptName"].astype(str).str.strip().str.casefold().isin(touched)
+        existing_df = existing_df[keep_mask]
+
+    if existing_df.empty:
+        return new_df
+    return pd.concat([existing_df, new_df], ignore_index=True)
+
+
 def _ensure_price_change_header(sheet):
     cell = sheet.cell(row=1, column=PRICE_CHANGE_COLUMN)
     if _cell_is_empty(cell.value):
@@ -582,16 +641,22 @@ def _write_price_change_cell(sheet, row_idx, upc, new_price, previous_prices):
 
 def _replace_costo_departments(sheet, department_paths):
     """
-    Consolidate department exports, clear the COSTO.TODOS data grid, and write
-    fresh rows starting at DATA_START_ROW (overwrite, never append).
+    Consolidate department exports and rewrite the COSTO.TODOS data grid.
+
+    Only the department(s) present in department_paths are replaced -- every
+    other department already in the sheet is preserved (see
+    _merge_with_existing_departments). Uploading every department's export
+    together still overwrites the whole grid, same as before.
     """
     _hide_column_b(sheet)
     combined_df, file_stats = _consolidate_department_files(department_paths)
     previous_prices = _snapshot_costo_prices(sheet)
+    merged_df = _merge_with_existing_departments(sheet, combined_df)
+    merged_df = _sort_by_department(merged_df)
     _clear_costo_data_grid(sheet)
     _ensure_price_change_header(sheet)
     _, rows_written = _write_department_rows(
-        sheet, combined_df, DATA_START_ROW, previous_prices=previous_prices
+        sheet, merged_df, DATA_START_ROW, previous_prices=previous_prices
     )
     _hide_column_b(sheet)
     return file_stats, rows_written
@@ -610,17 +675,6 @@ def _openpyxl_merge_and_save(master_path, department_paths, temp_xlsx_path):
             workbook.close()
 
 
-def _launch_temp_workbook(temp_path):
-    """Open the transient preview workbook without UI alerts."""
-    abs_path = os.path.abspath(temp_path)
-    if sys.platform == "win32":
-        os.startfile(abs_path)
-    elif sys.platform == "darwin":
-        os.system(f'open "{abs_path}"')
-    else:
-        os.system(f'xdg-open "{abs_path}"')
-
-
 def update_master_costo_todos_bulk(master_path, department_paths):
     """
     Overwrite COSTO.TODOS product rows via openpyxl (clean-then-write).
@@ -628,7 +682,7 @@ def update_master_costo_todos_bulk(master_path, department_paths):
     Reads all selected department files into one pandas DataFrame, cleans UPC
     and Cost/Price fields, sorts by department name, deletes existing rows from
     row 2 downward (columns A–G), then writes the consolidated import from A2.
-    Saves a transient .xlsx preview and opens it silently.
+    Saves a transient .xlsx preview and returns its path.
 
     Returns:
         tuple: (temp_xlsx_path, file_stats, total_parsed, rows_appended,
@@ -648,8 +702,6 @@ def update_master_costo_todos_bulk(master_path, department_paths):
 
     if rows_appended == 0:
         raise ValueError("No se pudo escribir ninguna fila de departamento en COSTO.TODOS.")
-
-    _launch_temp_workbook(temp_xlsx_path)
 
     total_parsed = sum(item["parsed"] for item in file_stats)
     return (
