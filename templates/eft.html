@@ -20,7 +20,7 @@
 <div class="card">
   <h2>Paso 1 — Pipeline Cta Cte (PDF EFT)</h2>
   <p class="muted">PDF de EFT bancario. Actualiza la hoja Cta Cte J.H.Williams.</p>
-  <form method="post" action="{{ url_for('eft_cta_cte_route') }}" enctype="multipart/form-data" class="needs-shared-master">
+  <form method="post" action="{{ url_for('eft_cta_cte_route') }}" enctype="multipart/form-data" class="needs-shared-master ajax-process-form">
     <input type="file" name="master_file" class="hidden-master-mirror" style="display:none">
     <label class="muted">EFT PDF</label>
     <input type="file" name="pdf_file" id="eft-ctacte-pdf" accept=".pdf" required>
@@ -34,7 +34,7 @@
 <div class="card">
   <h2>Paso 2 — Pipeline Cupones (Excel J.H. Mensual)</h2>
   <p class="muted">Reporte Mensual (opcional). Sin reporte mensual, solo actualiza cupones pendientes/$0.</p>
-  <form method="post" action="{{ url_for('eft_cupones') }}" enctype="multipart/form-data" class="needs-shared-master">
+  <form method="post" action="{{ url_for('eft_cupones') }}" enctype="multipart/form-data" class="needs-shared-master ajax-process-form">
     <input type="file" name="master_file" class="hidden-master-mirror" style="display:none">
     <label class="muted">Reporte Mensual (opcional)</label>
     <input type="file" name="monthly_report_file" id="eft-cupones-monthly" accept=".xlsx,.xlsm,.xls,.csv">

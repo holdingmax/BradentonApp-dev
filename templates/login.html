@@ -86,6 +86,45 @@
       margin-bottom: 16px;
       font-size: 13px;
     }
+    .login-extra-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 14px;
+      font-size: 13px;
+    }
+    .remember-me {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-soft);
+      cursor: pointer;
+    }
+    .remember-me input { margin: 0; }
+    .forgot-link {
+      background: none;
+      border: none;
+      padding: 0;
+      margin: 0;
+      width: auto;
+      color: var(--accent);
+      font-size: 13px;
+      font-weight: 500;
+      cursor: pointer;
+      text-decoration: underline;
+    }
+    .forgot-help {
+      display: none;
+      margin-top: 12px;
+      padding: 10px 12px;
+      background: #F8FAFC;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-soft);
+      font-size: 12.5px;
+      line-height: 1.5;
+    }
+    .forgot-help.open { display: block; }
   </style>
 </head>
 <body>
@@ -103,6 +142,16 @@
       <input type="text" id="username" name="username" autocomplete="username" required autofocus>
       <label for="password">Contraseña</label>
       <input type="password" id="password" name="password" autocomplete="current-password" required>
+      <div class="login-extra-row">
+        <label class="remember-me" for="remember">
+          <input type="checkbox" id="remember" name="remember">
+          Recordarme
+        </label>
+        <button type="button" class="forgot-link" onclick="document.getElementById('forgot-help').classList.toggle('open')">Olvidé mi contraseña</button>
+      </div>
+      <div class="forgot-help" id="forgot-help">
+        Por ahora no hay recuperación automática por mail — pedile a un administrador que te resetee la contraseña desde "Gestionar usuarios".
+      </div>
       <button type="submit">Entrar</button>
     </form>
   </div>

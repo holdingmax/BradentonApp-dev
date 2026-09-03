@@ -20,7 +20,7 @@
 <div class="card">
   <h2>Cupones Diarios → hoja Gettel-Toyota</h2>
   <p class="muted">Excel de cupones diarios (o PDF/foto escaneada).</p>
-  <form method="post" action="{{ url_for('gettel_cupones') }}" enctype="multipart/form-data" class="needs-shared-master">
+  <form method="post" action="{{ url_for('gettel_cupones') }}" enctype="multipart/form-data" class="needs-shared-master ajax-process-form">
     <input type="file" name="master_file" class="hidden-master-mirror" style="display:none">
     <label class="muted">Excel o PDF/Foto de Origen (Cupones Diarios)</label>
     <input type="file" name="source_file" id="gettel-source-file" accept=".xlsx,.pdf" required>
@@ -34,7 +34,7 @@
 <div class="card">
   <h2>Pagos (Cupones) → hoja PAGO Cupones</h2>
   <p class="muted">Uno o más PDF de recibos de pago.</p>
-  <form method="post" action="{{ url_for('gettel_pagos') }}" enctype="multipart/form-data" class="needs-shared-master">
+  <form method="post" action="{{ url_for('gettel_pagos') }}" enctype="multipart/form-data" class="needs-shared-master ajax-process-form">
     <input type="file" name="master_file" class="hidden-master-mirror" style="display:none">
     <label class="muted">PDF(s) de Pagos</label>
     <input type="file" name="pdf_files" id="gettel-pagos-pdfs" accept=".pdf" multiple required>

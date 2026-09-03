@@ -20,7 +20,7 @@
 <div class="card">
   <h2>Ventas por Departamento → CARGA AQUI</h2>
   <p class="muted">Excel Bradenton. Análisis C-Store. Ventas.</p>
-  <form method="post" action="{{ url_for('reporte_ventas') }}" enctype="multipart/form-data" class="needs-shared-master">
+  <form method="post" action="{{ url_for('reporte_ventas') }}" enctype="multipart/form-data" class="needs-shared-master ajax-process-form">
     <input type="file" name="pdf_files" class="hidden-master-mirror" multiple style="display:none">
     <label class="muted">Excel Ledger (Bradenton. Análisis C-Store. Ventas)</label>
     <input type="file" name="master_file" id="reporte-ventas-master" accept=".xlsx,.xlsm" required>
@@ -34,7 +34,7 @@
 <div class="card">
   <h2>Store Info (Fechas, Fuel, Cash/TC)</h2>
   <p class="muted">Excel de Cierre (hoja Store Info).</p>
-  <form method="post" action="{{ url_for('reporte_store_info') }}" enctype="multipart/form-data" class="needs-shared-master">
+  <form method="post" action="{{ url_for('reporte_store_info') }}" enctype="multipart/form-data" class="needs-shared-master ajax-process-form">
     <input type="file" name="pdf_files" class="hidden-master-mirror" multiple style="display:none">
     <label class="muted">Excel Ledger (Cierre)</label>
     <input type="file" name="master_file" id="reporte-storeinfo-master" accept=".xlsx,.xlsm" required>

@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Bradenton App — Controles{% endblock %}
+{% block content %}
+<div class="page-header">
+  <span class="eyebrow">Verificación de cierres</span>
+  <h1>Controles</h1>
+  <p class="page-subtitle">Subí los Excels ya cerrados de fin de mes para verificar que todo esté en orden. Se van a ir sumando módulos de a uno, empezando cuando Herramientas esté terminado y probado al 100%.</p>
+</div>
+{% if controls %}
+<div class="tool-grid">
+  {% for control in controls %}
+    <a class="tool-card" href="{{ control.url }}" style="--tool-accent: {{ control.accent }};">
+      <span class="tool-card-badge">{{ control.icon|safe }}</span>
+      <span class="tool-card-body">
+        <span class="tool-card-label">{{ control.label }}</span>
+        <span class="tool-card-desc">{{ control.description }}</span>
+      </span>
+    </a>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card" style="text-align: center; color: var(--text-soft);">
+  Todavía no hay módulos de control acá. Próximamente.
+</div>
+{% endif %}
+{% endblock %}

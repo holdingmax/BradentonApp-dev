@@ -20,7 +20,7 @@
 <div class="card">
   <h2>CMV Costo</h2>
   <p class="muted">Uno o más archivos de departamento de Elistar. Actualiza Costo y Precio en COSTO.TODOS.</p>
-  <form method="post" action="{{ url_for('cmv_costo') }}" enctype="multipart/form-data" class="needs-shared-master">
+  <form method="post" action="{{ url_for('cmv_costo') }}" enctype="multipart/form-data" class="needs-shared-master ajax-process-form">
     <input type="file" name="master_file" class="hidden-master-mirror" style="display:none">
     <label class="muted">Archivos de Departamento</label>
     <input type="file" name="dept_files" id="cmv-costo-dept-files" accept=".csv,.xls,.xlsx,.xlsm" multiple required>
@@ -34,7 +34,7 @@
 <div class="card">
   <h2>CMV Ventas</h2>
   <p class="muted">Uno o más reportes de ventas del POS. Actualiza las hojas de departamento.</p>
-  <form method="post" action="{{ url_for('cmv_ventas') }}" enctype="multipart/form-data" class="needs-shared-master">
+  <form method="post" action="{{ url_for('cmv_ventas') }}" enctype="multipart/form-data" class="needs-shared-master ajax-process-form">
     <input type="file" name="master_file" class="hidden-master-mirror" style="display:none">
     <label class="muted">POS Reports</label>
     <input type="file" name="sales_files" id="cmv-ventas-sales-files" accept=".csv,.xls,.xlsx,.xlsm" multiple required>

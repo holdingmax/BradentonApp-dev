@@ -9,9 +9,17 @@
   <h1>Facturas y Pagos</h1>
   <p class="page-subtitle">Dos flujos independientes sobre el mismo Excel Ledger (Cta Cte Proveedores) — Facturas agrega filas "invoice" detectando el proveedor de cada PDF, Pagos agrega filas "OP" a partir del extracto de Chase ya categorizado.</p>
 </div>
+<details class="card">
+  <summary style="cursor: pointer; font-weight: 600;">¿Qué proveedores puedo mandar en un solo lote sin revisar?</summary>
+  <p class="muted" style="margin-top: 12px;">Basado en pruebas contra el historial real de cada proveedor (no una promesa de que nunca va a fallar) — los de "tasa baja" conviene revisarlos después de cargar: fijate si "facturas cargadas" coincide con la cantidad de PDF que subiste, y cargá a mano las que falten.</p>
+  <p><strong>Confiables</strong> (podés mandar el lote entero de una): H.T. Hackney, CEC (Chinook Enterprises), Gold Coast Eagle, Frito-Lay, King's Wholesale Florists, Sweetheart Ice Cream, Bimbo Bakeries, Johnson Brothers, Flori-Gas, Airgas National Carbonation, Express Beverage of Tampa, FS Wholesale, LMT Trading, Overflow Group Distribution, Swisher, Signarama.</p>
+  <p><strong>Tasa media</strong> (la mayoría entra, pero conviene revisar): Kooler Ice (~75%), Sam's Club (~68%), Midtown Wholesale (~65%), Red Bull (~65%).</p>
+  <p style="margin-bottom: 0;"><strong>Tasa baja</strong> (esperá que varias fallen, revisá siempre): Colonial Wholesale (~40%), AZ Southeast Distributors (~15%) — de éstas dos en particular, no vale la pena mandar un lote grande sin mirar cuántas entraron.</p>
+</details>
+
 <div class="card">
   <h2>Excel Ledger</h2>
-  <p class="muted">Compartido por los dos cuadros de abajo — se completa una sola vez.</p>
+  <p class="muted">Compartido por los dos cuadros de abajo — se completa una sola vez, y el resultado de cada operación queda cargado solo para la siguiente (además de descargarse a tu PC), sin que haga falta volver a elegirlo a mano.</p>
   <label class="muted">Excel Ledger (Cta Cte Proveedores)</label>
   <input type="file" id="proveedores-shared-master" class="shared-master-input" accept=".xlsx,.xlsm" required>
   <button type="button" class="btn-secondary clear-file-btn" data-target="proveedores-shared-master" style="margin-top: 10px;">Limpiar</button>
@@ -20,10 +28,10 @@
 <div class="card">
   <h2>Cargar Facturas → fila "invoice" por proveedor</h2>
   <p class="muted">Uno o más PDF de factura. Se detecta el proveedor y la hoja de destino automáticamente; una factura que ya esté cargada (por N° de factura) se omite. Si el OCR no puede leer un dato con confianza, esa factura falla con un aviso en vez de cargar un valor dudoso.</p>
-  <form method="post" action="{{ url_for('proveedores_facturas') }}" enctype="multipart/form-data" class="needs-shared-master">
+  <form method="post" action="{{ url_for('proveedores_facturas') }}" enctype="multipart/form-data" class="needs-shared-master ajax-process-form chain-master-result">
     <input type="file" name="master_file" class="hidden-master-mirror" style="display:none">
     <label class="muted">PDF(s) de Factura</label>
-    <input type="file" name="pdf_files" id="proveedores-facturas-pdfs" accept=".pdf" multiple required>
+    <input type="file" name="pdf_files" id="proveedores-facturas-pdfs" class="accumulate-files" accept=".pdf" multiple required>
     <div class="form-actions">
       <button type="submit">Procesar</button>
       <button type="button" class="btn-secondary clear-file-btn" data-target="proveedores-facturas-pdfs">Limpiar</button>
@@ -34,7 +42,7 @@
 <div class="card">
   <h2>Cargar Pagos (Chase) → fila "OP" por proveedor</h2>
   <p class="muted">Extracto de Chase ya categorizado por la pestaña Chase Bank (columna Detalle = PROVEEDORES). Cada pago se ubica en la hoja del proveedor que le corresponda, en su posición cronológica exacta.</p>
-  <form method="post" action="{{ url_for('proveedores_pagos') }}" enctype="multipart/form-data" class="needs-shared-master">
+  <form method="post" action="{{ url_for('proveedores_pagos') }}" enctype="multipart/form-data" class="needs-shared-master ajax-process-form chain-master-result">
     <input type="file" name="master_file" class="hidden-master-mirror" style="display:none">
     <label class="muted">Extracto de Chase (ya categorizado)</label>
     <input type="file" name="bank_file" id="proveedores-pagos-bank" accept=".csv,.xlsx,.xlsm" required>
@@ -44,4 +52,24 @@
     </div>
   </form>
 </div>
+
+<script>
+  // El popup instantáneo (éxito/aviso/error) ya lo maneja el mecanismo
+  // genérico de base.html (form.ajax-process-form, ver ahí). Lo único
+  // específico de Proveedores es encadenar: el resultado recién descargado
+  // queda cargado solo en el input compartido de arriba, para no tener que
+  // ir a Descargas y volver a elegirlo a mano en el siguiente "Procesar".
+  (function () {
+    document.querySelectorAll('form.chain-master-result').forEach(function (form) {
+      form.addEventListener('ajaxprocess:success', function (event) {
+        var sharedInput = document.querySelector('.shared-master-input');
+        if (!sharedInput) return;
+        var dt = new DataTransfer();
+        dt.items.add(new File([event.detail.blob], event.detail.filename, { type: event.detail.blob.type }));
+        sharedInput.files = dt.files;
+        sharedInput.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    });
+  })();
+</script>
 {% endblock %}

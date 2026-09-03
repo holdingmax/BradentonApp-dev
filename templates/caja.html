@@ -20,7 +20,7 @@
 <div class="card">
   <h2>Chase → K (Depósitos) y S (Food Truck / Hielo)</h2>
   <p class="muted">Extracto de Chase ya categorizado por la pestaña Chase Bank. Se toman las filas con Detalle "DEPOSITO"/"DEPOSITO GETTEL" (columna K) o "FOOD TRUCK"/"DEPOSITO VENTA ICE" (columna S), sumadas por día.</p>
-  <form method="post" action="{{ url_for('caja_chase') }}" enctype="multipart/form-data" class="needs-shared-master">
+  <form method="post" action="{{ url_for('caja_chase') }}" enctype="multipart/form-data" class="needs-shared-master ajax-process-form">
     <input type="file" name="master_file" class="hidden-master-mirror" style="display:none">
     <label class="muted">Extracto de Chase (ya categorizado)</label>
     <input type="file" name="chase_file" id="caja-chase-file" accept=".xlsx,.xlsm" required>
@@ -34,7 +34,7 @@
 <div class="card">
   <h2>Lottery → N (Cuenta Final)</h2>
   <p class="muted">Excel de Lottery (columna X, "CUENTA FINAL"), matcheado por la fecha real de cada fila (columna B).</p>
-  <form method="post" action="{{ url_for('caja_lottery') }}" enctype="multipart/form-data" class="needs-shared-master">
+  <form method="post" action="{{ url_for('caja_lottery') }}" enctype="multipart/form-data" class="needs-shared-master ajax-process-form">
     <input type="file" name="master_file" class="hidden-master-mirror" style="display:none">
     <label class="muted">Excel de Lottery</label>
     <input type="file" name="lottery_file" id="caja-lottery-file" accept=".xlsx,.xlsm" required>

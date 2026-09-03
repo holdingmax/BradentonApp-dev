@@ -12,8 +12,9 @@ igual que el desktop, probando cada uno antes de seguir con el próximo.
 
 import os
 import tempfile
+from urllib.parse import quote
 
-from flask import Flask, flash, redirect, render_template, request, send_file, url_for
+from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, url_for
 from flask_login import (
     LoginManager,
     UserMixin,
@@ -118,7 +119,8 @@ def login():
         if user is None:
             flash("Usuario o contraseña incorrectos.", "error")
         else:
-            login_user(WebUser(username, user.get("is_admin", False)))
+            remember = bool(request.form.get("remember"))
+            login_user(WebUser(username, user.get("is_admin", False)), remember=remember)
             next_url = request.args.get("next")
             return redirect(next_url if _is_safe_next_url(next_url) else url_for("index"))
 
@@ -130,6 +132,27 @@ def login():
 def logout():
     logout_user()
     return redirect(url_for("login"))
+
+
+@app.route("/perfil/password", methods=["GET", "POST"])
+@login_required
+def perfil_password():
+    if request.method == "POST":
+        current_password = request.form.get("current_password", "")
+        new_password = request.form.get("new_password", "")
+        confirm_password = request.form.get("confirm_password", "")
+        if auth.verify_user(current_user.id, current_password) is None:
+            flash("La contraseña actual no es correcta.", "error")
+        elif new_password != confirm_password:
+            flash("Las contraseñas nuevas no coinciden.", "error")
+        else:
+            try:
+                auth.set_password(current_user.id, new_password)
+                flash("Contraseña actualizada correctamente.", "success")
+            except ValueError as exc:
+                flash(str(exc), "error")
+        return redirect(url_for("perfil_password"))
+    return render_template("perfil_password.html")
 
 
 @app.route("/admin/users", methods=["GET", "POST"])
@@ -268,9 +291,15 @@ TOOLS = [
     },
 ]
 
+# Segunda sección de la app, hermana de Herramientas (TOOLS): cada entrada acá
+# es un módulo que recibe un Excel ya cerrado de fin de mes y verifica que
+# esté en orden, en vez de transformarlo. Vacía a propósito hasta que
+# Herramientas esté 100% terminado — ver CLAUDE.md, "Módulo Controles".
+CONTROLS = []
+
 THEME_BY_KEY = {
     tool["key"]: {"accent": tool["accent"], "accent_soft": tool["accent_soft"]}
-    for tool in TOOLS
+    for tool in TOOLS + CONTROLS
 }
 
 
@@ -312,9 +341,93 @@ def _save_uploads_to_workspace(uploads, workdir=None):
     return paths
 
 
+def _is_ajax_request():
+    """
+    El JS genérico de base.html (form.ajax-process-form) manda este header
+    cuando procesa el formulario por fetch en vez de dejar que el navegador
+    navegue -- ahí un flash()+redirect no sirve (no hay recarga de página
+    de por medio para mostrarlo, y si la respuesta es un archivo -- ver
+    _success_response -- ni siquiera hay redirect), así que hace falta
+    responder con JSON en error o con un header de aviso en éxito, en vez
+    de la sesión de flash de Flask.
+    """
+    return request.headers.get("X-Ajax-Request") == "1"
+
+
+def _error_response(message):
+    """
+    Reporta una falla dura (nada se pudo procesar). Un pedido por fetch
+    recibe JSON así el popup de base.html lo muestra al instante; un submit
+    de formulario común (sin JS) cae al flash()+redirect de siempre -- acá
+    sí funciona porque todavía no hay ningún send_file de por medio.
+    """
+    if _is_ajax_request():
+        return jsonify({"error": message}), 400
+    flash(message, "error")
+    return redirect(request.referrer or url_for("index"))
+
+
+def _open_result_for_user(path):
+    """
+    Abre el resultado ya procesado en Excel, en esta misma PC -- pedido
+    explícito del usuario (2026-09-02): quiere verlo al toque en vez de ir a
+    buscarlo a la carpeta Descargas.
+
+    Solo se llama acá, desde el handler de una request HTTP real -- nunca
+    desde los módulos de negocio (cmv_costo.py, proveedores.py, etc.), que
+    Claude también llama directo (sin pasar por Flask) para verificar un fix
+    antes de pedirle al usuario que lo pruebe él mismo. Mantener esta
+    llamada fuera de esos módulos es lo que garantiza que esas verificaciones
+    nunca abran Excel solas en la PC del usuario (ver "Nunca abrir Excel en
+    la PC del usuario" en CLAUDE.md) mientras que un click real en
+    "Procesar" sí lo abre.
+    """
+    try:
+        os.startfile(path)  # noqa: solo se despliega en Windows
+    except OSError:
+        pass
+
+
+def _success_response(temp_path, download_name, notice=None, notice_level="warning"):
+    """
+    Abre el archivo procesado en Excel (ver _open_result_for_user) y lo sirve
+    en la respuesta -- ya no fuerza la descarga a la carpeta Descargas del
+    navegador (el JS de base.html dejó de disparar esa descarga, pedido
+    explícito del usuario), pero el archivo real sigue viajando en el blob
+    de la respuesta porque Proveedores lo reusa para encadenar Facturas →
+    Pagos sin que el usuario tenga que volver a seleccionarlo (ver
+    chain-master-result en proveedores.html).
+
+    El aviso opcional (éxito parcial: algo no se pudo cargar solo) tiene que
+    mostrarse en el momento aunque la respuesta sea una descarga de archivo,
+    nunca una página HTML -- un flash() acá quedaría en cola de sesión y
+    aparecería recién en la próxima página que el usuario visite, fuera de
+    contexto (bug real, ya documentado en CLAUDE.md). Un pedido por fetch
+    recibe el aviso en un header que el JS de base.html muestra al toque,
+    arriba de la página; un submit común (sin JS) no tiene forma de mostrar
+    nada en el momento junto a una descarga, así que cae a flash() como
+    mejor esfuerzo -- caso raro, todos los formularios de módulo ya mandan
+    el pedido por fetch.
+    """
+    _open_result_for_user(temp_path)
+    response = send_file(temp_path, as_attachment=True, download_name=download_name)
+    if notice:
+        if _is_ajax_request():
+            response.headers["X-App-Notice"] = quote(notice)
+            response.headers["X-App-Notice-Level"] = notice_level
+        else:
+            flash(notice, notice_level)
+    return response
+
+
 @app.route("/")
 def index():
     return render_template("index.html", tools=TOOLS)
+
+
+@app.route("/controles")
+def controles():
+    return render_template("controles_index.html", controls=CONTROLS)
 
 
 @app.route("/chase", methods=["GET", "POST"])
@@ -326,21 +439,15 @@ def chase():
 
     upload = request.files.get("chase_file")
     if upload is None or not upload.filename:
-        flash("Seleccioná un archivo CSV o Excel de Chase.", "error")
-        return redirect(url_for("chase"))
+        return _error_response("Seleccioná un archivo CSV o Excel de Chase.")
 
     try:
         temp_path, filename = _save_upload_to_workspace(upload)
         updated_count, total_rows = process_chase_categorization(temp_path)
     except Exception as exc:
-        flash(f"Error: {exc}", "error")
-        return redirect(url_for("chase"))
+        return _error_response(f"Error: {exc}")
 
-    return send_file(
-        temp_path,
-        as_attachment=True,
-        download_name=filename,
-    )
+    return _success_response(temp_path, filename)
 
 
 def _require_admin_for_chase_rules():
@@ -409,11 +516,9 @@ def cmv_costo():
     master_upload = request.files.get("master_file")
     dept_uploads = request.files.getlist("dept_files")
     if master_upload is None or not master_upload.filename:
-        flash("Seleccioná el Excel maestro CMV.", "error")
-        return redirect(url_for("cmv"))
+        return _error_response("Seleccioná el Excel maestro CMV.")
     if not dept_uploads or not any(u.filename for u in dept_uploads):
-        flash("Seleccioná uno o más archivos de departamento.", "error")
-        return redirect(url_for("cmv"))
+        return _error_response("Seleccioná uno o más archivos de departamento.")
 
     try:
         workdir = _new_workspace_dir()
@@ -423,14 +528,9 @@ def cmv_costo():
             update_master_costo_todos_bulk(master_path, dept_paths)
         )
     except Exception as exc:
-        flash(f"Error: {exc}", "error")
-        return redirect(url_for("cmv"))
+        return _error_response(f"Error: {exc}")
 
-    return send_file(
-        temp_xlsx_path,
-        as_attachment=True,
-        download_name=master_filename,
-    )
+    return _success_response(temp_xlsx_path, master_filename)
 
 
 @app.route("/cmv/ventas", methods=["POST"])
@@ -438,25 +538,41 @@ def cmv_ventas():
     master_upload = request.files.get("master_file")
     sales_uploads = request.files.getlist("sales_files")
     if master_upload is None or not master_upload.filename:
-        flash("Seleccioná el Excel maestro CMV.", "error")
-        return redirect(url_for("cmv"))
+        return _error_response("Seleccioná el Excel maestro CMV.")
     if not sales_uploads or not any(u.filename for u in sales_uploads):
-        flash("Seleccioná uno o más reportes de ventas del POS.", "error")
-        return redirect(url_for("cmv"))
+        return _error_response("Seleccioná uno o más reportes de ventas del POS.")
 
     try:
         workdir = _new_workspace_dir()
         master_path, master_filename = _save_upload_to_workspace(master_upload, workdir=workdir)
         sales_paths = _save_uploads_to_workspace(sales_uploads, workdir=workdir)
-        _combined, temp_master_path = process_monthly_sales(sales_paths, master_path)
+        _combined, temp_master_path, summary = process_monthly_sales(sales_paths, master_path)
     except Exception as exc:
-        flash(f"Error: {exc}", "error")
-        return redirect(url_for("cmv"))
+        return _error_response(f"Error: {exc}")
 
-    return send_file(
+    # Un archivo o departamento problemático no aborta la carga (ver
+    # monthly_sales.py) -- el resto se guarda igual, y el aviso se muestra
+    # al toque junto con la descarga (nunca con flash(): la respuesta es
+    # una descarga de archivo, no una página, así que quedaría en cola y
+    # aparecería fuera de contexto -- mismo bug ya documentado para
+    # Proveedores/Caja).
+    notice_parts = []
+    if summary["failed_files"]:
+        notice_parts.append(f"{len(summary['failed_files'])} archivo(s) de ventas no se pudieron leer.")
+    if summary["unmapped_departments"]:
+        notice_parts.append(
+            f"{len(summary['unmapped_departments'])} departamento(s) no se pudieron ubicar en el maestro."
+        )
+    if summary["sheets_failed"]:
+        notice_parts.append(
+            f"{len(summary['sheets_failed'])} hoja(s) de departamento no se pudieron actualizar."
+        )
+
+    return _success_response(
         temp_master_path,
-        as_attachment=True,
-        download_name=master_filename,
+        master_filename,
+        notice=" ".join(notice_parts) or None,
+        notice_level="error",
     )
 
 
@@ -470,11 +586,9 @@ def gettel_cupones():
     source_upload = request.files.get("source_file")
     master_upload = request.files.get("master_file")
     if source_upload is None or not source_upload.filename:
-        flash("Seleccioná el Excel o PDF/Foto de origen (cupones diarios).", "error")
-        return redirect(url_for("gettel"))
+        return _error_response("Seleccioná el Excel o PDF/Foto de origen (cupones diarios).")
     if master_upload is None or not master_upload.filename:
-        flash("Seleccioná el Excel de destino (master Cierre).", "error")
-        return redirect(url_for("gettel"))
+        return _error_response("Seleccioná el Excel de destino (master Cierre).")
 
     try:
         workdir = _new_workspace_dir()
@@ -484,21 +598,16 @@ def gettel_cupones():
         is_pdf = os.path.splitext(source_path)[1].lower() == ".pdf"
         if is_pdf:
             preview_path, rows_matched, vendor, days_found, _diagnostics = (
-                merge_gettel_toyota_pdf_into_master(source_path, master_path, launch=False)
+                merge_gettel_toyota_pdf_into_master(source_path, master_path)
             )
         else:
             preview_path, rows_matched, gettel_days, toyota_days, _unmatched = (
-                merge_gettel_toyota_into_master(source_path, master_path, launch=False)
+                merge_gettel_toyota_into_master(source_path, master_path)
             )
     except Exception as exc:
-        flash(f"Error: {exc}", "error")
-        return redirect(url_for("gettel"))
+        return _error_response(f"Error: {exc}")
 
-    return send_file(
-        preview_path,
-        as_attachment=True,
-        download_name=master_filename,
-    )
+    return _success_response(preview_path, master_filename)
 
 
 @app.route("/gettel/pagos", methods=["POST"])
@@ -506,11 +615,9 @@ def gettel_pagos():
     master_upload = request.files.get("master_file")
     pdf_uploads = request.files.getlist("pdf_files")
     if master_upload is None or not master_upload.filename:
-        flash("Seleccioná el Excel de destino (master Cierre).", "error")
-        return redirect(url_for("gettel"))
+        return _error_response("Seleccioná el Excel de destino (master Cierre).")
     if not pdf_uploads or not any(u.filename for u in pdf_uploads):
-        flash("Seleccioná uno o más PDF de pagos.", "error")
-        return redirect(url_for("gettel"))
+        return _error_response("Seleccioná uno o más PDF de pagos.")
 
     try:
         workdir = _new_workspace_dir()
@@ -518,14 +625,9 @@ def gettel_pagos():
         pdf_paths = _save_uploads_to_workspace(pdf_uploads, workdir=workdir)
         preview_path, _summary = process_gettel_pagos(master_path, pdf_paths)
     except Exception as exc:
-        flash(f"Error: {exc}", "error")
-        return redirect(url_for("gettel"))
+        return _error_response(f"Error: {exc}")
 
-    return send_file(
-        preview_path,
-        as_attachment=True,
-        download_name=master_filename,
-    )
+    return _success_response(preview_path, master_filename)
 
 
 @app.route("/reporte")
@@ -538,48 +640,44 @@ def _reporte_pdf_upload():
     master_upload = request.files.get("master_file")
     pdf_uploads = request.files.getlist("pdf_files")
     if not pdf_uploads or not any(u.filename for u in pdf_uploads):
-        flash("Seleccioná uno o más PDF diarios.", "error")
-        return None
+        return None, _error_response("Seleccioná uno o más PDF diarios.")
     if master_upload is None or not master_upload.filename:
-        flash("Seleccioná el Excel de destino.", "error")
-        return None
+        return None, _error_response("Seleccioná el Excel de destino.")
 
     workdir = _new_workspace_dir()
     master_path, master_filename = _save_upload_to_workspace(master_upload, workdir=workdir)
     pdf_paths = _save_uploads_to_workspace(pdf_uploads, workdir=workdir)
-    return master_path, master_filename, pdf_paths
+    return (master_path, master_filename, pdf_paths), None
 
 
 @app.route("/reporte/ventas", methods=["POST"])
 def reporte_ventas():
-    saved = _reporte_pdf_upload()
-    if saved is None:
-        return redirect(url_for("reporte"))
+    saved, error = _reporte_pdf_upload()
+    if error is not None:
+        return error
     master_path, master_filename, pdf_paths = saved
 
     try:
         temp_path, _summary = process_reporte_diario(master_path, pdf_paths)
     except Exception as exc:
-        flash(f"Error: {exc}", "error")
-        return redirect(url_for("reporte"))
+        return _error_response(f"Error: {exc}")
 
-    return send_file(temp_path, as_attachment=True, download_name=master_filename)
+    return _success_response(temp_path, master_filename)
 
 
 @app.route("/reporte/store-info", methods=["POST"])
 def reporte_store_info():
-    saved = _reporte_pdf_upload()
-    if saved is None:
-        return redirect(url_for("reporte"))
+    saved, error = _reporte_pdf_upload()
+    if error is not None:
+        return error
     master_path, master_filename, pdf_paths = saved
 
     try:
         temp_path, _summary = process_store_info(master_path, pdf_paths)
     except Exception as exc:
-        flash(f"Error: {exc}", "error")
-        return redirect(url_for("reporte"))
+        return _error_response(f"Error: {exc}")
 
-    return send_file(temp_path, as_attachment=True, download_name=master_filename)
+    return _success_response(temp_path, master_filename)
 
 
 @app.route("/lottery")
@@ -592,48 +690,44 @@ def _lottery_pdf_upload():
     master_upload = request.files.get("master_file")
     pdf_uploads = request.files.getlist("pdf_files")
     if not pdf_uploads or not any(u.filename for u in pdf_uploads):
-        flash("Seleccioná uno o más PDF.", "error")
-        return None
+        return None, _error_response("Seleccioná uno o más PDF.")
     if master_upload is None or not master_upload.filename:
-        flash("Seleccioná el Excel de Lottery.", "error")
-        return None
+        return None, _error_response("Seleccioná el Excel de Lottery.")
 
     workdir = _new_workspace_dir()
     master_path, master_filename = _save_upload_to_workspace(master_upload, workdir=workdir)
     pdf_paths = _save_uploads_to_workspace(pdf_uploads, workdir=workdir)
-    return master_path, master_filename, pdf_paths
+    return (master_path, master_filename, pdf_paths), None
 
 
 @app.route("/lottery/sales-report", methods=["POST"])
 def lottery_sales_report():
-    saved = _lottery_pdf_upload()
-    if saved is None:
-        return redirect(url_for("lottery"))
+    saved, error = _lottery_pdf_upload()
+    if error is not None:
+        return error
     master_path, master_filename, pdf_paths = saved
 
     try:
         temp_path, _summary = process_lottery(master_path, [], pdf_paths)
     except Exception as exc:
-        flash(f"Error: {exc}", "error")
-        return redirect(url_for("lottery"))
+        return _error_response(f"Error: {exc}")
 
-    return send_file(temp_path, as_attachment=True, download_name=master_filename)
+    return _success_response(temp_path, master_filename)
 
 
 @app.route("/lottery/department", methods=["POST"])
 def lottery_department():
-    saved = _lottery_pdf_upload()
-    if saved is None:
-        return redirect(url_for("lottery"))
+    saved, error = _lottery_pdf_upload()
+    if error is not None:
+        return error
     master_path, master_filename, pdf_paths = saved
 
     try:
         temp_path, _summary = process_lottery(master_path, pdf_paths, [])
     except Exception as exc:
-        flash(f"Error: {exc}", "error")
-        return redirect(url_for("lottery"))
+        return _error_response(f"Error: {exc}")
 
-    return send_file(temp_path, as_attachment=True, download_name=master_filename)
+    return _success_response(temp_path, master_filename)
 
 
 @app.route("/eft")
@@ -646,11 +740,9 @@ def eft_cta_cte_route():
     pdf_upload = request.files.get("pdf_file")
     master_upload = request.files.get("master_file")
     if pdf_upload is None or not pdf_upload.filename:
-        flash("Seleccioná un archivo PDF de EFT.", "error")
-        return redirect(url_for("eft"))
+        return _error_response("Seleccioná un archivo PDF de EFT.")
     if master_upload is None or not master_upload.filename:
-        flash("Seleccioná el Excel Ledger.", "error")
-        return redirect(url_for("eft"))
+        return _error_response("Seleccioná el Excel Ledger.")
 
     try:
         workdir = _new_workspace_dir()
@@ -659,15 +751,13 @@ def eft_cta_cte_route():
 
         header_data, paid_invoices, credit_coupons = extract_eft_data(pdf_path)
         if eft_already_loaded_in_workbook(master_path, header_data, credit_coupons):
-            flash(EFT_DUPLICATE_ALERT, "error")
-            return redirect(url_for("eft"))
+            return _error_response(EFT_DUPLICATE_ALERT)
 
         update_excel_workbook(master_path, header_data, paid_invoices, credit_coupons)
     except Exception as exc:
-        flash(f"Error: {exc}", "error")
-        return redirect(url_for("eft"))
+        return _error_response(f"Error: {exc}")
 
-    return send_file(master_path, as_attachment=True, download_name=master_filename)
+    return _success_response(master_path, master_filename)
 
 
 @app.route("/eft/cupones", methods=["POST"])
@@ -675,8 +765,7 @@ def eft_cupones():
     master_upload = request.files.get("master_file")
     monthly_upload = request.files.get("monthly_report_file")
     if master_upload is None or not master_upload.filename:
-        flash("Seleccioná el Excel Ledger.", "error")
-        return redirect(url_for("eft"))
+        return _error_response("Seleccioná el Excel Ledger.")
 
     try:
         workdir = _new_workspace_dir()
@@ -688,16 +777,13 @@ def eft_cupones():
         else:
             saved_path, _summary = resync_cupones_only(master_path)
     except NoPendingCouponsError as exc:
-        flash(str(exc), "error")
-        return redirect(url_for("eft"))
+        return _error_response(str(exc))
     except MonthlyReportFullyDuplicateError as exc:
-        flash(str(exc), "error")
-        return redirect(url_for("eft"))
+        return _error_response(str(exc))
     except Exception as exc:
-        flash(f"Error: {exc}", "error")
-        return redirect(url_for("eft"))
+        return _error_response(f"Error: {exc}")
 
-    return send_file(saved_path, as_attachment=True, download_name=master_filename)
+    return _success_response(saved_path, master_filename)
 
 
 @app.route("/proveedores")
@@ -705,16 +791,34 @@ def proveedores():
     return render_template("proveedores.html", **THEME_BY_KEY["proveedores"])
 
 
+def _proveedores_error(message):
+    return _error_response(message)
+
+
+def _proveedores_success(temp_path, download_name, notices):
+    """
+    `notices` es una lista de tuplas (level, message) -- level es
+    "warning" para algo informativo que no requiere acción (ej. una
+    factura que ya estaba cargada, se omite sola) o "error" para algo que
+    sí requiere que el usuario cargue esa factura a mano. Se combinan en
+    un solo aviso porque _success_response solo lleva uno; el nivel final
+    es "error" si alguno de los dos lo es.
+    """
+    if not notices:
+        return _success_response(temp_path, download_name)
+    combined = " ".join(message for _level, message in notices)
+    worst_level = "error" if any(level == "error" for level, _message in notices) else "warning"
+    return _success_response(temp_path, download_name, notice=combined, notice_level=worst_level)
+
+
 @app.route("/proveedores/facturas", methods=["POST"])
 def proveedores_facturas():
     master_upload = request.files.get("master_file")
     pdf_uploads = request.files.getlist("pdf_files")
     if master_upload is None or not master_upload.filename:
-        flash("Seleccioná el Excel Ledger.", "error")
-        return redirect(url_for("proveedores"))
+        return _proveedores_error("Seleccioná el Excel Ledger.")
     if not pdf_uploads or not any(u.filename for u in pdf_uploads):
-        flash("Seleccioná uno o más PDF de facturas.", "error")
-        return redirect(url_for("proveedores"))
+        return _proveedores_error("Seleccioná uno o más PDF de facturas.")
 
     try:
         workdir = _new_workspace_dir()
@@ -722,14 +826,42 @@ def proveedores_facturas():
         pdf_paths = _save_uploads_to_workspace(pdf_uploads, workdir=workdir)
         temp_path, summary = append_supplier_invoices(master_path, pdf_paths)
     except Exception as exc:
-        flash(f"Error: {exc}", "error")
-        return redirect(url_for("proveedores"))
+        return _proveedores_error(f"Error: {exc}")
+
+    notices = []
+
+    duplicate_files = []
+    for result in summary["batch_results"]:
+        duplicate_files.extend(result.get("duplicates_skipped") or [])
+    if duplicate_files:
+        notices.append((
+            "warning",
+            f"{len(duplicate_files)} factura(s) ya estaban cargadas y se omitieron solas.",
+        ))
 
     if summary["failed"]:
-        detail = "; ".join(f"{item['filename']}: {item['error']}" for item in summary["failed"])
-        flash(f"{len(summary['failed'])} factura(s) no se pudieron cargar y se omitieron: {detail}", "error")
+        notices.append((
+            "error",
+            f"{len(summary['failed'])} factura(s) no se pudieron leer automáticamente. Revisalas a mano.",
+        ))
 
-    return send_file(temp_path, as_attachment=True, download_name=master_filename)
+    resumen_warnings = summary.get("resumen_warnings") or []
+    if resumen_warnings:
+        if any(item["status"] == "sheet_not_found" for item in resumen_warnings):
+            notices.append((
+                "warning",
+                "Las facturas se cargaron bien, pero no se encontró la hoja RESUMEN COMPRAS "
+                "para actualizar el resumen mensual.",
+            ))
+        else:
+            suppliers = ", ".join(sorted({item["supplier"] for item in resumen_warnings if item["supplier"]}))
+            notices.append((
+                "warning",
+                f"{len(resumen_warnings)} factura(s) se cargaron bien, pero no se sumaron en "
+                f"RESUMEN COMPRAS ({suppliers}). Revisalo a mano.",
+            ))
+
+    return _proveedores_success(temp_path, master_filename, notices)
 
 
 @app.route("/proveedores/pagos", methods=["POST"])
@@ -737,22 +869,34 @@ def proveedores_pagos():
     master_upload = request.files.get("master_file")
     bank_upload = request.files.get("bank_file")
     if master_upload is None or not master_upload.filename:
-        flash("Seleccioná el Excel Ledger.", "error")
-        return redirect(url_for("proveedores"))
+        return _proveedores_error("Seleccioná el Excel Ledger.")
     if bank_upload is None or not bank_upload.filename:
-        flash("Seleccioná el extracto de Chase ya categorizado.", "error")
-        return redirect(url_for("proveedores"))
+        return _proveedores_error("Seleccioná el extracto de Chase ya categorizado.")
 
     try:
         workdir = _new_workspace_dir()
         master_path, master_filename = _save_upload_to_workspace(master_upload, workdir=workdir)
         bank_path, _bank_filename = _save_upload_to_workspace(bank_upload, workdir=workdir)
-        temp_path, _summary = append_supplier_payments(master_path, bank_path)
+        temp_path, summary = append_supplier_payments(master_path, bank_path)
     except Exception as exc:
-        flash(f"Error: {exc}", "error")
-        return redirect(url_for("proveedores"))
+        return _proveedores_error(f"Error: {exc}")
 
-    return send_file(temp_path, as_attachment=True, download_name=master_filename)
+    notices = []
+
+    duplicate_count = sum(len(result.get("duplicates_skipped") or []) for result in summary["batch_results"])
+    if duplicate_count:
+        notices.append((
+            "warning",
+            f"{duplicate_count} pago(s) ya estaban cargados y se omitieron solos.",
+        ))
+
+    if summary["unmatched"]:
+        notices.append((
+            "error",
+            f"{len(summary['unmatched'])} fila(s) del banco no se pudieron cargar. Revisalas a mano.",
+        ))
+
+    return _proveedores_success(temp_path, master_filename, notices)
 
 
 def _format_date_amounts(date_amounts):
@@ -771,11 +915,9 @@ def caja_chase():
     master_upload = request.files.get("master_file")
     chase_upload = request.files.get("chase_file")
     if master_upload is None or not master_upload.filename:
-        flash("Seleccioná el Excel Cierre.", "error")
-        return redirect(url_for("caja"))
+        return _error_response("Seleccioná el Excel Cierre.")
     if chase_upload is None or not chase_upload.filename:
-        flash("Seleccioná el Excel de Chase ya categorizado.", "error")
-        return redirect(url_for("caja"))
+        return _error_response("Seleccioná el Excel de Chase ya categorizado.")
 
     try:
         workdir = _new_workspace_dir()
@@ -783,22 +925,23 @@ def caja_chase():
         chase_path, _chase_filename = _save_upload_to_workspace(chase_upload, workdir=workdir)
         temp_path, summary = apply_chase_deposits(master_path, chase_path)
     except Exception as exc:
-        flash(f"Error: {exc}", "error")
-        return redirect(url_for("caja"))
+        return _error_response(f"Error: {exc}")
 
+    notice_parts = []
     if summary["deposits_unmatched"]:
-        flash(
+        notice_parts.append(
             "Depósitos sin fecha en CAJA (no se cargaron): "
-            + _format_date_amounts(summary["deposits_unmatched"]),
-            "error",
+            + _format_date_amounts(summary["deposits_unmatched"])
         )
     if summary["food_ice_unmatched"]:
-        flash(
+        notice_parts.append(
             "Food Truck/Hielo sin fecha en CAJA (no se cargaron): "
-            + _format_date_amounts(summary["food_ice_unmatched"]),
-            "error",
+            + _format_date_amounts(summary["food_ice_unmatched"])
         )
-    return send_file(temp_path, as_attachment=True, download_name=master_filename)
+
+    return _success_response(
+        temp_path, master_filename, notice=" ".join(notice_parts) or None, notice_level="error"
+    )
 
 
 @app.route("/caja/lottery", methods=["POST"])
@@ -806,11 +949,9 @@ def caja_lottery():
     master_upload = request.files.get("master_file")
     lottery_upload = request.files.get("lottery_file")
     if master_upload is None or not master_upload.filename:
-        flash("Seleccioná el Excel Cierre.", "error")
-        return redirect(url_for("caja"))
+        return _error_response("Seleccioná el Excel Cierre.")
     if lottery_upload is None or not lottery_upload.filename:
-        flash("Seleccioná el Excel de Lottery.", "error")
-        return redirect(url_for("caja"))
+        return _error_response("Seleccioná el Excel de Lottery.")
 
     try:
         workdir = _new_workspace_dir()
@@ -818,24 +959,24 @@ def caja_lottery():
         lottery_path, _lottery_filename = _save_upload_to_workspace(lottery_upload, workdir=workdir)
         temp_path, summary = apply_lottery_cuenta_final(master_path, lottery_path)
     except Exception as exc:
-        flash(f"Error: {exc}", "error")
-        return redirect(url_for("caja"))
+        return _error_response(f"Error: {exc}")
 
+    notice_parts = []
     if summary["unmatched"]:
-        flash(
+        notice_parts.append(
             "Fechas de Lottery sin fila en CAJA (no se cargaron): "
-            + _format_date_amounts(summary["unmatched"]),
-            "error",
+            + _format_date_amounts(summary["unmatched"])
         )
     if summary["missing_cached_value"]:
         dates_str = ", ".join(d.strftime("%d/%m") for d in sorted(summary["missing_cached_value"]))
-        flash(
+        notice_parts.append(
             "Días sin CUENTA FINAL calculada en el Lottery (abrilo y guardalo en Excel para "
-            f"que recalcule las fórmulas, después volvé a intentar): {dates_str}",
-            "error",
+            f"que recalcule las fórmulas, después volvé a intentar): {dates_str}"
         )
 
-    return send_file(temp_path, as_attachment=True, download_name=master_filename)
+    return _success_response(
+        temp_path, master_filename, notice=" ".join(notice_parts) or None, notice_level="error"
+    )
 
 
 if __name__ == "__main__":

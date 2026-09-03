@@ -22,6 +22,8 @@
       --error-soft: #FEF2F2;
       --success: #15803D;
       --success-soft: #F0FDF4;
+      --warning: #B45309;
+      --warning-soft: #FFFBEB;
       --radius: 10px;
       --shadow-sm: 0 1px 2px rgba(17, 24, 39, 0.06);
       --shadow-md: 0 4px 14px rgba(17, 24, 39, 0.08);
@@ -89,6 +91,27 @@
     nav.crumbs a:hover { color: var(--text-on-brand); }
     nav.crumbs .current { color: var(--text-on-brand); font-weight: 600; }
 
+    nav.section-switch {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+      margin-left: 18px;
+      padding-left: 18px;
+      border-left: 1px solid var(--border);
+    }
+    .section-switch-item {
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-muted-on-brand);
+      padding: 6px 12px;
+      border-radius: 999px;
+    }
+    .section-switch-item:hover { color: var(--text-on-brand); }
+    .section-switch-item.active { color: var(--text-on-brand); background: var(--surface-alt); }
+
+    .topbar-left { display: flex; align-items: center; flex-wrap: wrap; row-gap: 6px; }
+
     .topbar-right { display: flex; align-items: center; gap: 14px; }
 
     /* Account button — UI shell only, no auth wired up yet */
@@ -151,16 +174,6 @@
       color: var(--text-soft);
     }
     a.account-dropdown-item:hover { background: var(--surface-alt); color: var(--text); }
-    .account-dropdown-item .soon {
-      font-size: 10px;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      background: var(--surface-alt);
-      border: 1px solid var(--border);
-      color: var(--text-soft);
-      padding: 2px 6px;
-      border-radius: 999px;
-    }
 
     /* ---------- Layout ---------- */
     main {
@@ -252,6 +265,8 @@
     @media (max-width: 640px) {
       .topbar-inner { height: auto; min-height: 56px; padding: 8px 0; flex-wrap: wrap; row-gap: 8px; }
       nav.crumbs { margin-left: 10px; padding-left: 10px; font-size: 12px; }
+      nav.section-switch { margin-left: 10px; padding-left: 10px; }
+      .section-switch-item { padding: 5px 10px; font-size: 12px; }
       .brand-word { font-size: 14px; }
       .account-dropdown { right: -8px; width: min(220px, calc(100vw - 32px)); }
       main { padding: 24px 16px 48px; }
@@ -338,17 +353,31 @@
       margin-bottom: 18px;
       font-size: 13.5px;
     }
+    .flash-warning {
+      background: var(--warning-soft);
+      border: 1px solid #FDE68A;
+      color: var(--warning);
+      padding: 12px 14px;
+      border-radius: 8px;
+      margin-bottom: 18px;
+      white-space: pre-wrap;
+      font-size: 13.5px;
+    }
     .muted { color: var(--text-soft); font-size: 13px; }
   </style>
 </head>
 <body>
   <header class="topbar">
     <div class="topbar-inner">
-      <div style="display: flex; align-items: center;">
+      <div class="topbar-left">
         <a class="brand" href="{{ url_for('index') }}">
           <img class="brand-mark" src="{{ url_for('static', filename='logo.png') }}" alt="Bradenton">
           <span class="brand-word">Bradenton <span>App</span></span>
         </a>
+        <nav class="section-switch">
+          <a class="section-switch-item{{ ' active' if not request.path.startswith('/controles') else '' }}" href="{{ url_for('index') }}">Herramientas</a>
+          <a class="section-switch-item{{ ' active' if request.path.startswith('/controles') else '' }}" href="{{ url_for('controles') }}">Controles</a>
+        </nav>
         {% block crumbs %}{% endblock %}
       </div>
       <div class="topbar-right">
@@ -368,7 +397,7 @@
             {% if current_user.is_authenticated and current_user.is_admin %}
             <a class="account-dropdown-item" href="{{ url_for('admin_users') }}" style="text-decoration: none; cursor: pointer;">Gestionar usuarios</a>
             {% endif %}
-            <div class="account-dropdown-item">Mi perfil <span class="soon">Próximamente</span></div>
+            <a class="account-dropdown-item" href="{{ url_for('perfil_password') }}" style="text-decoration: none; cursor: pointer;">Cambiar contraseña</a>
             <a class="account-dropdown-item" href="{{ url_for('logout') }}" style="text-decoration: none; cursor: pointer;">Cerrar sesión</a>
           </div>
         </div>
@@ -381,6 +410,7 @@
         <div class="flash-{{ category }}">{{ message }}</div>
       {% endfor %}
     {% endwith %}
+    <div id="global-notice" style="display:none;"></div>
     {% block content %}{% endblock %}
   </main>
   <script>
@@ -411,6 +441,44 @@
       });
     })();
 
+    // Acumular selecciones de archivos entre aperturas del diálogo nativo:
+    // el navegador siempre REEMPLAZA input.files con la selección nueva al
+    // volver a abrir el picker (a diferencia del diálogo de Windows del
+    // desktop, que sí acumulaba) — esto restaura ese comportamiento para
+    // <input type="file" multiple class="accumulate-files">, así se puede
+    // entrar a una carpeta de proveedor por vez y sumar PDFs de varias sin
+    // perder lo ya elegido. El botón "Limpiar" sigue vaciando todo (un
+    // change con 0 archivos se interpreta como reinicio, no como merge).
+    (function () {
+      var accumulated = new WeakMap();
+      function fileKey(file) {
+        return file.name + '|' + file.size + '|' + file.lastModified;
+      }
+      document.querySelectorAll('input[type=file].accumulate-files').forEach(function (input) {
+        accumulated.set(input, []);
+        input.addEventListener('change', function () {
+          var picked = Array.prototype.slice.call(input.files);
+          if (picked.length === 0) {
+            accumulated.set(input, []);
+            return;
+          }
+          var seen = {};
+          var merged = [];
+          accumulated.get(input).concat(picked).forEach(function (file) {
+            var key = fileKey(file);
+            if (!seen[key]) {
+              seen[key] = true;
+              merged.push(file);
+            }
+          });
+          accumulated.set(input, merged);
+          var dt = new DataTransfer();
+          merged.forEach(function (file) { dt.items.add(file); });
+          input.files = dt.files;
+        });
+      });
+    })();
+
     // Botón "Limpiar" genérico: vacía el <input type="file"> señalado por
     // data-target (id) y dispara un evento "change" — así, si ese input es
     // el compartido de arriba, el mismo listener de mirrorSharedFiles() de
@@ -422,6 +490,130 @@
           if (!input) return;
           input.value = '';
           input.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+      });
+    })();
+
+    // Aviso instantáneo en todos los módulos: cualquier <form> con
+    // class="ajax-process-form" se manda por fetch en vez de dejar que el
+    // navegador navegue -- necesario porque la respuesta de estas rutas es
+    // una descarga de archivo (send_file), nunca una página HTML nueva, así
+    // que un flash() de Flask quedaría en cola de sesión y aparecería recién
+    // en la próxima página que el usuario visite, totalmente fuera de
+    // contexto (bug real, ya documentado en CLAUDE.md). Con fetch, el error
+    // (JSON + 400) o el aviso de éxito parcial (header X-App-Notice) se
+    // puede mostrar en el momento, arriba de la página, sin esperar a nada.
+    // El servidor ya abrió el resultado en Excel (misma PC, ver
+    // _open_result_for_user en webapp.py) -- acá no se dispara ninguna
+    // descarga a la carpeta Descargas, pedido explícito del usuario
+    // (2026-09-02). Un CustomEvent "ajaxprocess:success" con el blob se
+    // dispara igual para que una página puntual (ej. Proveedores, que
+    // encadena el resultado al input compartido) pueda reusarlo sin que
+    // este mecanismo genérico sepa nada de eso.
+    (function () {
+      function noticeBox() {
+        return document.getElementById('global-notice');
+      }
+      function showNotice(message, kind) {
+        var box = noticeBox();
+        if (!box) return;
+        box.className = kind === 'error' ? 'flash-error' : (kind === 'warning' ? 'flash-warning' : 'flash-success');
+        box.style.display = 'flex';
+        box.style.justifyContent = 'space-between';
+        box.style.alignItems = 'flex-start';
+        box.style.gap = '14px';
+        box.innerHTML = '';
+
+        var text = document.createElement('div');
+        text.textContent = message;
+        box.appendChild(text);
+
+        var closeBtn = document.createElement('button');
+        closeBtn.type = 'button';
+        closeBtn.setAttribute('aria-label', 'Cerrar aviso');
+        closeBtn.textContent = '×';
+        closeBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:18px;line-height:1;flex-shrink:0;color:inherit;padding:0;';
+        closeBtn.addEventListener('click', hideNotice);
+        box.appendChild(closeBtn);
+
+        box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+      function hideNotice() {
+        var box = noticeBox();
+        if (box) box.style.display = 'none';
+      }
+      function parseFilename(disposition) {
+        if (!disposition) return null;
+        var utf8Match = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
+        if (utf8Match) return decodeURIComponent(utf8Match[1]);
+        var plainMatch = /filename="?([^";]+)"?/i.exec(disposition);
+        return plainMatch ? plainMatch[1] : null;
+      }
+
+      document.querySelectorAll('form.ajax-process-form').forEach(function (form) {
+        form.addEventListener('submit', function (event) {
+          if (form.classList.contains('needs-shared-master')) {
+            var mirror = form.querySelector('.hidden-master-mirror');
+            if (mirror && mirror.files.length === 0) {
+              return; // deja que needs-shared-master (arriba) bloquee y avise
+            }
+          }
+          event.preventDefault();
+          hideNotice();
+
+          var submitBtn = form.querySelector('button[type=submit]');
+          var originalLabel = submitBtn ? submitBtn.textContent : null;
+          if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Procesando...';
+          }
+
+          fetch(form.action, {
+            method: 'POST',
+            body: new FormData(form),
+            headers: { 'X-Ajax-Request': '1' },
+          })
+            .then(function (response) {
+              if (!response.ok) {
+                return response.json().then(function (data) {
+                  throw new Error(data.error || 'Error al procesar.');
+                });
+              }
+              var noticeHeader = response.headers.get('X-App-Notice');
+              var noticeLevel = response.headers.get('X-App-Notice-Level') || 'warning';
+              var filename = parseFilename(response.headers.get('Content-Disposition')) || 'resultado.xlsx';
+              return response.blob().then(function (blob) {
+                return {
+                  blob: blob,
+                  filename: filename,
+                  notice: noticeHeader ? decodeURIComponent(noticeHeader) : null,
+                  noticeLevel: noticeLevel,
+                };
+              });
+            })
+            .then(function (result) {
+              // El servidor ya abrió el resultado en Excel (misma PC) --
+              // acá no se dispara ninguna descarga a la carpeta Descargas,
+              // pedido explícito del usuario. El blob se conserva solo para
+              // que una página puntual (ej. Proveedores, que encadena
+              // Facturas -> Pagos) lo pueda reusar via este evento.
+              form.dispatchEvent(new CustomEvent('ajaxprocess:success', {
+                detail: { blob: result.blob, filename: result.filename },
+              }));
+
+              if (result.notice) {
+                showNotice(result.notice, result.noticeLevel);
+              }
+            })
+            .catch(function (err) {
+              showNotice(err.message, 'error');
+            })
+            .finally(function () {
+              if (submitBtn) {
+                submitBtn.disabled = false;
+                submitBtn.textContent = originalLabel;
+              }
+            });
         });
       });
     })();
