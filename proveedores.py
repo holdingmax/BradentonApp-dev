@@ -10,10 +10,10 @@ detectado automáticamente por el contenido del PDF. Se agregan proveedores
 nuevos ahí, sin tocar la lógica de inserción de filas.
 """
 
+import difflib
 import io
 import os
 import re
-import sys
 import tempfile
 from copy import copy
 from datetime import datetime
@@ -41,6 +41,7 @@ try:
     from openpyxl import load_workbook
     from openpyxl.styles import Font, PatternFill
     from openpyxl.worksheet.cell_range import CellRange
+    from openpyxl.utils import get_column_letter
 
     OPENPYXL_AVAILABLE = True
 except ImportError:  # pragma: no cover - environment guard
@@ -48,6 +49,7 @@ except ImportError:  # pragma: no cover - environment guard
     Font = None  # type: ignore[assignment,misc]
     PatternFill = None  # type: ignore[assignment,misc]
     CellRange = None  # type: ignore[assignment,misc]
+    get_column_letter = None  # type: ignore[assignment,misc]
     OPENPYXL_AVAILABLE = False
 
 try:
@@ -89,16 +91,6 @@ def _create_temp_workbook_path():
     fd, temp_path = tempfile.mkstemp(suffix=".xlsx", prefix="proveedores_")
     os.close(fd)
     return temp_path
-
-
-def _launch_temp_workbook(temp_path):
-    abs_path = os.path.abspath(temp_path)
-    if sys.platform == "win32":
-        os.startfile(abs_path)
-    elif sys.platform == "darwin":
-        os.system(f'open "{abs_path}"')
-    else:
-        os.system(f'xdg-open "{abs_path}"')
 
 
 def _parse_mmdd_year_flexible(date_text):
@@ -192,22 +184,53 @@ def _extract_colonial_invoice(pdf_path):
     crédito tachado y reescrito), la letra manuscrita no se puede leer de
     forma confiable y esta función va a fallar con un error claro -- en ese
     caso hay que cargar esa factura a mano.
+
+    2026-09-02: se detectaron facturas reales (ago-2026) donde el recorte
+    angosto original no encuentra el BALANCE DUE -- la tabla de totales se
+    corrió de posición según la cantidad de ítems, y en facturas de 2
+    páginas el total puede caer en la página 2. Si el recorte rápido no
+    encuentra nada, se prueba una franja más ancha, agrandada y sin líneas
+    de grilla, ancladas al texto "BALANCE DUE", en cada página del PDF --
+    con VARIAS alturas de recorte (no una sola): se probaron 3 facturas
+    reales de agosto-2026 y cada una necesitó una altura de recorte
+    distinta para que la tabla de totales completa entrara en el recorte
+    (0.80 vs 0.82), así que una altura fija no alcanza. **Aun así, esto
+    NO es un fix completo**: validado contra las 140 facturas del
+    historial completo (2023-2026), sigue fallando ~60% -- no es algo
+    que empezó en agosto, Colonial viene fallando en la mayoría de sus
+    facturas desde siempre por calidad de escaneo real, no por esto en
+    particular. Mismo tipo de límite ya aceptado para AZ Southeast.
     """
     _ensure_pdfplumber()
     _ensure_pytesseract()
     with pdfplumber.open(pdf_path) as pdf:
-        image = _extract_page_image(pdf.pages[0])
-    if image is None:
+        pages = [_extract_page_image(page) for page in pdf.pages]
+    pages = [img for img in pages if img is not None]
+    if not pages:
         raise ValueError(
             f"{os.path.basename(pdf_path)}: no se encontró la imagen escaneada de la factura Colonial."
         )
 
-    top_text = pytesseract.image_to_string(_crop_relative(image, 0.68, 0.0, 1.0, 0.22))
-    bottom_text = pytesseract.image_to_string(_crop_relative(image, 0.50, 0.90, 1.0, 1.0))
-
+    top_text = pytesseract.image_to_string(_crop_relative(pages[0], 0.68, 0.0, 1.0, 0.22))
     invoice_match = re.search(r"\b(\d{7})\b", top_text)
     date_match = re.search(r"(\d{1,2}/\d{1,2}/\d{2,4})", top_text)
+
+    bottom_text = pytesseract.image_to_string(_crop_relative(pages[0], 0.50, 0.90, 1.0, 1.0))
     balance_match = re.search(r"([\d,]+\.\d{2})", bottom_text)
+
+    if balance_match is None:
+        for image in pages:
+            for top in (0.76, 0.78, 0.80, 0.82, 0.84, 0.86):
+                wide_crop = _crop_relative(image, 0.0, top, 1.0, 1.0)
+                wide_crop = wide_crop.resize((wide_crop.width * 3, wide_crop.height * 3))
+                wide_text = pytesseract.image_to_string(_remove_grid_lines(wide_crop))
+                balance_match = re.search(
+                    r"BALANCE\s*DUE\.?\s*\n*\s*\$?\s*([\d,]+\.\d{2})", wide_text, re.IGNORECASE
+                )
+                if balance_match:
+                    break
+            if balance_match:
+                break
 
     if not (invoice_match and date_match and balance_match):
         raise ValueError(
@@ -487,6 +510,13 @@ def _extract_midtown_invoice(pdf_path):
     ilegible (sin el punto decimal) y esta función falla con un error
     claro -- en ese caso hay que cargar la factura manualmente, nunca va
     a devolver el importe viejo por error.
+
+    2026-09-02: Midtown cambió de plantilla en algún momento antes de
+    agosto -- la nueva ("INVOICE : {n}", "Date: {fecha}", "Grand Total
+    ${monto}") ya no usa "Receipt #"/"Receipt Date" y no descoloca el
+    total en columnas separadas, así que no hace falta el recorte de
+    Subtotal. Se prueba primero la plantilla vieja (por si el usuario
+    todavía recibe facturas viejas) y, si no matchea, la nueva.
     """
     _ensure_pdfplumber()
     _ensure_pytesseract()
@@ -511,6 +541,17 @@ def _extract_midtown_invoice(pdf_path):
     invoice_match = re.search(r"Receipt #:?\s*(\d+)", text, re.IGNORECASE)
     date_match = re.search(r"Receipt Date\s*:?\s*(\d{1,2})-(\d{1,2})-(\d{4})", text, re.IGNORECASE)
     total_match = re.search(r"\bTotal\D{0,5}\$?\s*([\d,]+\.\d{2})", totals_text)
+
+    if invoice_match and date_match and total_match:
+        invoice_no = int(invoice_match.group(1))
+        month, day, year = date_match.groups()
+        invoice_date = datetime(int(year), int(month), int(day))
+        amount = float(total_match.group(1).replace(",", ""))
+        return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
+
+    invoice_match = re.search(r"\bINVOICE\s*:\s*(\d+)", text, re.IGNORECASE)
+    date_match = re.search(r"(?<!Due )\bDate:\s*(\d{1,2})/(\d{1,2})/(\d{4})", text, re.IGNORECASE)
+    total_match = re.search(r"Grand Total\s*\$?\s*([\d,]+\.\d{2})", text, re.IGNORECASE)
 
     if not (invoice_match and date_match and total_match):
         raise ValueError(
@@ -1173,132 +1214,154 @@ SUPPLIER_REGISTRY = {
     "ht_hackney": {
         "label": "H.T. Hackney",
         "sheet_name": "HT Hackney",
+        "resumen_label": "HT HACKNEY",
         "detect": lambda text: "h.t. hackney" in text.lower(),
         "extract": _extract_ht_hackney_invoice,
     },
     "cec": {
         "label": "CEC (Chinook Enterprises Corp.)",
         "sheet_name": "Chinook CEC",
+        "resumen_label": "CEC",
         "detect": lambda text: "cec distributing" in text.lower(),
         "extract": _extract_cec_invoice,
     },
     "colonial": {
         "label": "Colonial Wholesale Dist. LLC",
         "sheet_name": "Colonial",
+        "resumen_label": "COLONIAL",
         "detect": lambda text: "colonial wholesale" in text.lower(),
         "extract": _extract_colonial_invoice,
     },
     "gce": {
         "label": "Gold Coast Eagle",
         "sheet_name": "GOLDCE",
+        "resumen_label": "GCE",
         "detect": lambda text: "gold coast eagle" in text.lower(),
         "extract": _extract_gce_invoice,
     },
     "frito_lay": {
         "label": "Frito-Lay",
         "sheet_name": "FRITO-LAY",
+        "resumen_label": "FRITO-LAY",
         "detect": lambda text: "frito" in text.lower() and "lay" in text.lower(),
         "extract": _extract_frito_lay_invoice,
     },
     "kings": {
         "label": "King's Wholesale Florists",
         "sheet_name": "KING'S",
+        "resumen_label": "KING'S",
         "detect": lambda text: "wholesale florists" in text.lower(),
         "extract": _extract_kings_invoice,
     },
     "red_bull": {
         "label": "Red Bull Distribution Company",
         "sheet_name": "RED BULL",
+        "resumen_label": "RED BULL",
         "detect": lambda text: "red bull distribution" in text.lower(),
         "extract": _extract_red_bull_invoice,
     },
     "sweetheart": {
         "label": "Sweetheart Ice Cream",
         "sheet_name": "SWEETHEART-ICE CREAM",
+        "resumen_label": "SWT ICE CREAM",
         "detect": lambda text: "sweetheart" in text.lower(),
         "extract": _extract_sweetheart_invoice,
     },
     "bimbo": {
         "label": "Bimbo Bakeries USA, Inc.",
         "sheet_name": "BIMBO",
+        "resumen_label": "BIMBO",
         "detect": lambda text: "bimbo bakeries" in text.lower(),
         "extract": _extract_bimbo_invoice,
     },
     "midtown": {
         "label": "Midtown Wholesale LLC",
         "sheet_name": "MIDTOWN",
+        "resumen_label": "MIDTOWN",
         "detect": lambda text: "midtown wholesale" in text.lower(),
         "extract": _extract_midtown_invoice,
     },
     "johnson": {
         "label": "Johnson Brothers of Florida",
         "sheet_name": "JOHNSON",
+        "resumen_label": "JOHNSON",
         "detect": lambda text: "johnson brothers" in text.lower(),
         "extract": _extract_johnson_brothers_invoice,
     },
     "flori_gas": {
         "label": "Flori-Gas",
         "sheet_name": "FLORI-GAS",
+        "resumen_label": "FLORI GAS",
         "detect": lambda text: "305-637-9262" in text,
         "extract": _extract_flori_gas_invoice,
     },
     "airgas": {
         "label": "Airgas National Carbonation",
         "sheet_name": "AIRGAS",
+        "resumen_label": "AIRGAS",
         "detect": lambda text: "airgas" in text.lower(),
         "extract": _extract_airgas_invoice,
     },
     "az": {
         "label": "AZ Southeast Distributors LLC",
         "sheet_name": "AZ Sout",
+        "resumen_label": "AZ",
         "detect": lambda text: "az southeast distributors" in text.lower(),
         "extract": _extract_az_invoice,
     },
     "express": {
         "label": "Express Beverage of Tampa",
         "sheet_name": "EXPRESS ",
+        "resumen_label": "EXPRESS",
         "detect": lambda text: "express beverage" in text.lower(),
         "extract": _extract_express_beverage_invoice,
     },
     "kooler_ice": {
         "label": "Kooler Ice, Inc.",
         "sheet_name": "KOOLER ICE",
+        "resumen_label": "KOOLER ICE",
         "detect": lambda text: "kooler ice" in text.lower(),
         "extract": _extract_kooler_ice_invoice,
     },
     "sams_club": {
         "label": "Sam's Club",
         "sheet_name": "SAM'S",
+        "resumen_label": "SAM'S",
         "detect": lambda text: re.search(r"sam.?s\s*club", text.lower()) is not None,
         "extract": _extract_sams_club_invoice,
     },
     "fs_wholesale": {
         "label": "FS Wholesale (Florida Smokes Wholesale, LLC)",
         "sheet_name": "FS WHOLESALE",
+        "resumen_label": "FS WHOLESALE",
         "detect": lambda text: "florida smokes" in text.lower(),
         "extract": _extract_fs_wholesale_invoice,
     },
     "lmt": {
         "label": "LMT Trading Company LLC",
         "sheet_name": "LMT",
+        "resumen_label": "LMT",
         "detect": lambda text: re.search(r"paylink\s*-\s*lmt", text.lower()) is not None,
         "extract": _extract_lmt_invoice,
     },
     "overflow": {
         "label": "Overflow Group Distribution",
         "sheet_name": "OVERFLOW",
+        "resumen_label": "OVERFLOW",
         "detect": lambda text: "overflowgroupdistribution" in text.lower().replace(" ", ""),
         "extract": _extract_overflow_invoice,
     },
     "swisher": {
         "label": "Swisher",
         "sheet_name": "SWISHER",
+        "resumen_label": "SWISHER",
         "detect": lambda text: "swisher" in text.lower(),
         "extract": _extract_swisher_invoice,
     },
     "signarama": {
         "label": "Signarama (Bradenton Signs)",
         "sheet_name": "SIGNARAMA",
+        "resumen_label": "SIGNARAMA",
         "detect": lambda text: "bradentonsigns" in text.lower(),
         "extract": _extract_signarama_invoice,
     },
@@ -1326,11 +1389,7 @@ def _detect_supplier(pdf_path):
                 if config["detect"](text):
                     return key
 
-    supported = ", ".join(cfg["label"] for cfg in SUPPLIER_REGISTRY.values())
-    raise ValueError(
-        f"{os.path.basename(pdf_path)}: proveedor no reconocido todavía. "
-        f"Proveedores soportados por ahora: {supported}."
-    )
+    raise ValueError(f"{os.path.basename(pdf_path)}: proveedor no reconocido.")
 
 
 def _get_supplier_sheet(workbook, sheet_name):
@@ -1423,30 +1482,24 @@ def _existing_invoice_numbers(sheet):
     return numbers
 
 
-def _append_invoice_row(sheet, style_ref_row, last_row, last_color, last_date, invoice):
+def _write_invoice_row(sheet, target_row, style_row, balance_ref_row, color, invoice):
     """
-    Inserta una fila de factura justo después de last_row: si cambia el mes
-    respecto a last_date, salta una fila (el separador en blanco ya
-    existente entre meses) y alterna el color de la columna N; si es el
-    mismo mes, la agrega justo debajo con el mismo color.
+    Escribe los datos y el estilo de una factura en target_row -- código
+    compartido entre el encadenado al final y la inserción cronológica en
+    medio de la hoja (ver _find_invoice_insertion_point). El estilo
+    (fuente/borde/alineación/formato) se copia de style_row -- una fila
+    "invoice" real, nunca "OP" ni el separador -- en vez de confiar en lo
+    que traiga target_row, que puede tener overrides viejos inconsistentes.
 
-    El estilo (fuente/borde/alineación/formato) se copia de style_ref_row
-    -- la última factura real ya cargada -- en vez de confiar en lo que
-    traiga la fila destino, que puede tener overrides viejos inconsistentes.
-
-    Devuelve (fila_nueva, color_usado) para encadenar la siguiente factura.
+    balance_ref_row es la fila real inmediata anterior en la posición
+    final de target_row (puede ser el separador entre meses, que también
+    lleva su propia fórmula de arrastre) -- nunca target_row - 1 a
+    ciegas, porque tras una inserción en medio de la hoja la fila de
+    arriba física puede no ser la referencia correcta todavía en este
+    punto (ver _find_invoice_insertion_point).
     """
-    new_date = invoice["date"]
-    month_changed = (new_date.year, new_date.month) != (last_date.year, last_date.month)
-    target_row = last_row + 2 if month_changed else last_row + 1
-
-    if month_changed:
-        new_color = GREEN_FILL if last_color == YELLOW_FILL else YELLOW_FILL
-    else:
-        new_color = last_color or GREEN_FILL
-
     for col in INVOICE_ROW_COLUMNS:
-        ref_cell = sheet.cell(row=style_ref_row, column=col)
+        ref_cell = sheet.cell(row=style_row, column=col)
         new_cell = sheet.cell(row=target_row, column=col)
         new_cell.font = copy(ref_cell.font)
         new_cell.border = copy(ref_cell.border)
@@ -1454,7 +1507,7 @@ def _append_invoice_row(sheet, style_ref_row, last_row, last_color, last_date, i
         new_cell.number_format = ref_cell.number_format
 
     # El N° de factura siempre va en negrita, sin importar el estilo que
-    # haya traído style_ref_row.
+    # haya traído style_row.
     number_cell = sheet.cell(row=target_row, column=COL_NUMERO)
     number_font = number_cell.font
     number_cell.font = Font(
@@ -1466,37 +1519,432 @@ def _append_invoice_row(sheet, style_ref_row, last_row, last_color, last_date, i
         underline=number_font.underline,
     )
 
-    sheet.cell(row=target_row, column=COL_DATE, value=new_date)
+    sheet.cell(row=target_row, column=COL_DATE, value=invoice["date"])
     sheet.cell(row=target_row, column=COL_COMPROB, value="invoice")
     sheet.cell(row=target_row, column=COL_NUMERO, value=invoice["invoice_no"])
     sheet.cell(row=target_row, column=COL_DEBE, value=invoice["amount"])
-    # La fila anterior a target_row puede ser el separador en blanco entre
-    # meses (sin fórmula de balance) -- siempre referenciar last_row, la
-    # última fila real con saldo, para no perder el arrastre al cambiar de mes.
     sheet.cell(
         row=target_row,
         column=COL_BALANCE,
-        value=f"=+{sheet.cell(row=last_row, column=COL_BALANCE).coordinate}"
+        value=f"=+{sheet.cell(row=balance_ref_row, column=COL_BALANCE).coordinate}"
         f"+{sheet.cell(row=target_row, column=COL_DEBE).coordinate}"
         f"-{sheet.cell(row=target_row, column=COL_HABER).coordinate}",
     )
     sheet.cell(row=target_row, column=COL_DETALLE).value = None
 
     sheet.cell(row=target_row, column=COL_NUMERO).fill = PatternFill(
-        start_color=new_color, end_color=new_color, fill_type="solid"
+        start_color=color, end_color=color, fill_type="solid"
     )
 
+
+def _resolve_invoice_style_row(sheet, target_row, last_row):
+    """
+    Ubica la fila "invoice" real más cercana a target_row para copiarle
+    el estilo -- primero buscando hacia arriba (mismo criterio que
+    _find_last_invoice_row), y si no hay ninguna (se está insertando
+    antes de la primera factura de toda la hoja), hacia abajo.
+    """
+    candidate = _find_last_invoice_row(sheet, target_row - 1)
+    comprob = sheet.cell(row=candidate, column=COL_COMPROB).value
+    if isinstance(comprob, str) and comprob.strip().lower() == "invoice":
+        return candidate
+    for row in range(target_row, last_row + 1):
+        comprob = sheet.cell(row=row, column=COL_COMPROB).value
+        if isinstance(comprob, str) and comprob.strip().lower() == "invoice":
+            return row
+    return candidate
+
+
+def _resolve_invoice_month_color(sheet, invoice_date, target_row, last_row):
+    """
+    Determina qué color (verde/amarillo) le corresponde a la columna N°
+    de una factura que se va a insertar en target_row -- se calcula
+    ANTES de abrir la fila, con los números de fila previos a la
+    inserción.
+
+    El color es por mes calendario, no por posición: todas las facturas
+    del mismo mes comparten color sin importar en qué parte de la hoja
+    estén, así que primero se busca si ya existe alguna factura real de
+    ese mismo (año, mes) en cualquier lugar de la hoja y se reusa su
+    color -- nunca se alterna dentro de un mismo mes. Si el mes es
+    nuevo, se alterna respecto a la factura real más cercana arriba de
+    target_row (o, si no hay ninguna arriba, la más cercana abajo) --
+    mismo criterio de alternancia que ya usaba el encadenado al final.
+    """
+    for row in range(1, last_row + 1):
+        row_date = sheet.cell(row=row, column=COL_DATE).value
+        comprob = sheet.cell(row=row, column=COL_COMPROB).value
+        if (
+            isinstance(row_date, datetime)
+            and isinstance(comprob, str)
+            and comprob.strip().lower() == "invoice"
+            and (row_date.year, row_date.month) == (invoice_date.year, invoice_date.month)
+        ):
+            fill = sheet.cell(row=row, column=COL_NUMERO).fill
+            if fill and fill.patternType == "solid" and fill.fgColor and fill.fgColor.rgb in MONTH_FILL_COLORS:
+                return fill.fgColor.rgb
+
+    def _nearest_invoice_color(rows):
+        for row in rows:
+            comprob = sheet.cell(row=row, column=COL_COMPROB).value
+            if isinstance(comprob, str) and comprob.strip().lower() == "invoice":
+                fill = sheet.cell(row=row, column=COL_NUMERO).fill
+                if fill and fill.patternType == "solid" and fill.fgColor and fill.fgColor.rgb in MONTH_FILL_COLORS:
+                    return fill.fgColor.rgb
+        return None
+
+    nearest_color = _nearest_invoice_color(range(target_row - 1, 0, -1))
+    if nearest_color is None:
+        nearest_color = _nearest_invoice_color(range(target_row, last_row + 1))
+    if nearest_color is None:
+        return GREEN_FILL
+    return GREEN_FILL if nearest_color == YELLOW_FILL else YELLOW_FILL
+
+
+def _find_invoice_insertion_point(sheet, invoice_date):
+    """
+    Determina dónde debe ir una factura con fecha invoice_date para
+    mantener la hoja en orden cronológico -- pedido explícito del
+    usuario (2026-09-02): antes, Facturas siempre encadenaba al final
+    sin importar la fecha, así que cargar una factura vieja después de
+    una más nueva la dejaba fuera de orden (el BALANCE seguía siendo
+    matemáticamente correcto, pero el orden visual de fechas quedaba
+    mal). Mismo patrón que ya usaba _find_payment_insertion_point para
+    Pagos (ver ese docstring para el porqué de cada paso: por qué se
+    compara por tipo datetime y no "no vacío", por qué balance_ref_row
+    nunca es un separador en blanco, etc.) -- acá además hay que resolver
+    el estilo/color propios de una factura (ver _resolve_invoice_style_row
+    / _resolve_invoice_month_color).
+
+    Devuelve (target_row, needs_shift, style_row, balance_ref_row, last_row, color).
+    - needs_shift=False: target_row es el próximo lugar libre al final de
+      la hoja (saltando el separador si cambia el mes) -- no hace falta
+      mover nada.
+    - needs_shift=True: target_row ya tiene una fila real cargada -- hay
+      que abrir espacio con _insert_row_preserving_merges(target_row),
+      escribir la factura con _write_invoice_row, y recién ahí llamar a
+      _reformulate_rows_below para las filas que quedaron abajo.
+
+    Limitación conocida (igual que para Pagos): si la factura cae en un
+    mes que no tiene NINGUNA fila cargada todavía (un hueco completo
+    entre dos meses con datos), no se agrega una fila separadora nueva --
+    el BALANCE sigue siendo correcto, pero el formato visual queda un
+    poco distinto en ese caso puntual.
+    """
+    last_row = _find_last_real_row(sheet)
+    if last_row is None:
+        raise ValueError("La hoja no tiene ninguna fila real cargada.")
+    last_date = sheet.cell(row=last_row, column=COL_DATE).value
+
+    if invoice_date >= last_date:
+        month_changed = (invoice_date.year, invoice_date.month) != (last_date.year, last_date.month)
+        target_row = last_row + 2 if month_changed else last_row + 1
+        style_row = _find_last_invoice_row(sheet, last_row)
+        color = _find_last_month_color(sheet, last_row) or GREEN_FILL
+        if month_changed:
+            color = GREEN_FILL if color == YELLOW_FILL else YELLOW_FILL
+        return target_row, False, style_row, last_row, last_row, color
+
+    for row in range(1, last_row + 1):
+        row_date = sheet.cell(row=row, column=COL_DATE).value
+        if not isinstance(row_date, datetime):
+            continue
+        if row_date > invoice_date:
+            balance_ref_row = _nearest_balance_row_at_or_above(sheet, row - 1)
+            if balance_ref_row is None:
+                raise ValueError(
+                    f"La factura del {invoice_date:%d/%m/%Y} caería antes de que la hoja "
+                    "tenga ninguna fila con un balance calculable (fórmula o número) de la "
+                    "cual partir -- cargarla a mano."
+                )
+            style_row = _resolve_invoice_style_row(sheet, row, last_row)
+            color = _resolve_invoice_month_color(sheet, invoice_date, row, last_row)
+            return row, True, style_row, balance_ref_row, last_row, color
+
+    # No debería llegar acá dado el chequeo de arriba, pero por las dudas.
+    style_row = _find_last_invoice_row(sheet, last_row)
+    color = _find_last_month_color(sheet, last_row) or GREEN_FILL
+    return last_row + 1, False, style_row, last_row, last_row, color
+
     return target_row, new_color
+
+
+# ---- Resumen Compras (hoja "RESUMEN COMPRAS") ----
+#
+# Cada vez que se carga una factura, además de la fila en la hoja del
+# proveedor, se suma el monto en la hoja "RESUMEN COMPRAS": una fila por
+# proveedor (columna A) x una columna por mes (B=Enero .. M=Diciembre),
+# donde cada celda es una fórmula que suma las celdas D de las filas de
+# factura de ese proveedor cargadas ese mes -- mismo criterio que usaba el
+# usuario a mano. Si el proveedor todavía no tiene fila, se crea siguiendo
+# el mismo formato que las demás. Nunca debe tumbar la carga de la factura:
+# cualquier problema acá queda como advertencia en el resumen de la carga.
+
+RESUMEN_SHEET_NAME = "RESUMEN COMPRAS"
+RESUMEN_LABEL_COL = 1
+RESUMEN_FIRST_MONTH_COL = 2  # B = Enero
+MONTH_NAMES_ES = (
+    "ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO",
+    "JULIO", "AGOSTO", "SEPTIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE",
+)
+
+
+def _get_resumen_sheet(workbook):
+    """
+    Ubica la hoja "RESUMEN COMPRAS" -- tolera el espacio de más al final
+    que tiene la pestaña real del libro (y variaciones de tipeo futuras,
+    mismo criterio que get_worksheet en eft_cta_cte.py). Devuelve None si
+    no se encuentra -- el llamador no debe fallar la carga por esto.
+    """
+    target = RESUMEN_SHEET_NAME.strip().lower()
+    for name in workbook.sheetnames:
+        if name.strip().lower() == target:
+            return workbook[name]
+    close = difflib.get_close_matches(RESUMEN_SHEET_NAME, workbook.sheetnames, n=1, cutoff=0.85)
+    if close:
+        return workbook[close[0]]
+    return None
+
+
+def _resumen_month_column(sheet, month):
+    """
+    Columna del mes (1=Enero..12=Diciembre) según el encabezado real de la
+    fila 1 -- nunca asume la posición fija B..M sin chequearla.
+    """
+    expected = MONTH_NAMES_ES[month - 1]
+    for col in range(RESUMEN_FIRST_MONTH_COL, sheet.max_column + 1):
+        value = sheet.cell(row=1, column=col).value
+        if isinstance(value, str) and value.strip().upper().startswith(expected):
+            return col
+    return None
+
+
+def _resumen_find_supplier_row(sheet, label):
+    target = label.strip().upper()
+    for row in range(2, sheet.max_row + 1):
+        value = sheet.cell(row=row, column=RESUMEN_LABEL_COL).value
+        if isinstance(value, str) and value.strip().upper() == target:
+            return row
+    return None
+
+
+def _resumen_quote_sheet_ref(sheet_name):
+    """
+    Rodea el nombre de hoja con comillas simples solo si hace falta
+    (espacios, guiones, apóstrofes, etc.) -- mismo criterio que ya usan las
+    fórmulas existentes de RESUMEN COMPRAS (ej. "GOLDCE!D320" sin comillas
+    vs. "'AZ Sout'!D106" con comillas), duplicando un apóstrofe interno
+    como exige Excel (ej. KING'S -> 'KING''S').
+    """
+    if re.search(r"[^A-Za-z0-9_]", sheet_name):
+        return "'" + sheet_name.replace("'", "''") + "'"
+    return sheet_name
+
+
+def _resumen_create_supplier_row(sheet, label):
+    """
+    Agrega una fila nueva para un proveedor que todavía no aparece en
+    RESUMEN COMPRAS, pegada debajo del último proveedor existente (antes de
+    la fila "TOTAL"), copiando su estilo -- y corrige a mano las fórmulas
+    de TOTAL y de la fila "diferencia con Chase" (openpyxl no traduce
+    fórmulas al insertar filas como sí hace Excel). Levanta ValueError si
+    la hoja no tiene la estructura esperada (columna A con proveedores +
+    fila "TOTAL") -- mejor fallar claro que insertar a ciegas.
+
+    Devuelve la fila nueva.
+    """
+    last_supplier_row = None
+    row = 2
+    while True:
+        value = sheet.cell(row=row, column=RESUMEN_LABEL_COL).value
+        if not isinstance(value, str) or not value.strip() or value.strip().upper() == "TOTAL":
+            break
+        last_supplier_row = row
+        row += 1
+    if last_supplier_row is None:
+        raise ValueError('RESUMEN COMPRAS no tiene ningún proveedor cargado en la columna A todavía.')
+
+    total_row = None
+    for r in range(last_supplier_row + 1, sheet.max_row + 1):
+        value = sheet.cell(row=r, column=RESUMEN_LABEL_COL).value
+        if isinstance(value, str) and value.strip().upper() == "TOTAL":
+            total_row = r
+            break
+    if total_row is None:
+        raise ValueError('RESUMEN COMPRAS no tiene una fila "TOTAL" -- no se puede agregar el proveedor de forma segura.')
+
+    # Fila "CHASE" y la fila de diferencia (=+B{total}-B{chase}) debajo del
+    # TOTAL -- opcionales, si no están simplemente no se tocan.
+    chase_row = None
+    for r in range(total_row + 1, sheet.max_row + 1):
+        value = sheet.cell(row=r, column=RESUMEN_LABEL_COL).value
+        if isinstance(value, str) and value.strip().upper() == "CHASE":
+            chase_row = r
+            break
+
+    diff_row = None
+    diff_formulas = {}
+    if chase_row is not None:
+        diff_re = re.compile(r"^=\+([A-Z]+)" + str(total_row) + r"-([A-Z]+)" + str(chase_row) + r"$")
+        for r in range(chase_row + 1, sheet.max_row + 1):
+            probe = sheet.cell(row=r, column=RESUMEN_FIRST_MONTH_COL).value
+            if isinstance(probe, str) and diff_re.match(probe):
+                diff_row = r
+                for col in range(RESUMEN_FIRST_MONTH_COL, sheet.max_column + 1):
+                    value = sheet.cell(row=r, column=col).value
+                    if isinstance(value, str) and diff_re.match(value):
+                        diff_formulas[col] = value
+                break
+
+    total_formulas = {}
+    sum_re = re.compile(r"^=SUM\(([A-Z]+)(\d+):([A-Z]+)(\d+)\)$")
+    for col in range(RESUMEN_FIRST_MONTH_COL, sheet.max_column + 1):
+        value = sheet.cell(row=total_row, column=col).value
+        if isinstance(value, str):
+            match = sum_re.match(value)
+            if match:
+                total_formulas[col] = match
+
+    insert_at = last_supplier_row + 1
+    sheet.insert_rows(insert_at)
+
+    for col in range(1, sheet.max_column + 1):
+        ref_cell = sheet.cell(row=last_supplier_row, column=col)
+        new_cell = sheet.cell(row=insert_at, column=col)
+        new_cell.font = copy(ref_cell.font)
+        new_cell.border = copy(ref_cell.border)
+        new_cell.alignment = copy(ref_cell.alignment)
+        new_cell.fill = copy(ref_cell.fill)
+        new_cell.number_format = ref_cell.number_format
+    sheet.cell(row=insert_at, column=RESUMEN_LABEL_COL, value=label)
+    for col in range(RESUMEN_FIRST_MONTH_COL, sheet.max_column + 1):
+        sheet.cell(row=insert_at, column=col).value = None
+
+    new_total_row = total_row + 1
+    for col, match in total_formulas.items():
+        start_col, start_row, end_col, end_row = match.groups()
+        new_end_row = int(end_row) + 1
+        sheet.cell(row=new_total_row, column=col).value = f"=SUM({start_col}{start_row}:{end_col}{new_end_row})"
+
+    if diff_row is not None and chase_row is not None:
+        new_diff_row = diff_row + 1
+        new_chase_row = chase_row + 1
+        for col in diff_formulas:
+            col_letter = get_column_letter(col)
+            sheet.cell(row=new_diff_row, column=col).value = (
+                f"=+{col_letter}{new_total_row}-{col_letter}{new_chase_row}"
+            )
+
+    return insert_at
+
+
+def _shift_resumen_compras_refs(resumen_sheet, sheet_title, resumen_label, insert_at_row):
+    """
+    Corrige las referencias que RESUMEN COMPRAS ya tenía hacia esta hoja de
+    proveedor después de insertar una fila en insert_at_row -- openpyxl no
+    traduce fórmulas de OTRA hoja al insertar filas como sí hace Excel, así
+    que cualquier referencia tipo "AIRGAS!D130" que ya apuntaba a
+    insert_at_row o más abajo queda apuntando a la fila vieja (equivocada)
+    tras el corrimiento. Bug real encontrado el 2026-09-02 insertando una
+    factura cronológicamente antes de otra ya cargada y verificando que
+    RESUMEN COMPRAS seguía sumando el monto correcto después.
+
+    Solo la fila de este proveedor en RESUMEN COMPRAS puede tener
+    referencias a esta hoja (_update_resumen_compras siempre escribe ahí),
+    así que no hace falta escanear la hoja entera. No hace nada si el
+    proveedor todavía no tiene fila ahí o no tiene ninguna referencia
+    todavía -- es la situación normal, no un error.
+    """
+    if resumen_sheet is None:
+        return
+    row = _resumen_find_supplier_row(resumen_sheet, resumen_label)
+    if row is None:
+        return
+
+    quoted = _resumen_quote_sheet_ref(sheet_title)
+    pattern = re.compile(re.escape(quoted) + r"!D(\d+)")
+
+    def _shift(match):
+        old_row = int(match.group(1))
+        new_row = old_row + 1 if old_row >= insert_at_row else old_row
+        return f"{quoted}!D{new_row}"
+
+    for col in range(RESUMEN_FIRST_MONTH_COL, resumen_sheet.max_column + 1):
+        cell = resumen_sheet.cell(row=row, column=col)
+        if isinstance(cell.value, str) and cell.value.strip().startswith("="):
+            cell.value = pattern.sub(_shift, cell.value)
+
+
+def _update_resumen_compras(resumen_sheet, sheet_title, resumen_label, invoice_row, invoice_date):
+    """
+    Suma la factura recién agregada en la celda proveedor x mes de RESUMEN
+    COMPRAS -- crea la fila del proveedor si hace falta (ver
+    _resumen_create_supplier_row) y agrega la referencia a la fórmula
+    existente en vez de reemplazarla, igual que hacía el usuario a mano.
+
+    Devuelve un dict {"status": ..., ...} para el resumen de la carga; nunca
+    levanta una excepción hacia afuera -- la factura ya se cargó bien en la
+    hoja del proveedor, esto es un agregado informativo.
+    """
+    try:
+        year_cell = resumen_sheet.cell(row=1, column=RESUMEN_LABEL_COL).value
+        try:
+            resumen_year = int(str(year_cell).strip())
+        except (TypeError, ValueError):
+            resumen_year = None
+        if resumen_year is not None and resumen_year != invoice_date.year:
+            return {
+                "status": "year_mismatch",
+                "supplier": resumen_label,
+                "detail": f"RESUMEN COMPRAS está en {resumen_year}, la factura es de {invoice_date.year}.",
+            }
+
+        month_col = _resumen_month_column(resumen_sheet, invoice_date.month)
+        if month_col is None:
+            return {
+                "status": "month_not_found",
+                "supplier": resumen_label,
+                "detail": f"No se encontró la columna del mes {invoice_date.month} en RESUMEN COMPRAS.",
+            }
+
+        row = _resumen_find_supplier_row(resumen_sheet, resumen_label)
+        created = False
+        if row is None:
+            row = _resumen_create_supplier_row(resumen_sheet, resumen_label)
+            created = True
+
+        cell = resumen_sheet.cell(row=row, column=month_col)
+        ref = f"{_resumen_quote_sheet_ref(sheet_title)}!D{invoice_row}"
+        current = cell.value
+        if isinstance(current, str) and current.strip().startswith("="):
+            cell.value = current + f"+{ref}"
+        else:
+            old_number = 0.0
+            if isinstance(current, (int, float)):
+                old_number = float(current)
+            elif isinstance(current, str) and current.strip():
+                try:
+                    old_number = float(current.strip())
+                except ValueError:
+                    old_number = 0.0
+            if old_number:
+                cell.value = f"=+{old_number}+{ref}"
+            else:
+                cell.value = f"=+{ref}"
+
+        return {"status": "created_row" if created else "updated", "supplier": resumen_label}
+    except Exception as exc:  # noqa: BLE001 - nunca debe tumbar la carga de la factura
+        return {"status": "error", "supplier": resumen_label, "detail": str(exc)}
 
 
 def append_supplier_invoices(ledger_path, pdf_paths):
     """
     Lee cada PDF, detecta su proveedor y agrega una fila "invoice" a la
-    hoja correspondiente del libro -- en orden de fecha, encadenada a la
-    última fila real que ya tenga esa hoja. Un mismo invoice ya cargado
-    (por N° de factura) se omite. Guarda una copia temporal y la abre; el
-    usuario la revisa y hace "Guardar como" como en el resto de los
-    módulos.
+    hoja correspondiente del libro -- cada una en su posición cronológica
+    correcta dentro de esa hoja (ver _find_invoice_insertion_point). Un
+    mismo invoice ya cargado (por N° de factura) se omite. Guarda una
+    copia temporal y la devuelve; quien llame se encarga de servirla para
+    descargar (nunca se abre sola en la PC del servidor).
     """
     if not OPENPYXL_AVAILABLE:
         raise ImportError("Proveedores requiere openpyxl. Instale con: pip install openpyxl")
@@ -1518,10 +1966,13 @@ def append_supplier_invoices(ledger_path, pdf_paths):
         by_supplier.setdefault(supplier_key, []).append(invoice)
 
     if not by_supplier:
-        detail = "; ".join(f"{item['filename']}: {item['error']}" for item in failed)
-        raise ValueError(f"Ninguna factura se pudo procesar. {detail}")
+        raise ValueError("No se pudo cargar ninguna factura. Revisalas a mano.")
 
     workbook = load_workbook(ledger_path, data_only=False)
+    resumen_sheet = _get_resumen_sheet(workbook)
+    resumen_warnings = []
+    if resumen_sheet is None:
+        resumen_warnings.append({"status": "sheet_not_found", "supplier": None})
 
     batch_results = []
     total_appended = 0
@@ -1531,10 +1982,6 @@ def append_supplier_invoices(ledger_path, pdf_paths):
         invoices.sort(key=lambda inv: inv["date"])
 
         existing_numbers = _existing_invoice_numbers(sheet)
-        last_row = _find_last_real_row(sheet)
-        last_date = sheet.cell(row=last_row, column=COL_DATE).value
-        last_color = _find_last_month_color(sheet, last_row)
-        style_ref_row = _find_last_invoice_row(sheet, last_row)
 
         appended = 0
         duplicates_skipped = []
@@ -1542,12 +1989,32 @@ def append_supplier_invoices(ledger_path, pdf_paths):
             if invoice["invoice_no"] in existing_numbers:
                 duplicates_skipped.append(invoice["filename"])
                 continue
-            last_row, last_color = _append_invoice_row(
-                sheet, style_ref_row, last_row, last_color, last_date, invoice
-            )
-            last_date = invoice["date"]
+
+            try:
+                target_row, needs_shift, style_row, balance_ref_row, last_row, color = (
+                    _find_invoice_insertion_point(sheet, invoice["date"])
+                )
+                if needs_shift:
+                    _insert_row_preserving_merges(sheet, target_row)
+                    _shift_resumen_compras_refs(
+                        resumen_sheet, sheet.title, config["resumen_label"], target_row
+                    )
+                _write_invoice_row(sheet, target_row, style_row, balance_ref_row, color, invoice)
+                if needs_shift:
+                    _reformulate_rows_below(sheet, target_row, last_row)
+            except (ValueError, TypeError, AttributeError) as exc:
+                failed.append({"filename": invoice["filename"], "error": str(exc)})
+                continue
+
             existing_numbers.add(invoice["invoice_no"])
             appended += 1
+
+            if resumen_sheet is not None:
+                resumen_result = _update_resumen_compras(
+                    resumen_sheet, sheet.title, config["resumen_label"], target_row, invoice["date"]
+                )
+                if resumen_result["status"] not in ("updated", "created_row"):
+                    resumen_warnings.append(resumen_result)
 
         _update_sheet_tab_color(sheet)
 
@@ -1565,13 +2032,12 @@ def append_supplier_invoices(ledger_path, pdf_paths):
     workbook.save(os.path.abspath(temp_path))
     workbook.close()
 
-    _launch_temp_workbook(temp_path)
-
     summary = {
         "files_processed": len(pdf_paths),
         "invoices_appended": total_appended,
         "batch_results": batch_results,
         "failed": failed,
+        "resumen_warnings": resumen_warnings,
     }
     return temp_path, summary
 
@@ -1866,8 +2332,9 @@ def append_supplier_payments(ledger_path, bank_path):
     proveedores_pago_rules.py) e inserta una fila "OP" en la posición
     cronológica correcta de esa hoja -- corriendo filas hacia abajo y
     trasladando fórmulas de BALANCE si el pago cae antes de facturas ya
-    cargadas. Guarda una copia temporal y la abre; el usuario la revisa y
-    hace "Guardar como" como en el resto de los módulos.
+    cargadas. Guarda una copia temporal y la devuelve; quien llame se
+    encarga de servirla para descargar (nunca se abre sola en la PC del
+    servidor).
     """
     if not OPENPYXL_AVAILABLE:
         raise ImportError("Proveedores requiere openpyxl. Instale con: pip install openpyxl")
@@ -1957,8 +2424,6 @@ def append_supplier_payments(ledger_path, bank_path):
     temp_path = _create_temp_workbook_path()
     workbook.save(os.path.abspath(temp_path))
     workbook.close()
-
-    _launch_temp_workbook(temp_path)
 
     summary = {
         "candidates_found": len(candidates),
