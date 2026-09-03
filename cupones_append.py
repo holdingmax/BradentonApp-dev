@@ -4,9 +4,7 @@ import difflib
 import gc
 import os
 import re
-import sys
 import tempfile
-import time
 from datetime import datetime
 
 import pandas as pd
@@ -232,16 +230,6 @@ def _create_temp_workbook_path(suffix=".xlsx"):
     os.close(fd)
     return temp_path
 
-
-def _launch_temp_workbook(temp_path):
-    abs_path = os.path.abspath(temp_path)
-    if sys.platform == "win32":
-        time.sleep(0.35)
-        os.startfile(abs_path)
-    elif sys.platform == "darwin":
-        os.system(f'open "{abs_path}"')
-    else:
-        os.system(f'xdg-open "{abs_path}"')
 
 
 def _apply_decimal_format(worksheet, row, column, value):
@@ -1132,8 +1120,6 @@ def resync_cupones_only(master_path):
             workbook.close()
         gc.collect()
 
-    _launch_temp_workbook(save_path)
-
     summary = {"rows_resynced_pending": rows_resynced_pending}
     return save_path, summary
 
@@ -1231,8 +1217,6 @@ def append_monthly_cupones(master_path, monthly_path):
         if "monthly_rows" in locals():
             monthly_rows = None
         gc.collect()
-
-    _launch_temp_workbook(save_path)
 
     summary = {
         "rows_appended": appended,

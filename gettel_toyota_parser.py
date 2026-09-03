@@ -15,7 +15,6 @@ import io
 import os
 import re
 import sys
-import time
 from collections import Counter
 from datetime import datetime
 
@@ -366,18 +365,6 @@ def _build_output_path(pdf_paths, vendor_label):
     return os.path.join(base_dir, filename)
 
 
-def _launch_workbook(path):
-    """Open the saved workbook with a deferred, platform-aware launch."""
-    abs_path = os.path.abspath(path)
-    if sys.platform == "win32":
-        time.sleep(0.35)
-        os.startfile(abs_path)  # type: ignore[attr-defined]
-    elif sys.platform == "darwin":
-        os.system(f'open "{abs_path}"')
-    else:
-        os.system(f'xdg-open "{abs_path}"')
-
-
 def _write_date_cell(worksheet, row, column, block):
     """Write a left-aligned MM/DD/YYYY date string (blank when the block is empty)."""
     cell = worksheet.cell(row=row, column=column)
@@ -509,7 +496,7 @@ def write_multi_sheet_fuel_coupon_workbook(pdf_paths, output_path):
     return record_count, sheets_written, vendor_label
 
 
-def generate_fuel_coupon_workbook_from_pdfs(pdf_paths, output_path=None, launch=True):
+def generate_fuel_coupon_workbook_from_pdfs(pdf_paths, output_path=None):
     """
     Parse multiple PDFs into one workbook (one sheet per file).
 
@@ -532,8 +519,6 @@ def generate_fuel_coupon_workbook_from_pdfs(pdf_paths, output_path=None, launch=
     record_count, sheet_count, _vendor_label = write_multi_sheet_fuel_coupon_workbook(
         pdf_paths, output_path
     )
-    if launch:
-        _launch_workbook(output_path)
     return output_path, record_count, sheet_count
 
 
@@ -1197,11 +1182,11 @@ def _populate_gettel_toyota_destination_sheet(worksheet, gettel_totals, toyota_t
     return rows_matched, unmatched_days
 
 
-def merge_gettel_toyota_into_master(source_path, destination_path, launch=True):
+def merge_gettel_toyota_into_master(source_path, destination_path):
     """
     Summarize the origin Excel's Gettel and Toyota daily fuel-log sheets and
     merge the daily totals into the destination sheet (Gettel-Toyota
-    MM.YYYY). Opens a temp preview copy.
+    MM.YYYY). Saves a temp preview copy and returns its path.
 
     Returns:
         tuple[str, int, int, int, list]: (preview path, rows matched, gettel
@@ -1247,13 +1232,10 @@ def merge_gettel_toyota_into_master(source_path, destination_path, launch=True):
     finally:
         destination_workbook.close()
 
-    if launch:
-        _launch_workbook(preview_path)
-
     return preview_path, rows_matched, len(gettel_totals), len(toyota_totals), unmatched_days
 
 
-def merge_gettel_toyota_pdf_into_master(pdf_path, destination_path, launch=True):
+def merge_gettel_toyota_pdf_into_master(pdf_path, destination_path):
     """
     OCR a photographed Date/Amount/Tracking/Gallons report (one vendor per
     PDF) and merge its daily totals into the destination sheet (Gettel-
@@ -1314,9 +1296,6 @@ def merge_gettel_toyota_pdf_into_master(pdf_path, destination_path, launch=True)
         destination_workbook.close()
 
     diagnostics["unmatched_days"] = [d.isoformat() for d in unmatched_days]
-
-    if launch:
-        _launch_workbook(preview_path)
 
     return preview_path, rows_matched, vendor, len(totals_by_date), diagnostics
 
@@ -1668,8 +1647,6 @@ def process_gettel_pagos(master_path, pdf_paths):
         workbook.save(preview_path)
     finally:
         workbook.close()
-
-    _launch_workbook(preview_path)
 
     return preview_path, {"batch_results": batch_results}
 

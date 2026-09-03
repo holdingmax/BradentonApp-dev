@@ -19,7 +19,6 @@ de negocio) — nunca por la C (que es esa misma fecha +1 día).
 """
 
 import os
-import sys
 import tempfile
 from datetime import date, datetime
 
@@ -65,16 +64,6 @@ def _create_temp_workbook_path():
     fd, temp_path = tempfile.mkstemp(suffix=".xlsx", prefix="caja_")
     os.close(fd)
     return temp_path
-
-
-def _launch_temp_workbook(temp_path):
-    abs_path = os.path.abspath(temp_path)
-    if sys.platform == "win32":
-        os.startfile(abs_path)
-    elif sys.platform == "darwin":
-        os.system(f'open "{abs_path}"')
-    else:
-        os.system(f'xdg-open "{abs_path}"')
 
 
 def _normalize_date(value):
@@ -186,7 +175,6 @@ def apply_chase_deposits(cierre_path, chase_path):
 
     temp_path = _create_temp_workbook_path()
     workbook.save(temp_path)
-    _launch_temp_workbook(temp_path)
 
     summary = {
         "deposits_written": deposits_written,
@@ -238,7 +226,6 @@ def apply_lottery_cuenta_final(cierre_path, lottery_path):
 
     temp_path = _create_temp_workbook_path()
     workbook.save(temp_path)
-    _launch_temp_workbook(temp_path)
 
     summary = {
         "written": written,

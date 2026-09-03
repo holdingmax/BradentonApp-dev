@@ -9,7 +9,6 @@ and injects count/amount pairs on the first eligible operational row.
 import io
 import os
 import re
-import sys
 import tempfile
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -660,15 +659,6 @@ def _create_temp_workbook_path():
     os.close(fd)
     return temp_path
 
-
-def _launch_temp_workbook(temp_path):
-    abs_path = os.path.abspath(temp_path)
-    if sys.platform == "win32":
-        os.startfile(abs_path)
-    elif sys.platform == "darwin":
-        os.system(f'open "{abs_path}"')
-    else:
-        os.system(f'xdg-open "{abs_path}"')
 
 
 def _get_carga_aqui_sheet(workbook):
@@ -1689,8 +1679,6 @@ def process_reporte_diario(
     workbook.save(os.path.abspath(temp_path))
     workbook.close()
 
-    _launch_temp_workbook(temp_path)
-
     summary = {
         "files_processed": len(batch_results),
         "departments_written": total_written,
@@ -2150,8 +2138,6 @@ def process_store_info(master_path, pdf_paths):
     workbook.save(os.path.abspath(temp_path))
     workbook.close()
 
-    _launch_temp_workbook(temp_path)
-
     summary = {
         "files_processed": len(batch_results),
         "batch_results": batch_results,
@@ -2547,8 +2533,6 @@ def process_lottery(master_path, department_pdf_paths, sales_report_pdf_paths):
     temp_path = _create_temp_workbook_path()
     workbook.save(os.path.abspath(temp_path))
     workbook.close()
-
-    _launch_temp_workbook(temp_path)
 
     summary = {
         "files_processed": len(batch_results),
