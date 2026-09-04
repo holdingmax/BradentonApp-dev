@@ -29,6 +29,29 @@
       --shadow-md: 0 4px 14px rgba(17, 24, 39, 0.08);
     }
     * { box-sizing: border-box; }
+
+    /* Transición fluida entre páginas (navegación normal del navegador,
+       no una SPA) -- View Transitions API para documentos completos.
+       Si el navegador no la soporta, no hace nada (degrada solo a la
+       navegación de siempre). Se repite este mismo bloque en login.html
+       (standalone, no extiende base.html) para que también transicione
+       al entrar/salir del login. */
+    @view-transition {
+      navigation: auto;
+    }
+    ::view-transition-old(root) {
+      animation: page-out 0.2s ease-in both;
+    }
+    ::view-transition-new(root) {
+      animation: page-in 0.25s ease-out both;
+    }
+    @keyframes page-out {
+      to { opacity: 0; transform: translateX(-14px); }
+    }
+    @keyframes page-in {
+      from { opacity: 0; transform: translateX(14px); }
+    }
+
     body {
       margin: 0;
       font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;

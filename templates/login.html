@@ -16,6 +16,26 @@
       --error-soft: #FEF2F2;
     }
     * { box-sizing: border-box; }
+
+    /* Mismo bloque que base.html -- login.html es standalone y no lo
+       extiende, así que necesita su propia copia para que la
+       transición también corra al entrar/salir del login. */
+    @view-transition {
+      navigation: auto;
+    }
+    ::view-transition-old(root) {
+      animation: page-out 0.2s ease-in both;
+    }
+    ::view-transition-new(root) {
+      animation: page-in 0.25s ease-out both;
+    }
+    @keyframes page-out {
+      to { opacity: 0; transform: translateX(-14px); }
+    }
+    @keyframes page-in {
+      from { opacity: 0; transform: translateX(14px); }
+    }
+
     body {
       margin: 0;
       min-height: 100vh;
@@ -146,6 +166,20 @@
       line-height: 1.5;
     }
     .forgot-help.open { display: block; }
+    .caps-lock-warning {
+      display: none;
+      align-items: center;
+      gap: 6px;
+      margin-top: 8px;
+      padding: 7px 10px;
+      background: #FFFBEB;
+      border: 1px solid #FDE68A;
+      color: #B45309;
+      border-radius: 8px;
+      font-size: 12.5px;
+    }
+    .caps-lock-warning.visible { display: flex; }
+    .caps-lock-warning svg { width: 14px; height: 14px; flex: none; }
   </style>
 </head>
 <body>
@@ -169,6 +203,10 @@
           <svg class="icon-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-11-7-11-7a20.77 20.77 0 0 1 5.06-5.94M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 7 11 7a20.77 20.77 0 0 1-2.27 3.36"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
         </button>
       </div>
+      <div class="caps-lock-warning" id="caps-lock-warning">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 11h5v11h8V11h5z"/></svg>
+        Bloq Mayús está activado
+      </div>
       <div class="login-extra-row">
         <label class="remember-me" for="remember">
           <input type="checkbox" id="remember" name="remember">
@@ -183,6 +221,19 @@
     </form>
   </div>
   <script>
+    (function () {
+      var capsWarning = document.getElementById('caps-lock-warning');
+      function updateCapsLockState(event) {
+        if (typeof event.getModifierState !== 'function') return;
+        capsWarning.classList.toggle('visible', event.getModifierState('CapsLock'));
+      }
+      ['username', 'password'].forEach(function (id) {
+        var field = document.getElementById(id);
+        field.addEventListener('keydown', updateCapsLockState);
+        field.addEventListener('keyup', updateCapsLockState);
+      });
+    })();
+
     function togglePasswordVisibility() {
       var input = document.getElementById('password');
       var btn = document.getElementById('toggle-password');
