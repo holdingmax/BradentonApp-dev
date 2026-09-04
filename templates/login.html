@@ -85,7 +85,22 @@
     }
     input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
     .password-field { position: relative; }
-    .password-field input { padding-right: 40px; }
+    .password-field input { padding-right: 62px; }
+    .caps-lock-indicator {
+      position: absolute;
+      right: 36px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 16px;
+      height: 16px;
+      color: #B45309;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.15s ease;
+      pointer-events: none;
+    }
+    .caps-lock-indicator.visible { opacity: 1; visibility: visible; }
+    .caps-lock-indicator svg { width: 100%; height: 100%; display: block; }
     .toggle-password {
       position: absolute;
       right: 4px;
@@ -166,20 +181,6 @@
       line-height: 1.5;
     }
     .forgot-help.open { display: block; }
-    .caps-lock-warning {
-      display: none;
-      align-items: center;
-      gap: 6px;
-      margin-top: 8px;
-      padding: 7px 10px;
-      background: #FFFBEB;
-      border: 1px solid #FDE68A;
-      color: #B45309;
-      border-radius: 8px;
-      font-size: 12.5px;
-    }
-    .caps-lock-warning.visible { display: flex; }
-    .caps-lock-warning svg { width: 14px; height: 14px; flex: none; }
   </style>
 </head>
 <body>
@@ -198,14 +199,13 @@
       <label for="password">Contraseña</label>
       <div class="password-field">
         <input type="password" id="password" name="password" autocomplete="current-password" required>
+        <span class="caps-lock-indicator" id="caps-lock-indicator" title="Bloq Mayús está activado" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 11h5v11h8V11h5z"/></svg>
+        </span>
         <button type="button" class="toggle-password" id="toggle-password" onclick="togglePasswordVisibility()" aria-label="Mostrar contraseña">
           <svg class="icon-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>
           <svg class="icon-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 19c-7 0-11-7-11-7a20.77 20.77 0 0 1 5.06-5.94M9.9 4.24A10.94 10.94 0 0 1 12 4c7 0 11 7 11 7a20.77 20.77 0 0 1-2.27 3.36"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
         </button>
-      </div>
-      <div class="caps-lock-warning" id="caps-lock-warning">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 3 11h5v11h8V11h5z"/></svg>
-        Bloq Mayús está activado
       </div>
       <div class="login-extra-row">
         <label class="remember-me" for="remember">
@@ -222,7 +222,7 @@
   </div>
   <script>
     (function () {
-      var capsWarning = document.getElementById('caps-lock-warning');
+      var capsWarning = document.getElementById('caps-lock-indicator');
       function updateCapsLockState(event) {
         if (typeof event.getModifierState !== 'function') return;
         capsWarning.classList.toggle('visible', event.getModifierState('CapsLock'));
