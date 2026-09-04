@@ -21,11 +21,11 @@ chequeo), según lo ya decidido para toda la sección Controles.
 
 import calendar
 import os
-import re
 from datetime import datetime
 
 from openpyxl import load_workbook
 
+from controles_utils import eval_literal_sum_cell
 from reporte_diario import (
     LOTTERY_COL_CASH_BALANCE,
     LOTTERY_COL_COMIS,
@@ -63,27 +63,7 @@ _MONTHLY_SUM_COLUMNS = {
 
 
 def _eval_literal_sum_cell(value):
-    """
-    Devuelve el número real de una celda de Lottery -- puede ser un
-    literal (float/int), una fórmula "=num-num" (el usuario a veces carga
-    así un desglose, ej. "=62-11"), o estar vacía (None -> 0.0). Nunca
-    evalúa una fórmula con referencias a otras celdas -- si aparece algo
-    así, falla en vez de arriesgar un resultado incorrecto (regla de oro
-    del proyecto: nunca un valor de baja confianza en silencio).
-    """
-    if value is None:
-        return 0.0
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str) and value.startswith("="):
-        body = value[1:]
-        if not re.match(r"^[\d.\-+]+$", body):
-            raise ValueError(
-                f"No se puede evaluar la fórmula {value!r} de Lottery -- tiene algo "
-                "más que números y signos, revisar a mano."
-            )
-        return sum(float(token) for token in re.findall(r"-?\d+\.?\d*", body))
-    raise ValueError(f"Valor inesperado en una celda de Lottery: {value!r}")
+    return eval_literal_sum_cell(value, "Lottery")
 
 
 def _sum_lottery_month(sheet, year, month):

@@ -96,8 +96,13 @@ def load_user(username):
 
 
 def _is_safe_next_url(target):
-    """Only allow redirecting to an in-app relative path after login."""
-    return bool(target) and target.startswith("/") and not target.startswith("//")
+    """
+    Only allow redirecting to an in-app relative path after login. Rejects
+    "//host/..." (protocol-relative) AND any backslash -- some browsers
+    normalize "/\\host/..." to "//host/..." too, treating it as an external
+    URL despite starting with a single forward slash.
+    """
+    return bool(target) and target.startswith("/") and not target.startswith("//") and "\\" not in target
 
 
 @app.before_request
@@ -177,11 +182,13 @@ def admin_users():
                 )
                 flash("Usuario creado.", "success")
             elif action == "reset_password":
-                auth.set_password(
-                    request.form.get("username", "").strip(),
-                    request.form.get("new_password", ""),
-                )
-                flash("Contraseña actualizada.", "success")
+                new_password = request.form.get("new_password", "")
+                confirm_password = request.form.get("confirm_password", "")
+                if new_password != confirm_password:
+                    flash("Las contraseñas no coinciden.", "error")
+                else:
+                    auth.set_password(request.form.get("username", "").strip(), new_password)
+                    flash("Contraseña actualizada.", "success")
             elif action == "delete":
                 auth.delete_user(
                     request.form.get("username", "").strip(),
@@ -1079,4 +1086,12 @@ def caja_lottery():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    # El modo debug (reloader + debugger interactivo de Werkzeug) prendido
+    # por default preserva el flujo de desarrollo local de siempre -- hoy no
+    # es un riesgo real porque sin "host" explícito Flask solo escucha en
+    # 127.0.0.1 (nadie fuera de esta PC llega a la página del debugger, que
+    # permite correr código Python arbitrario desde el navegador). Pero hay
+    # que apagarlo con BRADENTON_DEBUG=0 (o no dejarlo prendido por default)
+    # antes de que esto corra en Render/Toolbox, donde sí quedaría expuesto.
+    debug_mode = os.environ.get("BRADENTON_DEBUG", "1") == "1"
+    app.run(debug=debug_mode, port=5000)

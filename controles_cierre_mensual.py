@@ -17,11 +17,11 @@ chequeo), según lo que ya se decidió para toda la sección Controles.
 
 import calendar
 import os
-import re
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from openpyxl import load_workbook
 
+from controles_utils import eval_literal_sum_cell
 from reporte_diario import (
     STORE_INFO_COL_CASH,
     STORE_INFO_COL_CREDIT,
@@ -49,28 +49,7 @@ STORE_INFO_COL_OTHER = STORE_INFO_COL_CREDIT + 1
 
 
 def _eval_literal_sum_cell(value):
-    """
-    Devuelve el número real de una celda de Store Info -- puede ser un
-    literal (float/int), una fórmula "=num+num+num..." (como escribe
-    reporte_diario.py para TC, o como el usuario carga a mano un desglose
-    de pagos), o estar vacía (None -> 0.0). Nunca evalúa una fórmula con
-    referencias a otras celdas -- si aparece algo así, falla en vez de
-    arriesgar un resultado incorrecto (regla de oro del proyecto: nunca
-    un valor de baja confianza en silencio).
-    """
-    if value is None:
-        return 0.0
-    if isinstance(value, (int, float)):
-        return float(value)
-    if isinstance(value, str) and value.startswith("="):
-        body = value[1:]
-        if not re.match(r"^[\d.\-+]+$", body):
-            raise ValueError(
-                f"No se puede evaluar la fórmula {value!r} de Store Info -- tiene algo "
-                "más que números y signos, revisar a mano."
-            )
-        return sum(float(token) for token in re.findall(r"-?\d+\.?\d*", body))
-    raise ValueError(f"Valor inesperado en una celda de Store Info: {value!r}")
+    return eval_literal_sum_cell(value, "Store Info")
 
 
 # Cada entrada agrupa la columna de Store Info a sumar por día con el
@@ -167,7 +146,19 @@ def check_store_info_monthly(cierre_path, monthly_pdf_path):
         raise FileNotFoundError(f"Excel Cierre no encontrado: {cierre_path}")
 
     pdf_fields = extract_store_info_from_pdf(monthly_pdf_path, start_page_index=0)
-    period_from = pdf_fields["from_date"]
+    # El "PERIOD FROM" que imprime este mismo reporte (Store Sales Summary
+    # Report, reusado tal cual del extractor de Reporte Diario) siempre viene
+    # un día antes del día real que cubre el reporte -- por el cierre nocturno
+    # del negocio, no por un error del POS. Reporte Diario ya corrige esto
+    # sumando 1 día antes de decidir en qué fila escribir (ver
+    # write_store_info_row en reporte_diario.py) -- acá hace falta la misma
+    # corrección antes de decidir qué mes buscar en Store Info, si no, un PDF
+    # mensual de agosto (que imprime algo como "PERIOD FROM: Jul 31 ... TO:
+    # Aug 31 ...") terminaría comparándose contra julio en vez de agosto.
+    # "period_to" no necesita el mismo ajuste -- ya cae en el día real
+    # correcto (ver el ejemplo de _parse_period_from_to_line: un reporte
+    # "para" el día 19 imprime FROM=día 18, TO=día 19).
+    period_from = pdf_fields["from_date"] + timedelta(days=1)
     period_to = pdf_fields["to_date"]
 
     workbook = load_workbook(cierre_path, data_only=False)

@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}Usuarios — Bradenton App{% endblock %}
 {% block crumbs %}
-<nav class="crumbs"><a href="{{ url_for('index') }}">Herramientas</a><span>/</span><span class="current">Usuarios</span></nav>
+<nav class="crumbs"><span class="current">Usuarios</span></nav>
 {% endblock %}
 {% block content %}
 <div class="page-header">
@@ -43,6 +43,7 @@
             <input type="hidden" name="action" value="reset_password">
             <input type="hidden" name="username" value="{{ user.username }}">
             <input type="password" name="new_password" placeholder="Nueva contraseña" required style="width: auto; padding: 6px 8px; font-size: 12.5px;">
+            <input type="password" name="confirm_password" placeholder="Confirmar" required style="width: auto; padding: 6px 8px; font-size: 12.5px;">
             <button type="submit" style="margin-top: 0; padding: 6px 12px; font-size: 12.5px;">Resetear</button>
           </form>
         </td>
