@@ -43,13 +43,13 @@
       animation: page-out 0.2s ease-in both;
     }
     ::view-transition-new(root) {
-      animation: page-in 0.25s ease-out both;
+      animation: page-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
     }
     @keyframes page-out {
-      to { opacity: 0; transform: translateX(-14px); }
+      to { opacity: 0; transform: scale(0.98) translateY(-4px); }
     }
     @keyframes page-in {
-      from { opacity: 0; transform: translateX(14px); }
+      from { opacity: 0; transform: scale(0.96) translateY(10px); }
     }
 
     body {
