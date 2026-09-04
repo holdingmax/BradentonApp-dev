@@ -619,6 +619,29 @@
         });
       });
     })();
+
+    // Encadenado genérico: cuando un form con class="chain-master-result"
+    // termina de procesar, el resultado recién producido queda cargado solo
+    // en el input compartido de la página (.shared-master-input), para que
+    // el próximo "Procesar" de otro sub-flujo parta de ese resultado en vez
+    // del archivo original -- sin tener que ir a Descargas y volver a
+    // elegirlo a mano. Generalizado desde la implementación que antes vivía
+    // solo en proveedores.html (Facturas -> Pagos) — la lógica ya era 100%
+    // genérica (no dependía de nada específico de Proveedores), así que
+    // cualquier página nueva con dos sub-flujos sobre un mismo Excel
+    // compartido lo obtiene gratis con solo agregar la clase al form.
+    (function () {
+      document.querySelectorAll('form.chain-master-result').forEach(function (form) {
+        form.addEventListener('ajaxprocess:success', function (event) {
+          var sharedInput = document.querySelector('.shared-master-input');
+          if (!sharedInput) return;
+          var dt = new DataTransfer();
+          dt.items.add(new File([event.detail.blob], event.detail.filename, { type: event.detail.blob.type }));
+          sharedInput.files = dt.files;
+          sharedInput.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+      });
+    })();
   </script>
 </body>
 </html>

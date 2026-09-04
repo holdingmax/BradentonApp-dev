@@ -5,6 +5,7 @@ Parses department files with pandas, updates the master workbook with openpyxl
 (style-preserving), and saves a temp preview only.
 """
 
+import difflib
 import logging
 import os
 import tempfile
@@ -33,7 +34,6 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 COSTO_TODOS_SHEET_NAME = "COSTO.TODOS"
-COSTO_TODOS_SHEET_INDEX = 3  # 1-based sheet position in workbook
 DATA_START_ROW = 2  # Row 1 is header; product grid overwrite begins at A2
 COSTO_DATA_COLUMNS = 7  # A through G (UPC … DeptName)
 PRICE_CHANGE_COLUMN = 8  # H — Price this run minus Price last run, same UPC
@@ -273,13 +273,26 @@ def _sort_by_department(df):
 def _consolidate_department_files(department_paths):
     """
     Read all Elistars department exports, concatenate, clean, and sort by dept.
+
+    Aislado por archivo: antes, un solo archivo de departamento malo (mal
+    formado, vacío, con una fila que no se pudo parsear) tiraba el lote
+    ENTERO -- perdiendo los demás archivos ya buenos -- igual que ya se
+    encontró y se corrigió una vez en monthly_sales.py (CMV Ventas). Como
+    esto corre antes de tocar el libro real (_clear_costo_data_grid), no
+    hay riesgo de corrupción -- solo se estaba perdiendo trabajo bueno sin
+    necesidad.
     """
     frames = []
     file_stats = []
+    failed_files = 0
     ordered_paths = [os.path.abspath(path) for path in department_paths]
 
     for department_path in ordered_paths:
-        dept_df = read_elistars_department_file(department_path)
+        try:
+            dept_df = read_elistars_department_file(department_path)
+        except (ValueError, TypeError, KeyError) as exc:
+            failed_files += 1
+            continue
         label = infer_department_label(dept_df, department_path)
         frames.append(dept_df)
         file_stats.append(
@@ -292,12 +305,14 @@ def _consolidate_department_files(department_paths):
         )
 
     if not frames:
-        raise ValueError("No se pudo leer ninguna fila de departamento de los archivos seleccionados.")
+        raise ValueError(
+            f"No se pudo leer ninguna fila de departamento: {failed_files} archivo(s) no se pudieron leer."
+        )
 
     combined = pd.concat(frames, ignore_index=True)
     combined = _finalize_department_frame(combined)
     combined = _sort_by_department(combined)
-    return combined, file_stats
+    return combined, file_stats, failed_files
 
 
 def infer_department_label(df, source_path):
@@ -354,15 +369,27 @@ def _create_temp_xlsx_path():
 
 
 def _get_costo_todos_sheet(workbook):
-    """Target COSTO.TODOS by name; fall back to the third worksheet."""
+    """
+    Target COSTO.TODOS by name (exact, luego case-insensitive, luego la hoja
+    más parecida por texto). Antes caía a "la 3ra hoja del libro" en
+    silencio si no encontraba el nombre -- exactamente el tipo de bug que
+    ya mordió a este proyecto (hoja EFT con un typo de una letra) y que ya
+    se sacó del módulo hermano monthly_sales.py por la misma razón: si
+    alguien renombra o reordena la pestaña, la próxima carga de Costo
+    terminaría escribiendo en silencio sobre lo que sea que esté en esa
+    posición. Ahora, si no hay un nombre exacto/case-insensitive, se
+    prueba por similitud de texto (cutoff alto para no matchear una hoja
+    sin relación) antes de fallar limpio.
+    """
     names = list(workbook.sheetnames)
     target = COSTO_TODOS_SHEET_NAME.strip().lower()
     for name in names:
         if name.strip().lower() == target:
             return workbook[name]
 
-    if len(workbook.worksheets) >= COSTO_TODOS_SHEET_INDEX:
-        return workbook.worksheets[COSTO_TODOS_SHEET_INDEX - 1]
+    close = difflib.get_close_matches(COSTO_TODOS_SHEET_NAME, names, n=1, cutoff=0.85)
+    if close:
+        return workbook[close[0]]
 
     raise ValueError(
         f'Hoja "{COSTO_TODOS_SHEET_NAME}" no encontrada. Disponibles: {", ".join(names)}'
@@ -593,13 +620,33 @@ def _merge_with_existing_departments(sheet, new_df):
     Only the department(s) present in new_df are replaced — every other
     department's existing rows are carried over untouched, so uploading a
     single department's export can never wipe out the rest of the grid.
+
+    "Present in new_df" tolerates a close spelling variant of an existing
+    DeptName, not just an exact (case/whitespace-insensitive) match --
+    monthly_sales.py already had to special-case this exact scenario for
+    this same POS ("FOUTAIN" vs "FOUNTAIN" is a documented real export
+    variant), and without it here, a department whose spelling shifts
+    between two Costo uploads never gets its old rows cleared: the old
+    spelling's rows stay untouched forever, duplicated alongside the new
+    spelling's rows for the same physical items. Cutoff matches the one
+    already used elsewhere in this codebase for the same class of problem
+    (sheet-name fuzzy matching).
     """
     existing_df = _read_existing_costo_rows(sheet)
     if existing_df.empty:
         return new_df
 
-    touched = set(new_df["DeptName"].astype(str).str.strip().str.casefold()) - {""}
-    if touched:
+    new_dept_names = set(new_df["DeptName"].astype(str).str.strip().str.casefold()) - {""}
+    if new_dept_names:
+        existing_dept_names = set(
+            existing_df["DeptName"].astype(str).str.strip().str.casefold()
+        ) - {""}
+        touched = set(new_dept_names)
+        for existing_name in existing_dept_names:
+            if existing_name in touched:
+                continue
+            if difflib.get_close_matches(existing_name, new_dept_names, n=1, cutoff=0.85):
+                touched.add(existing_name)
         keep_mask = ~existing_df["DeptName"].astype(str).str.strip().str.casefold().isin(touched)
         existing_df = existing_df[keep_mask]
 
@@ -649,7 +696,7 @@ def _replace_costo_departments(sheet, department_paths):
     together still overwrites the whole grid, same as before.
     """
     _hide_column_b(sheet)
-    combined_df, file_stats = _consolidate_department_files(department_paths)
+    combined_df, file_stats, failed_files = _consolidate_department_files(department_paths)
     previous_prices = _snapshot_costo_prices(sheet)
     merged_df = _merge_with_existing_departments(sheet, combined_df)
     merged_df = _sort_by_department(merged_df)
@@ -659,7 +706,7 @@ def _replace_costo_departments(sheet, department_paths):
         sheet, merged_df, DATA_START_ROW, previous_prices=previous_prices
     )
     _hide_column_b(sheet)
-    return file_stats, rows_written
+    return file_stats, rows_written, failed_files
 
 
 def _openpyxl_merge_and_save(master_path, department_paths, temp_xlsx_path):
@@ -667,9 +714,9 @@ def _openpyxl_merge_and_save(master_path, department_paths, temp_xlsx_path):
     try:
         workbook = _load_master_workbook(master_path)
         sheet = _get_costo_todos_sheet(workbook)
-        file_stats, rows_appended = _replace_costo_departments(sheet, department_paths)
+        file_stats, rows_appended, failed_files = _replace_costo_departments(sheet, department_paths)
         workbook.save(os.path.abspath(temp_xlsx_path))
-        return file_stats, rows_appended
+        return file_stats, rows_appended, failed_files
     finally:
         if workbook is not None:
             workbook.close()
@@ -686,7 +733,7 @@ def update_master_costo_todos_bulk(master_path, department_paths):
 
     Returns:
         tuple: (temp_xlsx_path, file_stats, total_parsed, rows_appended,
-                upcs_not_in_master, master_row_count)
+                upcs_not_in_master, master_row_count, failed_files)
     """
     if not department_paths:
         raise ValueError("No se proporcionaron archivos de departamento.")
@@ -696,7 +743,7 @@ def update_master_costo_todos_bulk(master_path, department_paths):
 
     temp_xlsx_path = _create_temp_xlsx_path()
 
-    file_stats, rows_appended = _openpyxl_merge_and_save(
+    file_stats, rows_appended, failed_files = _openpyxl_merge_and_save(
         master_path, department_paths, temp_xlsx_path
     )
 
@@ -711,44 +758,7 @@ def update_master_costo_todos_bulk(master_path, department_paths):
         rows_appended,
         0,
         rows_appended,
+        failed_files,
     )
 
 
-def workbook_has_costo_todos_sheet(file_path):
-    extension = os.path.splitext(file_path)[1].lower()
-    if extension not in {".xlsx", ".xlsm", ".xls"}:
-        return False
-
-    if extension in {".xlsx", ".xlsm"} and OPENPYXL_AVAILABLE:
-        workbook = None
-        try:
-            workbook = load_workbook(
-                os.path.abspath(file_path), read_only=True, data_only=False
-            )
-            _get_costo_todos_sheet(workbook)
-            return True
-        except ValueError:
-            return False
-        except Exception:
-            pass
-        finally:
-            if workbook is not None:
-                workbook.close()
-
-    try:
-        if extension == ".xls":
-            if not XLRD_AVAILABLE:
-                return False
-            book = pd.ExcelFile(file_path, engine="xlrd")
-        else:
-            book = pd.ExcelFile(file_path)
-        try:
-            target = COSTO_TODOS_SHEET_NAME.lower()
-            names = [name.strip().lower() for name in book.sheet_names]
-            if target in names:
-                return True
-            return len(book.sheet_names) > COSTO_TODOS_SHEET_INDEX - 1
-        finally:
-            book.close()
-    except Exception:
-        return False

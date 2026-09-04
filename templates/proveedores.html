@@ -78,24 +78,4 @@
     </div>
   </form>
 </div>
-
-<script>
-  // El popup instantáneo (éxito/aviso/error) ya lo maneja el mecanismo
-  // genérico de base.html (form.ajax-process-form, ver ahí). Lo único
-  // específico de Proveedores es encadenar: el resultado recién descargado
-  // queda cargado solo en el input compartido de arriba, para no tener que
-  // ir a Descargas y volver a elegirlo a mano en el siguiente "Procesar".
-  (function () {
-    document.querySelectorAll('form.chain-master-result').forEach(function (form) {
-      form.addEventListener('ajaxprocess:success', function (event) {
-        var sharedInput = document.querySelector('.shared-master-input');
-        if (!sharedInput) return;
-        var dt = new DataTransfer();
-        dt.items.add(new File([event.detail.blob], event.detail.filename, { type: event.detail.blob.type }));
-        sharedInput.files = dt.files;
-        sharedInput.dispatchEvent(new Event('change', { bubbles: true }));
-      });
-    });
-  })();
-</script>
 {% endblock %}

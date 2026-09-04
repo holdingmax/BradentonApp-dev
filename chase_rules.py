@@ -106,7 +106,30 @@ def _add_rule(filename, keyword, detail, seed=None):
     return entry
 
 
-def _edit_rule_by_index(filename, index, keyword, detail, seed=None):
+def _check_expected_rule(rules, idx, expected_keyword, expected_detail):
+    """
+    Guard against the stale-index race: the `index` a form submits was
+    captured from a page render that may no longer match the file's
+    current state (another tab/session edited or deleted a rule in the
+    meantime, shifting every index after it). If the caller passed what it
+    believes rules[idx] still looks like, refuse instead of silently
+    editing/deleting whatever rule happens to sit at that index now.
+    `expected_keyword`/`expected_detail` are optional so direct callers
+    (e.g. a future script) can skip the check on purpose.
+    """
+    if expected_keyword is None and expected_detail is None:
+        return
+    current = rules[idx]
+    if current["keyword"] != expected_keyword or current["detail"] != expected_detail:
+        raise ValueError(
+            "Esta regla cambió mientras tanto (probablemente otra pestaña u otra sesión "
+            "la editó primero) -- recargá la página y volvé a intentarlo."
+        )
+
+
+def _edit_rule_by_index(
+    filename, index, keyword, detail, seed=None, expected_keyword=None, expected_detail=None
+):
     """Replace one persisted rule in place, keeping its position in the list."""
     entry = _normalize_rule_entry(keyword, detail)
     rules = _load_rules_file(filename, seed=seed)
@@ -116,12 +139,13 @@ def _edit_rule_by_index(filename, index, keyword, detail, seed=None):
         raise ValueError("Índice de regla inválido.") from None
     if idx < 0 or idx >= len(rules):
         raise ValueError("La regla seleccionada no se encontró en el almacenamiento.")
+    _check_expected_rule(rules, idx, expected_keyword, expected_detail)
     rules[idx] = entry
     _save_rules_file(filename, rules)
     return entry
 
 
-def _delete_rule_by_index(filename, index, seed=None):
+def _delete_rule_by_index(filename, index, seed=None, expected_keyword=None, expected_detail=None):
     """Remove one persisted rule by index."""
     rules = _load_rules_file(filename, seed=seed)
     try:
@@ -130,6 +154,7 @@ def _delete_rule_by_index(filename, index, seed=None):
         raise ValueError("Índice de regla inválido.") from None
     if idx < 0 or idx >= len(rules):
         raise ValueError("La regla seleccionada no se encontró en el almacenamiento.")
+    _check_expected_rule(rules, idx, expected_keyword, expected_detail)
     removed = rules.pop(idx)
     _save_rules_file(filename, rules)
     return removed
@@ -145,18 +170,45 @@ def save_dynamic_rules(rules):
 
 
 def add_dynamic_rule(keyword, detail):
-    """Append or update one Personalizada rule while preserving every other saved rule."""
+    """
+    Append or update one Personalizada rule while preserving every other
+    saved rule.
+
+    Refuses a keyword that already exists as a Maestra rule -- antes esto
+    se permitía en silencio, pero como categorize_chase_description evalúa
+    Maestra antes que Personalizada y solo un keyword ESTRICTAMENTE más
+    largo puede ganarle a una regla ya matcheada (_match_rules), una
+    Personalizada nueva con el mismo keyword (o uno igual o más corto)
+    nunca podía aplicarse: la UI confirmaba "Regla creada" pero la
+    categorización seguía usando el detail viejo de la Maestra para
+    siempre, sin ningún aviso de que la regla nueva no servía para nada.
+    """
+    entry = _normalize_rule_entry(keyword, detail)
+    keyword_key = entry["keyword"].lower()
+    for master_rule in load_master_rules():
+        if master_rule["keyword"].lower() == keyword_key:
+            raise ValueError(
+                f'Ya existe una regla Maestra con el keyword "{entry["keyword"]}" '
+                f'(detalle: "{master_rule["detail"]}"). Una Personalizada con el mismo '
+                "keyword nunca se aplicaría -- si querés otro resultado, editá esa "
+                "regla Maestra en vez de crear una nueva."
+            )
     return _add_rule(RULES_FILENAME, keyword, detail)
 
 
-def edit_dynamic_rule_by_index(index, keyword, detail):
+def edit_dynamic_rule_by_index(index, keyword, detail, expected_keyword=None, expected_detail=None):
     """Replace one Personalizada rule in place by index in chase_rules.json."""
-    return _edit_rule_by_index(RULES_FILENAME, index, keyword, detail)
+    return _edit_rule_by_index(
+        RULES_FILENAME, index, keyword, detail,
+        expected_keyword=expected_keyword, expected_detail=expected_detail,
+    )
 
 
-def delete_dynamic_rule_by_index(index):
+def delete_dynamic_rule_by_index(index, expected_keyword=None, expected_detail=None):
     """Remove one Personalizada rule by index in chase_rules.json."""
-    return _delete_rule_by_index(RULES_FILENAME, index)
+    return _delete_rule_by_index(
+        RULES_FILENAME, index, expected_keyword=expected_keyword, expected_detail=expected_detail
+    )
 
 
 def load_master_rules():
@@ -172,16 +224,20 @@ def load_master_rules():
     return _load_rules_file(MASTER_RULES_FILENAME, seed=_DEFAULT_MASTER_RULES)
 
 
-def edit_master_rule_by_index(index, keyword, detail):
+def edit_master_rule_by_index(index, keyword, detail, expected_keyword=None, expected_detail=None):
     """Replace one Maestra rule in place by index in chase_master_rules.json."""
     return _edit_rule_by_index(
-        MASTER_RULES_FILENAME, index, keyword, detail, seed=_DEFAULT_MASTER_RULES
+        MASTER_RULES_FILENAME, index, keyword, detail, seed=_DEFAULT_MASTER_RULES,
+        expected_keyword=expected_keyword, expected_detail=expected_detail,
     )
 
 
-def delete_master_rule_by_index(index):
+def delete_master_rule_by_index(index, expected_keyword=None, expected_detail=None):
     """Remove one Maestra rule by index in chase_master_rules.json."""
-    return _delete_rule_by_index(MASTER_RULES_FILENAME, index, seed=_DEFAULT_MASTER_RULES)
+    return _delete_rule_by_index(
+        MASTER_RULES_FILENAME, index, seed=_DEFAULT_MASTER_RULES,
+        expected_keyword=expected_keyword, expected_detail=expected_detail,
+    )
 
 
 def _rule_and_terms(keyword):
@@ -631,9 +687,16 @@ def write_chase_csv_file(df, file_path, column_map):
         if posting_dt:
             output.at[index, output.columns[posting_idx]] = posting_dt.strftime("%d/%m/%Y")
 
-        output.at[index, output.columns[amount_idx]] = parse_amount_signed(
-            output.at[index, output.columns[amount_idx]]
-        )
+        # La columna se leyó con dtype=str (read_chase_activity_file) --
+        # pandas 3.0 hace ese dtype estricto de verdad y rechaza asignarle
+        # un float nativo vía .at[] (TypeError: "Invalid value ... for
+        # dtype 'str'"), a diferencia de pandas <3.0 que lo toleraba en
+        # silencio. Se formatea a texto con coma decimal (el mismo display
+        # que ya documentaba esta función) antes de asignarlo, en vez de
+        # asignar el float crudo -- soluciona el TypeError y de paso fija
+        # el formato final que se escribe en el CSV.
+        signed_amount = parse_amount_signed(output.at[index, output.columns[amount_idx]])
+        output.at[index, output.columns[amount_idx]] = f"{signed_amount:.2f}".replace(".", ",")
 
         excel_row = CHASE_DATA_START_ROW + row_offset
         if excel_row == CHASE_DATA_START_ROW:

@@ -173,7 +173,7 @@ GROUP_500_DEPARTMENTS = frozenset(
         "AUTO",
         "BOILED PEANUTS",
         "HBA",
-        "ICECREAM",
+        "ICE CREAM",
         "MILK",
         "PROPANE",
         "GROCERIES",
@@ -1551,24 +1551,62 @@ def _parse_pdfs_concurrently(paths, parse_fn, **kwargs):
     read at the same time on a multi-core machine instead of strictly one
     after another, with no change to how any single PDF is read. Capped at
     a handful of workers so a big batch doesn't overwhelm the machine.
+
+    Returns (results, errors) -- two dicts keyed by path -- instead of
+    raising on the first bad PDF. A single unreadable/unrecognizable PDF
+    used to abort the entire batch (losing the already-good work of every
+    other PDF) and its error text embedded the failing filename, which
+    violates the sitewide "never a filename in an aviso" policy. Now every
+    path gets its own outcome, and it's up to the caller to isolate a
+    failed path into a short, count-only notice instead of a raw message.
     """
 
     def _run(path):
         try:
-            return parse_fn(path, **kwargs)
+            return ("ok", parse_fn(path, **kwargs))
         except Exception as exc:
-            raise type(exc)(f"{os.path.basename(path)}: {exc}") from exc
+            return ("error", exc)
 
     if len(paths) <= 1:
-        return {path: _run(path) for path in paths}
+        outcomes = {path: _run(path) for path in paths}
+    else:
+        max_workers = min(len(paths), os.cpu_count() or _MAX_CONCURRENT_PDF_WORKERS, _MAX_CONCURRENT_PDF_WORKERS)
+        outcomes = {}
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(_run, path): path for path in paths}
+            for future in as_completed(futures):
+                outcomes[futures[future]] = future.result()
 
-    max_workers = min(len(paths), os.cpu_count() or _MAX_CONCURRENT_PDF_WORKERS, _MAX_CONCURRENT_PDF_WORKERS)
     results = {}
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = {executor.submit(_run, path): path for path in paths}
-        for future in as_completed(futures):
-            results[futures[future]] = future.result()
-    return results
+    errors = {}
+    for path, (status, payload) in outcomes.items():
+        if status == "ok":
+            results[path] = payload
+        else:
+            errors[path] = payload
+    return results, errors
+
+
+def _partition_paths_by_extractable_day(paths):
+    """
+    Split `paths` into (sorted_by_day, unrecognized_count) -- a PDF whose
+    filename doesn't match the expected "... DD-MM.pdf" pattern used to
+    abort sorting (and therefore the whole batch) for every other PDF too,
+    via the ValueError from extract_day_from_filename propagating out of
+    sorted()'s key function. Now it's isolated: that one file is counted
+    and excluded, the rest still get sorted and processed normally.
+    """
+    dated_paths = []
+    unrecognized = 0
+    for path in paths:
+        try:
+            day = extract_day_from_filename(path)
+        except ValueError:
+            unrecognized += 1
+            continue
+        dated_paths.append((day, path))
+    dated_paths.sort(key=lambda item: item[0])
+    return [path for _day, path in dated_paths], unrecognized
 
 
 def process_reporte_diario(
@@ -1598,14 +1636,29 @@ def process_reporte_diario(
     if extension not in {".xlsx", ".xlsm"}:
         raise ValueError("El Excel maestro debe ser .xlsx o .xlsm.")
 
-    sorted_paths = sorted(paths, key=extract_day_from_filename)
-    for pdf_path in sorted_paths:
-        if not os.path.isfile(pdf_path):
-            raise FileNotFoundError(f"PDF no encontrado: {pdf_path}")
+    # Aislado por archivo: antes, un solo PDF con un nombre que no matchea
+    # "... DD-MM.pdf" tiraba el sorted() de TODO el lote (ValueError de
+    # extract_day_from_filename propagándose desde la key function),
+    # perdiendo el trabajo de los demás PDFs que sí estaban bien nombrados.
+    sorted_paths, files_with_bad_filename = _partition_paths_by_extractable_day(paths)
+    if not sorted_paths:
+        raise ValueError(
+            "No se pudo extraer el día del mes del nombre de ningún PDF -- se esperaba "
+            "un patrón como 'Close Store 01-05.pdf'."
+        )
 
-    parsed_by_path = _parse_pdfs_concurrently(
+    # Aislado por archivo también acá: antes, un PDF ilegible (OCR sin
+    # ancla, escaneo corrupto, etc.) tiraba TODO el lote via
+    # future.result() sin capturar, perdiendo el trabajo ya bueno de los
+    # demás PDFs -- y el mensaje de esa excepción venía con el nombre de
+    # archivo incrustado (violaba la política de "nunca un nombre de
+    # archivo en un aviso"). Ahora cada PDF que falla se cuenta aparte y el
+    # resto sigue procesándose normal.
+    parsed_by_path, parse_errors = _parse_pdfs_concurrently(
         sorted_paths, parse_elistar_daily_pdf_page, page_index=page_index
     )
+    files_failed_to_parse = len(parse_errors)
+    ok_paths = [path for path in sorted_paths if path in parsed_by_path]
 
     keep_vba = extension == ".xlsm"
     workbook = load_workbook(master_path, data_only=False, keep_vba=keep_vba)
@@ -1613,18 +1666,27 @@ def process_reporte_diario(
     column_map, protected = build_department_column_map(sheet)
 
     batch_results = []
+    days_failed_to_write = 0
     total_written = 0
     total_skipped = 0
     total_departments = 0
 
-    for pdf_path in sorted_paths:
+    for pdf_path in ok_paths:
         pdf_records, pdf_diagnostics = parsed_by_path[pdf_path]
-        target_day = int(extract_day_from_filename(pdf_path))
-        target_row = find_row_for_calendar_day(sheet, target_day)
+        try:
+            target_day = int(extract_day_from_filename(pdf_path))
+            target_row = find_row_for_calendar_day(sheet, target_day)
+        except (ValueError, TypeError) as exc:
+            days_failed_to_write += 1
+            continue
 
-        written, skipped = inject_daily_sales(
-            sheet, pdf_records, column_map, target_row
-        )
+        try:
+            written, skipped = inject_daily_sales(
+                sheet, pdf_records, column_map, target_row
+            )
+        except (ValueError, TypeError, AttributeError) as exc:
+            days_failed_to_write += 1
+            continue
 
         total_written += len(written)
         total_skipped += len(skipped)
@@ -1675,6 +1737,15 @@ def process_reporte_diario(
         )
         pdf_records = None
 
+    if not batch_results:
+        workbook.close()
+        raise ValueError(
+            "No se pudo cargar ningún día: "
+            f"{files_with_bad_filename} archivo(s) con nombre no reconocido, "
+            f"{files_failed_to_parse} archivo(s) no se pudieron leer, "
+            f"{days_failed_to_write} día(s) no matchearon ninguna fila."
+        )
+
     temp_path = _create_temp_workbook_path()
     workbook.save(os.path.abspath(temp_path))
     workbook.close()
@@ -1685,6 +1756,9 @@ def process_reporte_diario(
         "departments_skipped": total_skipped,
         "pdf_departments": total_departments,
         "protected_headers": sorted(protected),
+        "files_with_bad_filename": files_with_bad_filename,
+        "files_failed_to_parse": files_failed_to_parse,
+        "days_failed_to_write": days_failed_to_write,
         "batch_results": batch_results,
     }
     return temp_path, summary
@@ -2125,12 +2199,16 @@ def process_store_info(master_path, pdf_paths):
     if extension not in {".xlsx", ".xlsm"}:
         raise ValueError("El Excel de Store Info debe ser .xlsx o .xlsm.")
 
-    sorted_paths = sorted(paths, key=extract_day_from_filename)
-    for pdf_path in sorted_paths:
-        if not os.path.isfile(pdf_path):
-            raise FileNotFoundError(f"PDF no encontrado: {pdf_path}")
+    sorted_paths, files_with_bad_filename = _partition_paths_by_extractable_day(paths)
+    if not sorted_paths:
+        raise ValueError(
+            "No se pudo extraer el día del mes del nombre de ningún PDF -- se esperaba "
+            "un patrón como 'Close Store 01-05.pdf'."
+        )
 
-    fields_by_path = _parse_pdfs_concurrently(sorted_paths, extract_store_info_from_pdf)
+    fields_by_path, parse_errors = _parse_pdfs_concurrently(sorted_paths, extract_store_info_from_pdf)
+    files_failed_to_parse = len(parse_errors)
+    ok_paths = [path for path in sorted_paths if path in fields_by_path]
 
     keep_vba = extension == ".xlsm"
     workbook = load_workbook(master_path, data_only=False, keep_vba=keep_vba)
@@ -2138,17 +2216,31 @@ def process_store_info(master_path, pdf_paths):
 
     batch_results = []
 
-    for pdf_path in sorted_paths:
+    for pdf_path in ok_paths:
         fields = fields_by_path[pdf_path]
         row = write_store_info_row(sheet, fields)
+        # El "from_date" tal como lo imprime el PDF viene siempre un día
+        # antes del día real que cubre el reporte (ver write_store_info_row)
+        # -- se lee de vuelta la fecha que realmente quedó en columna A en
+        # vez de reformatear el "from_date" crudo, para no mostrar una
+        # fecha corrida un día si este resumen alguna vez se muestra.
+        written_date = sheet.cell(row=row, column=STORE_INFO_COL_FROM_DATE).value
         batch_results.append(
             {
                 "pdf_path": pdf_path,
                 "filename": os.path.basename(pdf_path),
                 "target_row": row,
-                "from_date": fields["from_date"].strftime("%d/%m/%Y"),
+                "from_date": written_date.strftime("%d/%m/%Y") if written_date else None,
                 "pages_used": fields.get("pages_used"),
             }
+        )
+
+    if not batch_results:
+        workbook.close()
+        raise ValueError(
+            "No se pudo cargar ningún día: "
+            f"{files_with_bad_filename} archivo(s) con nombre no reconocido, "
+            f"{files_failed_to_parse} archivo(s) no se pudieron leer."
         )
 
     temp_path = _create_temp_workbook_path()
@@ -2157,6 +2249,8 @@ def process_store_info(master_path, pdf_paths):
 
     summary = {
         "files_processed": len(batch_results),
+        "files_with_bad_filename": files_with_bad_filename,
+        "files_failed_to_parse": files_failed_to_parse,
         "batch_results": batch_results,
     }
     return temp_path, summary
@@ -2473,16 +2567,20 @@ def process_lottery(master_path, department_pdf_paths, sales_report_pdf_paths):
         if not os.path.isfile(pdf_path):
             raise FileNotFoundError(f"PDF no encontrado: {pdf_path}")
 
-    department_fields_by_path = (
+    # Aislado por PDF: antes, un PDF ilegible de cualquiera de los dos
+    # conjuntos tiraba TODO el lote (ambas fuentes), perdiendo el trabajo ya
+    # bueno del resto -- ver _parse_pdfs_concurrently.
+    department_fields_by_path, department_parse_errors = (
         _parse_pdfs_concurrently(department_paths, extract_lottery_department_fields_from_pdf)
         if department_paths
-        else {}
+        else ({}, {})
     )
-    sales_report_fields_by_path = (
+    sales_report_fields_by_path, sales_report_parse_errors = (
         _parse_pdfs_concurrently(sales_report_paths, extract_lottery_receipt_fields_from_sales_report)
         if sales_report_paths
-        else {}
+        else ({}, {})
     )
+    files_failed_to_parse = len(department_parse_errors) + len(sales_report_parse_errors)
 
     department_by_date = {
         fields["report_date"]: (path, fields) for path, fields in department_fields_by_path.items()
@@ -2498,6 +2596,7 @@ def process_lottery(master_path, department_pdf_paths, sales_report_pdf_paths):
     all_dates = sorted(set(department_by_date) | set(sales_report_by_date))
 
     batch_results = []
+    dates_failed_to_write = 0
     for report_date in all_dates:
         dept_path, dept_fields = department_by_date.get(report_date, (None, None))
         sales_path, sales_fields = sales_report_by_date.get(report_date, (None, None))
@@ -2537,7 +2636,15 @@ def process_lottery(master_path, department_pdf_paths, sales_report_pdf_paths):
                 "— columnas F/G/H/I/K/P/Q/R/S sin actualizar."
             )
 
-        row = write_lottery_row(sheet, merged)
+        # Aislado por fecha: antes, una fecha que no matcheaba ninguna fila
+        # de la hoja de Lottery (ej. pertenece a otro mes) tiraba TODO el
+        # lote, perdiendo las filas de las demás fechas ya escritas en
+        # memoria antes de que workbook.save() llegara a correr.
+        try:
+            row = write_lottery_row(sheet, merged)
+        except (ValueError, TypeError) as exc:
+            dates_failed_to_write += 1
+            continue
         batch_results.append(
             {
                 "filename": os.path.basename(sales_path or dept_path),
@@ -2547,12 +2654,22 @@ def process_lottery(master_path, department_pdf_paths, sales_report_pdf_paths):
             }
         )
 
+    if not batch_results:
+        workbook.close()
+        raise ValueError(
+            "No se pudo cargar ninguna fecha: "
+            f"{files_failed_to_parse} archivo(s) no se pudieron leer, "
+            f"{dates_failed_to_write} fecha(s) no matchearon ninguna fila."
+        )
+
     temp_path = _create_temp_workbook_path()
     workbook.save(os.path.abspath(temp_path))
     workbook.close()
 
     summary = {
         "files_processed": len(batch_results),
+        "files_failed_to_parse": files_failed_to_parse,
+        "dates_failed_to_write": dates_failed_to_write,
         "batch_results": batch_results,
     }
     return temp_path, summary

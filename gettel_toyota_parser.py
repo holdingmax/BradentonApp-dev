@@ -1618,8 +1618,24 @@ def process_gettel_pagos(master_path, pdf_paths):
         if not os.path.isfile(pdf_path):
             raise FileNotFoundError(f"PDF no encontrado: {pdf_path}")
 
-    batches = [extract_pago_batch_from_pdf(pdf_path) for pdf_path in paths]
+    # Aislado por PDF: antes, un solo PDF con nombre mal formado (sin el
+    # patrón "PagosN (Empresa).pdf") o sin ninguna fecha legible tiraba el
+    # lote ENTERO -- perdiendo los demás pagos ya extraídos bien -- y el
+    # ValueError de origen trae el nombre de archivo incrustado, que
+    # llegaba crudo al popup. Mismo criterio ya aplicado en CMV/Proveedores.
+    batches = []
+    files_failed_to_parse = 0
+    for pdf_path in paths:
+        try:
+            batches.append(extract_pago_batch_from_pdf(pdf_path))
+        except (ValueError, TypeError, AttributeError) as exc:
+            files_failed_to_parse += 1
     batches.sort(key=lambda b: b["payment_number"])
+
+    if not batches:
+        raise ValueError(
+            f"No se pudo leer ningún pago: {files_failed_to_parse} archivo(s) no se pudieron leer."
+        )
 
     preview_handle = tempfile.NamedTemporaryFile(
         suffix=".xlsx", prefix="GettelPagosPreview_", delete=False
@@ -1632,8 +1648,17 @@ def process_gettel_pagos(master_path, pdf_paths):
     try:
         sheet = _find_pago_cupones_sheet(workbook)
         batch_results = []
+        batches_failed_to_write = 0
         for batch in batches:
-            row = _write_pago_batch(sheet, batch)
+            # Aislado también acá: un batch cuyo bloque no se puede
+            # redimensionar (ej. un layout de hoja fuera de lo común) no
+            # debe perder los demás pagos ya escritos en memoria antes de
+            # que workbook.save() corra.
+            try:
+                row = _write_pago_batch(sheet, batch)
+            except (ValueError, TypeError, AttributeError) as exc:
+                batches_failed_to_write += 1
+                continue
             batch_results.append(
                 {
                     "payment_number": batch["payment_number"],
@@ -1644,11 +1669,21 @@ def process_gettel_pagos(master_path, pdf_paths):
                     "warning": batch["warning"],
                 }
             )
+        if not batch_results:
+            raise ValueError(
+                "No se pudo cargar ningún pago: "
+                f"{files_failed_to_parse} archivo(s) no se pudieron leer, "
+                f"{batches_failed_to_write} pago(s) no se pudieron escribir."
+            )
         workbook.save(preview_path)
     finally:
         workbook.close()
 
-    return preview_path, {"batch_results": batch_results}
+    return preview_path, {
+        "batch_results": batch_results,
+        "files_failed_to_parse": files_failed_to_parse,
+        "batches_failed_to_write": batches_failed_to_write,
+    }
 
 
 def main(argv=None):

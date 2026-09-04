@@ -1797,8 +1797,6 @@ def _find_invoice_insertion_point(sheet, invoice_date):
     color = _find_last_month_color(sheet, last_row) or GREEN_FILL
     return last_row + 1, False, style_row, last_row, last_row, color
 
-    return target_row, new_color
-
 
 # ---- Resumen Compras (hoja "RESUMEN COMPRAS") ----
 #
@@ -2094,7 +2092,15 @@ def append_supplier_invoices(ledger_path, pdf_paths):
         try:
             supplier_key = _detect_supplier(pdf_path)
             invoice = SUPPLIER_REGISTRY[supplier_key]["extract"](pdf_path)
-        except ValueError as exc:
+        except (ValueError, TypeError, AttributeError, RuntimeError) as exc:
+            # Antes solo se atrapaba ValueError -- varios extractores hacen
+            # trabajo de imagen (pytesseract, Pillow, pdfplumber sobre un
+            # PDF corrupto) que puede tirar otros tipos de excepción, y esas
+            # se escapaban hasta el catch-all genérico de la ruta, tirando
+            # el LOTE ENTERO (incluidas facturas de otros proveedores ya
+            # extraídas bien) y mostrando el texto crudo de la excepción
+            # -- que puede traer el nombre de archivo incrustado -- en vez
+            # del aviso corto agrupado por proveedor de más abajo.
             supplier_label = SUPPLIER_REGISTRY[supplier_key]["label"] if supplier_key else None
             failed.append({"filename": os.path.basename(pdf_path), "error": str(exc), "supplier": supplier_label})
             continue
@@ -2114,7 +2120,21 @@ def append_supplier_invoices(ledger_path, pdf_paths):
     total_appended = 0
     for supplier_key, invoices in by_supplier.items():
         config = SUPPLIER_REGISTRY[supplier_key]
-        sheet = _get_supplier_sheet(workbook, config["sheet_name"])
+        try:
+            sheet = _get_supplier_sheet(workbook, config["sheet_name"])
+        except ValueError:
+            # Mismo criterio que ya usa append_supplier_payments más abajo
+            # -- antes esta búsqueda no estaba protegida acá, así que un
+            # Ledger sin la hoja esperada (versión vieja, hoja renombrada)
+            # tiraba el lote ENTERO de todos los proveedores, no solo el de
+            # la hoja faltante.
+            for invoice in invoices:
+                failed.append({
+                    "filename": invoice["filename"],
+                    "error": f'La hoja "{config["sheet_name"]}" no existe en el Ledger.',
+                    "supplier": config["label"],
+                })
+            continue
         invoices.sort(key=lambda inv: inv["date"])
 
         existing_numbers = _existing_invoice_numbers(sheet)
@@ -2126,6 +2146,7 @@ def append_supplier_invoices(ledger_path, pdf_paths):
                 duplicates_skipped.append(invoice["filename"])
                 continue
 
+            structural_mutation_done = False
             try:
                 target_row, needs_shift, style_row, balance_ref_row, last_row, color = (
                     _find_invoice_insertion_point(sheet, invoice["date"])
@@ -2133,11 +2154,23 @@ def append_supplier_invoices(ledger_path, pdf_paths):
                 if needs_shift:
                     _insert_row_preserving_merges(sheet, target_row)
                     _shift_resumen_compras_refs(resumen_sheet, sheet.title, target_row)
+                    structural_mutation_done = True
                 _write_invoice_row(sheet, target_row, style_row, balance_ref_row, color, invoice)
                 if needs_shift:
                     _reformulate_rows_below(sheet, target_row, last_row)
             except (ValueError, TypeError, AttributeError) as exc:
-                failed.append({"filename": invoice["filename"], "error": str(exc), "supplier": config["label"]})
+                # No hay forma de deshacer limpio un insert_rows/repunteo de
+                # RESUMEN COMPRAS ya aplicado -- si la falla ocurre DESPUÉS
+                # de eso (estructuralmente posible aunque no se encontró un
+                # disparador real en datos de producción), avisar que la
+                # hoja quedó modificada de verdad, no solo "revisar a mano
+                # esta factura" como si no hubiera pasado nada.
+                failed.append({
+                    "filename": invoice["filename"],
+                    "error": str(exc),
+                    "supplier": config["label"],
+                    "partial_write": structural_mutation_done,
+                })
                 continue
 
             existing_numbers.add(invoice["invoice_no"])

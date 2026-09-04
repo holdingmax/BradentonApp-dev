@@ -5,6 +5,7 @@ Cta Cte ledger with its summary row, balance formula, and borders.
 """
 
 import difflib
+import os
 import re
 from datetime import datetime
 
@@ -508,7 +509,19 @@ def extract_header(full_text):
 
 
 def extract_eft_data(pdf_path):
-    """Read EFT PDF and return (header_data, paid_invoices, credit_coupons)."""
+    """
+    Read EFT PDF and return (header_data, paid_invoices, credit_coupons, skipped_coupon_rows).
+
+    `skipped_coupon_rows` counts rows that visibly look like a coupon line
+    (an SI-/DDC- combo, per row_contains_credit_coupon) but that
+    extract_coupon_columns still couldn't turn into a usable row (typically
+    because it couldn't find 3+ legible currency tokens) -- previously these
+    were dropped with zero tracking, so a partially-corrupted table silently
+    lost coupons with no way to know without recounting the PDF by hand.
+    Rows that simply aren't coupon rows at all (footer text, boilerplate)
+    are NOT counted here, only ones that positively matched the coupon
+    pattern and still failed to parse.
+    """
     full_text, rows = collect_pdf_rows(pdf_path)
     header_data = extract_header(full_text)
     fallback_date = header_data.get("eft_date")
@@ -518,6 +531,7 @@ def extract_eft_data(pdf_path):
     seen_invoices = set()
     seen_coupons = set()
     coupon_section_started = False
+    skipped_coupon_rows = 0
 
     for cells in rows:
         try:
@@ -525,7 +539,8 @@ def extract_eft_data(pdf_path):
                 coupon_section_started = True
                 continue
 
-            if row_contains_credit_coupon(cells):
+            looks_like_coupon_row = row_contains_credit_coupon(cells)
+            if looks_like_coupon_row:
                 coupon_section_started = True
 
             if coupon_section_started:
@@ -542,6 +557,8 @@ def extract_eft_data(pdf_path):
                     if key not in seen_coupons:
                         seen_coupons.add(key)
                         credit_coupons.append(coupon_row)
+                elif looks_like_coupon_row:
+                    skipped_coupon_rows += 1
                 continue
 
             for paid_entry in extract_paid_invoice_entries(cells):
@@ -552,7 +569,7 @@ def extract_eft_data(pdf_path):
         except Exception:
             continue
 
-    return header_data, paid_invoices, credit_coupons
+    return header_data, paid_invoices, credit_coupons, skipped_coupon_rows
 
 
 def is_valid_historical_coupon_date(value):
@@ -766,6 +783,10 @@ def eft_already_loaded_in_workbook(excel_path, header_data, credit_coupons):
     if not draft_no or not eft_date_str or not credit_coupons:
         return False
 
+    extension = os.path.splitext(str(excel_path))[1].lower()
+    if extension not in {".xlsx", ".xlsm"}:
+        raise ValueError("El Excel Ledger debe ser .xlsx o .xlsm.")
+
     incoming_nro = _normalize_eft_rcv_number(draft_no)
     incoming_date = _normalize_eft_date_key(eft_date_str)
     incoming_net = sum(
@@ -837,18 +858,40 @@ def update_excel_workbook(excel_path, header_data, paid_invoices, credit_coupons
     if not credit_coupons:
         raise ValueError("No se extrajeron cupones de tarjeta de crédito del PDF.")
 
+    extension = os.path.splitext(str(excel_path))[1].lower()
+    if extension not in {".xlsx", ".xlsm"}:
+        raise ValueError("El Excel Ledger debe ser .xlsx o .xlsm.")
+
     workbook = load_workbook(excel_path, data_only=False)
     worksheet = get_worksheet(workbook)
 
     last_active_row = find_last_active_row_bottom_up(worksheet)
     target_row = last_active_row + 1
-    num_rows = len(credit_coupons)
+    paid_invoice_count = len(paid_invoices) if paid_invoices else 1
+
+    # El bloque insertado tiene que tener lugar para escribir TODAS las
+    # facturas pagadas en K/L a partir de middle_row -- si no, la escritura
+    # sigue más allá de end_row y pisa en silencio filas del ledger que
+    # insert_rows ya corrió hacia abajo, pero que no son parte de este
+    # bloque (bug real encontrado en la auditoría de 2026-09-03: un EFT con
+    # más facturas pagadas que cupones corrompía filas ajenas sin ningún
+    # aviso). Con num_rows = 2*paid_invoice_count-1, el bloque queda
+    # exactamente centrado en middle_row con lugar para las N facturas
+    # debajo -- ver calculate_middle_row: rows desde middle_row hasta
+    # end_row = num_rows - (num_rows-1)//2, que con este tamaño da
+    # exactamente paid_invoice_count.
+    min_rows_for_paid_invoices = 2 * paid_invoice_count - 1
+    num_rows = max(len(credit_coupons), min_rows_for_paid_invoices)
 
     worksheet.insert_rows(target_row, amount=num_rows)
 
     start_row = target_row
     end_row = target_row + num_rows - 1
     middle_row = calculate_middle_row(start_row, end_row)
+    assert end_row - middle_row + 1 >= paid_invoice_count, (
+        "El bloque de EFT quedó más chico de lo necesario para las facturas pagadas -- "
+        "esto sería un bug en el cálculo de tamaño de arriba, no un dato del usuario."
+    )
     draft_no = header_data.get("draft_no") or "UNKNOWN"
     eft_date_str = header_data.get("eft_date")
 
@@ -886,7 +929,6 @@ def update_excel_workbook(excel_path, header_data, paid_invoices, credit_coupons
     for cell in (cell_h, cell_i, cell_j):
         apply_currency_format(cell)
 
-    paid_invoice_count = len(paid_invoices) if paid_invoices else 1
     balance_formula = build_balance_formula(middle_row, paid_invoice_count)
     cell_m = worksheet.cell(row=middle_row, column=13, value=balance_formula)
     apply_currency_format(cell_m)

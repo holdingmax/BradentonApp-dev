@@ -524,11 +524,22 @@ def chase():
     if upload is None or not upload.filename:
         return _error_response("Seleccioná un archivo CSV o Excel de Chase.")
 
+    temp_path = None
+    filename = None
     try:
         temp_path, filename = _save_upload_to_workspace(upload)
         updated_count, total_rows = process_chase_categorization(temp_path)
     except Exception as exc:
-        return _error_response(f"Error: {exc}")
+        # pandas/openpyxl a veces incrustan la ruta completa (que contiene
+        # el nombre real del archivo) en el texto de su propia excepción --
+        # a diferencia de otros módulos, acá no hay una capa propia que
+        # arme un mensaje corto antes, así que se scrubea el texto crudo.
+        message = str(exc)
+        if temp_path:
+            message = message.replace(temp_path, "el archivo")
+        if filename:
+            message = message.replace(filename, "el archivo")
+        return _error_response(f"Error: {message}")
 
     return _success_response(temp_path, filename)
 
@@ -549,16 +560,22 @@ def chase_rules_save():
     detail = request.form.get("detail", "")
     rule_type = request.form.get("rule_type", "").strip()
     index = request.form.get("index", "").strip()
+    # Si vienen (edición desde la tabla), protegen contra la carrera de
+    # índice desactualizado: otra pestaña/sesión pudo haber editado o
+    # borrado una regla en el medio, corriendo los índices de todo lo que
+    # está después -- ver _check_expected_rule en chase_rules.py.
+    expected_keyword = request.form.get("expected_keyword") or None
+    expected_detail = request.form.get("expected_detail") or None
 
     try:
         if not rule_type or not index:
             add_chase_rule(keyword, detail)
             flash("Regla creada.", "success")
         elif rule_type == "master":
-            edit_chase_master_rule(index, keyword, detail)
+            edit_chase_master_rule(index, keyword, detail, expected_keyword, expected_detail)
             flash("Regla Maestra actualizada.", "success")
         elif rule_type == "custom":
-            edit_chase_custom_rule(index, keyword, detail)
+            edit_chase_custom_rule(index, keyword, detail, expected_keyword, expected_detail)
             flash("Regla actualizada.", "success")
         else:
             flash("Tipo de regla inválido.", "error")
@@ -574,13 +591,15 @@ def chase_rules_delete():
 
     rule_type = request.form.get("rule_type", "").strip()
     index = request.form.get("index", "").strip()
+    expected_keyword = request.form.get("expected_keyword") or None
+    expected_detail = request.form.get("expected_detail") or None
 
     try:
         if rule_type == "master":
-            delete_chase_master_rule(index)
+            delete_chase_master_rule(index, expected_keyword, expected_detail)
             flash("Regla Maestra eliminada.", "success")
         elif rule_type == "custom":
-            delete_chase_custom_rule(index)
+            delete_chase_custom_rule(index, expected_keyword, expected_detail)
             flash("Regla eliminada.", "success")
         else:
             flash("Seleccioná una regla de la tabla antes de eliminar.", "error")
@@ -607,13 +626,14 @@ def cmv_costo():
         workdir = _new_workspace_dir()
         master_path, master_filename = _save_upload_to_workspace(master_upload, workdir=workdir)
         dept_paths = _save_uploads_to_workspace(dept_uploads, workdir=workdir)
-        temp_xlsx_path, _file_stats, _total_parsed, rows_updated, _upcs, _count = (
+        temp_xlsx_path, _file_stats, _total_parsed, rows_updated, _upcs, _count, failed_files = (
             update_master_costo_todos_bulk(master_path, dept_paths)
         )
     except Exception as exc:
         return _error_response(f"Error: {exc}")
 
-    return _success_response(temp_xlsx_path, master_filename)
+    notice = f"{failed_files} archivo(s) de departamento no se pudieron leer." if failed_files else None
+    return _success_response(temp_xlsx_path, master_filename, notice=notice)
 
 
 @app.route("/cmv/ventas", methods=["POST"])
@@ -679,18 +699,30 @@ def gettel_cupones():
         master_path, master_filename = _save_upload_to_workspace(master_upload, workdir=workdir)
 
         is_pdf = os.path.splitext(source_path)[1].lower() == ".pdf"
+        notice_parts = []
         if is_pdf:
-            preview_path, rows_matched, vendor, days_found, _diagnostics = (
+            preview_path, rows_matched, vendor, days_found, diagnostics = (
                 merge_gettel_toyota_pdf_into_master(source_path, master_path)
             )
+            unmatched = diagnostics.get("unmatched_days") or []
+            if unmatched:
+                notice_parts.append(f"{len(unmatched)} día(s) del PDF no matchearon ninguna fila en el destino.")
+            if diagnostics.get("printed_subtotal_found") and not (
+                diagnostics.get("amount_matches_subtotal") and diagnostics.get("gallons_matches_subtotal")
+            ):
+                notice_parts.append(
+                    "El total impreso en el PDF no coincide con lo leído — revise el OCR."
+                )
         else:
-            preview_path, rows_matched, gettel_days, toyota_days, _unmatched = (
+            preview_path, rows_matched, gettel_days, toyota_days, unmatched = (
                 merge_gettel_toyota_into_master(source_path, master_path)
             )
+            if unmatched:
+                notice_parts.append(f"{len(unmatched)} día(s) del origen no matchearon ninguna fila en el destino.")
     except Exception as exc:
         return _error_response(f"Error: {exc}")
 
-    return _success_response(preview_path, master_filename)
+    return _success_response(preview_path, master_filename, notice=" ".join(notice_parts) or None)
 
 
 @app.route("/gettel/pagos", methods=["POST"])
@@ -706,11 +738,21 @@ def gettel_pagos():
         workdir = _new_workspace_dir()
         master_path, master_filename = _save_upload_to_workspace(master_upload, workdir=workdir)
         pdf_paths = _save_uploads_to_workspace(pdf_uploads, workdir=workdir)
-        preview_path, _summary = process_gettel_pagos(master_path, pdf_paths)
+        preview_path, summary = process_gettel_pagos(master_path, pdf_paths)
     except Exception as exc:
         return _error_response(f"Error: {exc}")
 
-    return _success_response(preview_path, master_filename)
+    notice_parts = []
+    if summary.get("files_failed_to_parse"):
+        notice_parts.append(f"{summary['files_failed_to_parse']} archivo(s) no se pudieron leer.")
+    if summary.get("batches_failed_to_write"):
+        notice_parts.append(f"{summary['batches_failed_to_write']} pago(s) no se pudieron escribir.")
+    receipt_warnings = [r for r in summary.get("batch_results", []) if r.get("warning")]
+    if receipt_warnings:
+        notice_parts.append(
+            f"{len(receipt_warnings)} pago(s) con algo para revisar (OCR ilegible en algún campo)."
+        )
+    return _success_response(preview_path, master_filename, notice=" ".join(notice_parts) or None)
 
 
 @app.route("/reporte")
@@ -733,6 +775,38 @@ def _reporte_pdf_upload():
     return (master_path, master_filename, pdf_paths), None
 
 
+def _reporte_batch_notice(summary, day_key="calendar_day"):
+    """
+    Arma un aviso corto (sin nombres de archivo) a partir del summary de
+    process_reporte_diario/process_store_info/process_lottery: cuántos
+    archivos/días quedaron aislados por un problema, más cualquier
+    diagnóstico propio ya calculado por día (BS vs. cargado, subtotal OCR
+    vs. impreso, fuente faltante) que antes se calculaba y nunca llegaba a
+    mostrarse -- ver "Reporte Diario + Lottery" en la auditoría de
+    2026-09-03.
+    """
+    parts = []
+    if summary.get("files_with_bad_filename"):
+        parts.append(f"{summary['files_with_bad_filename']} archivo(s) con nombre no reconocido.")
+    if summary.get("files_failed_to_parse"):
+        parts.append(f"{summary['files_failed_to_parse']} archivo(s) no se pudieron leer.")
+    if summary.get("days_failed_to_write"):
+        parts.append(f"{summary['days_failed_to_write']} día(s) no matchearon ninguna fila.")
+    if summary.get("dates_failed_to_write"):
+        parts.append(f"{summary['dates_failed_to_write']} fecha(s) no matchearon ninguna fila.")
+
+    day_warnings = [
+        (result.get(day_key) or result.get("report_date"), result["warning"])
+        for result in summary.get("batch_results", [])
+        if result.get("warning")
+    ]
+    if day_warnings:
+        detail = "; ".join(f"día {day}: {warning}" for day, warning in day_warnings)
+        parts.append(f"{len(day_warnings)} día(s) con algo para revisar — {detail}")
+
+    return " ".join(parts) or None
+
+
 @app.route("/reporte/ventas", methods=["POST"])
 def reporte_ventas():
     saved, error = _reporte_pdf_upload()
@@ -741,11 +815,11 @@ def reporte_ventas():
     master_path, master_filename, pdf_paths = saved
 
     try:
-        temp_path, _summary = process_reporte_diario(master_path, pdf_paths)
+        temp_path, summary = process_reporte_diario(master_path, pdf_paths)
     except Exception as exc:
         return _error_response(f"Error: {exc}")
 
-    return _success_response(temp_path, master_filename)
+    return _success_response(temp_path, master_filename, notice=_reporte_batch_notice(summary))
 
 
 @app.route("/reporte/store-info", methods=["POST"])
@@ -756,11 +830,11 @@ def reporte_store_info():
     master_path, master_filename, pdf_paths = saved
 
     try:
-        temp_path, _summary = process_store_info(master_path, pdf_paths)
+        temp_path, summary = process_store_info(master_path, pdf_paths)
     except Exception as exc:
         return _error_response(f"Error: {exc}")
 
-    return _success_response(temp_path, master_filename)
+    return _success_response(temp_path, master_filename, notice=_reporte_batch_notice(summary))
 
 
 @app.route("/lottery")
@@ -791,11 +865,11 @@ def lottery_sales_report():
     master_path, master_filename, pdf_paths = saved
 
     try:
-        temp_path, _summary = process_lottery(master_path, [], pdf_paths)
+        temp_path, summary = process_lottery(master_path, [], pdf_paths)
     except Exception as exc:
         return _error_response(f"Error: {exc}")
 
-    return _success_response(temp_path, master_filename)
+    return _success_response(temp_path, master_filename, notice=_reporte_batch_notice(summary))
 
 
 @app.route("/lottery/department", methods=["POST"])
@@ -806,11 +880,11 @@ def lottery_department():
     master_path, master_filename, pdf_paths = saved
 
     try:
-        temp_path, _summary = process_lottery(master_path, pdf_paths, [])
+        temp_path, summary = process_lottery(master_path, pdf_paths, [])
     except Exception as exc:
         return _error_response(f"Error: {exc}")
 
-    return _success_response(temp_path, master_filename)
+    return _success_response(temp_path, master_filename, notice=_reporte_batch_notice(summary))
 
 
 @app.route("/eft")
@@ -832,7 +906,7 @@ def eft_cta_cte_route():
         pdf_path, _pdf_filename = _save_upload_to_workspace(pdf_upload, workdir=workdir)
         master_path, master_filename = _save_upload_to_workspace(master_upload, workdir=workdir)
 
-        header_data, paid_invoices, credit_coupons = extract_eft_data(pdf_path)
+        header_data, paid_invoices, credit_coupons, skipped_coupon_rows = extract_eft_data(pdf_path)
         if eft_already_loaded_in_workbook(master_path, header_data, credit_coupons):
             return _error_response(EFT_DUPLICATE_ALERT)
 
@@ -840,7 +914,13 @@ def eft_cta_cte_route():
     except Exception as exc:
         return _error_response(f"Error: {exc}")
 
-    return _success_response(master_path, master_filename)
+    notice = None
+    if skipped_coupon_rows:
+        notice = (
+            f"{skipped_coupon_rows} fila(s) de cupón no se pudieron leer del PDF "
+            "(faltaban montos legibles) y no se cargaron — revisá el EFT a mano."
+        )
+    return _success_response(master_path, master_filename, notice=notice)
 
 
 @app.route("/eft/cupones", methods=["POST"])
@@ -856,9 +936,9 @@ def eft_cupones():
 
         if monthly_upload is not None and monthly_upload.filename:
             monthly_path, _monthly_filename = _save_upload_to_workspace(monthly_upload, workdir=workdir)
-            saved_path, _summary = append_monthly_cupones(master_path, monthly_path)
+            saved_path, summary = append_monthly_cupones(master_path, monthly_path)
         else:
-            saved_path, _summary = resync_cupones_only(master_path)
+            saved_path, summary = resync_cupones_only(master_path)
     except NoPendingCouponsError as exc:
         return _error_response(str(exc))
     except MonthlyReportFullyDuplicateError as exc:
@@ -866,7 +946,21 @@ def eft_cupones():
     except Exception as exc:
         return _error_response(f"Error: {exc}")
 
-    return _success_response(saved_path, master_filename)
+    notice_parts = []
+    if summary.get("rows_skipped_duplicates"):
+        notice_parts.append(
+            f"{summary['rows_skipped_duplicates']} cupón(es) ya estaban cargado(s) y se omitieron solos."
+        )
+    if summary.get("unmatched_coupons"):
+        notice_parts.append(
+            f"{len(summary['unmatched_coupons'])} cupón(es) no matchearon contra ningún EFT todavía "
+            "(quedan pendientes, se reintentan solos en la próxima carga)."
+        )
+    if summary.get("rows_resynced_pending"):
+        notice_parts.append(
+            f"{summary['rows_resynced_pending']} fila(s) pendiente(s) de antes se actualizaron con este EFT."
+        )
+    return _success_response(saved_path, master_filename, notice=" ".join(notice_parts) or None)
 
 
 @app.route("/proveedores")
@@ -950,6 +1044,18 @@ def proveedores_facturas():
             "error",
             _group_by_supplier_message("No se pudieron cargar", summary["failed"], "factura(s)"),
         ))
+        if any(item.get("partial_write") for item in summary["failed"]):
+            # Caso raro: la factura falló DESPUÉS de que ya se insertó una
+            # fila y se repuntearon fórmulas de RESUMEN COMPRAS -- a
+            # diferencia de una falla normal (nada se tocó), acá la hoja del
+            # proveedor sí quedó modificada. Avisar explícito para que se
+            # revise la hoja completa, no solo se recargue la factura.
+            notices.append((
+                "error",
+                "Al menos una de esas facturas falló después de modificar la hoja del "
+                "proveedor (no antes) — revisá esa hoja completa a mano, no le cargues "
+                "la factura de nuevo sin mirarla primero.",
+            ))
 
     resumen_warnings = summary.get("resumen_warnings") or []
     if resumen_warnings:

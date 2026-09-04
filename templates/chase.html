@@ -32,6 +32,8 @@
   <form method="post" action="{{ url_for('chase_rules_save') }}" id="chase-rule-form" style="display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;">
     <input type="hidden" name="rule_type" id="chase-rule-type" value="">
     <input type="hidden" name="index" id="chase-rule-index" value="">
+    <input type="hidden" name="expected_keyword" id="chase-rule-expected-keyword" value="">
+    <input type="hidden" name="expected_detail" id="chase-rule-expected-detail" value="">
     <div style="flex: 1; min-width: 160px;">
       <label class="muted">Palabra clave</label>
       <input type="text" name="keyword" id="chase-rule-keyword" required>
@@ -49,6 +51,8 @@
     <form method="post" action="{{ url_for('chase_rules_delete') }}" onsubmit="return confirm('¿Eliminar la regla seleccionada?');">
       <input type="hidden" name="rule_type" id="chase-delete-type" value="">
       <input type="hidden" name="index" id="chase-delete-index" value="">
+      <input type="hidden" name="expected_keyword" id="chase-delete-expected-keyword" value="">
+      <input type="hidden" name="expected_detail" id="chase-delete-expected-detail" value="">
       <button type="submit" id="chase-rule-delete-btn" class="btn-danger-soft" style="margin-top: 0;" disabled>Eliminar seleccionada</button>
     </form>
   </div>
@@ -92,9 +96,13 @@
       var deleteBtn = document.getElementById('chase-rule-delete-btn');
       var deleteType = document.getElementById('chase-delete-type');
       var deleteIndex = document.getElementById('chase-delete-index');
+      var deleteExpectedKeyword = document.getElementById('chase-delete-expected-keyword');
+      var deleteExpectedDetail = document.getElementById('chase-delete-expected-detail');
       var form = document.getElementById('chase-rule-form');
       var typeField = document.getElementById('chase-rule-type');
       var indexField = document.getElementById('chase-rule-index');
+      var expectedKeywordField = document.getElementById('chase-rule-expected-keyword');
+      var expectedDetailField = document.getElementById('chase-rule-expected-detail');
       var keywordField = document.getElementById('chase-rule-keyword');
       var detailField = document.getElementById('chase-rule-detail');
       var submitBtn = document.getElementById('chase-rule-submit');
@@ -115,6 +123,12 @@
           deleteBtn.disabled = !selected;
           deleteType.value = parts[0];
           deleteIndex.value = parts[1];
+          // Manda lo que la tabla mostraba en el momento de tildar el radio
+          // -- si para cuando el POST llega la regla en ese índice ya es
+          // otra (otra pestaña la cambió primero), el backend lo rechaza
+          // en vez de borrar/editar a ciegas la que quedó en su lugar.
+          deleteExpectedKeyword.value = selected ? selected.dataset.keyword : '';
+          deleteExpectedDetail.value = selected ? selected.dataset.detail : '';
         });
       });
 
@@ -124,6 +138,8 @@
         var parts = selected.value.split(':');
         typeField.value = parts[0];
         indexField.value = parts[1];
+        expectedKeywordField.value = selected.dataset.keyword;
+        expectedDetailField.value = selected.dataset.detail;
         keywordField.value = selected.dataset.keyword;
         detailField.value = selected.dataset.detail;
         submitBtn.textContent = 'Guardar Cambios';
@@ -135,6 +151,8 @@
       cancelBtn.addEventListener('click', function () {
         typeField.value = '';
         indexField.value = '';
+        expectedKeywordField.value = '';
+        expectedDetailField.value = '';
         keywordField.value = '';
         detailField.value = '';
         submitBtn.textContent = 'Crear Regla';

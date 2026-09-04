@@ -25,6 +25,8 @@ from datetime import date, datetime
 import openpyxl
 from openpyxl.comments import Comment
 
+from reporte_diario import _find_lottery_sheet
+
 CAJA_SHEET_NAME = "CAJA"
 CAJA_DATA_START_ROW = 4
 CAJA_COL_DATE = 1  # A — Fecha del día de negocio (la que se usa para matchear)
@@ -164,6 +166,13 @@ def apply_chase_deposits(cierre_path, chase_path):
             if date_key in gettel_dates:
                 cell.comment = Comment(GETTEL_COMMENT_TEXT, GETTEL_COMMENT_AUTHOR)
                 gettel_days_written.append(date_key)
+            elif cell.comment is not None and cell.comment.text == GETTEL_COMMENT_TEXT:
+                # Un día reprocesado que YA NO clasifica como depósito de
+                # Gettel (ej. se corrigió la regla de Chase) antes se
+                # quedaba con este comentario viejo e incorrecto para
+                # siempre, porque el comentario solo se agregaba, nunca se
+                # sacaba.
+                cell.comment = None
             deposits_written[date_key] = amount
         if date_key in remaining_food_ice:
             amount = round(remaining_food_ice.pop(date_key), 2)
@@ -188,7 +197,12 @@ def apply_chase_deposits(cierre_path, chase_path):
 
 def _collect_lottery_cuenta_final(lottery_path):
     workbook = openpyxl.load_workbook(lottery_path, data_only=True)
-    sheet = workbook.active
+    # Antes usaba workbook.active -- el libro de Lottery tiene una hoja por
+    # mes sin un nombre fijo (ver reporte_diario._find_lottery_sheet, que ya
+    # resuelve este mismo archivo por nombre único o por firma de encabezado
+    # en la fila 3), así que si la hoja activa al guardar no era la del mes
+    # correcto, esto leía fechas/valores de un mes distinto en silencio.
+    sheet = _find_lottery_sheet(workbook)
 
     values_by_date = {}
     missing_dates = []

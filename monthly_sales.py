@@ -1393,6 +1393,36 @@ def update_resumen_department_links(workbook):
     return links_written
 
 
+def _validate_sales_dataframe(dept_frame):
+    """
+    Pre-flight check for _write_sales_rows -- confirms every row's UPC/Name/
+    Dept Name/Count/Retail-Amount actually converts to the type that will
+    be written, WITHOUT touching the sheet.
+
+    Called before the destructive _clear_sales_data_block/
+    _ensure_sales_writing_capacity for a department's sheet -- previously,
+    a row that failed to convert was only discovered by _write_sales_rows
+    AFTER the sheet's old data block had already been wiped, so the
+    caught exception (isolated per-sheet, per CLAUDE.md 2026-09-02) still
+    left a half-cleared/half-written sheet saved to disk instead of the
+    old data staying intact (bug found in the 2026-09-03 audit). Doing the
+    same type conversions here first means a bad row is caught while the
+    sheet hasn't been touched at all yet, so this department's old data
+    survives untouched if anything here fails.
+    """
+    for _, row in dept_frame.iterrows():
+        try:
+            str(row["UPC"])
+            str(row["Name"])
+            str(row["Dept Name"])
+            int(row["Count"])
+            float(row["Retail/Amount"])
+        except (AttributeError, TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Fila de ventas inválida (UPC {row.get('UPC')!r}): {exc}"
+            ) from exc
+
+
 def _write_sales_rows(sheet, dept_frame):
     row_idx = SALES_DATA_START_ROW
     for _, row in dept_frame.iterrows():
@@ -1497,6 +1527,7 @@ def _inject_sales_into_master(master_path, file_paths):
     for sheet_name, batches in sheet_batches.items():
         try:
             combined = pd.concat(batches, ignore_index=True)
+            _validate_sales_dataframe(combined)
             sheet = _get_department_sheet(workbook, sheet_lookup, sheet_name)
             record_count = len(combined)
             total_row_index, original_formula_last = _ensure_sales_writing_capacity(
