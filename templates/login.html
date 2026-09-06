@@ -182,30 +182,6 @@
       cursor: pointer;
     }
     .remember-me input { margin: 0; }
-    .forgot-link {
-      background: none;
-      border: none;
-      padding: 0;
-      margin: 0;
-      width: auto;
-      color: var(--accent);
-      font-size: 13px;
-      font-weight: 500;
-      cursor: pointer;
-      text-decoration: underline;
-    }
-    .forgot-help {
-      display: none;
-      margin-top: 12px;
-      padding: 10px 12px;
-      background: #F8FAFC;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      color: var(--text-soft);
-      font-size: 12.5px;
-      line-height: 1.5;
-    }
-    .forgot-help.open { display: block; }
   </style>
 </head>
 <body>
@@ -238,10 +214,6 @@
           <input type="checkbox" id="remember" name="remember">
           Recordarme
         </label>
-        <button type="button" class="forgot-link" onclick="document.getElementById('forgot-help').classList.toggle('open')">Olvidé mi contraseña</button>
-      </div>
-      <div class="forgot-help" id="forgot-help">
-        Por ahora no hay recuperación automática por mail — pedile a un administrador que te resetee la contraseña desde "Gestionar usuarios".
       </div>
       <button type="submit">Entrar</button>
     </form>
