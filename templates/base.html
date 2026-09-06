@@ -85,7 +85,19 @@
          vacíos enormes a los costados en un monitor ancho donde no entraba
          ningún elemento). El contenido de cada página (más abajo, "main")
          sigue centrado en 1080px -- este cambio es solo para el header. */
-      height: 60px;
+      /* `min-height` (no `height` fijo) -- bug real encontrado en la
+         auditoría 2026-09-06: con `height:60px` fijo, en anchos
+         intermedios (~900-1100px, ventanas de escritorio comunes sin
+         maximizar) el logo+nav+breadcrumb de la izquierda no entraban en
+         una sola línea, se envolvían a una 2ª línea, y esa 2ª línea
+         quedaba directamente invisible -- `overflow:hidden` en
+         `.topbar-left` recortaba cualquier cosa que no entrara en los
+         60px fijos, incluida la fila completa (no era un solape, era
+         contenido que no se veía ni se podía clickear). Con `min-height`
+         la fila del grid puede crecer si hace falta, así que nunca se
+         recorta nada -- en el caso común (una sola línea) el resultado
+         es idéntico a antes. */
+      min-height: 60px;
       display: grid;
       /* La izquierda (logo + switch de sección + breadcrumb) necesita bastante
          más lugar que la derecha (solo el botón de cuenta) -- un 1fr/1fr
@@ -249,6 +261,7 @@
       background: var(--surface-alt);
       border: none;
       border-left: 1px solid var(--border);
+      border-radius: 0;
       padding: 0 24px 0 16px;
       cursor: pointer;
       color: var(--text-on-brand);
@@ -720,6 +733,23 @@
             input.value = '';
           }
         }, 0);
+      });
+    })();
+
+    // El dropdown de cuenta solo se abría/cerraba con el propio botón (el
+    // onclick de abajo) -- a diferencia de la barra de búsqueda, no tenía
+    // "clic afuera para cerrar" ni Escape -- bug real encontrado en la
+    // auditoría 2026-09-06 (asimetría entre los dos dropdowns del header).
+    (function () {
+      var accountMenu = document.getElementById('account-menu');
+      if (!accountMenu) return;
+      document.addEventListener('click', function (e) {
+        if (accountMenu.classList.contains('open') && !e.target.closest('#account-menu')) {
+          accountMenu.classList.remove('open');
+        }
+      });
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') accountMenu.classList.remove('open');
       });
     })();
 
