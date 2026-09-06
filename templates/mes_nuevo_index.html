@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <span class="eyebrow">Mes Nuevo</span>
+  <h1>Preparar el mes siguiente</h1>
+  <p class="page-subtitle">Subí el archivo del mes que se está cerrando y descargá el del mes que viene ya preparado.</p>
+</div>
+<div class="tool-grid">
+  {% for module in modules %}
+    <a class="tool-card" href="{{ module.url }}" style="--tool-accent: {{ module.accent }};">
+      <span class="tool-card-badge">{{ module.icon|safe }}</span>
+      <span class="tool-card-body">
+        <span class="tool-card-label">{{ module.label }}</span>
+        <span class="tool-card-desc">{{ module.description }}</span>
+      </span>
+    </a>
+  {% endfor %}
+</div>
+{% endblock %}

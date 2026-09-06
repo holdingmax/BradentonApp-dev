@@ -3,7 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}Bradenton App{% endblock %}</title>
+  <title>{% block title %}{% if request.path.startswith('/controles') %}Controles{% elif request.path.startswith('/mes-nuevo') %}Mes Nuevo{% else %}Herramientas{% endif %}{% endblock %}</title>
+  <link rel="icon" type="image/png" href="{{ url_for('static', filename='logo.png') }}">
   <style>
     :root {
       --bg: #F2F6F9;
@@ -387,6 +388,21 @@
       font-size: 13.5px;
     }
     .muted { color: var(--text-soft); font-size: 13px; }
+
+    /* El aviso instantáneo (#global-notice) flota por ENCIMA de la página
+       en vez de ocupar un lugar en el flujo normal -- pedido explícito del
+       usuario (2026-09-06): que aparezca/desaparezca nunca debe correr el
+       resto del contenido de lugar (antes al mostrarse empujaba todo hacia
+       abajo, y al cerrarlo todo volvía a subir -- no se veía profesional). */
+    #global-notice {
+      position: fixed;
+      top: 16px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 1000;
+      width: min(640px, calc(100% - 32px));
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.18);
+    }
   </style>
 </head>
 <body>
@@ -397,10 +413,11 @@
           <img class="brand-mark" src="{{ url_for('static', filename='logo.png') }}" alt="Bradenton">
           <span class="brand-word">Bradenton <span>App</span></span>
         </a>
-        {% if request.endpoint in ('index', 'controles') %}
+        {% if request.endpoint in ('index', 'controles', 'mes_nuevo_index', 'mes_nuevo_book_keeping', 'mes_nuevo_lottery') %}
         <nav class="section-switch">
           <a class="section-switch-item{{ ' active' if request.endpoint == 'index' else '' }}" href="{{ url_for('index') }}">Herramientas</a>
           <a class="section-switch-item{{ ' active' if request.endpoint == 'controles' else '' }}" href="{{ url_for('controles') }}">Controles</a>
+          <a class="section-switch-item{{ ' active' if request.path.startswith('/mes-nuevo') else '' }}" href="{{ url_for('mes_nuevo_index') }}">Mes Nuevo</a>
         </nav>
         {% endif %}
         {% block crumbs %}{% endblock %}
@@ -560,8 +577,6 @@
         closeBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:18px;line-height:1;flex-shrink:0;color:inherit;padding:0;';
         closeBtn.addEventListener('click', hideNotice);
         box.appendChild(closeBtn);
-
-        box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       }
       function hideNotice() {
         var box = noticeBox();
@@ -622,6 +637,27 @@
               // pedido explícito del usuario. El blob se conserva solo para
               // que una página puntual (ej. Proveedores, que encadena
               // Facturas -> Pagos) lo pueda reusar via este evento.
+              //
+              // Excepción: un form "force-download" (Mes Nuevo) SÍ dispara
+              // la descarga real a la carpeta Descargas (pedido explícito
+              // del usuario 2026-09-06: quiere ver el pop típico de
+              // descarga del navegador) con el mecanismo clásico de blob
+              // URL + <a download> sintético -- el servidor ya borró de
+              // Descargas cualquier archivo previo con el mismo nombre
+              // (ver _save_to_downloads_and_build_notice en webapp.py) para
+              // que el navegador guarde el nuevo con el nombre exacto en
+              // vez de sufijarlo "(1)".
+              if (form.classList.contains('force-download')) {
+                var blobUrl = URL.createObjectURL(result.blob);
+                var link = document.createElement('a');
+                link.href = blobUrl;
+                link.download = result.filename;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                setTimeout(function () { URL.revokeObjectURL(blobUrl); }, 1000);
+              }
+
               form.dispatchEvent(new CustomEvent('ajaxprocess:success', {
                 detail: { blob: result.blob, filename: result.filename },
               }));

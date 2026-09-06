@@ -50,6 +50,7 @@ from gettel_toyota_parser import (
 )
 from controles_cierre_mensual import check_store_info_monthly
 from controles_lottery_mensual import check_lottery_monthly
+from mes_nuevo import prepare_next_month, prepare_next_month_lottery
 from monthly_sales import process_monthly_sales
 from proveedores import append_supplier_invoices, append_supplier_payments
 from reporte_diario import process_lottery, process_reporte_diario, process_store_info
@@ -217,6 +218,7 @@ _ICON_EXCHANGE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" str
 _ICON_TRUCK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="7" width="13" height="10" rx="1"/><path d="M14 10h4l3 3v4h-7z"/><circle cx="6" cy="18.5" r="1.6"/><circle cx="17.5" cy="18.5" r="1.6"/></svg>'
 _ICON_REGISTER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="10" width="18" height="10" rx="1"/><path d="M6 10V7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v3"/><path d="M9 15h6"/></svg>'
 _ICON_CHECKLIST = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6a1 1 0 0 1 1 1v1H8V4a1 1 0 0 1 1-1z"/><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M8.5 12.5l2 2 4-4"/></svg>'
+_ICON_REFRESH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15.3-6.4L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.3 6.4L3 16"/><path d="M3 21v-5h5"/></svg>'
 
 TOOLS = [
     {
@@ -327,9 +329,39 @@ CONTROLS = [
     },
 ]
 
+# Tercera sección de la app, aparte de Herramientas y Controles: prepara la
+# carpeta/archivo del mes siguiente a partir del cierre del mes actual
+# (mismo trabajo que Alfonso hacía a mano con la carpeta "Lienzo en blanco"
+# para Book Keeping, y el traslado de bloques semanales para Lottery -- ver
+# mes_nuevo.py y CLAUDE.md "Módulo Mes Nuevo"). Igual que Controles, es una
+# página índice (grilla de tarjetas) con un módulo por sub-flujo -- acá solo
+# van a existir estos dos, pedido explícito del usuario 2026-09-05.
+MES_NUEVO = [
+    {
+        "key": "mes_nuevo_book_keeping",
+        "code": "MN",
+        "icon": _ICON_REFRESH,
+        "label": "Book Keeping",
+        "url": "/mes-nuevo/book-keeping",
+        "description": "Sube el .zip del mes que se cierra, descarga el .zip del mes siguiente ya preparado.",
+        "accent": "#B45309",
+        "accent_soft": "#FDECD1",
+    },
+    {
+        "key": "mes_nuevo_lottery",
+        "code": "LT",
+        "icon": _ICON_TICKET,
+        "label": "Lottery",
+        "url": "/mes-nuevo/lottery",
+        "description": "Sube el Excel de Lottery del mes que se cierra, descarga el del mes siguiente ya preparado.",
+        "accent": "#0284C7",
+        "accent_soft": "#D7EFFB",
+    },
+]
+
 THEME_BY_KEY = {
     tool["key"]: {"accent": tool["accent"], "accent_soft": tool["accent_soft"]}
-    for tool in TOOLS + CONTROLS
+    for tool in TOOLS + CONTROLS + MES_NUEVO
 }
 
 
@@ -418,7 +450,7 @@ def _open_result_for_user(path):
         pass
 
 
-def _success_response(temp_path, download_name, notice=None, notice_level="warning"):
+def _success_response(temp_path, download_name, notice=None, notice_level="warning", open_result=True):
     """
     Abre el archivo procesado en Excel (ver _open_result_for_user) y lo sirve
     en la respuesta -- ya no fuerza la descarga a la carpeta Descargas del
@@ -427,6 +459,13 @@ def _success_response(temp_path, download_name, notice=None, notice_level="warni
     de la respuesta porque Proveedores lo reusa para encadenar Facturas →
     Pagos sin que el usuario tenga que volver a seleccionarlo (ver
     chain-master-result en proveedores.html).
+
+    `open_result=False` salta el os.startfile -- pensado para un resultado
+    que no es un Excel para mirar sino un .zip para mover a otro lado (Mes
+    Nuevo, pedido explícito del usuario 2026-09-04: ahí el JS dispara una
+    descarga real a la carpeta Descargas en su lugar, ver "force-download"
+    en base.html -- abrirlo con el visor de zip de Windows no serviría de
+    nada).
 
     El aviso opcional (éxito parcial: algo no se pudo cargar solo) tiene que
     mostrarse en el momento aunque la respuesta sea una descarga de archivo,
@@ -439,7 +478,8 @@ def _success_response(temp_path, download_name, notice=None, notice_level="warni
     mejor esfuerzo -- caso raro, todos los formularios de módulo ya mandan
     el pedido por fetch.
     """
-    _open_result_for_user(temp_path)
+    if open_result:
+        _open_result_for_user(temp_path)
     response = send_file(temp_path, as_attachment=True, download_name=download_name)
     if notice:
         if _is_ajax_request():
@@ -510,6 +550,98 @@ def control_lottery_mensual():
                 flash(f"Error: {exc}", "error")
     return render_template(
         "control_lottery_mensual.html", result=result, **THEME_BY_KEY["lottery_mensual"]
+    )
+
+
+def _save_to_downloads_and_build_notice(output_path, summary):
+    """
+    Deja el camino libre para que el navegador descargue el resultado a
+    Descargas con el nombre exacto -- pedido explícito del usuario
+    (2026-09-06): quiere ver el pop típico de descarga del navegador, así
+    que la descarga ahora la dispara el JS del lado del cliente (ver
+    "force-download" en base.html, y la clase en los forms de Mes Nuevo) en
+    vez de que el servidor escriba el archivo directo. El problema es que
+    el navegador renombra con "(1)" en vez de reemplazar si ya existe un
+    archivo con ese nombre en Descargas (pedido explícito 2026-09-04: no
+    quiere tener que borrar el anterior a mano) -- por eso, si ya hay uno
+    con el mismo nombre, se borra ACÁ antes de que el navegador descargue
+    el nuevo, para que quede con el nombre exacto sin duplicar.
+    Devuelve el aviso corto: solo lo que sí requiere revisar a mano, o un
+    simple "listo" si no hay nada de eso (el detalle de "assumptions" ya no
+    se muestra en el popup). Compartido entre los dos sub-módulos de Mes
+    Nuevo (Book Keeping y Lottery) -- misma lógica exacta para los dos.
+    """
+    try:
+        downloads_dir = os.path.join(os.path.expanduser("~"), "Downloads")
+        downloads_target = os.path.join(downloads_dir, os.path.basename(output_path))
+        if os.path.exists(downloads_target):
+            os.remove(downloads_target)
+    except OSError as exc:
+        summary.setdefault("warnings", []).append(f"No pude limpiar el archivo anterior en Descargas: {exc}")
+
+    if summary.get("warnings"):
+        return f"{len(summary['warnings'])} cosa(s) para revisar a mano: " + " | ".join(summary["warnings"])
+    return "Copia creada en Descargas correctamente."
+
+
+@app.route("/mes-nuevo")
+def mes_nuevo_index():
+    return render_template("mes_nuevo_index.html", modules=MES_NUEVO)
+
+
+@app.route("/mes-nuevo/book-keeping", methods=["GET", "POST"])
+def mes_nuevo_book_keeping():
+    if request.method == "GET":
+        return render_template("mes_nuevo_book_keeping.html", **THEME_BY_KEY["mes_nuevo_book_keeping"])
+
+    upload = request.files.get("zip_file")
+    if upload is None or not upload.filename:
+        return _error_response("Seleccioná el .zip de la carpeta del mes.")
+    if not upload.filename.lower().endswith(".zip"):
+        return _error_response("El archivo tiene que ser un .zip.")
+
+    try:
+        workdir = _new_workspace_dir()
+        zip_path, _filename = _save_upload_to_workspace(upload, workdir=workdir)
+        output_zip, summary = prepare_next_month(zip_path)
+    except Exception as exc:
+        return _error_response(f"Error: {exc}")
+
+    notice = _save_to_downloads_and_build_notice(output_zip, summary)
+    return _success_response(
+        output_zip,
+        os.path.basename(output_zip),
+        notice=notice,
+        notice_level="warning" if summary.get("warnings") else "success",
+        open_result=False,
+    )
+
+
+@app.route("/mes-nuevo/lottery", methods=["GET", "POST"])
+def mes_nuevo_lottery():
+    if request.method == "GET":
+        return render_template("mes_nuevo_lottery.html", **THEME_BY_KEY["mes_nuevo_lottery"])
+
+    upload = request.files.get("xlsx_file")
+    if upload is None or not upload.filename:
+        return _error_response("Seleccioná el Excel de Lottery del mes que se cierra.")
+    if not upload.filename.lower().endswith((".xlsx", ".xlsm")):
+        return _error_response("El archivo tiene que ser un .xlsx.")
+
+    try:
+        workdir = _new_workspace_dir()
+        upload_path, _filename = _save_upload_to_workspace(upload, workdir=workdir)
+        output_path, summary = prepare_next_month_lottery(upload_path)
+    except Exception as exc:
+        return _error_response(f"Error: {exc}")
+
+    notice = _save_to_downloads_and_build_notice(output_path, summary)
+    return _success_response(
+        output_path,
+        os.path.basename(output_path),
+        notice=notice,
+        notice_level="warning" if summary.get("warnings") else "success",
+        open_result=False,
     )
 
 
