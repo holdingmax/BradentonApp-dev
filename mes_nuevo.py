@@ -1325,13 +1325,15 @@ def _lottery_write_subtotal_row(sheet, row, day_first, day_last):
 
 
 def _lottery_write_debito_row(sheet, row, subtotal_row, chase_text=None):
-    # V siempre lleva su fórmula (=+F+Q, "CUENTA FINAL") -- bug real
-    # reportado por el usuario 2026-09-06: quedaba en blanco en los bloques
-    # nuevos/reciclados, en vez de traer la fórmula que ya tenían los demás
-    # bloques (E/F/Q también se escriben siempre, reconciliado o no; V
-    # tiene que seguir el mismo criterio). Solo W (el texto real "Chase
-    # Bank {fecha}") queda para cuando el usuario reconcilie a mano -- eso
-    # sí es un dato real, no una fórmula que se pueda adivinar.
+    # V (=+F+Q, no confundir con la columna X "CUENTA FINAL" que lee
+    # caja.py -- son dos columnas distintas de la misma fila) siempre lleva
+    # su fórmula -- bug real reportado por el usuario 2026-09-06: quedaba
+    # en blanco en los bloques nuevos/reciclados, en vez de traer la
+    # fórmula que ya tenían los demás bloques (E/F/Q también se escriben
+    # siempre, reconciliado o no; V tiene que seguir el mismo criterio).
+    # Solo W (el texto real "Chase Bank {fecha}") queda para cuando el
+    # usuario reconcilie a mano -- eso sí es un dato real, no una fórmula
+    # que se pueda adivinar.
     sheet.cell(row=row, column=5, value=f"=+E{subtotal_row}-F{subtotal_row}")
     sheet.cell(row=row, column=6, value=f"=+F{subtotal_row}+G{subtotal_row}+I{subtotal_row}+K{subtotal_row}+10")
     sheet.cell(row=row, column=17, value=f"=+Q{subtotal_row}+R{subtotal_row}+S{subtotal_row}")
@@ -1383,6 +1385,21 @@ def _lottery_apply_style(sheet, block_start, style_rows):
             cell.alignment = copy(alignment)
             cell.number_format = number_format
             cell.fill = copy(fill)
+
+
+def _lottery_cell_has_content(cell):
+    """Una celda "cuenta" para detectar dónde termina la sección de
+    liquidación tanto si tiene un valor como si solo tiene relleno de color
+    (la "cajita" visual puede terminar en una fila pintada sin ningún dato) --
+    bug real encontrado en esta auditoría 2026-09-06: la detección vieja
+    solo miraba `.value`, así que una fila final sin valor pero coloreada
+    quedaba afuera de `footer_end_old` y `sheet.delete_rows` (que sí borra
+    hasta el final real de la hoja) se la comía sin que _lottery_capture_footer
+    llegara a guardarla antes -- se perdía para siempre."""
+    if cell.value is not None:
+        return True
+    fill = getattr(cell, "fill", None)
+    return bool(fill and fill.patternType is not None)
 
 
 def _lottery_capture_footer(sheet, start_row, end_row):
@@ -1522,7 +1539,7 @@ def prepare_next_month_lottery(upload_path):
     footer_start_old = _LOTTERY_FIRST_ROW + _LOTTERY_BLOCK_ROWS * total_blocks
     footer_end_old = footer_start_old - 1
     for row in range(footer_start_old, sheet.max_row + 1):
-        if any(sheet.cell(row=row, column=col).value is not None for col in range(1, sheet.max_column + 1)):
+        if any(_lottery_cell_has_content(sheet.cell(row=row, column=col)) for col in range(1, sheet.max_column + 1)):
             footer_end_old = row
     footer_rows, footer_merges = (
         _lottery_capture_footer(sheet, footer_start_old, footer_end_old)
