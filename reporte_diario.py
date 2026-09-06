@@ -490,6 +490,18 @@ def _parse_row_by_reverse_index(line):
         amount_index = max(len(tail_tokens) - 1, 1)
         count_index = max(amount_index - 1, 0)
 
+    if amount_index is None:
+        # _resolve_reverse_indices() solo se llama con part_count < 5 (ver
+        # el if/else de arriba), pero sus dos condiciones (>=8, >=5) exigen
+        # part_count >= 5 -- siempre cae a su "return None, None", así que
+        # amount_index/count_index quedan sin asignar acá. Sin este chequeo,
+        # la línea de abajo (amount_index - 1 con amount_index=None) tira un
+        # TypeError sin atrapar que, en el camino de texto plano
+        # (_parse_tables_with_line_anchor, sin su propio try/except),
+        # tumbaba el archivo entero en vez de descartar esta fila como no
+        # parseable -- mismo trato que ya reciben el resto de filas que no
+        # se pueden leer con confianza (bug real, auditoría 2026-09-06).
+        return None
     if count_index is None:
         count_index = max(amount_index - 1, 0)
 
@@ -2215,10 +2227,22 @@ def process_store_info(master_path, pdf_paths):
     sheet = _find_store_info_sheet(workbook)
 
     batch_results = []
+    days_failed_to_write = 0
 
     for pdf_path in ok_paths:
         fields = fields_by_path[pdf_path]
-        row = write_store_info_row(sheet, fields)
+        # Aislado por día, igual que ya hacen process_reporte_diario/
+        # process_lottery con su propio paso de escritura -- sin esto, un
+        # solo PDF con un campo mal parseado (ej. from_date en None) tiraba
+        # TODO el lote via una excepción sin atrapar, perdiendo también los
+        # días de otros PDFs ya escritos en memoria (bug real, auditoría
+        # 2026-09-06: inconsistencia con los otros dos flujos del mismo
+        # archivo, que sí tienen este aislamiento desde 2026-09-03).
+        try:
+            row = write_store_info_row(sheet, fields)
+        except (ValueError, TypeError, AttributeError) as exc:
+            days_failed_to_write += 1
+            continue
         # El "from_date" tal como lo imprime el PDF viene siempre un día
         # antes del día real que cubre el reporte (ver write_store_info_row)
         # -- se lee de vuelta la fecha que realmente quedó en columna A en
@@ -2240,7 +2264,8 @@ def process_store_info(master_path, pdf_paths):
         raise ValueError(
             "No se pudo cargar ningún día: "
             f"{files_with_bad_filename} archivo(s) con nombre no reconocido, "
-            f"{files_failed_to_parse} archivo(s) no se pudieron leer."
+            f"{files_failed_to_parse} archivo(s) no se pudieron leer, "
+            f"{days_failed_to_write} día(s) no matchearon ninguna fila."
         )
 
     temp_path = _create_temp_workbook_path()
@@ -2251,6 +2276,7 @@ def process_store_info(master_path, pdf_paths):
         "files_processed": len(batch_results),
         "files_with_bad_filename": files_with_bad_filename,
         "files_failed_to_parse": files_failed_to_parse,
+        "days_failed_to_write": days_failed_to_write,
         "batch_results": batch_results,
     }
     return temp_path, summary
