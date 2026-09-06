@@ -43,16 +43,39 @@
       align-items: center;
       justify-content: center;
       font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      background: var(--bg);
+      background: #0B4C7A;
       color: var(--text);
+      overflow-x: hidden;
     }
+    /* Fondo del login -- pedido explícito del usuario: bandas diagonales
+       grandes con los colores reales del logo (sampleados del propio
+       static/logo.png: azul oscuro #0169A6, celeste #0CA3DA, bordó #81152F,
+       rojo #D0223B), con una tira angosta del fondo claro entre cada banda
+       -- el mismo detalle de "costura" blanca que separa los colores en el
+       logo real -- y un pequeño acento rojo/bordó en la esquina abajo a la
+       derecha, haciendo eco de la segunda mitad del isotipo. No toca nada
+       de la tarjeta de login en sí, solo vive detrás (z-index 0).*/
+    .login-bg {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      overflow: hidden;
+      background: #EAF6FB;
+    }
+    .login-bg-shape { position: absolute; inset: 0; }
+    .login-bg .shape-1 { background: #0169A6; clip-path: polygon(0 0, 44% 0, 24% 100%, 0 100%); }
+    .login-bg .shape-2 { background: #0CA3DA; clip-path: polygon(47% 0, 100% 0, 100% 100%, 27% 100%); }
+    .login-bg .shape-3 { background: #81152F; clip-path: polygon(79% 100%, 100% 100%, 100% 80%); }
+    .login-bg .shape-4 { background: #D0223B; clip-path: polygon(88% 100%, 100% 100%, 100% 89%); }
     .login-card {
+      position: relative;
+      z-index: 1;
       width: 100%;
       max-width: 360px;
       background: var(--surface);
       border: 1px solid var(--border);
       border-radius: 12px;
-      box-shadow: 0 4px 14px rgba(17, 24, 39, 0.08);
+      box-shadow: 0 10px 34px rgba(4, 30, 51, 0.28);
       padding: 32px 28px;
       margin: 20px;
     }
@@ -184,6 +207,12 @@
   </style>
 </head>
 <body>
+  <div class="login-bg" aria-hidden="true">
+    <span class="login-bg-shape shape-1"></span>
+    <span class="login-bg-shape shape-2"></span>
+    <span class="login-bg-shape shape-3"></span>
+    <span class="login-bg-shape shape-4"></span>
+  </div>
   <div class="login-card">
     <img class="brand-mark" src="{{ url_for('static', filename='logo.png') }}" alt="Bradenton">
     <h1>Bradenton App</h1>
