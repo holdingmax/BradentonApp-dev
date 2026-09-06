@@ -364,6 +364,16 @@ THEME_BY_KEY = {
     for tool in TOOLS + CONTROLS + MES_NUEVO
 }
 
+# Índice para la barra de búsqueda del header (base.html) -- pedido
+# explícito del usuario 2026-09-06: buscar un módulo por nombre desde
+# cualquier página, entendiendo palabras parecidas (typos), mostrando
+# todos los módulos relacionados de las 3 secciones a la vez. Se inyecta
+# solo (sin que cada ruta tenga que pasarlo) porque base.html lo necesita
+# en TODAS las páginas, no solo en los 3 índices de sección.
+@app.context_processor
+def inject_search_index():
+    return {"SEARCH_INDEX": TOOLS + CONTROLS + MES_NUEVO}
+
 
 def _new_workspace_dir():
     return tempfile.mkdtemp(prefix="bradenton_web_")

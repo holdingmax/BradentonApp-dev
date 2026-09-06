@@ -71,19 +71,27 @@
       z-index: 10;
       border-bottom: 1px solid var(--border);
     }
+    /* Grid de 3 columnas en vez de flex -- pedido explícito del usuario
+       2026-09-06: la búsqueda tiene que quedar en una posición FIJA que
+       nunca se corra, sea que la izquierda tenga breadcrumb o no (entre
+       el Home y una página de módulo) -- con flex + space-between, el
+       ancho variable de la izquierda corría todo lo de al lado. Con
+       "1fr auto 1fr" la columna del medio queda centrada siempre en el
+       mismo lugar, sin importar cuánto contenido tengan las otras dos. */
     .topbar-inner {
       max-width: 1080px;
       margin: 0 auto;
       height: 60px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+      align-items: stretch;
     }
     .brand {
       display: flex;
       align-items: center;
       gap: 10px;
       text-decoration: none;
+      margin-left: -14px;
     }
     .brand-mark {
       height: 32px;
@@ -134,26 +142,111 @@
     .section-switch-item:hover { color: var(--text-on-brand); }
     .section-switch-item.active { color: var(--text-on-brand); background: var(--surface-alt); }
 
-    .topbar-left { display: flex; align-items: center; flex-wrap: wrap; row-gap: 6px; }
+    .topbar-left { grid-column: 1; justify-self: start; min-width: 0; display: flex; align-items: center; flex-wrap: wrap; row-gap: 6px; overflow: hidden; }
 
-    .topbar-right { display: flex; align-items: center; gap: 14px; }
+    /* Barra de búsqueda de módulos -- pedido explícito del usuario
+       2026-09-06: buscar por nombre desde cualquier página y encontrar
+       todos los módulos relacionados de Herramientas/Controles/Mes Nuevo
+       a la vez, tolerando errores de tipeo (ver SEARCH_INDEX + el script
+       de búsqueda difusa más abajo). Sin recuadro propio -- "fusionada"
+       con el header, mismo fondo -- y en la columna del medio del grid de
+       arriba, así queda en una posición fija que nunca se corre al
+       cambiar de módulo (con o sin breadcrumb a la izquierda). */
+    .topbar-search { grid-column: 2; justify-self: center; align-self: center; position: relative; width: 260px; }
+    .search-box {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: transparent;
+      border: none;
+      border-bottom: 1px solid transparent;
+      padding: 6px 2px;
+      transition: border-color 0.15s ease;
+    }
+    .search-box svg { width: 15px; height: 15px; color: var(--text-muted-on-brand); flex-shrink: 0; }
+    .search-box:focus-within { border-bottom-color: var(--accent); }
+    #search-input {
+      display: block;
+      border: none;
+      border-radius: 0;
+      background: none;
+      outline: none;
+      font: inherit;
+      font-size: 13px;
+      color: var(--text-on-brand);
+      width: 100%;
+      padding: 0;
+      margin: 0;
+    }
+    #search-input:focus-visible { outline: none; }
+    .search-results {
+      position: absolute;
+      top: calc(100% + 8px);
+      left: 0;
+      right: 0;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: var(--shadow-md);
+      padding: 6px;
+      display: none;
+      max-height: 360px;
+      overflow-y: auto;
+      z-index: 1001;
+    }
+    .search-results.open { display: block; }
+    a.search-result-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 10px;
+      border-radius: 8px;
+      text-decoration: none;
+      color: var(--text);
+    }
+    a.search-result-item:hover, a.search-result-item.highlighted { background: var(--surface-alt); }
+    .search-result-badge {
+      width: 30px;
+      height: 30px;
+      border-radius: 8px;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .search-result-badge svg { width: 16px; height: 16px; }
+    .search-result-body { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+    .search-result-label { font-weight: 600; font-size: 13px; }
+    .search-result-desc { font-size: 11.5px; color: var(--text-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .search-empty { padding: 16px 10px; text-align: center; color: var(--text-soft); font-size: 13px; }
 
-    /* Account button — UI shell only, no auth wired up yet */
-    .account-menu { position: relative; }
+    /* El bloque de cuenta ocupa toda la esquina -- alto completo del
+       header y hasta el borde derecho de verdad (el padding del header
+       se cancela acá con margin-right negativo) -- pedido explícito del
+       usuario 2026-09-06: sentía que sobraba espacio libre arriba a la
+       derecha en vez de aprovecharlo. */
+    .topbar-right { grid-column: 3; justify-self: end; display: flex; align-items: center; }
+
+    .account-menu { position: relative; display: flex; align-self: stretch; margin-right: -24px; }
     .account-button {
       display: flex;
       align-items: center;
       gap: 8px;
-      background: rgba(17, 24, 39, 0.04);
-      border: 1px solid var(--border);
-      border-radius: 999px;
-      padding: 5px 12px 5px 5px;
+      height: 100%;
+      margin: 0;
+      background: var(--surface-alt);
+      border: none;
+      border-left: 1px solid var(--border);
+      padding: 0 24px 0 16px;
       cursor: pointer;
       color: var(--text-on-brand);
       font: inherit;
       font-size: 13px;
+      font-weight: 600;
+      transition: background 0.15s ease;
     }
-    .account-button:hover { background: rgba(17, 24, 39, 0.08); }
+    .account-button:hover { background: var(--border); }
     .account-avatar {
       width: 24px;
       height: 24px;
@@ -163,6 +256,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
+      flex-shrink: 0;
     }
     .account-avatar svg { width: 14px; height: 14px; }
     .account-caret { color: var(--text-muted-on-brand); transition: transform 0.15s ease; }
@@ -287,11 +381,16 @@
 
     /* ---------- Responsive ---------- */
     @media (max-width: 640px) {
-      .topbar-inner { height: auto; min-height: 56px; padding: 8px 0; flex-wrap: wrap; row-gap: 8px; }
+      /* El grid de 3 columnas de escritorio no tiene sentido en una
+         pantalla angosta -- se apila en una columna simple (cada sección
+         en su propia fila), la garantía de "posición fija" no hace falta
+         acá porque igual se reacomoda todo por el ancho. */
+      .topbar-inner { display: flex; flex-direction: column; align-items: stretch; height: auto; min-height: 56px; padding: 8px 0; row-gap: 8px; }
       nav.crumbs { margin-left: 10px; padding-left: 10px; font-size: 12px; }
       nav.section-switch { margin-left: 10px; padding-left: 10px; }
       .section-switch-item { padding: 5px 10px; font-size: 12px; }
       .brand-word { font-size: 14px; }
+      .topbar-search { width: 100%; margin: 0 auto; }
       .account-dropdown { right: -8px; width: min(220px, calc(100vw - 32px)); }
       main { padding: 24px 16px 48px; }
       h1 { font-size: 20px; }
@@ -413,14 +512,19 @@
           <img class="brand-mark" src="{{ url_for('static', filename='logo.png') }}" alt="Bradenton">
           <span class="brand-word">Bradenton <span>App</span></span>
         </a>
-        {% if request.endpoint in ('index', 'controles', 'mes_nuevo_index', 'mes_nuevo_book_keeping', 'mes_nuevo_lottery') %}
         <nav class="section-switch">
-          <a class="section-switch-item{{ ' active' if request.endpoint == 'index' else '' }}" href="{{ url_for('index') }}">Herramientas</a>
-          <a class="section-switch-item{{ ' active' if request.endpoint == 'controles' else '' }}" href="{{ url_for('controles') }}">Controles</a>
+          <a class="section-switch-item{{ ' active' if not request.path.startswith('/controles') and not request.path.startswith('/mes-nuevo') else '' }}" href="{{ url_for('index') }}">Herramientas</a>
+          <a class="section-switch-item{{ ' active' if request.path.startswith('/controles') else '' }}" href="{{ url_for('controles') }}">Controles</a>
           <a class="section-switch-item{{ ' active' if request.path.startswith('/mes-nuevo') else '' }}" href="{{ url_for('mes_nuevo_index') }}">Mes Nuevo</a>
         </nav>
-        {% endif %}
         {% block crumbs %}{% endblock %}
+      </div>
+      <div class="topbar-search" id="topbar-search">
+        <div class="search-box">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>
+          <input type="text" id="search-input" placeholder="Buscar un módulo..." autocomplete="off">
+        </div>
+        <div class="search-results" id="search-results"></div>
       </div>
       <div class="topbar-right">
         <div class="account-menu" id="account-menu">
@@ -456,6 +560,143 @@
     {% block content %}{% endblock %}
   </main>
   <script>
+    // Búsqueda de módulos (header) -- pedido explícito del usuario
+    // 2026-09-06: buscar por nombre desde cualquier página y encontrar los
+    // módulos relacionados de las 3 secciones (Herramientas/Controles/Mes
+    // Nuevo) a la vez, tolerando errores de tipeo/palabras parecidas.
+    // SEARCH_INDEX lo inyecta inject_search_index() (webapp.py) en TODAS
+    // las páginas que extienden este layout.
+    (function () {
+      const SEARCH_INDEX = {{ SEARCH_INDEX | tojson }};
+      const input = document.getElementById('search-input');
+      const resultsBox = document.getElementById('search-results');
+      if (!input || !resultsBox) return;
+
+      function normalize(s) {
+        return (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      }
+
+      // Distancia de Levenshtein clásica (programación dinámica, una fila) --
+      // sirve para tolerar errores de tipeo (ej. "lotery" vs "lottery").
+      function levenshtein(a, b) {
+        const m = a.length, n = b.length;
+        if (!m) return n;
+        if (!n) return m;
+        const dp = new Array(n + 1);
+        for (let j = 0; j <= n; j++) dp[j] = j;
+        for (let i = 1; i <= m; i++) {
+          let prev = dp[0];
+          dp[0] = i;
+          for (let j = 1; j <= n; j++) {
+            const temp = dp[j];
+            dp[j] = Math.min(dp[j] + 1, dp[j - 1] + 1, prev + (a[i - 1] === b[j - 1] ? 0 : 1));
+            prev = temp;
+          }
+        }
+        return dp[n];
+      }
+
+      function similarity(a, b) {
+        if (!a.length && !b.length) return 1;
+        return 1 - levenshtein(a, b) / Math.max(a.length, b.length);
+      }
+
+      // Puntaje 0-1 de qué tan relacionado está un módulo con lo que se
+      // escribió -- coincidencia exacta/parcial del nombre pesa más que una
+      // palabra parecida encontrada por distancia de edición.
+      function scoreModule(query, mod) {
+        const q = normalize(query);
+        if (!q) return 0;
+        const label = normalize(mod.label);
+        const desc = normalize(mod.description || '');
+        const code = normalize(mod.code || '');
+        if (label === q) return 1;
+        if (label.startsWith(q)) return 0.95;
+        if (label.includes(q)) return 0.9;
+        if (code === q) return 0.85;
+        let best = 0;
+        // Palabras de 3 letras o menos (y, de, la, el, en, por, con...) se
+        // ignoran acá -- son tan cortas que casi cualquier búsqueda las
+        // "contiene" por casualidad, dando falsos positivos con módulos
+        // sin ninguna relación real (bug real encontrado en la verificación
+        // 2026-09-06: buscar "lottery" mostraba CMV, Gettel/Toyota, etc.
+        // solo porque sus descripciones tienen la palabra "y").
+        (label + ' ' + desc).split(/\s+/).filter(function (w) { return w.length > 3; }).forEach(function (w) {
+          if (w.indexOf(q) !== -1 || q.indexOf(w) !== -1) best = Math.max(best, 0.75);
+          best = Math.max(best, similarity(q, w) * 0.7);
+        });
+        best = Math.max(best, similarity(q, label) * 0.6);
+        return best;
+      }
+
+      const THRESHOLD = 0.45;
+
+      function renderResults(query) {
+        const q = query.trim();
+        if (!q) {
+          resultsBox.classList.remove('open');
+          resultsBox.innerHTML = '';
+          return;
+        }
+        const scored = SEARCH_INDEX
+          .map(function (m) { return { m: m, s: scoreModule(q, m) }; })
+          .filter(function (x) { return x.s >= THRESHOLD; })
+          .sort(function (a, b) { return b.s - a.s; })
+          .slice(0, 8);
+
+        resultsBox.innerHTML = '';
+        if (!scored.length) {
+          const empty = document.createElement('div');
+          empty.className = 'search-empty';
+          empty.textContent = 'No se encontró ningún módulo relacionado con "' + q + '".';
+          resultsBox.appendChild(empty);
+        } else {
+          scored.forEach(function (x) {
+            const a = document.createElement('a');
+            a.className = 'search-result-item';
+            a.href = x.m.url;
+
+            const badge = document.createElement('span');
+            badge.className = 'search-result-badge';
+            badge.style.background = x.m.accent || 'var(--accent)';
+            badge.innerHTML = x.m.icon || '';
+
+            const body = document.createElement('span');
+            body.className = 'search-result-body';
+            const label = document.createElement('span');
+            label.className = 'search-result-label';
+            label.textContent = x.m.label;
+            const desc = document.createElement('span');
+            desc.className = 'search-result-desc';
+            desc.textContent = x.m.description || '';
+            body.appendChild(label);
+            body.appendChild(desc);
+
+            a.appendChild(badge);
+            a.appendChild(body);
+            resultsBox.appendChild(a);
+          });
+        }
+        resultsBox.classList.add('open');
+      }
+
+      input.addEventListener('input', function () { renderResults(input.value); });
+      input.addEventListener('focus', function () {
+        if (input.value.trim()) renderResults(input.value);
+      });
+      input.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape') {
+          resultsBox.classList.remove('open');
+          input.blur();
+        }
+      });
+      document.addEventListener('click', function (e) {
+        if (!e.target.closest('#topbar-search')) {
+          resultsBox.classList.remove('open');
+        }
+      });
+    })();
+
     // Lets one file input feed several independent <form> submits — mirrors
     // the desktop app's "shared Excel maestro, cuadros de sub-flujo abajo"
     // layout, where the same file didn't need to be picked twice. Each
