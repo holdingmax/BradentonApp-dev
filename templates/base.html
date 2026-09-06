@@ -83,7 +83,15 @@
       margin: 0 auto;
       height: 60px;
       display: grid;
-      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+      /* La izquierda (logo + switch de sección + breadcrumb) necesita bastante
+         más lugar que la derecha (solo el botón de cuenta) -- un 1fr/1fr
+         parejo los apretaba/enrollaba en varias líneas. La derecha se ajusta
+         a su propio contenido (siempre el mismo ancho para un usuario dado,
+         no cambia de página a página) con un piso mínimo, y la izquierda se
+         queda con todo el resto -- la barra de búsqueda del medio sigue sin
+         moverse entre páginas porque ninguna de las dos columnas de los
+         costados depende del contenido que varía por página (el breadcrumb). */
+      grid-template-columns: minmax(0, 1fr) auto minmax(140px, auto);
       align-items: stretch;
     }
     .brand {
