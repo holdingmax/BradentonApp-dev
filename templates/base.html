@@ -702,6 +702,21 @@
           resultsBox.classList.remove('open');
         }
       });
+      // Si se va de la barra sin elegir ningún resultado (clic afuera, Tab,
+      // Escape) se limpia sola -- pedido explícito del usuario para no
+      // tener que borrar a mano el texto de la búsqueda anterior. El
+      // setTimeout espera un instante para no pisar el clic sobre un
+      // resultado (ese link vive adentro de #topbar-search, así que en ese
+      // caso el foco queda contenido y no se limpia nada).
+      const searchContainer = document.getElementById('topbar-search');
+      searchContainer.addEventListener('focusout', function () {
+        setTimeout(function () {
+          if (!searchContainer.contains(document.activeElement)) {
+            resultsBox.classList.remove('open');
+            input.value = '';
+          }
+        }, 0);
+      });
     })();
 
     // Lets one file input feed several independent <form> submits — mirrors
