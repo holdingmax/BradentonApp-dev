@@ -79,8 +79,12 @@
        "1fr auto 1fr" la columna del medio queda centrada siempre en el
        mismo lugar, sin importar cuánto contenido tengan las otras dos. */
     .topbar-inner {
-      max-width: 1080px;
-      margin: 0 auto;
+      /* Sin max-width a propósito -- pedido explícito del usuario 2026-09-06:
+         el header tiene que ocupar todo el ancho real de la ventana (antes
+         quedaba encerrado en una columna de 1080px centrada, con márgenes
+         vacíos enormes a los costados en un monitor ancho donde no entraba
+         ningún elemento). El contenido de cada página (más abajo, "main")
+         sigue centrado en 1080px -- este cambio es solo para el header. */
       height: 60px;
       display: grid;
       /* La izquierda (logo + switch de sección + breadcrumb) necesita bastante
