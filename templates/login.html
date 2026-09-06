@@ -43,30 +43,37 @@
       align-items: center;
       justify-content: center;
       font-family: -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-      background: #0B4C7A;
+      background: #FAFBFC;
       color: var(--text);
       overflow-x: hidden;
     }
-    /* Fondo del login -- pedido explícito del usuario: bandas diagonales
-       grandes con los colores reales del logo (sampleados del propio
-       static/logo.png: azul oscuro #0169A6, celeste #0CA3DA, bordó #81152F,
-       rojo #D0223B), con una tira angosta del fondo claro entre cada banda
-       -- el mismo detalle de "costura" blanca que separa los colores en el
-       logo real -- y un pequeño acento rojo/bordó en la esquina abajo a la
-       derecha, haciendo eco de la segunda mitad del isotipo. No toca nada
-       de la tarjeta de login en sí, solo vive detrás (z-index 0).*/
+    /* Fondo del login -- pedido explícito del usuario, con dos referencias
+       visuales: colores reales del logo (sampleados de static/logo.png:
+       azul oscuro #0169A6, celeste #0CA3DA, bordó #81152F, rojo #D0223B),
+       pero el blanco tiene que ser el color principal (la primera versión
+       abusaba del azul). El usuario mandó una segunda referencia -- picos
+       triangulares apilados, concentrados solo del lado izquierdo, con
+       todo el resto de la pantalla en blanco liso -- así que el conjunto
+       de colores quedó solo ahí (nunca a lo ancho de toda la pantalla) en
+       vez de dos acentos en esquinas opuestas. Los 4 picos se superponen
+       (cada uno más angosto y alto que el anterior, pintado encima) para
+       que se vea un perfil recortado tipo montaña, no franjas parejas --
+       recorre los 4 colores del logo de arriba (celeste) hacia abajo
+       (bordó), el mismo camino que sigue el propio isotipo pero en punta
+       de montaña en vez de chevron. No toca nada de la tarjeta de login
+       en sí, solo vive detrás (z-index 0). */
     .login-bg {
       position: fixed;
       inset: 0;
       z-index: 0;
       overflow: hidden;
-      background: #EAF6FB;
+      background: #FFFFFF;
     }
     .login-bg-shape { position: absolute; inset: 0; }
-    .login-bg .shape-1 { background: #0169A6; clip-path: polygon(0 0, 44% 0, 24% 100%, 0 100%); }
-    .login-bg .shape-2 { background: #0CA3DA; clip-path: polygon(47% 0, 100% 0, 100% 100%, 27% 100%); }
-    .login-bg .shape-3 { background: #81152F; clip-path: polygon(79% 100%, 100% 100%, 100% 80%); }
-    .login-bg .shape-4 { background: #D0223B; clip-path: polygon(88% 100%, 100% 100%, 100% 89%); }
+    .login-bg .shape-1 { background: #81152F; clip-path: polygon(0 100%, 0 58%, 38% 100%); }
+    .login-bg .shape-2 { background: #D0223B; clip-path: polygon(0 100%, 0 40%, 30% 100%); }
+    .login-bg .shape-3 { background: #0169A6; clip-path: polygon(0 100%, 0 20%, 22% 100%); }
+    .login-bg .shape-4 { background: #0CA3DA; clip-path: polygon(0 100%, 0 2%, 14% 100%); }
     .login-card {
       position: relative;
       z-index: 1;
