@@ -68,6 +68,18 @@ from ocr_utils import (
     remove_grid_lines as _remove_grid_lines,
 )
 
+# Excepciones que un extractor de proveedor puede tirar por un PDF con
+# contenido genuinamente corrupto/ilegible -- se aíslan por PDF en vez de
+# tumbar el lote entero (ver append_supplier_invoices). OSError cubre
+# PIL.UnidentifiedImageError (imagen embebida truncada/corrupta, ocr_utils.
+# extract_largest_page_image); cv2.error se agrega solo si cv2 importó bien
+# -- referenciarlo directo cuando cv2 es None (import falló) rompería con
+# un AttributeError que taparía la excepción real (auditoría 2026-09-06,
+# antes solo se atrapaba ValueError/TypeError/AttributeError/RuntimeError).
+_PDF_EXTRACTION_EXCEPTIONS = (ValueError, TypeError, AttributeError, RuntimeError, OSError)
+if cv2 is not None:
+    _PDF_EXTRACTION_EXCEPTIONS = _PDF_EXTRACTION_EXCEPTIONS + (cv2.error,)
+
 # Columnas de cada hoja de proveedor (1-based): DATE|COMPROB|N|Amount(DEBE)|
 # Amount(HABER)|BALANCE|DETAIL. Las filas de factura solo escriben
 # DATE/COMPROB/N/DEBE — HABER queda para los pagos (fase futura, via Chase).
@@ -2092,7 +2104,7 @@ def append_supplier_invoices(ledger_path, pdf_paths):
         try:
             supplier_key = _detect_supplier(pdf_path)
             invoice = SUPPLIER_REGISTRY[supplier_key]["extract"](pdf_path)
-        except (ValueError, TypeError, AttributeError, RuntimeError) as exc:
+        except _PDF_EXTRACTION_EXCEPTIONS as exc:
             # Antes solo se atrapaba ValueError -- varios extractores hacen
             # trabajo de imagen (pytesseract, Pillow, pdfplumber sobre un
             # PDF corrupto) que puede tirar otros tipos de excepción, y esas
@@ -2155,6 +2167,14 @@ def append_supplier_invoices(ledger_path, pdf_paths):
                     _insert_row_preserving_merges(sheet, target_row)
                     _shift_resumen_compras_refs(resumen_sheet, sheet.title, target_row)
                     structural_mutation_done = True
+                    # style_row puede venir >= target_row cuando no había
+                    # ninguna fila "invoice" arriba (_resolve_invoice_style_row
+                    # cae al fallback hacia adelante) -- insert_rows recién
+                    # corrió esa fila +1, así que hay que corregir el índice
+                    # o _write_invoice_row copia el estilo de la fila en
+                    # blanco recién insertada (bug real, auditoría 2026-09-06).
+                    if style_row >= target_row:
+                        style_row += 1
                 _write_invoice_row(sheet, target_row, style_row, balance_ref_row, color, invoice)
                 if needs_shift:
                     _reformulate_rows_below(sheet, target_row, last_row)
