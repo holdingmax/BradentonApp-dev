@@ -1371,9 +1371,10 @@ def _lottery_write_debito_row(sheet, row, subtotal_row, chase_text=None):
     # en blanco en los bloques nuevos/reciclados, en vez de traer la
     # fórmula que ya tenían los demás bloques (E/F/Q también se escriben
     # siempre, reconciliado o no; V tiene que seguir el mismo criterio).
-    # Solo W (el texto real "Chase Bank {fecha}") queda para cuando el
-    # usuario reconcilie a mano -- eso sí es un dato real, no una fórmula
-    # que se pueda adivinar.
+    # W ("Chase Bank\n{fecha}") se calcula afuera (ver _parse_chase_bank_date/
+    # _render_chase_bank_text) y se pasa ya armado en chase_text -- acá solo
+    # se escribe si vino algo (puede venir None si no se pudo interpretar la
+    # fecha real del bloque trasladado).
     sheet.cell(row=row, column=5, value=f"=+E{subtotal_row}-F{subtotal_row}")
     sheet.cell(row=row, column=6, value=f"=+F{subtotal_row}+G{subtotal_row}+I{subtotal_row}+K{subtotal_row}+10")
     sheet.cell(row=row, column=17, value=f"=+Q{subtotal_row}+R{subtotal_row}+S{subtotal_row}")
@@ -1381,6 +1382,71 @@ def _lottery_write_debito_row(sheet, row, subtotal_row, chase_text=None):
     sheet.cell(row=row, column=22, value=f"=+F{row}+Q{row}")
     if chase_text:
         sheet.cell(row=row, column=23, value=chase_text)
+
+
+# La fecha de "Chase Bank" (columna W de la fila Debito) es el día en que
+# ese monto semanal de Lottery llega al banco -- pedido explícito del
+# usuario (2026-09-07): pasa cada 7 días exactos, a partir de la última
+# fecha real ya cargada en el bloque trasladado (bloque 1). Nunca se
+# reconstruye el texto entero a mano -- se toma el texto real que el
+# usuario ya tipeó ("Chase Bank" + salto de línea + fecha) y solo se le
+# reemplaza la fecha, preservando separador/ancho/orden día-mes tal cual
+# estaban.
+_CHASE_BANK_DATE_RE = re.compile(r"(\d{1,2})([/.\-])(\d{1,2})([/.\-])(\d{2,4})")
+
+
+def _parse_chase_bank_date(text, reference_date):
+    """
+    Extrae la fecha real del texto de "Chase Bank" -- nunca asume un orden
+    día/mes fijo, prueba las dos lecturas posibles del texto real y elige
+    la que cae más cerca de reference_date (el último día real del bloque
+    trasladado) para desambiguar cuando ambas son fechas válidas. Devuelve
+    (fecha, match, day_is_first) o (None, None, None) si no hay texto o no
+    se pudo interpretar con confianza.
+    """
+    if not text:
+        return None, None, None
+    match = _CHASE_BANK_DATE_RE.search(str(text))
+    if not match:
+        return None, None, None
+    g1, sep1, g2, sep2, g3 = match.groups()
+    if sep1 != sep2:
+        return None, None, None
+    year = int(g3) if len(g3) == 4 else 2000 + int(g3)
+
+    candidates = []
+    try:
+        candidates.append((datetime(year, int(g2), int(g1)), True))  # g1=día, g2=mes
+    except ValueError:
+        pass
+    try:
+        candidates.append((datetime(year, int(g1), int(g2)), False))  # g1=mes, g2=día
+    except ValueError:
+        pass
+    if not candidates:
+        return None, None, None
+    if len(candidates) == 1:
+        date, day_is_first = candidates[0]
+    else:
+        date, day_is_first = min(candidates, key=lambda c: abs((c[0] - reference_date).days))
+    return date, match, day_is_first
+
+
+def _render_chase_bank_text(template_text, match, day_is_first, new_date):
+    """
+    Reemplaza solo la fecha dentro del texto real ya tipeado por el
+    usuario (ver _parse_chase_bank_date), preservando el resto tal cual --
+    el label "Chase Bank", el salto de línea, el separador, y el ancho de
+    cada número (01 vs 1, año de 2 vs 4 dígitos).
+    """
+    g1, sep1, g2, sep2, g3 = match.groups()
+    day_str, month_str = (g1, g2) if day_is_first else (g2, g1)
+    new_day = f"{new_date.day:02d}" if len(day_str) == 2 else str(new_date.day)
+    new_month = f"{new_date.month:02d}" if len(month_str) == 2 else str(new_date.month)
+    new_year = str(new_date.year) if len(g3) == 4 else f"{new_date.year % 100:02d}"
+    first, second = (new_day, new_month) if day_is_first else (new_month, new_day)
+    new_date_text = f"{first}{sep1}{second}{sep2}{new_year}"
+    return template_text[: match.start()] + new_date_text + template_text[match.end() :]
 
 
 def _lottery_merge_block(sheet, block_start):
@@ -1569,6 +1635,16 @@ def prepare_next_month_lottery(upload_path):
 
     next_date = carried_dates[-1][1]  # columna B del 7mo día del bloque trasladado
 
+    # ---- Fecha de "Chase Bank" (columna W) -- se repite cada 7 días exactos
+    # a partir de la del bloque trasladado (pedido explícito del usuario
+    # 2026-09-07) -- ver _parse_chase_bank_date/_render_chase_bank_text.
+    chase_date, chase_match, chase_day_first = _parse_chase_bank_date(carried_chase_text, next_date)
+    if carried_chase_text and chase_date is None:
+        summary["warnings"].append(
+            'No pude interpretar la fecha del texto de "Chase Bank" (columna W) del último '
+            "bloque -- los bloques nuevos quedaron sin esa fecha, completala a mano."
+        )
+
     # ---- Plantilla de estilo (del primer bloque -- estructuralmente igual a todos) ----
     style_rows = _lottery_capture_style(sheet, _LOTTERY_FIRST_ROW)
 
@@ -1626,7 +1702,13 @@ def prepare_next_month_lottery(upload_path):
             _lottery_write_day_row(sheet, block_start + i, date_a, date_b, {})
             cursor = date_b
         _lottery_write_subtotal_row(sheet, block_start + 7, block_start, block_start + 6)
-        _lottery_write_debito_row(sheet, block_start + 8, block_start + 7)
+        if chase_date is not None:
+            block_chase_text = _render_chase_bank_text(
+                carried_chase_text, chase_match, chase_day_first, chase_date + timedelta(days=7 * b)
+            )
+        else:
+            block_chase_text = None
+        _lottery_write_debito_row(sheet, block_start + 8, block_start + 7, chase_text=block_chase_text)
         _lottery_apply_style(sheet, block_start, style_rows)
         _lottery_merge_block(sheet, block_start)
 
@@ -1641,13 +1723,19 @@ def prepare_next_month_lottery(upload_path):
         )
 
     sheet.title = f"{next_month:02d}.{next_year:04d}"
+    chase_note = (
+        ' La fecha de "Chase Bank" (columna W) se calculó sola cada 7 días a partir de la '
+        "del bloque trasladado en los bloques nuevos."
+        if chase_date is not None
+        else ""
+    )
     summary["assumptions"].append(
         f"Se trasladó el último bloque de {MESES[month]} tal cual (con los datos que ya tenía) "
         f"como primer bloque de {MESES[next_month]}, y se agregaron {total_new_blocks - 1} "
         "bloque(s) más en 0 para cubrir el resto del mes. La sección de liquidación al pie se "
         "copió tal cual estaba en el mes anterior (mismo formato y fórmulas, sin actualizar "
         "ninguna referencia) -- revisala a mano antes de usarla, las fórmulas todavía apuntan a "
-        "los bloques del mes viejo."
+        f"los bloques del mes viejo.{chase_note}"
     )
 
     workdir = tempfile.mkdtemp(prefix="mes_nuevo_lottery_")
