@@ -413,6 +413,32 @@ def _prepare_trucks(path, year, month):
     wb.close()
 
 
+def _keep_only_last_sheet(path, summary):
+    """
+    El Excel de Horas de Trabajo (BDT. HOURS...) acumula una hoja por
+    semana del mes que se cierra -- pedido explícito del usuario
+    (2026-09-07): al pasar al mes nuevo hay que borrarlas todas menos
+    una, de preferencia la ÚLTIMA hoja del archivo (normalmente la
+    semana más reciente/en curso, la que sirve de base para el mes que
+    arranca). Si el archivo ya tiene una sola hoja, no hay nada que
+    hacer.
+    """
+    wb = load_workbook(path, data_only=False)
+    if len(wb.sheetnames) <= 1:
+        wb.close()
+        return
+    keep_name = wb.sheetnames[-1]
+    removed = [name for name in wb.sheetnames if name != keep_name]
+    for name in removed:
+        wb.remove(wb[name])
+    wb.save(path)
+    wb.close()
+    summary["assumptions"].append(
+        f"Horas Trabajo C-Store: se borraron {len(removed)} hoja(s) del mes que se cierra "
+        f'("{", ".join(removed)}"), se dejó solo "{keep_name}" (la última del archivo).'
+    )
+
+
 def _prepare_cierre(path, year, month, days, summary):
     wb = load_workbook(path, data_only=False)
 
@@ -847,9 +873,23 @@ def prepare_next_month(upload_zip_path):
             summary["assumptions"].append("Bce Brandenton: solo se renombró el archivo, el contenido no se toca (pendiente de definir).")
 
     with _isolate_step(summary, "Horas Trabajo C-Store"):
-        horas = _find_workbook(root, "hours", "xls")
+        horas = _find_workbook(root, "hours", "xlsx")
         if horas:
-            _rename_in_place(horas, f"BDT. HOURS {_mm_yyyy(next_year, next_month)}.xls")
+            horas = _rename_in_place(horas, f"BDT. HOURS {_mm_yyyy(next_year, next_month)}.xlsx")
+            # Pedido explícito del usuario 2026-09-07: este Excel acumula
+            # una hoja por semana del mes que se cierra -- hay que borrarlas
+            # todas menos una (de preferencia la última del archivo) antes
+            # de pasarlo al mes nuevo, para que no arrastre el historial.
+            _keep_only_last_sheet(horas, summary)
+        else:
+            horas_legacy = _find_workbook(root, "hours", "xls")
+            if horas_legacy:
+                horas = horas_legacy
+                summary["warnings"].append(
+                    "El Excel de Horas de Trabajo (BDT. HOURS...) sigue en formato .xls viejo -- "
+                    "abrilo en Excel y guardalo como .xlsx antes de subir el .zip, no lo pude "
+                    "renombrar ni borrarle las hojas del mes anterior en este formato."
+                )
         # La carpeta solo debe tener ese Excel -- el Lienzo en blanco no
         # trae ningún PDF ahí. Un mes ya vivido acumula un PDF de pago
         # semanal por empleado por semana; esos son del mes que se cierra
@@ -870,7 +910,7 @@ def prepare_next_month(upload_zip_path):
                 full = os.path.join(horas_dir, name)
                 if not os.path.isfile(full):
                     continue
-                if name.lower() == "desktop.ini" or name.startswith("~$") or name.lower().endswith(".xls"):
+                if name.lower() == "desktop.ini" or name.startswith("~$") or name.lower().endswith((".xls", ".xlsx")):
                     continue
                 os.remove(full)
                 removed_horas += 1
