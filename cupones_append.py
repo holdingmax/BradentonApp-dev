@@ -73,6 +73,12 @@ SPLIT_GROUP_FILL_COLORS = (
     "FFD0E0E3",  # pale teal
     "FFFCE9DB",  # cream
 )
+# Rojo rosado vivo -- deliberadamente distinto de la paleta pálida de grupos
+# partidos de arriba (incluye tonos rosa/rosa pálido) para que no se confunda
+# con esa marca. Se aplica solo en C/D/E (Gross/Fees/Net), nunca en B (Columna
+# del Cupón) -- esa columna ya tiene su propio significado de color (grupo
+# partido, ver _apply_split_group_colors/_reconstruct_split_groups_by_fill).
+DUPLICATE_COUPON_FILL_COLOR = "FFFF6F91"
 CUPONES_LEFT_COLUMNS = (
     CUPONES_COL_DATE,
     CUPONES_COL_COUPON,
@@ -586,6 +592,66 @@ def _apply_split_group_colors(cupones_sheet, split_group_rows):
         fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
         for row in rows:
             _cell_for_write(cupones_sheet, row, CUPONES_COL_COUPON).fill = fill
+
+
+def _duplicate_coupon_key(cupones_sheet, row):
+    """(N° de cupón, Gross, Fees, Net) redondeados -- None si la fila no tiene cupón."""
+    coupon_text = _strip_cell(cupones_sheet.cell(row=row, column=CUPONES_COL_COUPON).value)
+    if not coupon_text:
+        return None
+    gross = round(_read_float_cell(cupones_sheet, row, CUPONES_COL_GROSS), 2)
+    fees = round(_read_float_cell(cupones_sheet, row, CUPONES_COL_FEES), 2)
+    net = round(_read_float_cell(cupones_sheet, row, CUPONES_COL_NET), 2)
+    return (coupon_text.upper(), gross, fees, net)
+
+
+def _flag_possible_duplicate_coupons(cupones_sheet):
+    """
+    Pedido explícito del usuario (2026-09-07, reportado por su compañera de
+    trabajo): dos cupones con el MISMO número Y los mismos montos (Gross/
+    Fees/Net) en filas distintas -- casi seguro el mismo cupón cargado dos
+    veces por error, no una coincidencia real (solo el número repetido no
+    alcanza para marcarlo, tiene que coincidir todo). El chequeo de
+    duplicados que ya existe (_filter_new_cupones_records) solo compara cada
+    fila entrante contra lo que YA estaba en la hoja antes de esta carga --
+    si el propio reporte mensual del proveedor trae el mismo cupón repetido
+    dos veces, ninguna de las dos lo detecta como duplicado contra sí misma.
+    Esta función corre sobre TODA la hoja (filas viejas y nuevas por igual)
+    después de cada carga/resync, así que sí lo agarra.
+
+    Se marca en rojo rosado (columnas C/D/E, Gross/Fees/Net) -- nunca en B,
+    esa columna ya tiene su propio significado de color (grupo partido).
+    Se recalcula desde cero en cada corrida (limpia cualquier marca vieja
+    que ya no aplique) para ser idempotente.
+    """
+    if PatternFill is None:
+        return 0
+    last_row = find_last_cupones_row(cupones_sheet)
+    if last_row < CUPONES_SCAN_START_ROW:
+        return 0
+
+    rows_by_key = {}
+    for row in range(CUPONES_SCAN_START_ROW, last_row + 1):
+        key = _duplicate_coupon_key(cupones_sheet, row)
+        if key is not None:
+            rows_by_key.setdefault(key, []).append(row)
+
+    duplicate_rows = set()
+    for rows in rows_by_key.values():
+        if len(rows) > 1:
+            duplicate_rows.update(rows)
+
+    no_fill = PatternFill(fill_type=None)
+    duplicate_fill = PatternFill(
+        start_color=DUPLICATE_COUPON_FILL_COLOR,
+        end_color=DUPLICATE_COUPON_FILL_COLOR,
+        fill_type="solid",
+    )
+    for row in range(CUPONES_SCAN_START_ROW, last_row + 1):
+        fill = duplicate_fill if row in duplicate_rows else no_fill
+        for col in (CUPONES_COL_GROSS, CUPONES_COL_FEES, CUPONES_COL_NET):
+            _cell_for_write(cupones_sheet, row, col).fill = fill
+    return len(duplicate_rows)
 
 
 _PENDING_PLACEHOLDER_VALUES = {"RCV-MISSING", "MES-MISSING"}
@@ -1111,6 +1177,8 @@ def resync_cupones_only(master_path):
         if not rows_resynced_pending:
             raise NoPendingCouponsError(NO_PENDING_COUPONS_ALERT)
 
+        possible_duplicate_coupon_rows = _flag_possible_duplicate_coupons(cupones_sheet)
+
         save_path = _create_temp_workbook_path(suffix=extension or ".xlsx")
         workbook.save(save_path)
     except PermissionError as exc:
@@ -1120,7 +1188,10 @@ def resync_cupones_only(master_path):
             workbook.close()
         gc.collect()
 
-    summary = {"rows_resynced_pending": rows_resynced_pending}
+    summary = {
+        "rows_resynced_pending": rows_resynced_pending,
+        "possible_duplicate_coupon_rows": possible_duplicate_coupon_rows,
+    }
     return save_path, summary
 
 
@@ -1208,6 +1279,7 @@ def append_monthly_cupones(master_path, monthly_path):
             for r in rows:
                 _apply_cupones_row_alignment(cupones_sheet, r)
         _stretch_column_b_width(cupones_sheet, max_coupon_text_len)
+        possible_duplicate_coupon_rows = _flag_possible_duplicate_coupons(cupones_sheet)
         workbook.save(save_path)
     except PermissionError as exc:
         raise PermissionError("ERROR: Cierra el archivo Excel antes de continuar") from exc
@@ -1226,5 +1298,6 @@ def append_monthly_cupones(master_path, monthly_path):
         "rows_skipped_duplicates": rows_skipped_duplicates,
         "rows_resynced_pending": rows_resynced_pending,
         "unmatched_coupons": unmatched_coupons,
+        "possible_duplicate_coupon_rows": possible_duplicate_coupon_rows,
     }
     return save_path, summary

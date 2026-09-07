@@ -1102,6 +1102,11 @@ def eft_cupones():
         notice_parts.append(
             f"{summary['rows_resynced_pending']} fila(s) pendiente(s) de antes se actualizaron con este EFT."
         )
+    if summary.get("possible_duplicate_coupon_rows"):
+        notice_parts.append(
+            f"{summary['possible_duplicate_coupon_rows']} fila(s) parecen cupones duplicados (mismo número "
+            "y mismos montos) -- se marcaron en rojo rosado para revisar a mano."
+        )
     return _success_response(saved_path, master_filename, notice=" ".join(notice_parts) or None)
 
 
