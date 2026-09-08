@@ -14,7 +14,7 @@ import os
 import tempfile
 from urllib.parse import quote
 
-from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, url_for
+from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, session, url_for
 from flask_login import (
     LoginManager,
     UserMixin,
@@ -52,6 +52,7 @@ from controles_cierre_mensual import check_department_sales_monthly, check_store
 from controles_cupones import check_cupones_pending
 from controles_lottery_mensual import check_lottery_monthly
 from controles_mercaderia import check_mercaderia_invoices
+from controles_valuacion import check_and_complete_valuation
 from mes_nuevo import prepare_next_month, prepare_next_month_lottery
 from monthly_sales import process_monthly_sales
 from proveedores import append_supplier_invoices, append_supplier_payments
@@ -337,6 +338,16 @@ CONTROLS = [
         "description": "Cruza las facturas del mes en Proveedores contra el Mayor de Mercadería en C-Store.",
         "accent": "#DB2777",
         "accent_soft": "#FBD9EA",
+    },
+    {
+        "key": "valuacion",
+        "code": "VL",
+        "icon": _ICON_CHECKLIST,
+        "label": "Valuación de Existencia Final",
+        "url": "/controles/valuacion",
+        "description": "Cruza la Existencia Final según contabilidad contra la valuación de Chevron Category Cost Report.",
+        "accent": "#059669",
+        "accent_soft": "#D1FAE5",
     },
 ]
 
@@ -629,6 +640,50 @@ def control_mercaderia():
             except Exception as exc:
                 flash(f"Error: {exc}", "error")
     return render_template("control_mercaderia.html", result=result, **THEME_BY_KEY["mercaderia"])
+
+
+@app.route("/controles/valuacion", methods=["GET", "POST"])
+def control_valuacion():
+    # A diferencia de los otros controles, este SÍ completa una copia del
+    # Excel BGS (nunca el original) -- pedido explícito del usuario
+    # (2026-09-08): "quiero que si complete el excel, pero que el archivo
+    # aparezca abajo del reporte para que el usuario lo pueda descargar
+    # por su cuenta". Se guarda en un temporal y se ofrece aparte con un
+    # link (ver control_valuacion_descargar) en vez de forzar la descarga
+    # como hace un módulo de Herramientas.
+    result = None
+    if request.method == "POST":
+        mayor_upload = request.files.get("mayor_file")
+        bgs_upload = request.files.get("bgs_file")
+        chevron_upload = request.files.get("chevron_file")
+        if mayor_upload is None or not mayor_upload.filename:
+            flash("Seleccioná el Mayor de Mercadería en C-Store.", "error")
+        elif bgs_upload is None or not bgs_upload.filename:
+            flash("Seleccioná el Excel BGS.", "error")
+        elif chevron_upload is None or not chevron_upload.filename:
+            flash("Seleccioná el Chevron Category Cost Report.", "error")
+        else:
+            try:
+                workdir = _new_workspace_dir()
+                mayor_path, _mayor_filename = _save_upload_to_workspace(mayor_upload, workdir=workdir)
+                bgs_path, _bgs_filename = _save_upload_to_workspace(bgs_upload, workdir=workdir)
+                chevron_path, _chevron_filename = _save_upload_to_workspace(chevron_upload, workdir=workdir)
+                result = check_and_complete_valuation(mayor_path, bgs_path, chevron_path)
+                session["valuacion_download_path"] = result["download_path"]
+                session["valuacion_download_filename"] = result["download_filename"]
+            except Exception as exc:
+                flash(f"Error: {exc}", "error")
+    return render_template("control_valuacion.html", result=result, **THEME_BY_KEY["valuacion"])
+
+
+@app.route("/controles/valuacion/descargar")
+def control_valuacion_descargar():
+    path = session.get("valuacion_download_path")
+    filename = session.get("valuacion_download_filename")
+    if not path or not filename or not os.path.isfile(path):
+        flash("El archivo ya no está disponible -- volvé a correr el control de nuevo.", "error")
+        return redirect(url_for("control_valuacion"))
+    return send_file(path, as_attachment=True, download_name=filename)
 
 
 def _save_to_downloads_and_build_notice(output_path, summary):

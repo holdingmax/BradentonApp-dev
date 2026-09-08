@@ -101,10 +101,14 @@ def _read_mercaderia_mayor(path):
     exista una fila de totales con una forma exacta, se recalcula desde
     las filas reales.
 
-    Devuelve (period_from, period_to, total_debito, total_credito, invoice_count)
+    Devuelve (period_from, period_to, total_debito, total_credito, invoice_count, saldo_inicial)
     -- invoice_count cuenta solo las filas con Débito (una factura real),
     nunca las de Crédito (notas de crédito, ej. "CREDIT MEMO ..."), para
     poder comparar cantidad de facturas contra el lado de Proveedores.
+    saldo_inicial es el valor de la fila "SALDO INICIAL" (antes de
+    cualquier asiento con fecha) -- lo usa el control de Valuación de
+    Existencia Final como punto de partida de la existencia inicial del
+    mes; queda en None si esa fila no se pudo encontrar.
     """
     df = pd.read_excel(path, header=None)
 
@@ -128,6 +132,8 @@ def _read_mercaderia_mayor(path):
                     "fecha": lowered.index("fecha"),
                     "debito": lowered.index("debito"),
                     "credito": lowered.index("credito"),
+                    "descripcion": lowered.index("descripcion") if "descripcion" in lowered else None,
+                    "saldo": lowered.index("saldo") if "saldo" in lowered else None,
                 }
 
     if header_row_index is None:
@@ -138,9 +144,20 @@ def _read_mercaderia_mayor(path):
     total_debito = 0.0
     total_credito = 0.0
     invoice_count = 0
+    saldo_inicial = None
     for idx in range(header_row_index + 1, len(df)):
         fecha = df.iat[idx, col_index["fecha"]]
         if pd.isna(fecha):
+            if (
+                saldo_inicial is None
+                and col_index["descripcion"] is not None
+                and col_index["saldo"] is not None
+            ):
+                descripcion = df.iat[idx, col_index["descripcion"]]
+                if isinstance(descripcion, str) and "saldo inicial" in descripcion.strip().lower():
+                    saldo_value = df.iat[idx, col_index["saldo"]]
+                    if pd.notna(saldo_value):
+                        saldo_inicial = round(float(saldo_value), 2)
             continue
         debito = df.iat[idx, col_index["debito"]]
         credito = df.iat[idx, col_index["credito"]]
@@ -149,7 +166,7 @@ def _read_mercaderia_mayor(path):
             invoice_count += 1
         total_credito += float(credito) if pd.notna(credito) else 0.0
 
-    return period_from, period_to, round(total_debito, 2), round(total_credito, 2), invoice_count
+    return period_from, period_to, round(total_debito, 2), round(total_credito, 2), invoice_count, saldo_inicial
 
 
 def _sum_sheet_invoices_for_period(sheet, period_from, period_to):
@@ -209,7 +226,9 @@ def check_mercaderia_invoices(proveedores_path, mayor_path):
     if not os.path.isfile(mayor_path):
         raise FileNotFoundError(f"Mayor de Mercadería en C-Store no encontrado: {mayor_path}")
 
-    period_from, period_to, mayor_debito, mayor_credito, mayor_invoice_count = _read_mercaderia_mayor(mayor_path)
+    period_from, period_to, mayor_debito, mayor_credito, mayor_invoice_count, _saldo_inicial = (
+        _read_mercaderia_mayor(mayor_path)
+    )
     mayor_total = round(mayor_debito - mayor_credito, 2)
 
     workbook = load_workbook(proveedores_path, data_only=False)

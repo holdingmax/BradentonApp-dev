@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block crumbs %}
+<nav class="crumbs"><span class="current">Valuación de Existencia Final</span></nav>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <span class="eyebrow">Controles</span>
+  <h1>Valuación de Existencia Final</h1>
+  <p class="page-subtitle">Cruza la Existencia Final según contabilidad (Existencia Inicial + Compras - CMV) contra la valuación física del Chevron Category Cost Report.</p>
+</div>
+
+<div class="card">
+  <h2>Archivos del período</h2>
+  <p class="muted">Este control completa una copia del Excel BGS con la valuación de Chevron (celda N16 y la fila del mes en la tabla histórica) y recalcula la fórmula de N18 -- el archivo original nunca se toca, la copia completada queda para descargar abajo del resultado.</p>
+  <form method="post" enctype="multipart/form-data">
+    <label class="muted">Mayor de la cuenta Mercadería en C-Store (.xls o .xlsx)</label>
+    <input type="file" name="mayor_file" accept=".xls,.xlsx" required>
+    <label class="muted">Excel BGS (hoja RESUMEN, CMV del mes)</label>
+    <input type="file" name="bgs_file" accept=".xlsx,.xlsm" required>
+    <label class="muted">Chevron Category Cost Report</label>
+    <input type="file" name="chevron_file" accept=".xlsx,.xlsm" required>
+    <div class="form-actions">
+      <button type="submit">Verificar y completar</button>
+    </div>
+  </form>
+</div>
+
+{% if result %}
+<div class="card">
+  <h2>Resultado</h2>
+  <p class="muted">Período: {{ result.period_from_display }} al {{ result.period_to_display }}.</p>
+
+  <div class="valuacion-stat-row">
+    <div class="valuacion-stat">
+      <span class="valuacion-stat-label">Existencia Inicial</span>
+      <span class="valuacion-stat-value">${{ "{:,.2f}".format(result.saldo_inicial) }}</span>
+    </div>
+    <div class="valuacion-stat">
+      <span class="valuacion-stat-label">Compras</span>
+      <span class="valuacion-stat-value">${{ "{:,.2f}".format(result.compras) }}</span>
+    </div>
+    <div class="valuacion-stat">
+      <span class="valuacion-stat-label">CMV</span>
+      <span class="valuacion-stat-value">${{ "{:,.2f}".format(result.cmv) }}</span>
+    </div>
+  </div>
+
+  <div class="valuacion-stat-row" style="margin-top: 14px;">
+    <div class="valuacion-stat">
+      <span class="valuacion-stat-label">EF s/contabilidad</span>
+      <span class="valuacion-stat-value">${{ "{:,.2f}".format(result.ef_contabilidad) }}</span>
+    </div>
+    <div class="valuacion-stat">
+      <span class="valuacion-stat-label">EF s/auditoría (Chevron)</span>
+      <span class="valuacion-stat-value">${{ "{:,.2f}".format(result.ef_auditoria) }}</span>
+    </div>
+    <div class="valuacion-stat">
+      <span class="valuacion-stat-label">Diferencia</span>
+      <span class="valuacion-stat-value {{ 'valuacion-stat-ok' if result.ok else 'valuacion-stat-bad' }}">{{ "{:.2%}".format(result.diff_pct) if result.diff_pct is not none else '—' }}</span>
+    </div>
+  </div>
+
+  {% if result.ok %}
+  <div class="flash-success" style="margin-top: 18px;">Dentro del margen razonable (9%-13%).</div>
+  {% else %}
+  <div class="flash-warning" style="margin-top: 18px;">Atención: la diferencia está fuera del margen razonable (9%-13%) -- vale la pena revisarla.</div>
+  {% endif %}
+
+  {% if not result.target_row_found %}
+  <div class="flash-warning" style="margin-top: 10px;">No se encontró la fila del mes en la tabla histórica (columna Q de RESUMEN) -- se completaron N16 y N18 igual, pero esa fila hay que cargarla a mano.</div>
+  {% endif %}
+
+  <div class="valuacion-download">
+    <p class="muted">Copia del Excel BGS ya completada con la valuación de Chevron:</p>
+    <a class="btn-secondary" href="{{ url_for('control_valuacion_descargar') }}">Descargar Excel completado</a>
+  </div>
+</div>
+
+<style>
+  .valuacion-stat-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 14px;
+    margin-top: 4px;
+  }
+  .valuacion-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 16px 18px;
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  .valuacion-stat-label {
+    font-size: 12px;
+    color: var(--text-soft);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .valuacion-stat-value {
+    font-size: 22px;
+    font-weight: 700;
+  }
+  .valuacion-stat-ok { color: var(--success); }
+  .valuacion-stat-bad { color: var(--warning); }
+  .valuacion-download {
+    margin-top: 22px;
+    padding-top: 18px;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+</style>
+{% endif %}
+{% endblock %}
