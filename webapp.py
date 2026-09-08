@@ -49,6 +49,7 @@ from gettel_toyota_parser import (
     process_gettel_pagos,
 )
 from controles_cierre_mensual import check_department_sales_monthly, check_store_info_monthly
+from controles_cupones import check_cupones_pending
 from controles_lottery_mensual import check_lottery_monthly
 from mes_nuevo import prepare_next_month, prepare_next_month_lottery
 from monthly_sales import process_monthly_sales
@@ -316,6 +317,16 @@ CONTROLS = [
         "accent": "#0284C7",
         "accent_soft": "#D7EFFB",
     },
+    {
+        "key": "cupones",
+        "code": "CP",
+        "icon": _ICON_COINS,
+        "label": "Cupones",
+        "url": "/controles/cupones",
+        "description": "Cruza el saldo del Mayor de Recaudación a Liquidar contra los cupones sin aplicar a un EFT.",
+        "accent": "#7C3AED",
+        "accent_soft": "#EDE4FB",
+    },
 ]
 
 # Tercera sección de la app, aparte de Herramientas y Controles: prepara la
@@ -561,6 +572,29 @@ def control_lottery_mensual():
     return render_template(
         "control_lottery_mensual.html", result=result, **THEME_BY_KEY["lottery_mensual"]
     )
+
+
+@app.route("/controles/cupones", methods=["GET", "POST"])
+def control_cupones():
+    # Mismo criterio que los otros controles: solo lectura, reporte en
+    # pantalla, sin ajax-process-form ni _success_response.
+    result = None
+    if request.method == "POST":
+        mayor_upload = request.files.get("mayor_file")
+        eft_upload = request.files.get("eft_excel_file")
+        if mayor_upload is None or not mayor_upload.filename:
+            flash("Seleccioná el Mayor de Recaudación a Liquidar.", "error")
+        elif eft_upload is None or not eft_upload.filename:
+            flash("Seleccioná el Excel de Aplicacion TC y EFT.", "error")
+        else:
+            try:
+                workdir = _new_workspace_dir()
+                mayor_path, _mayor_filename = _save_upload_to_workspace(mayor_upload, workdir=workdir)
+                eft_path, _eft_filename = _save_upload_to_workspace(eft_upload, workdir=workdir)
+                result = check_cupones_pending(mayor_path, eft_path)
+            except Exception as exc:
+                flash(f"Error: {exc}", "error")
+    return render_template("control_cupones.html", result=result, **THEME_BY_KEY["cupones"])
 
 
 def _save_to_downloads_and_build_notice(output_path, summary):

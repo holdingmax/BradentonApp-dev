@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block crumbs %}
+<nav class="crumbs"><span class="current">Cupones</span></nav>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <span class="eyebrow">Controles</span>
+  <h1>Cupones</h1>
+  <p class="page-subtitle">Cruza el saldo final del Mayor de la cuenta J.H. Williams - Recaudación a Liquidar contra los cupones que todavía no se aplicaron a ningún EFT en la hoja Cupones.</p>
+</div>
+
+<div class="card">
+  <h2>Archivos del período</h2>
+  <p class="muted">No se descarga ni se modifica nada — solo se lee y se muestra el resultado acá abajo. Usá el Excel de Aplicacion TC y EFT de cerca de la fecha en que cerró ese mes — uno de un mes posterior ya va a tener esos cupones aplicados, y la comparación no va a servir.</p>
+  <form method="post" enctype="multipart/form-data">
+    <label class="muted">Mayor de la cuenta Recaudación a Liquidar (.xls o .xlsx)</label>
+    <input type="file" name="mayor_file" accept=".xls,.xlsx" required>
+    <label class="muted">Excel "Aplicacion TC y EFT -" (hoja Cupones)</label>
+    <input type="file" name="eft_excel_file" accept=".xlsx,.xlsm" required>
+    <div class="form-actions">
+      <button type="submit">Verificar</button>
+    </div>
+  </form>
+</div>
+
+{% if result %}
+<div class="card">
+  <h2>Resultado</h2>
+  <p class="muted">Período del Mayor: {{ result.period_from_display }} al {{ result.period_to_display }} — {{ result.pending_count }} cupón(es) sin aplicar a un EFT.</p>
+
+  <div class="cupones-stat-row">
+    <div class="cupones-stat">
+      <span class="cupones-stat-label">Saldo final (Mayor)</span>
+      <span class="cupones-stat-value">${{ "{:,.2f}".format(result.saldo_final) }}</span>
+    </div>
+    <div class="cupones-stat">
+      <span class="cupones-stat-label">Cupones sin aplicar (Bruto)</span>
+      <span class="cupones-stat-value">${{ "{:,.2f}".format(result.pending_total_gross) }}</span>
+    </div>
+    <div class="cupones-stat">
+      <span class="cupones-stat-label">Diferencia</span>
+      <span class="cupones-stat-value {{ 'cupones-stat-ok' if result.ok else 'cupones-stat-bad' }}">${{ "{:,.2f}".format(result.diff) }}</span>
+    </div>
+  </div>
+
+  {% if result.ok %}
+  <div class="flash-success" style="margin-top: 18px;">Margen esperado $15.000 por los últimos 3 días de ventas con tarjetas de crédito.</div>
+  {% else %}
+  <div class="flash-warning" style="margin-top: 18px;">Atención: la diferencia supera el margen esperado (±$15.000) — vale la pena revisarla.</div>
+  {% endif %}
+
+  {% if result.pending_coupons %}
+  <h2 style="margin-top: 28px; margin-bottom: 14px;">Cupones sin aplicar</h2>
+  <div class="cupones-table-wrap">
+    <table class="cupones-table">
+      <thead>
+        <tr>
+          <th>Fecha</th>
+          <th>Cupón</th>
+          <th>Gross</th>
+          <th>Fees</th>
+          <th>Net</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for coupon in result.pending_coupons %}
+        <tr>
+          <td>{{ coupon.date_display or '—' }}</td>
+          <td class="cupones-col-name">{{ coupon.coupon }}</td>
+          <td>${{ "{:,.2f}".format(coupon.gross) }}</td>
+          <td>${{ "{:,.2f}".format(coupon.fees) }}</td>
+          <td>${{ "{:,.2f}".format(coupon.net) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr class="cupones-total-row">
+          <td colspan="2">TOTAL</td>
+          <td>${{ "{:,.2f}".format(result.pending_total_gross) }}</td>
+          <td>${{ "{:,.2f}".format(result.pending_total_fees) }}</td>
+          <td>${{ "{:,.2f}".format(result.pending_total_net) }}</td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+  {% endif %}
+</div>
+
+<style>
+  .cupones-stat-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 14px;
+    margin-top: 4px;
+  }
+  .cupones-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 16px 18px;
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  .cupones-stat-label {
+    font-size: 12px;
+    color: var(--text-soft);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .cupones-stat-value {
+    font-size: 22px;
+    font-weight: 700;
+  }
+  .cupones-stat-ok { color: var(--success); }
+  .cupones-stat-bad { color: var(--warning); }
+
+  .cupones-table-wrap {
+    overflow-x: auto;
+    margin-top: 4px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  .cupones-table {
+    width: 100%;
+    min-width: 520px;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 13.5px;
+  }
+  .cupones-table th,
+  .cupones-table td {
+    padding: 9px 14px;
+    text-align: right;
+    white-space: nowrap;
+  }
+  .cupones-table thead th {
+    background: var(--accent-soft);
+    color: var(--text);
+    font-weight: 700;
+    border-bottom: 1px solid var(--border);
+  }
+  .cupones-table th:first-child, .cupones-table td:first-child,
+  .cupones-col-name {
+    text-align: left !important;
+  }
+  .cupones-col-name { font-weight: 600; }
+  .cupones-table tbody tr {
+    border-bottom: 1px solid var(--border);
+  }
+  .cupones-table tbody tr:nth-child(even) {
+    background: var(--surface-alt);
+  }
+  .cupones-total-row {
+    background: var(--accent-soft);
+    font-weight: 700;
+    border-top: 2px solid var(--border);
+  }
+  .cupones-total-row td:first-child { text-align: left !important; }
+</style>
+{% endif %}
+{% endblock %}
