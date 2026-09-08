@@ -96,22 +96,12 @@ def load_user(username):
     return WebUser(username, user.get("is_admin", False))
 
 
-def _is_safe_next_url(target):
-    """
-    Only allow redirecting to an in-app relative path after login. Rejects
-    "//host/..." (protocol-relative) AND any backslash -- some browsers
-    normalize "/\\host/..." to "//host/..." too, treating it as an external
-    URL despite starting with a single forward slash.
-    """
-    return bool(target) and target.startswith("/") and not target.startswith("//") and "\\" not in target
-
-
 @app.before_request
 def require_login():
     if request.endpoint in ("login", "static") or request.endpoint is None:
         return None
     if not current_user.is_authenticated:
-        return redirect(url_for("login", next=request.path))
+        return redirect(url_for("login"))
     return None
 
 
@@ -129,8 +119,7 @@ def login():
         else:
             remember = bool(request.form.get("remember"))
             login_user(WebUser(username, user.get("is_admin", False)), remember=remember)
-            next_url = request.args.get("next")
-            return redirect(next_url if _is_safe_next_url(next_url) else url_for("index"))
+            return redirect(url_for("index"))
 
     return render_template("login.html")
 
