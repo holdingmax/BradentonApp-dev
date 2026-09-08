@@ -1038,6 +1038,16 @@ _OCR_ROW_TAIL_FIELDS = 7
 _OCR_NET_SALES_REVERSE_INDEX = -1
 _OCR_NET_COUNT_REVERSE_INDEX = -4
 
+# Tesseract occasionally hallucinates a lone "_" as its own whitespace-
+# separated token between two real columns (seen in practice between two
+# "$0.00" cells) -- never a real column value in this report, but it does
+# add one extra token, which is enough to throw off every reverse-index
+# field lookup below it (e.g. "ONLINE $59.00 10 0 10 $0.00 _ $0.00 $59.00
+# 1.64%" reads Net Count off the wrong column and folds "$59" into the
+# department name). Dropped before indexing so a lone noise token can't
+# shift the count.
+_OCR_NOISE_TOKEN_RE = re.compile(r"^_+$")
+
 
 def _parse_ocr_department_row(line):
     """
@@ -1058,7 +1068,7 @@ def _parse_ocr_department_row(line):
     if _is_ocr_header_line(text):
         return None
 
-    parts = [token for token in text.split() if token]
+    parts = [token for token in text.split() if token and not _OCR_NOISE_TOKEN_RE.match(token)]
     if len(parts) < _OCR_ROW_TAIL_FIELDS + 1:
         return None
 
@@ -1903,9 +1913,11 @@ def _split_label_and_values(line):
     """
     Split "Total Fuel Sales 1,236.070 $5,152.10" into label + value tokens.
 
-    Strips stray punctuation off the label's edge (e.g. OCR sometimes reads
-    a faint column rule next to "Cash" as "Cash :", or a graphic behind the
-    text as "Cash |)") so it still matches the real label exactly, without
+    Strips stray punctuation off either edge of the label (e.g. OCR
+    sometimes reads a faint column rule next to "Cash" as "Cash :" or a
+    graphic behind the text as "Cash |)" -- trailing junk; a rule just
+    *before* the label can just as easily read as "| Network Revenue" --
+    leading junk) so it still matches the real label exactly, without
     loosening the match enough to also catch a longer label like "Cash
     Acceptor Cash". Value tokens are filtered down to ones that actually
     look numeric, so a trailing OCR artifact (e.g. "Total Taxes Collected
@@ -1914,7 +1926,9 @@ def _split_label_and_values(line):
     tokens = [t for t in _normalize_department_spacing(_strip_cell(line)).split() if t]
     for index, token in enumerate(tokens):
         if _NUMERIC_TOKEN_RE.match(token) and index > 0:
-            label = re.sub(r"[^A-Za-z]+$", "", " ".join(tokens[:index])).strip()
+            label = " ".join(tokens[:index])
+            label = re.sub(r"[^A-Za-z]+$", "", label)
+            label = re.sub(r"^[^A-Za-z]+", "", label).strip()
             values = [t for t in tokens[index:] if _NUMERIC_TOKEN_RE.match(t)]
             return label, values
     return None, []
