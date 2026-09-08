@@ -310,7 +310,7 @@ CONTROLS = [
     {
         "key": "lottery_mensual",
         "code": "LT",
-        "icon": _ICON_TICKET,
+        "icon": _ICON_CHECKLIST,
         "label": "Lottery Mensual",
         "url": "/controles/lottery-mensual",
         "description": "Cruza el Monthly Sales Report de Florida Lottery contra el Excel de Lottery del mes.",
@@ -320,12 +320,12 @@ CONTROLS = [
     {
         "key": "cupones",
         "code": "CP",
-        "icon": _ICON_COINS,
+        "icon": _ICON_CHECKLIST,
         "label": "Cupones",
         "url": "/controles/cupones",
         "description": "Cruza el saldo del Mayor de Recaudación a Liquidar contra los cupones sin aplicar a un EFT.",
-        "accent": "#7C3AED",
-        "accent_soft": "#EDE4FB",
+        "accent": "#3B5BDB",
+        "accent_soft": "#DDE3FA",
     },
 ]
 
@@ -350,7 +350,7 @@ MES_NUEVO = [
     {
         "key": "mes_nuevo_lottery",
         "code": "LT",
-        "icon": _ICON_TICKET,
+        "icon": _ICON_REFRESH,
         "label": "Lottery",
         "url": "/mes-nuevo/lottery",
         "description": "Sube el Excel de Lottery del mes que se cierra, descarga el del mes siguiente ya preparado.",
