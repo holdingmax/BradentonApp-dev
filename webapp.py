@@ -51,6 +51,7 @@ from gettel_toyota_parser import (
 from controles_cierre_mensual import check_department_sales_monthly, check_store_info_monthly
 from controles_cupones import check_cupones_pending
 from controles_lottery_mensual import check_lottery_monthly
+from controles_mercaderia import check_mercaderia_invoices
 from mes_nuevo import prepare_next_month, prepare_next_month_lottery
 from monthly_sales import process_monthly_sales
 from proveedores import append_supplier_invoices, append_supplier_payments
@@ -327,6 +328,16 @@ CONTROLS = [
         "accent": "#3B5BDB",
         "accent_soft": "#DDE3FA",
     },
+    {
+        "key": "mercaderia",
+        "code": "MC",
+        "icon": _ICON_CHECKLIST,
+        "label": "Mercadería",
+        "url": "/controles/mercaderia",
+        "description": "Cruza las facturas del mes en Proveedores contra el Mayor de Mercadería en C-Store.",
+        "accent": "#DB2777",
+        "accent_soft": "#FBD9EA",
+    },
 ]
 
 # Tercera sección de la app, aparte de Herramientas y Controles: prepara la
@@ -595,6 +606,29 @@ def control_cupones():
             except Exception as exc:
                 flash(f"Error: {exc}", "error")
     return render_template("control_cupones.html", result=result, **THEME_BY_KEY["cupones"])
+
+
+@app.route("/controles/mercaderia", methods=["GET", "POST"])
+def control_mercaderia():
+    # Mismo criterio que los otros controles: solo lectura, reporte en
+    # pantalla, sin ajax-process-form ni _success_response.
+    result = None
+    if request.method == "POST":
+        proveedores_upload = request.files.get("proveedores_file")
+        mayor_upload = request.files.get("mayor_file")
+        if proveedores_upload is None or not proveedores_upload.filename:
+            flash("Seleccioná el Excel de Proveedores (Cta Cte).", "error")
+        elif mayor_upload is None or not mayor_upload.filename:
+            flash("Seleccioná el Mayor de Mercadería en C-Store.", "error")
+        else:
+            try:
+                workdir = _new_workspace_dir()
+                proveedores_path, _proveedores_filename = _save_upload_to_workspace(proveedores_upload, workdir=workdir)
+                mayor_path, _mayor_filename = _save_upload_to_workspace(mayor_upload, workdir=workdir)
+                result = check_mercaderia_invoices(proveedores_path, mayor_path)
+            except Exception as exc:
+                flash(f"Error: {exc}", "error")
+    return render_template("control_mercaderia.html", result=result, **THEME_BY_KEY["mercaderia"])
 
 
 def _save_to_downloads_and_build_notice(output_path, summary):

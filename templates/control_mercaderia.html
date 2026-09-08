@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% block crumbs %}
+<nav class="crumbs"><span class="current">Mercadería</span></nav>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <span class="eyebrow">Controles</span>
+  <h1>Mercadería</h1>
+  <p class="page-subtitle">Cruza el total de facturas cargadas en el mes en el Excel de Proveedores contra el Mayor de la cuenta Mercadería en C-Store.</p>
+</div>
+
+<div class="card">
+  <h2>Archivos del período</h2>
+  <p class="muted">No se descarga ni se modifica nada — solo se lee y se muestra el resultado acá abajo. El período se toma del propio Mayor (línea "Desde: ... Hasta: ..."), así que subí el Mayor del mes que querés revisar. Quedan afuera de la suma AIRGAS, KOOLER ICE, SIGNARAMA y J.H W (J.H. Williams OIL) — no van a esta cuenta.</p>
+  <form method="post" enctype="multipart/form-data">
+    <label class="muted">Excel de Proveedores (Cta Cte, .xlsx)</label>
+    <input type="file" name="proveedores_file" accept=".xlsx,.xlsm" required>
+    <label class="muted">Mayor de la cuenta Mercadería en C-Store (.xls o .xlsx)</label>
+    <input type="file" name="mayor_file" accept=".xls,.xlsx" required>
+    <div class="form-actions">
+      <button type="submit">Verificar</button>
+    </div>
+  </form>
+</div>
+
+{% if result %}
+<div class="card">
+  <h2>Resultado</h2>
+  <p class="muted">Período del Mayor: {{ result.period_from_display }} al {{ result.period_to_display }} — {{ result.proveedores_invoice_count }} factura(s) en Proveedores, {{ result.mayor_invoice_count }} en el Mayor{% if result.invoice_count_diff != 0 %} (diferencia de {{ result.invoice_count_diff }}){% endif %}.</p>
+
+  <div class="mercaderia-stat-row">
+    <div class="mercaderia-stat">
+      <span class="mercaderia-stat-label">Mayor (Débito − Crédito)</span>
+      <span class="mercaderia-stat-value">${{ "{:,.2f}".format(result.mayor_total) }}</span>
+    </div>
+    <div class="mercaderia-stat">
+      <span class="mercaderia-stat-label">Facturas en Proveedores</span>
+      <span class="mercaderia-stat-value">${{ "{:,.2f}".format(result.proveedores_total) }}</span>
+    </div>
+    <div class="mercaderia-stat">
+      <span class="mercaderia-stat-label">Diferencia</span>
+      <span class="mercaderia-stat-value {{ 'mercaderia-stat-ok' if result.ok else 'mercaderia-stat-bad' }}">${{ "{:,.2f}".format(result.diff) }}</span>
+    </div>
+  </div>
+
+  {% if result.ok %}
+  <div class="flash-success" style="margin-top: 18px;">Coincide.</div>
+  {% else %}
+  <div class="flash-warning" style="margin-top: 18px;">Atención: no coincide — probablemente falten o sobren facturas de algún proveedor en ese período. Revisar el desglose de abajo.</div>
+  {% endif %}
+
+  {% if result.breakdown %}
+  <h2 style="margin-top: 28px; margin-bottom: 14px;">Facturas contadas en Proveedores, por proveedor</h2>
+  <div class="mercaderia-table-wrap">
+    <table class="mercaderia-table">
+      <thead>
+        <tr>
+          <th>Proveedor</th>
+          <th>Facturas</th>
+          <th>Monto</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in result.breakdown %}
+        <tr>
+          <td class="mercaderia-col-name">{{ item.supplier }}</td>
+          <td>{{ item.count }}</td>
+          <td>${{ "{:,.2f}".format(item.amount) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr class="mercaderia-total-row">
+          <td colspan="2">TOTAL</td>
+          <td>${{ "{:,.2f}".format(result.proveedores_total) }}</td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+  {% endif %}
+</div>
+
+<style>
+  .mercaderia-stat-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 14px;
+    margin-top: 4px;
+  }
+  .mercaderia-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 16px 18px;
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  .mercaderia-stat-label {
+    font-size: 12px;
+    color: var(--text-soft);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .mercaderia-stat-value {
+    font-size: 22px;
+    font-weight: 700;
+  }
+  .mercaderia-stat-ok { color: var(--success); }
+  .mercaderia-stat-bad { color: var(--warning); }
+
+  .mercaderia-table-wrap {
+    overflow-x: auto;
+    margin-top: 4px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  .mercaderia-table {
+    width: 100%;
+    min-width: 420px;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 13.5px;
+  }
+  .mercaderia-table th,
+  .mercaderia-table td {
+    padding: 9px 14px;
+    text-align: right;
+    white-space: nowrap;
+  }
+  .mercaderia-table thead th {
+    background: var(--accent-soft);
+    color: var(--text);
+    font-weight: 700;
+    border-bottom: 1px solid var(--border);
+  }
+  .mercaderia-table th:first-child, .mercaderia-table td:first-child,
+  .mercaderia-col-name {
+    text-align: left !important;
+  }
+  .mercaderia-col-name { font-weight: 600; }
+  .mercaderia-table tbody tr {
+    border-bottom: 1px solid var(--border);
+  }
+  .mercaderia-table tbody tr:nth-child(even) {
+    background: var(--surface-alt);
+  }
+  .mercaderia-total-row {
+    background: var(--accent-soft);
+    font-weight: 700;
+    border-top: 2px solid var(--border);
+  }
+  .mercaderia-total-row td:first-child { text-align: left !important; }
+</style>
+{% endif %}
+{% endblock %}
