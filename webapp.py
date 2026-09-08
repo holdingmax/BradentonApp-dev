@@ -48,7 +48,7 @@ from gettel_toyota_parser import (
     merge_gettel_toyota_pdf_into_master,
     process_gettel_pagos,
 )
-from controles_cierre_mensual import check_store_info_monthly
+from controles_cierre_mensual import check_department_sales_monthly, check_store_info_monthly
 from controles_lottery_mensual import check_lottery_monthly
 from mes_nuevo import prepare_next_month, prepare_next_month_lottery
 from monthly_sales import process_monthly_sales
@@ -507,23 +507,34 @@ def control_cierre_mensual():
     # verde/rojo por chequeo) -- por eso no usa ajax-process-form ni
     # _success_response, un submit normal alcanza.
     result = None
+    department_result = None
     if request.method == "POST":
         cierre_upload = request.files.get("cierre_file")
+        ventas_upload = request.files.get("ventas_file")
         pdf_upload = request.files.get("monthly_pdf")
         if cierre_upload is None or not cierre_upload.filename:
             flash("Seleccioná el Excel Cierre del mes.", "error")
+        elif ventas_upload is None or not ventas_upload.filename:
+            flash("Seleccioná el Excel de Ventas del mes.", "error")
         elif pdf_upload is None or not pdf_upload.filename:
             flash("Seleccioná el PDF de Resumen de Ventas del mes.", "error")
         else:
             try:
                 workdir = _new_workspace_dir()
                 cierre_path, _cierre_filename = _save_upload_to_workspace(cierre_upload, workdir=workdir)
+                ventas_path, _ventas_filename = _save_upload_to_workspace(ventas_upload, workdir=workdir)
                 pdf_path, _pdf_filename = _save_upload_to_workspace(pdf_upload, workdir=workdir)
                 result = check_store_info_monthly(cierre_path, pdf_path)
+                department_result = check_department_sales_monthly(ventas_path, pdf_path)
             except Exception as exc:
                 flash(f"Error: {exc}", "error")
+                result = None
+                department_result = None
     return render_template(
-        "control_cierre_mensual.html", result=result, **THEME_BY_KEY["cierre_mensual"]
+        "control_cierre_mensual.html",
+        result=result,
+        department_result=department_result,
+        **THEME_BY_KEY["cierre_mensual"],
     )
 
 

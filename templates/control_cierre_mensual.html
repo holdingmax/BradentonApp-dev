@@ -1,13 +1,12 @@
 {% extends "base.html" %}
-{% block title %}Cierre Mensual — Controles — Bradenton App{% endblock %}
 {% block crumbs %}
-<nav class="crumbs"><a href="{{ url_for('controles') }}">Controles</a><span>/</span><span class="current">Cierre Mensual</span></nav>
+<nav class="crumbs"><span class="current">Cierre Mensual</span></nav>
 {% endblock %}
 {% block content %}
 <div class="page-header">
   <span class="eyebrow">Controles</span>
   <h1>Cierre Mensual</h1>
-  <p class="page-subtitle">Cruza el "Store Sales Summary Report" mensual del POS (páginas 1-2: Volume, Total Fuel Sales, Fuel Discounts, Total Non Fuel Sales, Other Discounts, Total Taxes Collected, Cash, tarjetas de crédito, Local Accounts, Network Revenue y Total Revenue) contra el total del mes ya cargado en la hoja Store Info del Excel Cierre — una fuente independiente de la que ya usa el chequeo diario "dif 1"/"dif 2" de la propia hoja, así que puede detectar un día salteado, cargado dos veces, o mal tipeado que ese chequeo no ve.</p>
+  <p class="page-subtitle">Cruza el Resumen de Ventas mensual del POS contra el Excel Cierre del mes para detectar diferencias antes de dar el mes por cerrado.</p>
 </div>
 
 <div class="card">
@@ -16,7 +15,9 @@
   <form method="post" enctype="multipart/form-data">
     <label class="muted">Excel Cierre del mes</label>
     <input type="file" name="cierre_file" accept=".xlsx,.xlsm" required>
-    <label class="muted">PDF "Store Sales Summary Report" del mes (Resumen de Ventas)</label>
+    <label class="muted">Excel de Ventas del mes ("... Ventas ... ANALISIS.xlsx")</label>
+    <input type="file" name="ventas_file" accept=".xlsx,.xlsm" required>
+    <label class="muted">PDF de Resumen de Ventas del mes (Store Sales Summary Report + Department Sales Report)</label>
     <input type="file" name="monthly_pdf" accept=".pdf" required>
     <div class="form-actions">
       <button type="submit">Verificar</button>
@@ -26,7 +27,7 @@
 
 {% if result %}
 <div class="card">
-  <h2>Resultado</h2>
+  <h2>Resultado — Store Info</h2>
   <p class="muted">Período del PDF: {{ result.period_from.strftime('%d/%m/%Y') }} al {{ result.period_to.strftime('%d/%m/%Y') }}</p>
 
   {% if result.period_mismatch %}
@@ -78,5 +79,167 @@
   <div class="flash-error" style="margin-top: 18px; margin-bottom: 0;">Hay diferencias — revisar antes de dar el mes por cerrado.</div>
   {% endif %}
 </div>
+{% endif %}
+
+{% if department_result %}
+<div class="card dept-sales-card">
+  <h2>Resultado — Ventas por Departamento</h2>
+  <p class="muted">Período del PDF: {{ department_result.period_from.strftime('%d/%m/%Y') }} al {{ department_result.period_to.strftime('%d/%m/%Y') }} — {{ department_result.checks|length }} departamento(s) comparados.</p>
+
+  {% if department_result.period_mismatch %}
+  <div class="flash-warning">
+    Atención: el Excel de Ventas cargado también tiene fila(s) de otro período: {{ department_result.period_mismatch|join(', ') }} — no pertenece(n) al período del PDF ({{ department_result.period_from.strftime('%m/%Y') }}). Si es una comparación intencional podés ignorar este aviso; si no, revisá que subiste los archivos correctos.
+  </div>
+  {% endif %}
+
+  {% if department_result.missing_days %}
+  <div class="flash-warning">
+    Día(s) del mes sin ninguna fecha cargada en CARGA AQUI: {{ department_result.missing_days|join(', ') }}. Los totales de abajo no los incluyen — cargalos y volvé a verificar.
+  </div>
+  {% endif %}
+
+  {% if department_result.unmatched_departments %}
+  <div class="flash-warning">
+    El PDF trae departamento(s) que no se pudieron identificar en el Excel de Ventas: {{ department_result.unmatched_departments|join(', ') }}. Revisalos a mano.
+  </div>
+  {% endif %}
+
+  <div class="dept-sales-table-wrap">
+    <table class="dept-sales-table">
+      <thead>
+        <tr>
+          <th rowspan="2" class="dept-col-name">Departamento</th>
+          <th colspan="3" class="dept-col-group">Items vendidos</th>
+          <th colspan="3" class="dept-col-group">Dinero vendido</th>
+          <th rowspan="2">Estado</th>
+        </tr>
+        <tr>
+          <th>PDF</th><th>Excel</th><th>Dif</th>
+          <th>PDF</th><th>Excel</th><th>Dif</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for check in department_result.checks %}
+        <tr class="{{ 'row-diff' if not check.ok }}">
+          <td class="dept-col-name">{{ check.label }}</td>
+          <td>{{ "{:,}".format(check.pdf_count) }}</td>
+          <td>{{ "{:,}".format(check.excel_count) }}</td>
+          <td class="{{ 'cell-ok' if check.count_ok else 'cell-bad' }}">{{ "{:,}".format(check.count_diff) }}</td>
+          <td>${{ "{:,.2f}".format(check.pdf_amount) }}</td>
+          <td>${{ "{:,.2f}".format(check.excel_amount) }}</td>
+          <td class="{{ 'cell-ok' if check.amount_ok else 'cell-bad' }}">${{ "{:,.2f}".format(check.amount_diff) }}</td>
+          <td>
+            {% if check.ok %}
+            <span class="dept-status-ok">OK</span>
+            {% else %}
+            <span class="dept-status-bad">Diferencia</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      {% if department_result.total_check %}
+      <tfoot>
+        <tr class="dept-total-row">
+          <td class="dept-col-name">TOTAL (impreso en el PDF)</td>
+          <td>{{ "{:,}".format(department_result.total_check.pdf_count) }}</td>
+          <td>{{ "{:,}".format(department_result.total_check.excel_count) }}</td>
+          <td class="{{ 'cell-ok' if department_result.total_check.count_ok else 'cell-bad' }}">{{ "{:,}".format(department_result.total_check.count_diff) }}</td>
+          <td>${{ "{:,.2f}".format(department_result.total_check.pdf_amount) }}</td>
+          <td>${{ "{:,.2f}".format(department_result.total_check.excel_amount) }}</td>
+          <td class="{{ 'cell-ok' if department_result.total_check.amount_ok else 'cell-bad' }}">${{ "{:,.2f}".format(department_result.total_check.amount_diff) }}</td>
+          <td>
+            {% if department_result.total_check.count_ok and department_result.total_check.amount_ok %}
+            <span class="dept-status-ok">OK</span>
+            {% else %}
+            <span class="dept-status-bad">Diferencia</span>
+            {% endif %}
+          </td>
+        </tr>
+      </tfoot>
+      {% endif %}
+    </table>
+  </div>
+
+  {% if department_result.all_ok %}
+  <div class="flash-success" style="margin-top: 18px; margin-bottom: 0;">Todo coincide dentro del margen esperado (±$0.01, items exactos).</div>
+  {% else %}
+  <div class="flash-error" style="margin-top: 18px; margin-bottom: 0;">Hay diferencias — revisar antes de dar el mes por cerrado.</div>
+  {% endif %}
+</div>
+
+<style>
+  .dept-sales-table-wrap {
+    overflow-x: auto;
+    margin-top: 4px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  .dept-sales-table {
+    width: 100%;
+    min-width: 760px;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 13.5px;
+  }
+  .dept-sales-table th,
+  .dept-sales-table td {
+    padding: 10px 14px;
+    text-align: right;
+    white-space: nowrap;
+  }
+  .dept-sales-table thead th {
+    background: var(--accent-soft);
+    color: var(--text);
+    font-weight: 700;
+    border-bottom: 1px solid var(--border);
+  }
+  .dept-sales-table thead tr:first-child th {
+    border-bottom: 1px solid var(--border);
+  }
+  .dept-sales-table thead tr:first-child th.dept-col-group {
+    text-align: center;
+    border-left: 2px solid var(--surface);
+  }
+  .dept-col-name {
+    text-align: left !important;
+    font-weight: 600;
+  }
+  .dept-sales-table tbody tr {
+    border-bottom: 1px solid var(--border);
+  }
+  .dept-sales-table tbody tr:nth-child(even) {
+    background: var(--surface-alt);
+  }
+  .dept-sales-table tbody tr.row-diff {
+    background: var(--error-soft);
+  }
+  .dept-sales-table tbody td:nth-child(5) {
+    border-left: 2px solid var(--surface);
+  }
+  .dept-sales-table thead th:nth-child(5) {
+    border-left: 2px solid var(--surface);
+  }
+  .cell-ok {
+    color: var(--success);
+  }
+  .cell-bad {
+    color: var(--error);
+    font-weight: 700;
+  }
+  .dept-status-ok {
+    color: var(--success);
+    font-weight: 600;
+  }
+  .dept-status-bad {
+    color: var(--error);
+    font-weight: 600;
+  }
+  .dept-total-row {
+    background: var(--accent-soft);
+    font-weight: 700;
+    border-top: 2px solid var(--border);
+  }
+</style>
 {% endif %}
 {% endblock %}

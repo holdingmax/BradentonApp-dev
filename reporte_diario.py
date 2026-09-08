@@ -869,9 +869,20 @@ def _line_contains_anchor(line):
 
 
 def _line_contains_stop_marker(line):
-    """True at 'Safe Drop Report' — everything from there on is out of scope."""
+    """
+    True at 'Safe Drop Report' (daily "Close Store" PDF) or 'Method of
+    Payment Totals Report' (the standalone report of that name a monthly
+    bundle PDF -- Store Sales Summary + Department Sales + Method of
+    Payment Totals + Inventory, printed together for month-end -- prints
+    right after Department Sales Report, with no Safe Drop Report at all)
+    -- everything from there on is out of scope. The full "... totals
+    report" phrase is required (not just "method of payment") so this never
+    matches the unrelated "Method of Payment Totals Count $ Sales" line
+    that Store Sales Summary Report itself already prints, on an earlier
+    page, as part of its own Store Tender Reading section.
+    """
     text = _strip_cell(line).lower()
-    return "safe drop" in text
+    return "safe drop" in text or "method of payment totals report" in text
 
 
 _OCR_HEADER_COMPANION_TOKENS = ("sales", "count", "refund", "item")
@@ -1134,9 +1145,16 @@ def parse_elistar_daily_pdf_ocr(pdf_path, start_page_index=DEFAULT_PDF_PAGE_INDE
 
     Returns:
         tuple[list[dict], dict]: (records, diagnostics) — diagnostics has
-        keys "pages_used", "last_department" and "subtotal_mismatch" (the
+        keys "pages_used", "last_department", "subtotal_mismatch" (the
         printed grand-total line is cross-checked against the sum of parsed
-        rows as a soft OCR-quality sanity check, never a blocking one).
+        rows as a soft OCR-quality sanity check, never a blocking one),
+        "printed_totals" (the grand-total line itself, as a
+        {"count", "amount"} dict, always present when the report printed
+        one — regardless of whether it matched — for callers that want the
+        official total rather than just a mismatch flag), and "period"
+        (the {"from_date", "to_date", ...} dict parsed from this same
+        page's own "PERIOD FROM: ... TO: ..." line, or None if it wasn't
+        found there).
     """
     pdf_path = os.path.abspath(pdf_path)
     if not os.path.isfile(pdf_path):
@@ -1221,10 +1239,19 @@ def parse_elistar_daily_pdf_ocr(pdf_path, start_page_index=DEFAULT_PDF_PAGE_INDE
                 "printed_count": printed_totals["count"],
             }
 
+    period = None
+    for line in anchor_page_text.splitlines():
+        if PERIOD_FROM_ANCHOR in line.lower():
+            period = _parse_period_from_to_line(line)
+            if period:
+                break
+
     diagnostics = {
         "pages_used": pages_used,
         "last_department": records[-1]["department"],
         "subtotal_mismatch": subtotal_mismatch,
+        "printed_totals": printed_totals,
+        "period": period,
     }
     return records, diagnostics
 

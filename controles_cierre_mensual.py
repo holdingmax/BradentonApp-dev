@@ -10,6 +10,13 @@ misma, así que un día salteado, cargado dos veces, o mal tipeado de forma
 consistente no lo detecta), este control usa una fuente 100% independiente
 -- el reporte oficial del POS para el mes completo.
 
+Un segundo chequeo, `check_department_sales_monthly`, cruza el "Department
+Sales Report" del mismo PDF mensual (otra sección del mismo bundle que
+Store Sales Summary Report -- el usuario imprime varios reportes del POS
+juntos en un solo PDF a fin de mes) contra la hoja CARGA AQUI del Excel de
+Ventas ("... Ventas ... ANALISIS.xlsx", un archivo aparte del Excel
+Cierre) -- items y $ vendidos por cada departamento del mes.
+
 Es de solo lectura: nunca escribe nada en el Excel ni genera un archivo
 para descargar -- el resultado se muestra en pantalla (verde/rojo por
 chequeo), según lo que ya se decidió para toda la sección Controles.
@@ -23,6 +30,9 @@ from openpyxl import load_workbook
 
 from controles_utils import eval_literal_sum_cell
 from reporte_diario import (
+    DATE_SCAN_COLUMN,
+    HEADER_ROW,
+    HEADER_START_COLUMN,
     STORE_INFO_COL_CASH,
     STORE_INFO_COL_CREDIT,
     STORE_INFO_COL_DESC_COMB,
@@ -34,8 +44,15 @@ from reporte_diario import (
     STORE_INFO_COL_TAX_COLLECT,
     STORE_INFO_COL_VOLUME,
     _find_store_info_sheet,
+    _get_carga_aqui_sheet,
+    _normalize_department_label,
+    _resolve_department_columns,
     _store_info_row_for_day,
+    _strip_cell,
+    build_department_column_map,
     extract_store_info_from_pdf,
+    find_row_for_calendar_day,
+    parse_elistar_daily_pdf_ocr,
 )
 
 TOLERANCE = 0.01
@@ -117,8 +134,14 @@ def _sum_store_info_month(sheet, year, month):
     return totals, missing_days, periods_seen
 
 
-def _build_check(label, pdf_value, excel_value, unit="$", tolerance=TOLERANCE):
+def _rounded_diff(pdf_value, excel_value):
+    """round(..., 2), but never -0.00 -- confuses more than it clarifies."""
     diff = round(pdf_value - excel_value, 2)
+    return diff if diff != 0 else 0.0
+
+
+def _build_check(label, pdf_value, excel_value, unit="$", tolerance=TOLERANCE):
+    diff = _rounded_diff(pdf_value, excel_value)
     return {
         "label": label,
         "pdf_value": round(pdf_value, 2),
@@ -206,4 +229,215 @@ def check_store_info_monthly(cierre_path, monthly_pdf_path):
         "period_mismatch": period_mismatch,
         "checks": checks,
         "all_ok": all(check["ok"] for check in checks) and not missing_days,
+    }
+
+
+def _list_ventas_department_columns(sheet):
+    """
+    (label, count_col, amount_col) por cada departamento real (no
+    protegido) de la fila HEADER_ROW de CARGA AQUI, en orden, sin
+    duplicados.
+
+    Reusa build_department_column_map -- la misma resolución de columnas
+    que ya usa inject_daily_sales para escribir -- en vez de reinventarla,
+    así que un departamento con COUNT/NET SALES invertido entre fila 3 y 4
+    (el único caso en que esa función corrige el orden) se lee de la
+    columna correcta acá también. Se recorre la fila de encabezados una
+    vez más solo para conservar el texto real de cada label (mapping ya lo
+    normaliza a minúsculas para poder matchear, no sirve para mostrar).
+    """
+    column_map, _protected = build_department_column_map(sheet)
+    seen_coords = set()
+    entries = []
+    max_col = max(sheet.max_column, HEADER_START_COLUMN)
+    for col in range(HEADER_START_COLUMN, max_col + 1):
+        label = _strip_cell(sheet.cell(row=HEADER_ROW, column=col).value)
+        if not label:
+            continue
+        coords = column_map.get(_normalize_department_label(label))
+        if coords is None or coords in seen_coords:
+            continue
+        seen_coords.add(coords)
+        entries.append((label, coords[0], coords[1]))
+    return entries
+
+
+def _sum_ventas_departments_month(sheet, year, month, department_columns):
+    """
+    Suma, para cada día real de (year, month), el par COUNT | NET SALES de
+    cada departamento de `department_columns` en CARGA AQUI.
+
+    Mismo criterio que _sum_store_info_month: un día sin fila propia (fecha
+    real no encontrada en columna A) se reporta en missing_days en vez de
+    aportar 0 en silencio; `periods_seen` detecta un Excel de otro mes.
+    Ubica cada fila con find_row_for_calendar_day -- el mismo buscador por
+    fecha real que ya usa Reporte Diario, nunca un offset fijo.
+    """
+    days_in_month = calendar.monthrange(year, month)[1]
+    totals = {
+        (count_col, amount_col): {"count": 0.0, "amount": 0.0}
+        for _label, count_col, amount_col in department_columns
+    }
+    missing_days = []
+    periods_seen = set()
+    for day in range(1, days_in_month + 1):
+        try:
+            row = find_row_for_calendar_day(sheet, day)
+        except ValueError:
+            missing_days.append(day)
+            continue
+        date_value = sheet.cell(row=row, column=DATE_SCAN_COLUMN).value
+        if isinstance(date_value, datetime):
+            periods_seen.add((date_value.year, date_value.month))
+        for _label, count_col, amount_col in department_columns:
+            key = (count_col, amount_col)
+            totals[key]["count"] += eval_literal_sum_cell(
+                sheet.cell(row=row, column=count_col).value, "CARGA AQUI"
+            )
+            totals[key]["amount"] += eval_literal_sum_cell(
+                sheet.cell(row=row, column=amount_col).value, "CARGA AQUI"
+            )
+    return totals, missing_days, periods_seen
+
+
+def _aggregate_department_records(records, column_map):
+    """
+    Resuelve cada registro de departamento leído del PDF a su columna real
+    de CARGA AQUI con el mismo resolver que ya usa inject_daily_sales para
+    escribir (_resolve_department_columns) -- así "HOT DOGS & SANDWICH"
+    (como lo imprime el reporte mensual) cae en la misma columna que "HOT
+    DOGS" (el nombre real de esa columna en el Excel), en vez de compararse
+    como si fueran dos departamentos distintos.
+
+    Un registro que no resuelve a ninguna columna conocida se reporta en
+    `unmatched` -- salvo el caso de ruido puro (count=0 y amount=0 a la
+    vez), que se descarta directo: la línea "PERIOD FROM: ... TO: ..." de
+    la propia página, repetida antes de la tabla real, a veces se cuela
+    como si fuera una fila de departamento vacía.
+    """
+    totals_by_coords = {}
+    unmatched = []
+    for record in records:
+        if record.get("is_total"):
+            continue
+        if record["count"] == 0 and record["amount"] == 0:
+            continue
+        coords = _resolve_department_columns(record["department"], column_map)
+        if coords is None:
+            unmatched.append(record["department"])
+            continue
+        bucket = totals_by_coords.setdefault(coords, {"count": 0, "amount": 0.0})
+        bucket["count"] += record["count"]
+        bucket["amount"] += record["amount"]
+    return totals_by_coords, unmatched
+
+
+def check_department_sales_monthly(ventas_path, monthly_pdf_path):
+    """
+    Cruza el "Department Sales Report" del PDF mensual (otra sección del
+    mismo bundle que Store Sales Summary Report, período tomado de su
+    propia línea "PERIOD FROM: ... TO: ...") contra la hoja CARGA AQUI del
+    Excel de Ventas -- items y $ vendidos por cada departamento del mes.
+
+    Reusa el mismo motor que ya lee este reporte día a día en Reporte
+    Diario (parse_elistar_daily_pdf_ocr, build_department_column_map,
+    _resolve_department_columns) aplicado a la versión mensual del mismo
+    reporte en vez de a un PDF por día. Devuelve un chequeo (items + $) por
+    cada departamento real de CARGA AQUI más una fila de total general
+    (contra el total impreso por el propio reporte). Nunca escribe ni
+    descarga nada.
+    """
+    ventas_path = os.path.abspath(str(ventas_path).strip())
+    if not os.path.isfile(ventas_path):
+        raise FileNotFoundError(f"Excel de Ventas no encontrado: {ventas_path}")
+    extension = os.path.splitext(ventas_path)[1].lower()
+    if extension not in {".xlsx", ".xlsm"}:
+        raise ValueError("El Excel de Ventas debe ser .xlsx o .xlsm.")
+
+    records, diagnostics = parse_elistar_daily_pdf_ocr(monthly_pdf_path, start_page_index=0)
+    period = diagnostics.get("period")
+    if period is None:
+        raise ValueError(
+            'No se encontró la línea "PERIOD FROM: ... TO: ..." en el Department '
+            "Sales Report del PDF."
+        )
+    # Mismo ajuste de +1 día que check_store_info_monthly, y por el mismo
+    # motivo -- es la misma línea "PERIOD FROM" del mismo reporte del POS,
+    # solo que leída de otra página del bundle.
+    period_from = period["from_date"] + timedelta(days=1)
+    period_to = period["to_date"]
+
+    workbook = load_workbook(ventas_path, data_only=False)
+    try:
+        sheet = _get_carga_aqui_sheet(workbook)
+        column_map, _protected = build_department_column_map(sheet)
+        department_columns = _list_ventas_department_columns(sheet)
+        excel_totals, missing_days, periods_seen = _sum_ventas_departments_month(
+            sheet, period_from.year, period_from.month, department_columns
+        )
+    finally:
+        workbook.close()
+
+    pdf_totals, unmatched_departments = _aggregate_department_records(records, column_map)
+    unmatched_departments = sorted(set(unmatched_departments))
+
+    other_periods = sorted(periods_seen - {(period_from.year, period_from.month)})
+    period_mismatch = [f"{month:02d}/{year}" for year, month in other_periods]
+
+    checks = []
+    for label, count_col, amount_col in department_columns:
+        coords = (count_col, amount_col)
+        excel_bucket = excel_totals.get(coords, {"count": 0.0, "amount": 0.0})
+        pdf_bucket = pdf_totals.get(coords, {"count": 0, "amount": 0.0})
+        excel_count = int(round(excel_bucket["count"]))
+        pdf_count = int(round(pdf_bucket["count"]))
+        count_diff = pdf_count - excel_count
+        amount_diff = _rounded_diff(pdf_bucket["amount"], excel_bucket["amount"])
+        checks.append(
+            {
+                "label": label,
+                "pdf_count": pdf_count,
+                "excel_count": excel_count,
+                "count_diff": count_diff,
+                "count_ok": count_diff == 0,
+                "pdf_amount": round(pdf_bucket["amount"], 2),
+                "excel_amount": round(excel_bucket["amount"], 2),
+                "amount_diff": amount_diff,
+                "amount_ok": abs(amount_diff) <= TOLERANCE,
+                "ok": count_diff == 0 and abs(amount_diff) <= TOLERANCE,
+            }
+        )
+
+    printed_totals = diagnostics.get("printed_totals")
+    excel_grand_count = sum(check["excel_count"] for check in checks)
+    excel_grand_amount = round(sum(check["excel_amount"] for check in checks), 2)
+    total_check = None
+    if printed_totals is not None:
+        total_count_diff = printed_totals["count"] - excel_grand_count
+        total_amount_diff = _rounded_diff(printed_totals["amount"], excel_grand_amount)
+        total_check = {
+            "pdf_count": printed_totals["count"],
+            "excel_count": excel_grand_count,
+            "count_diff": total_count_diff,
+            "count_ok": total_count_diff == 0,
+            "pdf_amount": round(printed_totals["amount"], 2),
+            "excel_amount": excel_grand_amount,
+            "amount_diff": total_amount_diff,
+            "amount_ok": abs(total_amount_diff) <= TOLERANCE,
+        }
+
+    return {
+        "period_from": period_from,
+        "period_to": period_to,
+        "missing_days": missing_days,
+        "period_mismatch": period_mismatch,
+        "unmatched_departments": unmatched_departments,
+        "checks": checks,
+        "total_check": total_check,
+        "all_ok": (
+            all(check["ok"] for check in checks)
+            and not missing_days
+            and not unmatched_departments
+            and (total_check is None or (total_check["count_ok"] and total_check["amount_ok"]))
+        ),
     }
