@@ -715,6 +715,59 @@ def _prepare_bgs(path, year, month):
     return updated
 
 
+# Columnas C/E de "Resumen Venta" (UNIDAD, VALOR PROM) son, fila por fila
+# (una por departamento), una referencia directa a una sola celda del
+# renglón TOTAL de CARGA AQUI -- ej. `=+'CARGA AQUI'!AK36` (la columna
+# codifica el departamento, la fila siempre es la del renglón TOTAL). Se
+# captura por separado el prefijo (hasta la última letra de columna) y la
+# fila final para poder reescribir solo el número.
+_RESUMEN_VENTA_TOTAL_REF_RE = re.compile(r"^(=\+?'CARGA AQUI'!\$?[A-Z]{1,3}\$?)(\d+)$")
+
+
+def _retarget_resumen_venta_totals(sheet, old_total_row, new_total_row, summary):
+    """
+    Reapunta las fórmulas de columna C/E de "Resumen Venta" del renglón
+    TOTAL viejo de CARGA AQUI al nuevo -- _resize_day_block ya corre ese
+    renglón a `5 + days` dentro de CARGA AQUI, pero eso no mueve solas las
+    referencias que otra hoja le apunta (Translator no corre entre hojas,
+    y _resize_day_block ni sabe que "Resumen Venta" existe). Sin este paso,
+    un mes con más o menos días que el anterior deja C/E apuntando al
+    renglón TOTAL viejo -- vacío si el mes nuevo tiene menos días, o a
+    mitad de los días reales si tiene más -- en vez del renglón TOTAL real
+    del mes nuevo.
+    """
+    if old_total_row == new_total_row:
+        return
+    found = 0
+    updated = 0
+    row = 6
+    while True:
+        label = sheet.cell(row=row, column=1).value
+        dept = sheet.cell(row=row, column=2).value
+        if isinstance(label, str) and label.strip().upper() == "TOTALES":
+            break
+        if label is None and dept is None:
+            break
+        for col in (3, 5):  # C (UNIDAD), E (VALOR PROM)
+            cell = sheet.cell(row=row, column=col)
+            if not isinstance(cell.value, str):
+                continue
+            match = _RESUMEN_VENTA_TOTAL_REF_RE.match(cell.value)
+            if match is None:
+                continue
+            found += 1
+            if int(match.group(2)) == old_total_row:
+                cell.value = f"{match.group(1)}{new_total_row}"
+                updated += 1
+        row += 1
+    if found == 0:
+        summary.setdefault("warnings", []).append(
+            "Resumen Venta: no se encontró ninguna fórmula de columna C/E con el formato "
+            "esperado (referencia directa a una celda de CARGA AQUI) -- revisar a mano que "
+            "el renglón TOTAL haya quedado bien apuntado."
+        )
+
+
 def _prepare_ventas(path, year, month, days, summary):
     wb = load_workbook(path, data_only=False)
     if "CARGA AQUI" not in wb.sheetnames:
@@ -769,7 +822,9 @@ def _prepare_ventas(path, year, month, days, summary):
     )
 
     if "Resumen Venta" in wb.sheetnames:
-        wb["Resumen Venta"].cell(row=1, column=1, value=f"C-STORE - BRADENTON - VENTAS {_mm_slash_yyyy(year, month)}")
+        rv = wb["Resumen Venta"]
+        rv.cell(row=1, column=1, value=f"C-STORE - BRADENTON - VENTAS {_mm_slash_yyyy(year, month)}")
+        _retarget_resumen_venta_totals(rv, 5 + old_days, 5 + days, summary)
 
     if "Reply to Report c-Store" in wb.sheetnames:
         rr = wb["Reply to Report c-Store"]
