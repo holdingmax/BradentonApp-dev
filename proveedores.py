@@ -1353,6 +1353,416 @@ def _extract_signarama_invoice(pdf_path):
     return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
 
 
+# ---- Coca-Cola y Pepsi: un PDF puede traer más de una factura ----
+#
+# A diferencia de los 22 proveedores de arriba (siempre 1 PDF = 1 factura),
+# Coca-Cola y Pepsi a veces mandan dos facturas con N° distinto -- de
+# entrega el mismo día -- en un solo PDF (nombre de archivo tipo
+# "Invoice {N1}-{N2} {fecha}.pdf"). Estas dos funciones devuelven una
+# LISTA de facturas en vez de un solo dict; append_supplier_invoices ya
+# sabe tratar ambos casos (ver más abajo).
+
+_CURRENCY_RE = re.compile(r"-?\d+(?:,\d{3})*\.\d{2}")
+
+# El número tiene que estar PEGADO a "AMOUNT" en el mismo renglón (nunca
+# cruza un salto de línea) -- caso real encontrado 2026-09-04 (factura
+# 43266738012): cuando el OCR deja "AMOUNT DUE"/"AMOUNT PAID" sin ningún
+# número legible al lado (va a otro renglón, o el número sale sin el
+# punto decimal), tomar "los últimos dos montos con formato de moneda de
+# toda la página" agarraba TOTAL PRODUCTS/TOTAL ADJUSTMENTS en su lugar
+# -- un monto de otra fila completamente distinto, insertado en silencio.
+_AMOUNT_ANCHOR_RE = re.compile(r"AMOUNT[^\n\d\-]{0,20}(-?\d[\d,]*\.\d{2})")
+
+
+def _extract_due_paid(text):
+    """
+    Devuelve (amount_due, amount_paid). Primero intenta las dos
+    coincidencias ancladas de "AMOUNT ... {monto}" en el mismo renglón
+    (ver _AMOUNT_ANCHOR_RE). Si el layout quedó demasiado corrido (caso
+    real encontrado 2026-09-04, factura 38475357011 de 2023: "AMOUNT
+    DUE"/"AMOUNT PAID" salen como etiquetas sueltas sin ningún número al
+    lado, y los montos reales aparecen varias líneas más abajo, mezclados
+    con el resto de la tabla) se prueba un segundo criterio, más
+    conservador: si las ÚLTIMAS DOS cifras con formato de moneda de todo
+    el texto son IDÉNTICAS entre sí, es una señal razonable de que la
+    factura se pagó por completo (DUE == PAID) y no una coincidencia --
+    es mucho menos probable que dos importes de renglones distintos
+    coincidan centavo a centavo por azar que que sea el mismo total
+    repetido dos veces. Nunca adivina con menos que esto.
+    """
+    matches = _AMOUNT_ANCHOR_RE.findall(text)
+    if len(matches) == 2:
+        due, paid = (float(m.replace(",", "")) for m in matches)
+        return due, paid
+    if "AMOUNT" in text.upper():
+        all_amounts = _CURRENCY_RE.findall(text)
+        if len(all_amounts) >= 2 and all_amounts[-1] == all_amounts[-2]:
+            value = float(all_amounts[-1].replace(",", ""))
+            return value, value
+    return None
+
+
+def _best_amount_text(image):
+    """
+    Prueba las 3 rotaciones alternativas de una página y devuelve la que
+    mejor sirve para leer AMOUNT DUE/PAID -- primero cualquiera donde
+    _extract_due_paid ya resuelve limpio (las dos etiquetas con su
+    número al lado); si ninguna resuelve así, cae a la que produce MÁS
+    coincidencias de moneda bien formadas (_CURRENCY_RE) como mejor
+    esfuerzo -- no simplemente la primera que contiene "AMOUNT". Caso
+    real encontrado 2026-09-04: una rotación casi-correcta puede leer
+    las palabras bien pero confundir los números (comas en vez de
+    puntos, letras mezcladas con dígitos), y esa rotación "casi buena"
+    puede aparecer antes que la realmente limpia en el orden 90/180/270
+    -- quedarse con la primera que solo menciona "AMOUNT" sin evaluar
+    qué tan legibles quedaron los números de al lado insertaba montos
+    completamente equivocados (ej. 1.90 en vez de 517.39).
+    """
+    candidates = []
+    for rotation in (Image.ROTATE_90, Image.ROTATE_180, Image.ROTATE_270):
+        text = pytesseract.image_to_string(image.transpose(rotation))
+        if "AMOUNT" in text.upper():
+            candidates.append(text)
+    if not candidates:
+        return None
+    resolved = [text for text in candidates if _extract_due_paid(text) is not None]
+    pool = resolved if resolved else candidates
+    return max(pool, key=lambda t: len(_CURRENCY_RE.findall(t)))
+
+
+def _date_from_filename(pdf_path):
+    """
+    "DD.MM.YYYY" del nombre de archivo (misma convención ya usada por
+    Flori-Gas/LMT) -- respaldo cuando la fecha impresa en el documento no
+    se puede leer de forma confiable.
+    """
+    match = re.search(r"(\d{1,2})\.(\d{1,2})\.(\d{4})", os.path.basename(pdf_path))
+    if not match:
+        return None
+    day, month, year = (int(part) for part in match.groups())
+    try:
+        return datetime(year, month, day)
+    except ValueError:
+        return None
+
+
+def _filename_invoice_numbers(pdf_path):
+    """
+    Todos los números sueltos de 5+ dígitos del nombre de archivo, en el
+    orden en que aparecen -- respaldo para el N° de una factura cuyo
+    encabezado el OCR dejó ilegible (ver _extract_pepsi_invoices).
+    """
+    return [int(n) for n in re.findall(r"\d{5,}", os.path.basename(pdf_path))]
+
+
+def _reject_duplicate_invoice_numbers(pdf_path, invoices):
+    numbers = [invoice["invoice_no"] for invoice in invoices]
+    if len(set(numbers)) != len(numbers):
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: dos facturas del mismo PDF quedaron con "
+            "el mismo N° -- revisar a mano."
+        )
+
+
+def _extract_coca_invoices(pdf_path):
+    """
+    Cada factura de Coca-Cola arranca en una página con el encabezado
+    "OUTLET {cuenta} INV# {número}" (siempre 11 dígitos) y termina en la
+    página donde aparece "AMOUNT DUE"/"AMOUNT PAID" -- a veces la misma
+    página del encabezado, a veces 1-2 páginas después (facturas con
+    muchos ítems). Esa página de totales a veces queda en una
+    orientación que el auto-detector de Tesseract (OSD, ya aplicado por
+    _extract_page_image) no logra corregir -- es una tabla numérica
+    densa con poco texto reconocible, OSD no encuentra confianza
+    suficiente. Se prueban las 4 orientaciones de a 90° en esa página
+    hasta encontrar la palabra "AMOUNT", y de ahí se toman los ÚLTIMOS
+    DOS números con formato de moneda del texto de esa página --
+    en todas las facturas reales verificadas esos dos últimos valores
+    son siempre AMOUNT DUE y AMOUNT PAID en ese orden, sin importar que
+    el resto de la tabla (layout a varias columnas) haya quedado
+    desordenado.
+
+    El N° de factura se lee primero pegado a la etiqueta "INV#" (la
+    fuente más confiable); si el layout a 2 columnas (SHIP TO/REMIT TO)
+    descolocó esa etiqueta de su valor, se cae al número suelto de 11
+    dígitos que encabeza la página, justo antes de la palabra "INVOICE".
+
+    AMOUNT DUE vs. AMOUNT PAID (caso real encontrado y verificado
+    2026-09-04, factura 41332767008): cuando el mismo día se emite una
+    factura de devolución/crédito ("RETURNS") aparte, Coca-Cola ya la
+    netea sola contra la factura principal -- AMOUNT DUE queda con el
+    monto bruto (sin la devolución) y AMOUNT PAID con el neto real
+    (DUE menos la devolución), y el libro del usuario solo carga ESE
+    neto, nunca una fila aparte para la devolución. Cuando no hay
+    devolución, AMOUNT PAID sale 0.00 (factura a cuenta, no se cobró en
+    el momento) o igual a AMOUNT DUE (se cobró todo en efectivo) -- en
+    ambos casos el monto correcto es AMOUNT DUE. Por eso la regla es:
+    usar AMOUNT PAID cuando es distinto de 0, si no usar AMOUNT DUE. Un
+    PDF "RETURNS" por sí solo no genera ninguna fila -- su efecto ya
+    quedó reflejado en la factura principal (aparezca o no en el mismo
+    lote), forzarlo a insertar una fila propia duplicaría el crédito.
+    """
+    _ensure_pdfplumber()
+    _ensure_pytesseract()
+
+    groups = []
+    current = None
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            image = _extract_page_image(page)
+            if image is None:
+                continue
+            text = pytesseract.image_to_string(image)
+            text_upper = text.upper()
+            is_returns_page = "RETURNS" in text_upper or "THIS IS NOT AN INVOICE" in text_upper
+            if "OUTLET" in text_upper or is_returns_page:
+                # Un anexo de devolución a veces viene como página aparte
+                # DENTRO del mismo PDF de la factura principal, sin su
+                # propio "OUTLET" -- si no se tratara como límite de grupo
+                # acá, sus propios AMOUNT DUE/PAID pisarían los de la
+                # factura real de la página anterior (bug real encontrado
+                # 2026-09-04, factura 45811218011: la devolución de -46.44
+                # de la página 3 reemplazaba el 858.60 real de la página 2).
+                if current is not None:
+                    groups.append(current)
+                due = paid = None
+                if not is_returns_page and "AMOUNT" in text_upper:
+                    resolved = _extract_due_paid(text)
+                    if resolved is not None:
+                        due, paid = resolved
+                current = {"header_text": text, "due": due, "paid": paid, "returns": is_returns_page}
+                continue
+            if current is None:
+                continue  # página suelta antes del primer encabezado (ej. foto de cheque)
+            if current["returns"]:
+                continue  # ya se descarta este grupo, no hace falta leer más
+            if current["due"] is not None:
+                # Ya se encontró un total confiable para este grupo en una
+                # página anterior -- no dejar que una página siguiente lo
+                # pise. Bug real encontrado 2026-09-04 (factura 50511242048,
+                # bundleada junto con otras dos facturas reales -- 049 y
+                # 050 -- en el mismo PDF): esa página siguiente en realidad
+                # era el encabezado de OTRA factura cuyo propio "OUTLET" el
+                # OCR leyó mal ("QUTLET"), así que quedaba mal clasificada
+                # como continuación de esta y pisaba su monto real (0.00)
+                # con el de la otra factura.
+                continue
+            if "AMOUNT" in text_upper:
+                resolved = _extract_due_paid(text)
+                if resolved is not None:
+                    current["due"], current["paid"] = resolved
+                continue
+            best_text = _best_amount_text(image)
+            if best_text is not None:
+                resolved = _extract_due_paid(best_text)
+                if resolved is not None:
+                    current["due"], current["paid"] = resolved
+    if current is not None:
+        groups.append(current)
+
+    if not groups:
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se encontró ningún encabezado de "
+            "factura de Coca-Cola (OUTLET/INV#) en el PDF."
+        )
+
+    invoices = []
+    for group in groups:
+        if group["returns"]:
+            # Ya está neteada en la factura principal (ver docstring) --
+            # no se le crea fila propia, pero tampoco es un error.
+            continue
+        header_text = group["header_text"]
+
+        # El OCR a veces lee el "#" de "INV#" como otra letra (ej. "INVA")
+        # en escaneos de mala calidad -- caso real encontrado 2026-09-04.
+        invoice_match = re.search(r"INV[#A]?\s*(\d{11})", header_text)
+        if invoice_match:
+            invoice_no = int(invoice_match.group(1))
+        else:
+            top_match = re.search(r"(\d{11})\D{0,20}?(?:INVOICE|TNVOICE)", header_text, re.DOTALL)
+            if not top_match:
+                raise ValueError(
+                    f"{os.path.basename(pdf_path)}: no se pudo leer el N° de una "
+                    "factura de Coca-Cola."
+                )
+            invoice_no = int(top_match.group(1))
+
+        amount_due = group["due"]
+        amount_paid = group["paid"]
+        if amount_due is None:
+            raise ValueError(
+                f"{os.path.basename(pdf_path)}: no se pudo leer AMOUNT DUE de la "
+                f"factura {invoice_no} de Coca-Cola."
+            )
+        amount = amount_paid if amount_paid != 0 else amount_due
+        if amount < 0:
+            raise ValueError(
+                f"{os.path.basename(pdf_path)}: la factura {invoice_no} de Coca-Cola "
+                "dio un monto negativo -- cargarla a mano."
+            )
+
+        # El nombre de archivo va PRIMERO acá (al revés del criterio
+        # general del módulo) -- casos reales encontrados 2026-09-04
+        # donde "DEL DATE" del documento leyó mal el año (2624 en vez de
+        # 2024) o el mes, y strptime lo aceptó igual por ser una fecha
+        # sintácticamente válida aunque absurda; el nombre de archivo no
+        # falló en ningún caso real visto hasta ahora.
+        invoice_date = _date_from_filename(pdf_path)
+        if invoice_date is None:
+            date_match = re.search(r"DEL DATE:\s*(\d{1,2}/\d{1,2}/\d{4})", header_text)
+            if date_match:
+                try:
+                    invoice_date = datetime.strptime(date_match.group(1), "%m/%d/%Y")
+                except ValueError:
+                    invoice_date = None
+        if invoice_date is None:
+            raise ValueError(
+                f"{os.path.basename(pdf_path)}: no se pudo leer la fecha de la "
+                f"factura {invoice_no} de Coca-Cola (ni del nombre de archivo ni "
+                "del documento)."
+            )
+
+        invoices.append({"invoice_no": invoice_no, "date": invoice_date, "amount": amount})
+
+    # Cruce contra el nombre de archivo -- solo cuando hay una única
+    # factura real en el PDF y el nombre trae un único número, para que
+    # sea una comparación 1 a 1 sin ambigüedad. Con 2+ facturas reales no
+    # se cruza: ya se confirmó con un caso real (38150995005 en el
+    # nombre de un PDF que en realidad traía las facturas ...011/...013)
+    # que el nombre de archivo puede tener un número que no coincide con
+    # NINGUNA de las facturas reales del PDF -- exigir coincidencia ahí
+    # rechazaría facturas correctamente leídas del documento.
+    filename_numbers = _filename_invoice_numbers(pdf_path)
+    if len(invoices) == 1 and len(filename_numbers) == 1:
+        if invoices[0]["invoice_no"] != filename_numbers[0]:
+            raise ValueError(
+                f"{os.path.basename(pdf_path)}: el N° leído del documento "
+                f"({invoices[0]['invoice_no']}) no coincide con el del nombre de "
+                f"archivo ({filename_numbers[0]}) -- revisar a mano."
+            )
+
+    _reject_duplicate_invoice_numbers(pdf_path, invoices)
+    return invoices
+
+
+
+# "Invoice" a veces sale corrompido por el OCR (ej. "Invoi:e", la "c"
+# leída como ":") -- caso real encontrado 2026-09-04. `\S{0,3}` tolera
+# hasta 3 caracteres corruptos entre "Invo" y los dos puntos reales que
+# siempre siguen, sin dejar de matchear el caso limpio "Invoice:".
+_PEPSI_MARKER_RE = re.compile(r"for this Invo\S{0,3}:", re.IGNORECASE)
+_PEPSI_TOTAL_RE = re.compile(r"for this Invo\S{0,3}:\s*\$?\s*([\d,]+\.\d{2})", re.IGNORECASE)
+_PEPSI_HEADER_NO_RE = re.compile(r"INVOICE\D{0,15}?#\s*(\d{5,10})", re.IGNORECASE | re.DOTALL)
+_PEPSI_DATE_RE = re.compile(r"(\d{1,2}/\d{1,2}/\d{4})")
+
+
+def _pepsi_group_texts(pdf_path):
+    """
+    Cada factura de Pepsi termina en la página que trae "Amount Due for
+    this Invoice: $X" -- aparece una sola vez por factura, siempre al
+    final de sus páginas, a diferencia del "Amount Due $X" del cuadro
+    SALES SUMMARY que aparece antes (mismo importe, redundante). Un PDF
+    con dos facturas simplemente tiene ese marcador dos veces.
+    """
+    _ensure_pdfplumber()
+    _ensure_pytesseract()
+    groups = []
+    current = []
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            image = _extract_page_image(page)
+            if image is None:
+                continue
+            text = pytesseract.image_to_string(image)
+            current.append(text)
+            if _PEPSI_MARKER_RE.search(text):
+                groups.append("\n".join(current))
+                current = []
+    if current:
+        groups.append("\n".join(current))
+    return groups
+
+
+def _extract_pepsi_invoices(pdf_path):
+    """
+    Pepsi a veces manda dos facturas con N° distinto en un mismo PDF
+    (nombre de archivo tipo "Invoice {N1}-{N2} {fecha}.pdf") -- ver
+    _pepsi_group_texts para cómo se separan. El N° de cada una se lee
+    de su propio encabezado "INVOICE # {n}"; si un sello/stamp tapa el
+    "#" y el OCR lo deja ilegible, se lo asigna por ELIMINACIÓN contra
+    los números del nombre de archivo -- solo cuando falta leer
+    exactamente uno y sobra exactamente un número del nombre de archivo
+    sin reclamar por los demás grupos, nunca por posición (el orden de
+    los números en el nombre de archivo no siempre coincide con el
+    orden de las páginas en el PDF). Si la ambigüedad no se puede
+    resolver así, falla limpio en vez de adivinar.
+    """
+    groups = _pepsi_group_texts(pdf_path)
+    if not groups:
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se pudo leer ninguna página del PDF de Pepsi."
+        )
+
+    invoices = []
+    for text in groups:
+        total_match = _PEPSI_TOTAL_RE.search(text)
+        if not total_match:
+            raise ValueError(
+                f"{os.path.basename(pdf_path)}: no se encontró \"Amount Due for this "
+                "Invoice\" en una de las facturas del PDF de Pepsi."
+            )
+        amount = float(total_match.group(1).replace(",", ""))
+
+        # El nombre de archivo va primero -- mismo criterio ya validado
+        # para Coca-Cola (2026-09-04): el documento puede leer un dígito
+        # de más/menos en el mes o el año (casos reales encontrados acá
+        # también, ej. "05/29/2025" leído como "06/29/2025") y
+        # strptime lo acepta igual por ser una fecha sintácticamente
+        # válida aunque absurda; el nombre de archivo no falló en
+        # ningún caso real visto hasta ahora. Un mes/día fuera de rango
+        # (ej. "41/21/2023") no debe escaparse como ValueError crudo --
+        # se atrapa y cae al nombre de archivo como corresponde.
+        invoice_date = _date_from_filename(pdf_path)
+        if invoice_date is None:
+            date_match = _PEPSI_DATE_RE.search(text)
+            if date_match:
+                try:
+                    invoice_date = datetime.strptime(date_match.group(1), "%m/%d/%Y")
+                except ValueError:
+                    invoice_date = None
+        if invoice_date is None:
+            raise ValueError(
+                f"{os.path.basename(pdf_path)}: no se pudo leer la fecha de una "
+                "factura de Pepsi (ni del documento ni del nombre de archivo)."
+            )
+
+        header_match = _PEPSI_HEADER_NO_RE.search(text)
+        invoice_no = int(header_match.group(1)) if header_match else None
+        invoices.append({"invoice_no": invoice_no, "date": invoice_date, "amount": amount})
+
+    unresolved = [invoice for invoice in invoices if invoice["invoice_no"] is None]
+    if unresolved:
+        if len(unresolved) != 1:
+            raise ValueError(
+                f"{os.path.basename(pdf_path)}: no se pudo leer el N° de "
+                f"{len(unresolved)} facturas de Pepsi del mismo PDF -- no se puede "
+                "resolver la ambigüedad sin arriesgar adivinar mal, cargarlas a mano."
+            )
+        claimed = {invoice["invoice_no"] for invoice in invoices if invoice["invoice_no"] is not None}
+        available = [n for n in _filename_invoice_numbers(pdf_path) if n not in claimed]
+        if len(available) != 1:
+            raise ValueError(
+                f"{os.path.basename(pdf_path)}: no se pudo leer el N° de una factura "
+                "de Pepsi y el nombre de archivo no alcanza para resolverlo sin "
+                "ambigüedad -- cargarla a mano."
+            )
+        unresolved[0]["invoice_no"] = available[0]
+
+    _reject_duplicate_invoice_numbers(pdf_path, invoices)
+    return invoices
+
+
 SUPPLIER_REGISTRY = {
     "ht_hackney": {
         "label": "H.T. Hackney",
@@ -1508,6 +1918,25 @@ SUPPLIER_REGISTRY = {
         "detect": lambda text: "bradentonsigns" in text.lower(),
         "extract": _extract_signarama_invoice,
     },
+    "coca": {
+        "label": "Coca-Cola Beverages Florida LLC",
+        "sheet_name": "Coca",
+        "resumen_label": "COCA",
+        # "outlet 501565447" es la cuenta fija de Bradenton Gas en
+        # Coca-Cola (aparece en TODAS las facturas reales vistas) --
+        # respaldo para escaneos tan malos que ni "coca" ni "cola" se
+        # leen limpio en ninguna página (caso real encontrado 2026-09-04).
+        "detect": lambda text: ("coca" in text.lower() and "cola" in text.lower())
+        or "outlet 501565447" in text.lower(),
+        "extract": _extract_coca_invoices,
+    },
+    "pepsi": {
+        "label": "Pepsi Beverages Company",
+        "sheet_name": "PEPSI",
+        "resumen_label": "PEPSI",
+        "detect": lambda text: "pepsi" in text.lower(),
+        "extract": _extract_pepsi_invoices,
+    },
 }
 
 
@@ -1596,6 +2025,27 @@ def _compute_sheet_balance(sheet):
     for row in range(1, (last_row or 0) + 1):
         debe = sheet.cell(row=row, column=COL_DEBE).value
         haber = sheet.cell(row=row, column=COL_HABER).value
+        if isinstance(debe, (int, float)):
+            total_debe += debe
+        if isinstance(haber, (int, float)):
+            total_haber += haber
+    return total_debe - total_haber
+
+
+def _running_balance_up_to(sheet, row):
+    """
+    Igual que _compute_sheet_balance, pero solo hasta `row` inclusive (no
+    toda la hoja) -- el saldo real que tendría la hoja en ESE punto de la
+    cronología, antes de insertar un pago ahí. Se usa para detectar un pago
+    que dejaría el saldo en negativo (señal casi segura de que ya está
+    cargado con otra fecha, o de que falta la factura que lo justifica) sin
+    tener que evaluar ninguna fórmula.
+    """
+    total_debe = 0.0
+    total_haber = 0.0
+    for r in range(1, row + 1):
+        debe = sheet.cell(row=r, column=COL_DEBE).value
+        haber = sheet.cell(row=r, column=COL_HABER).value
         if isinstance(debe, (int, float)):
             total_debe += debe
         if isinstance(haber, (int, float)):
@@ -2103,7 +2553,7 @@ def append_supplier_invoices(ledger_path, pdf_paths):
         supplier_key = None
         try:
             supplier_key = _detect_supplier(pdf_path)
-            invoice = SUPPLIER_REGISTRY[supplier_key]["extract"](pdf_path)
+            result = SUPPLIER_REGISTRY[supplier_key]["extract"](pdf_path)
         except _PDF_EXTRACTION_EXCEPTIONS as exc:
             # Antes solo se atrapaba ValueError -- varios extractores hacen
             # trabajo de imagen (pytesseract, Pillow, pdfplumber sobre un
@@ -2116,8 +2566,17 @@ def append_supplier_invoices(ledger_path, pdf_paths):
             supplier_label = SUPPLIER_REGISTRY[supplier_key]["label"] if supplier_key else None
             failed.append({"filename": os.path.basename(pdf_path), "error": str(exc), "supplier": supplier_label})
             continue
-        invoice["filename"] = os.path.basename(pdf_path)
-        by_supplier.setdefault(supplier_key, []).append(invoice)
+        # La mayoría de los proveedores extraen 1 factura por PDF (un solo
+        # dict); Coca-Cola y Pepsi a veces meten dos facturas con N°
+        # distinto en el mismo PDF y devuelven una lista -- cualquiera de
+        # las dos formas termina en la misma lista plana por proveedor, que
+        # ya sabe ordenar/deduplicar/insertar cada factura por su cuenta
+        # sin importar de qué PDF vino.
+        filename = os.path.basename(pdf_path)
+        extracted_invoices = result if isinstance(result, list) else [result]
+        for invoice in extracted_invoices:
+            invoice["filename"] = filename
+            by_supplier.setdefault(supplier_key, []).append(invoice)
 
     if not by_supplier:
         raise ValueError("No se pudo cargar ninguna factura. Revisalas a mano.")
@@ -2160,7 +2619,7 @@ def append_supplier_invoices(ledger_path, pdf_paths):
 
             structural_mutation_done = False
             try:
-                target_row, needs_shift, style_row, balance_ref_row, last_row, color = (
+                target_row, needs_shift, style_row, balance_ref_row, _last_row, color = (
                     _find_invoice_insertion_point(sheet, invoice["date"])
                 )
                 if needs_shift:
@@ -2177,7 +2636,7 @@ def append_supplier_invoices(ledger_path, pdf_paths):
                         style_row += 1
                 _write_invoice_row(sheet, target_row, style_row, balance_ref_row, color, invoice)
                 if needs_shift:
-                    _reformulate_rows_below(sheet, target_row, last_row)
+                    _reformulate_rows_below(sheet, target_row)
             except (ValueError, TypeError, AttributeError) as exc:
                 # No hay forma de deshacer limpio un insert_rows/repunteo de
                 # RESUMEN COMPRAS ya aplicado -- si la falla ocurre DESPUÉS
@@ -2447,11 +2906,11 @@ def _insert_row_preserving_merges(sheet, insert_at_row):
         )
 
 
-def _reformulate_rows_below(sheet, insert_at_row, last_row):
+def _reformulate_rows_below(sheet, insert_at_row):
     """
     Después de insertar una fila nueva en insert_at_row -- y de haber
     escrito ya sus datos ahí, con _append_payment_row -- reconstruye la
-    fórmula de BALANCE de cada fila real que quedó debajo, para que siga
+    fórmula de BALANCE de cada fila que quedó debajo, para que siga
     apuntando a la fila real inmediata anterior en su nueva posición.
 
     No alcanza con trasladar la fórmula vieja +1 fila (ej. con
@@ -2465,14 +2924,29 @@ def _reformulate_rows_below(sheet, insert_at_row, last_row):
     todavía estuviera en blanco, "la fila real más cercana hacia arriba"
     la saltearía a ella también.
 
+    Recorre hasta sheet.max_row, NUNCA solo hasta la última fila real
+    anterior a la inserción -- bug real encontrado 2026-09-04: la
+    plantilla precarga la fórmula de BALANCE en columna F para cientos de
+    filas en blanco por delante de los datos reales (para que cargar
+    facturas/pagos futuros no requiera escribir la fórmula a mano), y
+    sheet.insert_rows() corre esas filas en blanco hacia abajo igual que
+    a las reales, sin traducir su texto -- si esta función se detiene en
+    la última fila real, todas esas filas en blanco que quedaron más
+    abajo conservan una fórmula que ya no corresponde a su nueva
+    posición, y el desajuste se nota recién cuando una carga futura llega
+    hasta ahí (compuesto además con cada inserción siguiente en la misma
+    hoja, ej. 3 pagos insertados en el medio en la misma corrida dejaban
+    esas filas 3 posiciones desalineadas).
+
     No se salta las filas separadoras en blanco: en el libro real, esas
     filas también llevan su propia fórmula de BALANCE (arrastra el saldo
     sin sumar/restar nada, ya que D/E quedan vacíos) y esa fórmula queda
     igual de desactualizada tras el corrimiento. El chequeo real acá no
     es "tiene fecha" sino "tiene una fórmula en la columna F" -- eso
-    cubre tanto facturas/pagos como separadores por igual.
+    cubre facturas/pagos, separadores, y el resto de las filas en blanco
+    precargadas por igual.
     """
-    for row in range(insert_at_row + 1, last_row + 2):
+    for row in range(insert_at_row + 1, sheet.max_row + 1):
         cell = sheet.cell(row=row, column=COL_BALANCE)
         if isinstance(cell.value, str) and cell.value.startswith("="):
             previous_row = _nearest_balance_row_at_or_above(sheet, row - 1)
@@ -2509,6 +2983,21 @@ def _existing_payment_keys(sheet):
     return keys
 
 
+_CHECK_NUMBER_RE = re.compile(r"\bCHECK\s+(\d+)", re.IGNORECASE)
+
+
+def _check_number_from_description(description):
+    """
+    N° de cheque de una descripción bancaria tipo "CHECK 1766 midtown" --
+    pedido explícito del usuario (2026-09-04): la columna G de un pago
+    hecho con cheque debe quedar con "CHEQ N°{n}", igual que ya se
+    anotaba a mano en los meses anteriores. None para pagos que no son
+    cheque (ACH/transferencia) -- no se inventa una nota para esos.
+    """
+    match = _CHECK_NUMBER_RE.search(description)
+    return match.group(1) if match else None
+
+
 def _append_payment_row(sheet, target_row, style_row, previous_balance_row, payment):
     """
     Escribe una fila "OP" (pago) en target_row. A diferencia de
@@ -2538,7 +3027,10 @@ def _append_payment_row(sheet, target_row, style_row, previous_balance_row, paym
         f"+{sheet.cell(row=target_row, column=COL_DEBE).coordinate}"
         f"-{sheet.cell(row=target_row, column=COL_HABER).coordinate}",
     )
-    sheet.cell(row=target_row, column=COL_DETALLE).value = None
+    check_number = _check_number_from_description(payment["description"])
+    sheet.cell(row=target_row, column=COL_DETALLE).value = (
+        f"CHEQ N°{check_number}" if check_number else None
+    )
 
 
 def append_supplier_payments(ledger_path, bank_path):
@@ -2616,15 +3108,37 @@ def append_supplier_payments(ledger_path, bank_path):
             # aborta append_supplier_payments entero ANTES de workbook.save,
             # perdiendo también el trabajo ya hecho en otras hojas del lote.
             try:
-                target_row, needs_shift, style_row, previous_balance_row, last_row = _find_payment_insertion_point(
+                target_row, needs_shift, style_row, previous_balance_row, _last_row = _find_payment_insertion_point(
                     sheet, payment["date"]
                 )
+                # El saldo de una cuenta a pagar nunca debería quedar
+                # negativo -- si este pago lo dejara así, es casi seguro que
+                # ya está cargado con otra fecha (bug real encontrado
+                # 2026-09-04: Chase mostró el mismo importe de una factura
+                # de J.J. Taylor ya pagada en julio, esta vez fechado en
+                # agosto -- sin este chequeo se insertaba igual y el saldo
+                # negativo se arrastraba por todas las filas en blanco de
+                # abajo) o falta la factura que lo justifica. Mejor frenar y
+                # que se revise a mano que insertar un saldo que no cierra.
+                balance_before = _running_balance_up_to(sheet, previous_balance_row)
+                if balance_before - payment["amount"] < -0.01:
+                    unmatched.append({
+                        "supplier": sheet_title,
+                        "detail": (
+                            f"{payment['description']!r} ({sheet_title}): el pago de "
+                            f"${payment['amount']:.2f} del {payment['date']:%d/%m/%Y} dejaría "
+                            f"el saldo en negativo (saldo antes: ${balance_before:.2f}) -- "
+                            "probablemente ya está cargado con otra fecha, o falta la "
+                            "factura que lo justifica. Revisar a mano."
+                        ),
+                    })
+                    continue
                 if needs_shift:
                     _insert_row_preserving_merges(sheet, target_row)
                     _shift_resumen_compras_refs(resumen_sheet, sheet.title, target_row)
                 _append_payment_row(sheet, target_row, style_row, previous_balance_row, payment)
                 if needs_shift:
-                    _reformulate_rows_below(sheet, target_row, last_row)
+                    _reformulate_rows_below(sheet, target_row)
             except (ValueError, TypeError, AttributeError) as exc:
                 unmatched.append({"supplier": sheet_title, "detail": f"{payment['description']!r} ({sheet_title}): {exc}"})
                 continue

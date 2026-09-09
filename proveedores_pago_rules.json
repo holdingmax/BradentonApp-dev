@@ -87,6 +87,30 @@
     {
       "keyword": "SIGNARAMA",
       "sheet_name": "SIGNARAMA"
+    },
+    {
+      "keyword": "coca",
+      "sheet_name": "Coca"
+    },
+    {
+      "keyword": "pbg",
+      "sheet_name": "PEPSI"
+    },
+    {
+      "keyword": "red bull",
+      "sheet_name": "RED BULL"
+    },
+    {
+      "keyword": "ice cream",
+      "sheet_name": "SWEETHEART-ICE CREAM"
+    },
+    {
+      "keyword": "chek + king",
+      "sheet_name": "KING'S"
+    },
+    {
+      "keyword": "jj taylor",
+      "sheet_name": "JJ Taylor"
     }
   ]
 }

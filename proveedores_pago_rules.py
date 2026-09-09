@@ -157,13 +157,39 @@ def delete_dynamic_rule_by_index(index):
     return removed
 
 
+def _rule_and_terms(keyword):
+    """Split a normalized keyword into its AND-terms: "a + b" -> ["a", "b"]."""
+    return [term.strip() for term in keyword.split(" + ") if term.strip()]
+
+
+def _rule_matches(desc, keyword):
+    """
+    True when every AND-term of `keyword` (already normalized) appears in
+    desc -- each AND-term may itself be an OR-group of alternatives
+    separated by "|" (ej. "chek + king|kings"). Mismo criterio que
+    chase_rules._rule_matches, portado acá para el mismo caso real: un
+    keyword suelto como "king" matchea de más en texto de banco ("ONLINE
+    BANKING", "PARKING") -- exigir que el cheque venga acompañado de
+    "CHECK"/"CHEQUE" (normalizado a "chek") lo vuelve seguro sin perder el
+    memo corto que el usuario ya usa a mano en sus cheques.
+    """
+    for term in _rule_and_terms(keyword):
+        alternatives = [alt for alt in term.split("|") if alt]
+        if not any(alt in desc for alt in alternatives):
+            return False
+    return True
+
+
 def match_supplier_sheet(description):
     """
     Case-insensitive substring match against saved keyword rules.
 
-    Among every rule whose keyword appears in the description, the LONGEST
-    keyword wins -- same criterion as chase_rules.match_dynamic_detalle, so a
-    generic rule doesn't permanently shadow a more specific one added later.
+    Una regla compuesta (keyword con " + ") se evalúa primero, en el orden
+    de la lista, y gana apenas matchea -- no tiene una "longitud" con la
+    que rankearla contra el resto. Entre las reglas simples restantes,
+    gana el keyword más largo -- mismo criterio que
+    chase_rules.match_dynamic_detalle, así una regla genérica no tapa para
+    siempre una más específica agregada después.
 
     Returns the target sheet_name, or None.
     """
@@ -175,7 +201,13 @@ def match_supplier_sheet(description):
     best_keyword = ""
     for rule in load_dynamic_rules():
         keyword = normalize_rule_text(rule.get("keyword", ""))
-        if keyword and keyword in desc and len(keyword) > len(best_keyword):
+        if not keyword:
+            continue
+        if " + " in keyword:
+            if _rule_matches(desc, keyword):
+                return rule.get("sheet_name")
+            continue
+        if keyword in desc and len(keyword) > len(best_keyword):
             best_rule = rule
             best_keyword = keyword
     return best_rule.get("sheet_name") if best_rule else None
