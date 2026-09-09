@@ -1,13 +1,12 @@
 {% extends "base.html" %}
-{% block title %}Lottery Mensual — Controles — Bradenton App{% endblock %}
 {% block crumbs %}
-<nav class="crumbs"><a href="{{ url_for('controles') }}">Controles</a><span>/</span><span class="current">Lottery Mensual</span></nav>
+<nav class="crumbs"><span class="current">Lottery Mensual</span></nav>
 {% endblock %}
 {% block content %}
 <div class="page-header">
   <span class="eyebrow">Controles</span>
   <h1>Lottery Mensual</h1>
-  <p class="page-subtitle">Cruza el "Monthly Sales Report" del portal de Florida Lottery (Ventas y Pagos Terminal, Comisión Terminal, Prize/Promo Free Plays, Boletos Instantáneos Pagados, Pagos y Ventas Instantáneas, Comisión Instantánea) contra el total del mes ya cargado en la hoja de Lottery del Excel.</p>
+  <p class="page-subtitle">Cruza el Monthly Sales Report de Florida Lottery contra el Excel de Lottery del mes para detectar diferencias antes de dar el mes por cerrado.</p>
 </div>
 
 <div class="card">
