@@ -1,0 +1,657 @@
+{% extends "base.html" %}
+{% block title %}Manual de Usuario — Bradenton App{% endblock %}
+{% block main_class %}manual-page{% endblock %}
+{% block crumbs %}
+<nav class="crumbs"><span class="current">Manual de Usuario</span></nav>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <span class="eyebrow">BradentonApp</span>
+  <h1>Manual de Usuario</h1>
+  <p class="page-subtitle">Guía paso a paso de cada módulo: qué es, qué Excel/PDF hay que subir y qué pasa después — pensada para alguien que nunca usó la página. Por ahora cubre Herramientas y Controles — Mes Nuevo se va a ir sumando acá mismo.</p>
+</div>
+
+<div class="manual-shell">
+  <nav class="manual-toc" id="manual-toc">
+    <div>
+      <span class="manual-toc-label">Cómo funciona</span>
+      <ul class="manual-toc-list">
+        <li><a href="#intro" data-target="intro">Ideas generales</a></li>
+      </ul>
+    </div>
+    <div>
+      <button type="button" class="manual-toc-toggle" aria-expanded="true">
+        <span class="manual-toc-label">Herramientas</span>
+        <svg class="manual-toc-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <ul class="manual-toc-list">
+        <li><a href="#chase" data-target="chase" style="--dot: var(--c-chase)"><span class="manual-toc-dot"></span>Chase Bank</a></li>
+        <li><a href="#cmv" data-target="cmv" style="--dot: var(--c-cmv)"><span class="manual-toc-dot"></span>CMV</a></li>
+        <li><a href="#gettel" data-target="gettel" style="--dot: var(--c-gettel)"><span class="manual-toc-dot"></span>Gettel / Toyota</a></li>
+        <li><a href="#reporte" data-target="reporte" style="--dot: var(--c-reporte)"><span class="manual-toc-dot"></span>Reporte Diario</a></li>
+        <li><a href="#lottery" data-target="lottery" style="--dot: var(--c-lottery)"><span class="manual-toc-dot"></span>Lottery</a></li>
+        <li><a href="#eft" data-target="eft" style="--dot: var(--c-eft)"><span class="manual-toc-dot"></span>Cupones y EFT</a></li>
+        <li><a href="#proveedores" data-target="proveedores" style="--dot: var(--c-proveedores)"><span class="manual-toc-dot"></span>Proveedores</a></li>
+        <li><a href="#caja" data-target="caja" style="--dot: var(--c-caja)"><span class="manual-toc-dot"></span>Caja</a></li>
+      </ul>
+    </div>
+    <div>
+      <button type="button" class="manual-toc-toggle" aria-expanded="true">
+        <span class="manual-toc-label">Controles</span>
+        <svg class="manual-toc-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <ul class="manual-toc-list">
+        <li><a href="#control-cierre-mensual" data-target="control-cierre-mensual" style="--dot: var(--c-cierre-mensual)"><span class="manual-toc-dot"></span>Cierre Mensual</a></li>
+        <li><a href="#control-lottery-mensual" data-target="control-lottery-mensual" style="--dot: var(--c-lottery)"><span class="manual-toc-dot"></span>Lottery Mensual</a></li>
+        <li><a href="#control-cupones" data-target="control-cupones" style="--dot: var(--c-eft)"><span class="manual-toc-dot"></span>Cupones</a></li>
+        <li><a href="#control-mercaderia" data-target="control-mercaderia" style="--dot: var(--c-proveedores)"><span class="manual-toc-dot"></span>Mercadería</a></li>
+        <li><a href="#control-valuacion" data-target="control-valuacion" style="--dot: var(--c-valuacion)"><span class="manual-toc-dot"></span>Valuación de Existencia Final</a></li>
+        <li><a href="#control-caja" data-target="control-caja" style="--dot: var(--c-caja)"><span class="manual-toc-dot"></span>Caja</a></li>
+      </ul>
+    </div>
+    <div>
+      <button type="button" class="manual-toc-toggle" aria-expanded="true">
+        <span class="manual-toc-label">Próximamente</span>
+        <svg class="manual-toc-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <ul class="manual-toc-list">
+        <li class="manual-toc-soon"><span class="manual-toc-dot"></span>Mes Nuevo<span class="manual-toc-soon-tag">Pronto</span></li>
+      </ul>
+    </div>
+  </nav>
+
+  <div class="manual-main">
+    <section class="manual-intro" id="intro">
+      <h2>Ideas generales</h2>
+      <p>La app tiene dos formas de trabajar bien distintas — Herramientas transforma un archivo, Controles solo lo compara. Acá abajo, cómo funciona cada una.</p>
+
+      <h3 class="manual-intro-subhead">Cómo funciona Herramientas</h3>
+      <div class="manual-flow-steps">
+        <div class="manual-flow-step"><span class="n">1</span><p>Subís el o los archivos que te pide el cuadro — tu Excel, un PDF, o el extracto del banco.</p></div>
+        <div class="manual-flow-step"><span class="n">2</span><p>Apretás <b>Procesar</b>.</p></div>
+        <div class="manual-flow-step"><span class="n">3</span><p>La app arma el resultado sola y se abre ya actualizado, en Excel, en tu propia PC — no hay que ir a buscarlo a ningún lado.</p></div>
+      </div>
+
+      <p style="margin-bottom: 10px;"><b>Tu archivo original nunca se toca.</b> Todo se hace sobre una copia — así que si algo sale mal, o subiste el archivo equivocado, no se rompe ni se pierde nada. Cerrás ese Excel sin guardar y volvés a intentarlo tranquilo.</p>
+
+      <h4>Qué significa cada color de aviso</h4>
+      <div class="manual-legend">
+        <div class="manual-legend-item"><span class="manual-legend-swatch" style="background: var(--success)"></span>Verde — <b>se cargó todo bien</b></div>
+        <div class="manual-legend-item"><span class="manual-legend-swatch" style="background: var(--warning)"></span>Ámbar — <b>se cargó, pero revisá algo</b></div>
+        <div class="manual-legend-item"><span class="manual-legend-swatch" style="background: var(--error)"></span>Rojo — <b>no se cargó nada</b>, corregí y reintentá</div>
+      </div>
+
+      <p style="margin: 14px 0 18px;">Al lado de cada casilla de archivo hay un botón <b>Limpiar</b> para vaciarla y elegir de nuevo. Cuando dos cuadros de una misma página comparten el mismo Excel, ese archivo se sube <b>una sola vez</b> arriba de todo — no hace falta elegirlo de nuevo para el segundo cuadro.</p>
+
+      <div class="manual-tip manual-tip-wide">
+        <div><b>Por dónde arrancar si es tu primera vez:</b> procesá primero el extracto de Chase en el módulo <b>Chase Bank</b>. El resultado categorizado de ese módulo es lo que después piden <b>Proveedores → Cargar Pagos</b> y <b>Caja</b> — conviene tenerlo listo antes de entrar a esos dos.</div>
+      </div>
+
+      <h3 class="manual-intro-subhead">Cómo funciona Controles</h3>
+      <p style="margin-bottom: 10px;">Acá no se transforma ningún archivo: subís los archivos ya cargados de un mes y la app los compara, mostrando el resultado en la misma pantalla — no se descarga ni se modifica nada, salvo <b>Valuación de Existencia Final</b>, la única excepción, que sí completa una copia y la ofrece para descargar.</p>
+      <p style="margin: 0 0 18px;">En vez del semáforo verde/ámbar/rojo de Herramientas, cada chequeo muestra <b>"OK"</b> en verde (coincide) o <b>"Diferencia"</b> en rojo (revisar antes de dar el mes por cerrado). Cada control tiene su propio margen de tolerancia — desde $0 exacto hasta un rango más amplio — aclarado en su propia explicación.</p>
+    </section>
+
+    <div class="manual-section-heading">
+      <h2>Herramientas</h2>
+      <p>Guía módulo por módulo: qué Excel o PDF pedís, qué hace, y qué mirar después de procesar.</p>
+    </div>
+
+    <section class="manual-module" id="chase" style="--c: var(--c-chase)">
+      <div class="manual-module-head">
+        <div class="manual-module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10 12 4l9 6"/><path d="M4 10v9M9 10v9M15 10v9M20 10v9"/><path d="M2 21h20"/></svg></div>
+        <div><span class="manual-kicker">Herramientas</span><h2>Chase Bank</h2></div>
+      </div>
+      <p class="manual-lede">Cuando bajás el extracto de movimientos de la cuenta de Chase, cada línea viene sin clasificar — no dice si es un depósito, un pago a un proveedor, un gasto de la tienda, etc. Antes eso se completaba a mano, línea por línea. Este módulo lee la descripción de cada movimiento y le agrega solo una columna <b>Detalle</b> con la categoría que le corresponde, comparándola contra una lista de reglas ya cargada (por ejemplo, si el texto del banco dice algo como "GETTEL", el Detalle queda "PROVEEDORES").</p>
+      <h3>Qué necesitás antes de empezar</h3>
+      <ul class="manual-need"><li>El extracto de movimientos de Chase, tal cual lo bajás de la banca online — puede ser el CSV o el Excel, sin tocar nada.</li></ul>
+      <h3>Cómo se usa</h3>
+      <ol class="manual-steps">
+        <li><span class="n">1</span><p>Subís el extracto de Chase (CSV o Excel).</p></li>
+        <li><span class="n">2</span><p>Apretás Procesar.</p></li>
+        <li><span class="n">3</span><p>Se abre el mismo extracto, ahora con la columna Detalle ya completa. Ese archivo ya categorizado es el que después usás en <b>Proveedores → Cargar Pagos</b> y en <b>Caja</b>.</p></li>
+      </ol>
+      <div class="manual-tip"><div><b>Tené en cuenta:</b> más abajo en la misma página hay una tabla con todas las reglas (palabra clave → Detalle a asignar). Si dos reglas podrían aplicar al mismo movimiento, gana la que tiene la palabra clave más larga. Solo un administrador puede crear, editar o borrar reglas — si un movimiento queda sin clasificar, pedile a un admin que agregue la regla que falta.</div></div>
+    </section>
+
+    <section class="manual-module" id="cmv" style="--c: var(--c-cmv)">
+      <div class="manual-module-head">
+        <div class="manual-module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg></div>
+        <div><span class="manual-kicker">Herramientas</span><h2>CMV</h2></div>
+      </div>
+      <p class="manual-lede">El Excel Maestro CMV es donde se lleva el costo de la mercadería vendida — tiene una hoja por cada departamento de la tienda (bebidas, snacks, cigarrillos, etc.) con el costo de cada producto y cuánto se vendió de él. Este módulo tiene dos cuadros separados que actualizan ese mismo archivo: <b>CMV Costo</b> carga el costo y precio que manda el distribuidor (el archivo de Elistar), y <b>CMV Ventas</b> carga cuánto se vendió de cada producto según el POS.</p>
+      <h3>Qué necesitás antes de empezar</h3>
+      <ul class="manual-need">
+        <li>El Excel Maestro CMV del mes — el mismo que ya se usa para llevar el costo de mercadería.</li>
+        <li>Para Costo: el o los archivos de departamento que manda el distribuidor (Elistar).</li>
+        <li>Para Ventas: el o los reportes de ventas que baja del sistema del POS.</li>
+      </ul>
+      <h3>Cómo se usa</h3>
+      <ol class="manual-steps">
+        <li><span class="n">1</span><p>Subís el Excel Maestro CMV una sola vez, arriba de todo. <span class="manual-shared-tag">Compartido</span></p></li>
+        <li><span class="n">2</span><p><b>CMV Costo</b>: subís uno o más archivos de departamento y Procesás — actualiza el costo y precio de cada producto en la hoja COSTO.TODOS.</p></li>
+        <li><span class="n">3</span><p><b>CMV Ventas</b>: subís uno o más reportes de ventas y Procesás — actualiza, producto por producto, la hoja del departamento que corresponda.</p></li>
+      </ol>
+      <div class="manual-tip"><div><b>Ojo:</b> cada carga de Ventas <b>reemplaza</b> todo lo que había cargado en esa hoja de departamento — no se suma a lo anterior. Subí siempre el reporte completo del mes para ese departamento, no una parte, aunque haya vendido menos productos que el mes pasado: no hay riesgo de "perder" nada, son datos de un mes ya cerrado.</div></div>
+    </section>
+
+    <section class="manual-module" id="gettel" style="--c: var(--c-gettel)">
+      <div class="manual-module-head">
+        <div class="manual-module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13l1.5-4.5A2 2 0 0 1 6.4 7h11.2a2 2 0 0 1 1.9 1.5L21 13"/><path d="M3 13v4a1 1 0 0 0 1 1h1a1 1 0 0 0 1-1v-1h12v1a1 1 0 0 0 1 1h1a1 1 0 0 0 1-1v-4"/><circle cx="7.5" cy="17" r="1.6"/><circle cx="16.5" cy="17" r="1.6"/></svg></div>
+        <div><span class="manual-kicker">Herramientas</span><h2>Gettel / Toyota</h2></div>
+      </div>
+      <p class="manual-lede">Gettel/Toyota son ventas que se hacen a través de esa cuenta — todos los días hay que sumarlas y volcar el total al Excel Cierre del mes, y aparte hay que ir registrando los pagos que te van haciendo por esas ventas. Antes esto se sumaba y se tipeaba a mano, día por día.</p>
+      <h3>Qué necesitás antes de empezar</h3>
+      <ul class="manual-need">
+        <li>El Excel Cierre del mes (el mismo de siempre).</li>
+        <li>Para Cupones Diarios: el Excel diario de Gettel/Toyota, o si no lo tenés en Excel, un PDF o una foto legible del reporte.</li>
+        <li>Para Pagos: el o los PDF de los recibos de pago que te mandan.</li>
+      </ul>
+      <h3>Cómo se usa</h3>
+      <ol class="manual-steps">
+        <li><span class="n">1</span><p>Subís el Excel Cierre una sola vez, arriba de todo. <span class="manual-shared-tag">Compartido</span></p></li>
+        <li><span class="n">2</span><p><b>Cupones Diarios</b>: subís el Excel diario (o un PDF/foto si no tenés el Excel) y Procesás — resume el día y lo suma al Cierre.</p></li>
+        <li><span class="n">3</span><p><b>Pagos</b>: subís uno o más PDF de recibos de pago y Procesás — se cargan en la hoja PAGO Cupones.</p></li>
+      </ol>
+    </section>
+
+    <section class="manual-module" id="reporte" style="--c: var(--c-reporte)">
+      <div class="manual-module-head">
+        <div class="manual-module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></div>
+        <div><span class="manual-kicker">Herramientas</span><h2>Reporte Diario</h2></div>
+      </div>
+      <p class="manual-lede">Todos los días el sistema del POS genera un PDF de cierre — el "Reporte Diario" — con toda la información de ese día: cuánto se vendió por departamento, y los datos generales de la tienda (ventas totales, tarjetas, etc.). Este módulo lee ese mismo PDF y reparte la información en dos destinos distintos: las ventas por producto van al Excel de Ventas, y la información general del día (Store Info) va al Excel Cierre.</p>
+      <h3>Qué necesitás antes de empezar</h3>
+      <ul class="manual-need">
+        <li>El o los PDF de cierre diario del POS (se pueden subir varios días juntos).</li>
+        <li>Según qué cuadro proceses: el Excel de Ventas o el Excel Cierre del mes correspondiente.</li>
+      </ul>
+      <h3>Cómo se usa</h3>
+      <ol class="manual-steps">
+        <li><span class="n">1</span><p>Subís el o los PDF de Reporte Diario, arriba de todo. <span class="manual-shared-tag">Compartido</span></p></li>
+        <li><span class="n">2</span><p><b>Ventas por Departamento</b>: subís el Excel de Ventas y Procesás — carga, producto por producto, lo que se vendió ese día.</p></li>
+        <li><span class="n">3</span><p><b>Store Info</b>: subís el Excel Cierre y Procesás — completa la fila del día con los datos generales de la tienda.</p></li>
+      </ol>
+      <div class="manual-tip"><div><b>Tené en cuenta:</b> los dos cuadros son independientes — si solo necesitás uno de los dos, no hace falta procesar el otro.</div></div>
+    </section>
+
+    <section class="manual-module" id="lottery" style="--c: var(--c-lottery)">
+      <div class="manual-module-head">
+        <div class="manual-module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4z"/><path d="M13 7v10" stroke-dasharray="2 2"/></svg></div>
+        <div><span class="manual-kicker">Herramientas</span><h2>Lottery</h2></div>
+      </div>
+      <p class="manual-lede">Hay que cargar al Excel de Lottery del mes las ventas de lotería de todos los días. Para eso sirven dos tipos de reporte distintos, según cuál tengas a mano ese día: el <b>Reporte Diario Lottery</b> (un PDF que se descarga del portal de Retailer Wizard Lottery) y el <b>Reporte Diario</b> del propio POS (el mismo "Department Sales Report" que usa el módulo Reporte Diario, de arriba).</p>
+      <h3>Qué necesitás antes de empezar</h3>
+      <ul class="manual-need">
+        <li>El Excel de Lottery del mes.</li>
+        <li>El o los PDF del tipo de reporte que vayas a cargar (no hace falta tener los dos).</li>
+      </ul>
+      <h3>Cómo se usa</h3>
+      <ol class="manual-steps">
+        <li><span class="n">1</span><p>Subís el Excel de Lottery una sola vez, arriba de todo. <span class="manual-shared-tag">Compartido</span></p></li>
+        <li><span class="n">2</span><p><b>Reporte Diario Lottery</b>: subís uno o más Reportes Diarios de Retailer Wizard Lottery (PDF) y Procesás.</p></li>
+        <li><span class="n">3</span><p><b>Reporte Diario</b>: subís uno o más Department Sales Report (PDF) y Procesás.</p></li>
+      </ol>
+      <div class="manual-tip"><div><b>Tené en cuenta:</b> no hace falta cargar los dos tipos de reporte juntos — cada cuadro funciona por su cuenta, con el que tengas disponible ese día.</div></div>
+    </section>
+
+    <section class="manual-module" id="eft" style="--c: var(--c-eft)">
+      <div class="manual-module-head">
+        <div class="manual-module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h13l-3-3M20 17H7l3 3"/></svg></div>
+        <div><span class="manual-kicker">Herramientas</span><h2>Cupones y EFT</h2></div>
+      </div>
+      <p class="manual-lede">J.H. Williams es quien procesa las ventas con cupón de la tienda y te paga ese dinero con un tiempo de demora — por eso hay que llevar una cuenta corriente de cuánto todavía no se cobró. El PDF del EFT bancario (la transferencia que llega de J.H. Williams) actualiza esa cuenta corriente. El reporte mensual de ese mismo proveedor sirve, aparte, para agregar y cruzar los cupones del mes.</p>
+      <h3>Qué necesitás antes de empezar</h3>
+      <ul class="manual-need">
+        <li>El Excel de Aplicacion TC y EFT — es un archivo único y acumulativo, no cambia de mes a mes.</li>
+        <li>Para el Paso 1: el PDF del EFT bancario que llega de J.H. Williams.</li>
+        <li>Para el Paso 2 (si lo tenés): el reporte mensual que manda J.H. Williams.</li>
+      </ul>
+      <h3>Cómo se usa</h3>
+      <ol class="manual-steps">
+        <li><span class="n">1</span><p>Subís el Excel de Aplicacion TC y EFT una sola vez, arriba de todo. <span class="manual-shared-tag">Compartido</span></p></li>
+        <li><span class="n">2</span><p><b>Paso 1</b>: subís el PDF del EFT bancario y Procesás — actualiza la Cuenta Corriente.</p></li>
+        <li><span class="n">3</span><p><b>Paso 2</b>: subís el reporte mensual de J.H. Williams y Procesás — agrega y cruza los cupones del mes.</p></li>
+      </ol>
+      <div class="manual-tip"><div><b>Tené en cuenta:</b> el reporte mensual del Paso 2 es opcional. Si todavía no lo tenés, podés Procesar igual el Paso 2 sin ese archivo — solo se actualizan los cupones pendientes.</div></div>
+    </section>
+
+    <section class="manual-module" id="proveedores" style="--c: var(--c-proveedores)">
+      <div class="manual-module-head">
+        <div class="manual-module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="7" width="13" height="10" rx="1"/><path d="M14 10h4l3 3v4h-7z"/><circle cx="6" cy="18.5" r="1.6"/><circle cx="17.5" cy="18.5" r="1.6"/></svg></div>
+        <div><span class="manual-kicker">Herramientas</span><h2>Proveedores</h2></div>
+      </div>
+      <p class="manual-lede">Este módulo lee automáticamente las facturas de compra en PDF de cada proveedor (bebidas, cigarrillos, hielo, etc.) y las carga en la hoja de ese proveedor dentro del Excel de Proveedores — reconoce solo, con leer el PDF, de qué proveedor es la factura y en qué hoja va, así que podés subir facturas de varios proveedores distintos juntas, sin separarlas antes. Aparte, cuando le pagás algo a un proveedor con la cuenta de Chase, este módulo registra ese pago en la hoja correspondiente, para que la cuenta corriente de cada proveedor quede al día.</p>
+      <h3>Qué necesitás antes de empezar</h3>
+      <ul class="manual-need">
+        <li>El Excel de Proveedores — archivo único, se va actualizando con cada carga.</li>
+        <li>Para Cargar Facturas: los PDF de las facturas, de cualquier proveedor, se pueden mezclar todos en la misma carga.</li>
+        <li>Para Cargar Pagos: el extracto de Chase ya categorizado — es decir, primero tenés que haberlo procesado en el módulo Chase Bank.</li>
+      </ul>
+      <h3>Cómo se usa</h3>
+      <ol class="manual-steps">
+        <li><span class="n">1</span><p>Subís el Excel de Proveedores una sola vez, arriba de todo. <span class="manual-shared-tag">Compartido</span></p></li>
+        <li><span class="n">2</span><p><b>Cargar Facturas</b>: subís uno o más PDF de factura, de cualquier proveedor, todos juntos, y Procesás. Una factura que ya estaba cargada se salta sola, sin duplicarse. Si no se puede leer un dato con confianza, esa factura no se carga y te avisa cuál revisar a mano.</p></li>
+        <li><span class="n">3</span><p><b>Cargar Pagos (Chase)</b>: subís el extracto de Chase ya categorizado y Procesás — cada pago se ubica solo en la hoja del proveedor que corresponda.</p></li>
+      </ol>
+      <h3>Qué tan confiable es cada proveedor</h3>
+      <p style="margin: 0 0 12px; color: var(--text-soft); font-size: 13.5px;">Arriba de la página hay una lista desplegable con el mismo detalle — es una guía, no una regla fija.</p>
+      <div class="manual-supplier-grid">
+        <div class="manual-supplier-col">
+          <div class="head"><span class="dot-ok"></span>Mandalos sin revisar</div>
+          <ul>
+            <li>H.T. Hackney</li><li>CEC</li><li>Gold Coast Eagle</li><li>Frito-Lay</li>
+            <li>King's Wholesale Florists</li><li>Sweetheart Ice Cream</li><li>Bimbo Bakeries</li>
+            <li>Johnson Brothers</li><li>Flori-Gas</li><li>Airgas National Carbonation</li>
+            <li>Express Beverage of Tampa</li><li>FS Wholesale</li><li>LMT Trading</li>
+            <li>Overflow Group Distribution</li><li>Swisher</li><li>Signarama</li><li>Midtown Wholesale</li>
+          </ul>
+        </div>
+        <div class="manual-supplier-col">
+          <div class="head"><span class="dot-check"></span>Revisá el resultado después</div>
+          <ul>
+            <li>Kooler Ice</li><li>Sam's Club</li><li>Red Bull</li><li>Colonial Wholesale</li>
+            <li>AZ Southeast Distributors</li><li>Coca-Cola</li><li>Pepsi</li><li>Brandon Liu</li><li>Slush Puppies</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="manual-module" id="caja" style="--c: var(--c-caja)">
+      <div class="manual-module-head">
+        <div class="manual-module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="10" width="18" height="10" rx="1"/><path d="M6 10V7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v3"/><path d="M9 15h6"/></svg></div>
+        <div><span class="manual-kicker">Herramientas</span><h2>Caja</h2></div>
+      </div>
+      <p class="manual-lede">La hoja CAJA del Excel Cierre lleva el control de los depósitos que se hacen en la cuenta de Chase (por ejemplo, lo que ingresa la máquina de hielo y el food truck) y cuánto quedó de saldo final de Lottery cada día. Este módulo completa esas columnas de una sola vez, cruzando el extracto de Chase ya categorizado y el Excel de Lottery del mes, en vez de tener que ir copiando cada depósito a mano día por día.</p>
+      <h3>Qué necesitás antes de empezar</h3>
+      <ul class="manual-need">
+        <li>El Excel Cierre del mes.</li>
+        <li>El extracto de Chase ya categorizado — primero tenés que haberlo procesado en el módulo Chase Bank.</li>
+        <li>El Excel de Lottery del mes.</li>
+      </ul>
+      <h3>Cómo se usa</h3>
+      <ol class="manual-steps">
+        <li><span class="n">1</span><p>Subís el Excel Cierre.</p></li>
+        <li><span class="n">2</span><p>Subís el extracto de Chase ya categorizado.</p></li>
+        <li><span class="n">3</span><p>Subís el Excel de Lottery.</p></li>
+        <li><span class="n">4</span><p>Apretás Procesar <b>una sola vez</b> — las tres partes (Depósitos, Food Truck / Máquina de Hielo, y Cuenta Final) se completan juntas.</p></li>
+      </ol>
+    </section>
+
+    <div class="manual-section-heading">
+      <h2>Controles</h2>
+      <p>Guía módulo por módulo: qué Excel/Mayor pedís y qué compara cada uno.</p>
+    </div>
+
+    <section class="manual-module" id="control-cierre-mensual" style="--c: var(--c-cierre-mensual)">
+      <div class="manual-module-head">
+        <div class="manual-module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6a1 1 0 0 1 1 1v1H8V4a1 1 0 0 1 1-1z"/><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M8.5 12.5l2 2 4-4"/></svg></div>
+        <div><span class="manual-kicker">Controles</span><h2>Cierre Mensual</h2></div>
+      </div>
+      <p class="manual-lede">Antes de dar un mes por cerrado, compara dos cosas a la vez contra el Excel Cierre: el resumen general de ventas del mes (Store Info, ya cargado día a día) y las ventas por departamento — las dos comparadas contra el mismo PDF que imprime el POS a fin de mes.</p>
+      <h3>Qué necesitás antes de empezar</h3>
+      <ul class="manual-need">
+        <li>El Excel Cierre del mes.</li>
+        <li>El Excel de Ventas del mes.</li>
+        <li>El PDF de Resumen de Ventas del mes (Store Sales Summary Report + Department Sales Report) — el mismo reporte que imprime el POS al cerrar el mes.</li>
+      </ul>
+      <h3>Cómo se usa</h3>
+      <ol class="manual-steps">
+        <li><span class="n">1</span><p>Subís los 3 archivos.</p></li>
+        <li><span class="n">2</span><p>Apretás Verificar.</p></li>
+        <li><span class="n">3</span><p>Aparecen dos resultados en pantalla: uno para Store Info y otro para Ventas por Departamento, cada uno con "OK" en verde o "Diferencia" en rojo, chequeo por chequeo.</p></li>
+      </ol>
+      <div class="manual-tip"><div><b>Tené en cuenta:</b> el margen de tolerancia es de ±$0.01 (redondeo de centavos) — cualquier diferencia mayor hay que revisarla antes de cerrar el mes.</div></div>
+    </section>
+
+    <section class="manual-module" id="control-lottery-mensual" style="--c: var(--c-lottery)">
+      <div class="manual-module-head">
+        <div class="manual-module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6a1 1 0 0 1 1 1v1H8V4a1 1 0 0 1 1-1z"/><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M8.5 12.5l2 2 4-4"/></svg></div>
+        <div><span class="manual-kicker">Controles</span><h2>Lottery Mensual</h2></div>
+      </div>
+      <p class="manual-lede">Compara el reporte mensual oficial de Florida Lottery contra el Excel de Lottery del mes, para confirmar que todo lo cargado durante el mes coincide con lo que la lotería dice que se vendió.</p>
+      <h3>Qué necesitás antes de empezar</h3>
+      <ul class="manual-need">
+        <li>El Excel de Lottery del mes.</li>
+        <li>El PDF "Monthly Sales Report" de Florida Lottery.</li>
+      </ul>
+      <h3>Cómo se usa</h3>
+      <ol class="manual-steps">
+        <li><span class="n">1</span><p>Subís los 2 archivos.</p></li>
+        <li><span class="n">2</span><p>Apretás Verificar.</p></li>
+        <li><span class="n">3</span><p>Ves el resultado en pantalla, chequeo por chequeo.</p></li>
+      </ol>
+      <div class="manual-tip"><div><b>Tené en cuenta:</b> el margen de tolerancia es de ±$0.01.</div></div>
+    </section>
+
+    <section class="manual-module" id="control-cupones" style="--c: var(--c-eft)">
+      <div class="manual-module-head">
+        <div class="manual-module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6a1 1 0 0 1 1 1v1H8V4a1 1 0 0 1 1-1z"/><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M8.5 12.5l2 2 4-4"/></svg></div>
+        <div><span class="manual-kicker">Controles</span><h2>Cupones</h2></div>
+      </div>
+      <p class="manual-lede">J.H. Williams paga los cupones con demora — este control confirma que el saldo que la contabilidad dice que todavía debe (el Mayor de Recaudación a Liquidar) coincide con los cupones que en la hoja Cupones todavía no se aplicaron a ningún EFT.</p>
+      <h3>Qué necesitás antes de empezar</h3>
+      <ul class="manual-need">
+        <li>El Mayor de la cuenta Recaudación a Liquidar.</li>
+        <li>El Excel de Aplicacion TC y EFT (hoja Cupones) — de cerca de la fecha de cierre de ese mes, no la copia "viva" actual (los cupones pendientes cambian todo el tiempo).</li>
+      </ul>
+      <h3>Cómo se usa</h3>
+      <ol class="manual-steps">
+        <li><span class="n">1</span><p>Subís los 2 archivos.</p></li>
+        <li><span class="n">2</span><p>Apretás Verificar.</p></li>
+        <li><span class="n">3</span><p>Ves el saldo, los cupones pendientes y la diferencia entre los dos.</p></li>
+      </ol>
+      <div class="manual-tip"><div><b>Tené en cuenta:</b> acá el margen es más amplio (hasta $15.000) porque siempre va a haber alguna diferencia real (los últimos días de ventas con tarjeta todavía sin conciliar) — por debajo de ese margen es normal, por encima aparece una alerta para revisar.</div></div>
+    </section>
+
+    <section class="manual-module" id="control-mercaderia" style="--c: var(--c-proveedores)">
+      <div class="manual-module-head">
+        <div class="manual-module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6a1 1 0 0 1 1 1v1H8V4a1 1 0 0 1 1-1z"/><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M8.5 12.5l2 2 4-4"/></svg></div>
+        <div><span class="manual-kicker">Controles</span><h2>Mercadería</h2></div>
+      </div>
+      <p class="manual-lede">Compara el total de facturas de compra cargadas en el mes (Excel de Proveedores) contra el Mayor contable de la cuenta Mercadería en C-Store, para confirmar que no falta ni sobra ninguna factura real.</p>
+      <h3>Qué necesitás antes de empezar</h3>
+      <ul class="manual-need">
+        <li>El Excel de Proveedores.</li>
+        <li>El Mayor de la cuenta Mercadería en C-Store.</li>
+      </ul>
+      <h3>Cómo se usa</h3>
+      <ol class="manual-steps">
+        <li><span class="n">1</span><p>Subís los 2 archivos.</p></li>
+        <li><span class="n">2</span><p>Apretás Verificar.</p></li>
+        <li><span class="n">3</span><p>Ves la cantidad de facturas y el monto de cada lado, más el desglose por proveedor.</p></li>
+      </ol>
+      <div class="manual-tip"><div><b>Tené en cuenta:</b> quedan afuera de esta cuenta AIRGAS, KOOLER ICE, SIGNARAMA y J.H W — no van a Mercadería. El margen de tolerancia es de ±$0.05.</div></div>
+    </section>
+
+    <section class="manual-module" id="control-valuacion" style="--c: var(--c-valuacion)">
+      <div class="manual-module-head">
+        <div class="manual-module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6a1 1 0 0 1 1 1v1H8V4a1 1 0 0 1 1-1z"/><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M8.5 12.5l2 2 4-4"/></svg></div>
+        <div><span class="manual-kicker">Controles</span><h2>Valuación de Existencia Final</h2></div>
+      </div>
+      <p class="manual-lede">El único control que además completa un archivo: cruza la Existencia Final según contabilidad (Existencia Inicial + Compras − CMV) contra la valuación física real (Chevron Category Cost Report), y de paso completa esos valores en una copia del Excel BGS — nunca el original.</p>
+      <h3>Qué necesitás antes de empezar</h3>
+      <ul class="manual-need">
+        <li>El Mayor de la cuenta Mercadería en C-Store.</li>
+        <li>El Excel Maestro CMV (hoja RESUMEN).</li>
+        <li>El Chevron Category Cost Report.</li>
+      </ul>
+      <h3>Cómo se usa</h3>
+      <ol class="manual-steps">
+        <li><span class="n">1</span><p>Subís los 3 archivos.</p></li>
+        <li><span class="n">2</span><p>Apretás "Verificar y completar".</p></li>
+        <li><span class="n">3</span><p>Ves el resultado (la diferencia en %) y aparece un link para descargar la copia del Excel BGS ya completada.</p></li>
+      </ol>
+      <div class="manual-tip"><div><b>Tené en cuenta:</b> el margen esperado es de 9% a 13% de diferencia — fuera de ese rango conviene revisar antes de confiar en el número.</div></div>
+    </section>
+
+    <section class="manual-module" id="control-caja" style="--c: var(--c-caja)">
+      <div class="manual-module-head">
+        <div class="manual-module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6a1 1 0 0 1 1 1v1H8V4a1 1 0 0 1 1-1z"/><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M8.5 12.5l2 2 4-4"/></svg></div>
+        <div><span class="manual-kicker">Controles</span><h2>Caja</h2></div>
+      </div>
+      <p class="manual-lede">Cruza los depósitos de Ice Machine y Food Truck, la columna K, y los gastos en efectivo de la columna M de la hoja CAJA del Excel Cierre, contra dos Mayores contables (Chase y Caja) — para confirmar que lo que se cargó a mano en CAJA coincide con lo que dice la contabilidad.</p>
+      <h3>Qué necesitás antes de empezar</h3>
+      <ul class="manual-need">
+        <li>El Excel Cierre del mes.</li>
+        <li>El Mayor de la cuenta Chase Bank.</li>
+        <li>El Mayor de la cuenta Caja.</li>
+      </ul>
+      <h3>Cómo se usa</h3>
+      <ol class="manual-steps">
+        <li><span class="n">1</span><p>Subís los 3 archivos.</p></li>
+        <li><span class="n">2</span><p>Apretás Verificar.</p></li>
+        <li><span class="n">3</span><p>Ves los 4 chequeos (Ice Machine, Food Truck, columna K, gastos en efectivo) y el detalle día por día de los gastos.</p></li>
+      </ol>
+      <div class="manual-tip"><div><b>Tené en cuenta:</b> el margen de tolerancia acá es $0 exacto en los 4 chequeos.</div></div>
+    </section>
+  </div>
+</div>
+
+<p class="manual-footnote">Manual en construcción — esta versión cubre los módulos de Herramientas y Controles. La sección de Mes Nuevo se agrega más adelante.</p>
+
+<style>
+  .manual-page { max-width: none; }
+
+  .manual-shell {
+    display: grid;
+    grid-template-columns: 230px minmax(0, 1fr);
+    gap: 36px;
+    align-items: start;
+  }
+  @media (max-width: 640px) {
+    .manual-shell { grid-template-columns: 1fr; gap: 22px; }
+    .manual-toc { position: static !important; order: 2; max-height: none; overflow: visible; }
+    .manual-main { order: 1; }
+  }
+
+  /* Colores reales de cada módulo, tal como aparecen en el Home */
+  .manual-shell {
+    --c-chase: #16A34A;
+    --c-cmv: #7C3AED;
+    --c-gettel: #0D9488;
+    --c-reporte: #0284C7;
+    --c-lottery: #0284C7;
+    --c-eft: #3B5BDB;
+    --c-proveedores: #DB2777;
+    --c-caja: #EA580C;
+    --c-cierre-mensual: #334155;
+    --c-valuacion: #059669;
+  }
+
+  .manual-toc {
+    position: sticky;
+    top: 24px;
+    align-self: start;
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    max-height: calc(100vh - 48px);
+    overflow-y: auto;
+  }
+  .manual-toc-label {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-soft);
+  }
+  .manual-toc-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    width: 100%;
+    background: none;
+    border: none;
+    padding: 0 0 8px;
+    margin: 0;
+    font: inherit;
+    cursor: default;
+  }
+  .manual-toc-toggle:hover .manual-toc-label { color: var(--text); }
+  .manual-toc-chevron { width: 13px; height: 13px; color: var(--text-soft); flex-shrink: 0; transition: transform 0.15s ease; }
+  .manual-toc-toggle[aria-expanded="false"] .manual-toc-chevron { transform: rotate(-90deg); }
+  .manual-toc-toggle[aria-expanded="false"] + .manual-toc-list { display: none; }
+  .manual-toc-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+  .manual-toc-list a {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 7px 10px;
+    border-radius: 8px;
+    text-decoration: none;
+    color: var(--text);
+    font-size: 13.5px;
+    font-weight: 600;
+    transition: transform 0.08s ease;
+  }
+  .manual-toc-list a:active { transform: scale(0.97); }
+  .manual-toc-list a:hover { background: var(--surface-alt); }
+  .manual-toc-list a.active { background: var(--surface); box-shadow: 0 0 0 1px var(--border); }
+  .manual-toc-dot { width: 8px; height: 8px; border-radius: 999px; flex-shrink: 0; background: var(--dot, var(--accent)); }
+  .manual-toc-soon { display: flex; align-items: center; gap: 9px; padding: 7px 10px; color: var(--text-soft); font-size: 13.5px; font-weight: 600; }
+  .manual-toc-soon .manual-toc-dot { background: var(--border); }
+  .manual-toc-soon-tag { margin-left: auto; font-size: 10px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; color: var(--text-soft); }
+
+  .manual-main {
+    min-width: 0;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(430px, 1fr));
+    gap: 24px;
+    align-items: start;
+  }
+  @media (max-width: 640px) {
+    .manual-main { grid-template-columns: 1fr; }
+  }
+
+  .manual-intro { grid-column: 1 / -1; }
+  .manual-intro h2 { font-size: 19px; margin: 0 0 12px; }
+  .manual-intro > p { color: var(--text-soft); margin: 0 0 16px; max-width: 760px; }
+  .manual-intro-subhead {
+    font-size: 15.5px;
+    font-weight: 700;
+    color: var(--text);
+    margin: 26px 0 14px;
+    padding-top: 22px;
+    border-top: 1px solid var(--border);
+  }
+  .manual-intro h3:first-of-type { margin-top: 4px; padding-top: 0; border-top: none; }
+  .manual-intro h4 { font-size: 12.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-soft); margin: 0 0 10px; }
+
+  .manual-section-heading {
+    grid-column: 1 / -1;
+    margin-top: 20px;
+    padding-top: 32px;
+    border-top: 1px solid var(--border);
+  }
+  .manual-section-heading h2 { margin: 0 0 6px; font-size: 22px; }
+  .manual-section-heading p { margin: 0; color: var(--text-soft); font-size: 14px; max-width: 640px; }
+
+  .manual-flow-steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin: 4px 0 22px; }
+  .manual-flow-step { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 14px 16px; }
+  .manual-flow-step .n {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; border-radius: 999px;
+    background: var(--accent-soft); color: var(--accent);
+    font-size: 12px; font-weight: 700; margin-bottom: 8px;
+  }
+  .manual-flow-step p { margin: 0; font-size: 13.5px; color: var(--text); }
+
+  .manual-legend { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 6px; }
+  .manual-legend-item { display: flex; align-items: center; gap: 8px; background: var(--surface); border: 1px solid var(--border); border-radius: 999px; padding: 6px 14px 6px 10px; font-size: 13px; }
+  .manual-legend-swatch { width: 10px; height: 10px; border-radius: 999px; flex-shrink: 0; }
+
+  .manual-module {
+    scroll-margin-top: 24px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--c, var(--accent));
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+    padding: 24px 26px;
+  }
+  .manual-module-head { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
+  .manual-module-icon {
+    width: 40px; height: 40px; border-radius: 10px;
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    background: color-mix(in srgb, var(--c, var(--accent)) 16%, var(--surface));
+    color: var(--c, var(--accent));
+  }
+  .manual-module-icon svg { width: 21px; height: 21px; }
+  .manual-module-head h2 { margin: 0; font-size: 20px; font-weight: 750; }
+  .manual-kicker { display: block; font-size: 11.5px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--c, var(--accent)); margin-bottom: 2px; }
+
+  .manual-module h3 { font-size: 12.5px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-soft); margin: 20px 0 10px; }
+  .manual-module > p.manual-lede { margin: 4px 0 0; color: var(--text); }
+
+  .manual-need { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 4px; font-size: 13.5px; color: var(--text); }
+
+  .manual-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+  .manual-steps li { display: flex; gap: 12px; align-items: flex-start; padding: 11px 14px; background: var(--surface-alt); border-radius: 9px; }
+  .manual-steps li .n {
+    flex-shrink: 0; width: 22px; height: 22px; border-radius: 999px;
+    background: var(--c, var(--accent)); color: white;
+    font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; margin-top: 1px;
+  }
+  .manual-steps li p { margin: 0; }
+  .manual-shared-tag {
+    display: inline-block; margin-left: 6px; font-size: 11px; font-weight: 700;
+    color: var(--c, var(--accent)); background: color-mix(in srgb, var(--c, var(--accent)) 14%, var(--surface));
+    padding: 1px 7px; border-radius: 999px; vertical-align: middle;
+  }
+
+  .manual-tip {
+    background: var(--warning-soft);
+    border: 1px solid #FDE68A;
+    border-radius: 9px;
+    padding: 12px 15px;
+    font-size: 14px;
+    color: var(--text);
+    margin-top: 16px;
+  }
+  .manual-tip b { color: var(--warning); }
+  .manual-tip-wide { max-width: 900px; }
+
+  .manual-supplier-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
+  .manual-supplier-col { background: var(--surface-alt); border-radius: 9px; padding: 14px 16px; }
+  .manual-supplier-col .head { display: flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 700; margin-bottom: 8px; }
+  .manual-supplier-col ul { margin: 0; padding-left: 18px; font-size: 13.5px; color: var(--text); }
+  .manual-supplier-col li { margin-bottom: 3px; }
+  .dot-ok, .dot-check { width: 8px; height: 8px; border-radius: 999px; flex-shrink: 0; }
+  .dot-ok { background: var(--success); }
+  .dot-check { background: var(--warning); }
+
+  .manual-footnote { color: var(--text-soft); font-size: 12.5px; border-top: 1px solid var(--border); padding-top: 18px; margin-top: 8px; }
+</style>
+
+<script>
+  (function () {
+    // La rueda del mouse sobre la barra lateral mueve solo su propio scroll
+    // interno -- nunca la página de atrás -- y viceversa (cursor sobre el
+    // contenido principal sigue moviendo la página como siempre). Sin este
+    // handler, con cursor:pointer solo (overflow-y:auto + max-height) el
+    // navegador deja "pasar" el scroll a la página apenas la barra lateral
+    // llega a su propio límite (o directamente no la mueve si el contenido
+    // ya entra entero), que es justo el comportamiento que no queríamos.
+    var toc = document.getElementById('manual-toc');
+    if (!toc) return;
+    toc.addEventListener('wheel', function (event) {
+      event.preventDefault();
+      toc.scrollTop += event.deltaY;
+    }, { passive: false });
+  })();
+
+  (function () {
+    document.querySelectorAll('.manual-toc-toggle').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var expanded = btn.getAttribute('aria-expanded') === 'true';
+        btn.setAttribute('aria-expanded', expanded ? 'false' : 'true');
+      });
+    });
+  })();
+
+  (function () {
+    var links = Array.prototype.slice.call(document.querySelectorAll('#manual-toc a[data-target]'));
+    var sections = links
+      .map(function (link) { return document.getElementById(link.dataset.target); })
+      .filter(Boolean);
+    if (!sections.length || !('IntersectionObserver' in window)) return;
+
+    var byId = {};
+    links.forEach(function (link) { byId[link.dataset.target] = link; });
+
+    var observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (entry) {
+        var link = byId[entry.target.id];
+        if (!link) return;
+        if (entry.isIntersecting) {
+          links.forEach(function (l) { l.classList.remove('active'); });
+          link.classList.add('active');
+        }
+      });
+    }, { rootMargin: '-15% 0px -70% 0px', threshold: 0 });
+
+    sections.forEach(function (section) { observer.observe(section); });
+  })();
+</script>
+{% endblock %}

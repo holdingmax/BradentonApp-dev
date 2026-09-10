@@ -195,6 +195,12 @@ def admin_users():
 
     return render_template("admin_users.html", users=auth.list_users())
 
+
+@app.route("/manual")
+@login_required
+def manual():
+    return render_template("manual.html")
+
 # Same per-module accent colors the desktop app used (ui_theme.py SectionTheme,
 # now retired) — kept here purely as brand identity/wayfinding across pages.
 # "icon" is inline SVG markup (rendered with |safe in index.html) chosen to
