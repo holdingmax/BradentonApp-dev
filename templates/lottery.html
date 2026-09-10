@@ -5,23 +5,21 @@
 {% block content %}
 <div class="page-header">
   <span class="eyebrow">Lottery</span>
-  <h1>Daily Sales Report y PDF Diario</h1>
+  <h1>Reporte Diario Lottery y Reporte Diario</h1>
   <p class="page-subtitle">Dos flujos independientes sobre el mismo Excel de Lottery — cada uno con su propio PDF, no hace falta cargar los dos juntos.</p>
 </div>
 <div class="card">
   <h2>Excel de Lottery</h2>
   <p class="muted">Compartido por los dos cuadros de abajo — se completa una sola vez.</p>
-  <label class="muted">Excel Ledger (LOTTERY. Análisis)</label>
   <input type="file" id="lottery-shared-master" class="shared-master-input" accept=".xlsx,.xlsm" required>
   <button type="button" class="btn-secondary clear-file-btn" data-target="lottery-shared-master" style="margin-top: 10px;">Limpiar</button>
 </div>
 
 <div class="card">
-  <h2>Daily Sales Report → F/G/H/I/K, P/Q/R/S</h2>
-  <p class="muted">Uno o más Daily Sales Report (PDF).</p>
+  <h2>Reporte Diario Lottery</h2>
+  <p class="muted">Uno o más Reportes Diarios de Retailer Wizard Lottery (PDF).</p>
   <form method="post" action="{{ url_for('lottery_sales_report') }}" enctype="multipart/form-data" class="needs-shared-master ajax-process-form">
     <input type="file" name="master_file" class="hidden-master-mirror" style="display:none">
-    <label class="muted">PDF(s)</label>
     <input type="file" name="pdf_files" id="lottery-sales-pdfs" accept=".pdf" multiple required>
     <div class="form-actions">
       <button type="submit">Procesar</button>
@@ -31,11 +29,10 @@
 </div>
 
 <div class="card">
-  <h2>PDF Diario → D/E/N/O</h2>
-  <p class="muted">Uno o más PDF diario(s) (Department Sales Report).</p>
+  <h2>Reporte Diario</h2>
+  <p class="muted">Uno o más Reportes Diarios (Department Sales Report).</p>
   <form method="post" action="{{ url_for('lottery_department') }}" enctype="multipart/form-data" class="needs-shared-master ajax-process-form">
     <input type="file" name="master_file" class="hidden-master-mirror" style="display:none">
-    <label class="muted">PDF(s)</label>
     <input type="file" name="pdf_files" id="lottery-dept-pdfs" accept=".pdf" multiple required>
     <div class="form-actions">
       <button type="submit">Procesar</button>

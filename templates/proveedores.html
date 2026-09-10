@@ -6,7 +6,7 @@
 <div class="page-header">
   <span class="eyebrow">Proveedores</span>
   <h1>Facturas y Pagos</h1>
-  <p class="page-subtitle">Dos flujos independientes sobre el mismo Excel Ledger (Cta Cte Proveedores) — Facturas agrega filas "invoice" detectando el proveedor de cada PDF, Pagos agrega filas "OP" a partir del extracto de Chase ya categorizado.</p>
+  <p class="page-subtitle">Dos flujos independientes sobre el mismo Excel de Proveedores — Facturas agrega filas "invoice" detectando el proveedor de cada PDF, Pagos agrega filas "OP" a partir del extracto de Chase ya categorizado.</p>
 </div>
 <details class="card">
   <summary style="cursor: pointer; font-weight: 600;">Lista de proveedores</summary>
@@ -28,12 +28,12 @@
     <li>Overflow Group Distribution</li>
     <li>Swisher</li>
     <li>Signarama</li>
+    <li>Midtown Wholesale</li>
   </ul>
   <p><strong>Cargar manual, punto a punto</strong></p>
   <ul class="muted" style="margin-bottom: 0;">
     <li>Kooler Ice</li>
     <li>Sam's Club</li>
-    <li>Midtown Wholesale</li>
     <li>Red Bull</li>
     <li>Colonial Wholesale</li>
     <li>AZ Southeast Distributors</li>
@@ -45,19 +45,17 @@
 </details>
 
 <div class="card">
-  <h2>Excel Ledger</h2>
-  <p class="muted">Compartido por los dos cuadros de abajo — se completa una sola vez, y el resultado de cada operación queda cargado solo para la siguiente (además de descargarse a tu PC), sin que haga falta volver a elegirlo a mano.</p>
-  <label class="muted">Excel Ledger (Cta Cte Proveedores)</label>
+  <h2>Excel de Proveedores</h2>
+  <p class="muted">Compartido por los dos cuadros de abajo.</p>
   <input type="file" id="proveedores-shared-master" class="shared-master-input" accept=".xlsx,.xlsm" required>
   <button type="button" class="btn-secondary clear-file-btn" data-target="proveedores-shared-master" style="margin-top: 10px;">Limpiar</button>
 </div>
 
 <div class="card">
-  <h2>Cargar Facturas → fila "invoice" por proveedor</h2>
+  <h2>Cargar Facturas</h2>
   <p class="muted">Uno o más PDF de factura. Se detecta el proveedor y la hoja de destino automáticamente; una factura que ya esté cargada (por N° de factura) se omite. Si el OCR no puede leer un dato con confianza, esa factura falla con un aviso en vez de cargar un valor dudoso.</p>
   <form method="post" action="{{ url_for('proveedores_facturas') }}" enctype="multipart/form-data" class="needs-shared-master ajax-process-form chain-master-result">
     <input type="file" name="master_file" class="hidden-master-mirror" style="display:none">
-    <label class="muted">PDF(s) de Factura</label>
     <input type="file" name="pdf_files" id="proveedores-facturas-pdfs" class="accumulate-files" accept=".pdf" multiple required>
     <div class="form-actions">
       <button type="submit">Procesar</button>
@@ -67,11 +65,10 @@
 </div>
 
 <div class="card">
-  <h2>Cargar Pagos (Chase) → fila "OP" por proveedor</h2>
+  <h2>Cargar Pagos (Chase)</h2>
   <p class="muted">Extracto de Chase ya categorizado por la pestaña Chase Bank (columna Detalle = PROVEEDORES). Cada pago se ubica en la hoja del proveedor que le corresponda, en su posición cronológica exacta.</p>
   <form method="post" action="{{ url_for('proveedores_pagos') }}" enctype="multipart/form-data" class="needs-shared-master ajax-process-form chain-master-result">
     <input type="file" name="master_file" class="hidden-master-mirror" style="display:none">
-    <label class="muted">Extracto de Chase (ya categorizado)</label>
     <input type="file" name="bank_file" id="proveedores-pagos-bank" accept=".csv,.xlsx,.xlsm" required>
     <div class="form-actions">
       <button type="submit">Procesar</button>

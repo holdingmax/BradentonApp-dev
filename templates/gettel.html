@@ -6,22 +6,20 @@
 <div class="page-header">
   <span class="eyebrow">Gettel / Toyota</span>
   <h1>Cupones y Pagos</h1>
-  <p class="page-subtitle">Resume el Excel diario de Gettel/Toyota por día y lo fusiona en el master Cierre. Los pagos van aparte, hacia la hoja PAGO Cupones.</p>
+  <p class="page-subtitle">Resume el Excel diario de Gettel/Toyota por día y lo fusiona en el Excel Cierre. Los pagos van aparte, hacia la hoja PAGO Cupones.</p>
 </div>
 <div class="card">
-  <h2>Excel Maestro (Master Cierre)</h2>
+  <h2>Excel Cierre</h2>
   <p class="muted">Compartido por los dos cuadros de abajo — se completa una sola vez.</p>
-  <label class="muted">Excel Maestro (Master Cierre)</label>
   <input type="file" id="gettel-shared-master" class="shared-master-input" accept=".xlsx" required>
   <button type="button" class="btn-secondary clear-file-btn" data-target="gettel-shared-master" style="margin-top: 10px;">Limpiar</button>
 </div>
 
 <div class="card">
-  <h2>Cupones Diarios → hoja Gettel-Toyota</h2>
+  <h2>Cupones Diarios</h2>
   <p class="muted">Excel de cupones diarios (o PDF/foto escaneada).</p>
   <form method="post" action="{{ url_for('gettel_cupones') }}" enctype="multipart/form-data" class="needs-shared-master ajax-process-form chain-master-result">
     <input type="file" name="master_file" class="hidden-master-mirror" style="display:none">
-    <label class="muted">Excel o PDF/Foto de Origen (Cupones Diarios)</label>
     <input type="file" name="source_file" id="gettel-source-file" accept=".xlsx,.pdf" required>
     <div class="form-actions">
       <button type="submit">Procesar</button>
@@ -31,11 +29,10 @@
 </div>
 
 <div class="card">
-  <h2>Pagos (Cupones) → hoja PAGO Cupones</h2>
+  <h2>Pagos (Cupones)</h2>
   <p class="muted">Uno o más PDF de recibos de pago.</p>
   <form method="post" action="{{ url_for('gettel_pagos') }}" enctype="multipart/form-data" class="needs-shared-master ajax-process-form chain-master-result">
     <input type="file" name="master_file" class="hidden-master-mirror" style="display:none">
-    <label class="muted">PDF(s) de Pagos</label>
     <input type="file" name="pdf_files" id="gettel-pagos-pdfs" accept=".pdf" multiple required>
     <div class="form-actions">
       <button type="submit">Procesar</button>

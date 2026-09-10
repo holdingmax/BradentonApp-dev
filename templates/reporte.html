@@ -6,22 +6,20 @@
 <div class="page-header">
   <span class="eyebrow">Reporte Diario</span>
   <h1>Ventas y Store Info</h1>
-  <p class="page-subtitle">Un mismo PDF de cierre diario alimenta dos destinos distintos — Ventas por Departamento y Store Info, cada uno con su propio Excel.</p>
+  <p class="page-subtitle">Un mismo Reporte Diario alimenta dos destinos distintos — Ventas por Departamento y Store Info, cada uno con su propio Excel.</p>
 </div>
 <div class="card">
-  <h2>PDF Diario</h2>
+  <h2>Reporte Diario</h2>
   <p class="muted">Compartido por los dos cuadros de abajo — se completa una sola vez.</p>
-  <label class="muted">PDF(s) Diario(s)</label>
   <input type="file" id="reporte-shared-pdf" class="shared-master-input" accept=".pdf" multiple required>
   <button type="button" class="btn-secondary clear-file-btn" data-target="reporte-shared-pdf" style="margin-top: 10px;">Limpiar</button>
 </div>
 
 <div class="card">
-  <h2>Ventas por Departamento → CARGA AQUI</h2>
-  <p class="muted">Excel Bradenton. Análisis C-Store. Ventas.</p>
+  <h2>Ventas por Departamento</h2>
+  <p class="muted">Excel de Ventas.</p>
   <form method="post" action="{{ url_for('reporte_ventas') }}" enctype="multipart/form-data" class="needs-shared-master ajax-process-form">
     <input type="file" name="pdf_files" class="hidden-master-mirror" multiple style="display:none">
-    <label class="muted">Excel Ledger (Bradenton. Análisis C-Store. Ventas)</label>
     <input type="file" name="master_file" id="reporte-ventas-master" accept=".xlsx,.xlsm" required>
     <div class="form-actions">
       <button type="submit">Procesar</button>
@@ -31,11 +29,10 @@
 </div>
 
 <div class="card">
-  <h2>Store Info (Fechas, Fuel, Cash/TC)</h2>
-  <p class="muted">Excel de Cierre (hoja Store Info).</p>
+  <h2>Store Info</h2>
+  <p class="muted">Excel Cierre (hoja Store Info).</p>
   <form method="post" action="{{ url_for('reporte_store_info') }}" enctype="multipart/form-data" class="needs-shared-master ajax-process-form">
     <input type="file" name="pdf_files" class="hidden-master-mirror" multiple style="display:none">
-    <label class="muted">Excel Ledger (Cierre)</label>
     <input type="file" name="master_file" id="reporte-storeinfo-master" accept=".xlsx,.xlsm" required>
     <div class="form-actions">
       <button type="submit">Procesar</button>
