@@ -11,6 +11,10 @@
     {
       "keyword": "FACEBK",
       "detail": "ADMINISTRATION FEE"
+    },
+    {
+      "keyword": "BNKCD",
+      "detail": "COMISIONES Y GASTOS BANCARIOS"
     }
   ]
 }
