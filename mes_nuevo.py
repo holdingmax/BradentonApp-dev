@@ -1641,6 +1641,58 @@ def _lottery_paste_footer(sheet, new_start_row, footer_rows, footer_merges, foot
         )
 
 
+_LOTTERY_DEBITO_TOTAL_RE = re.compile(r"^=SUM\(V\d+:V\d+\)$")
+
+
+def _lottery_debito_rows_in_month(chase_date, total_new_blocks, target_year, target_month):
+    """
+    Fila de "Debito" (columna V) de cada bloque nuevo cuyo pago real de
+    Chase Bank -- calculado cada 7 días exactos a partir de la fecha del
+    bloque trasladado, igual que ya hace el resto de la función -- cae
+    dentro de (target_year, target_month). El bloque trasladado (b=0) y
+    los siguientes suelen ser del mes nuevo, pero el ÚLTIMO puede pasarse
+    al mes siguiente (mismo patrón que ya se ve en el propio bloque
+    trasladado) -- se calcula bloque por bloque, nunca se asume "todos
+    menos el último". Devuelve None si no se pudo interpretar la fecha del
+    bloque trasladado (no hay forma de saber qué bloque cae en qué mes).
+    """
+    if chase_date is None:
+        return None
+    rows = []
+    for b in range(total_new_blocks):
+        block_date = chase_date + timedelta(days=7 * b)
+        if block_date.year == target_year and block_date.month == target_month:
+            rows.append(_LOTTERY_FIRST_ROW + _LOTTERY_BLOCK_ROWS * b + 8)
+    return rows
+
+
+def _lottery_fix_monthly_debito_total(sheet, footer_start_new, debito_rows):
+    """
+    La sección de liquidación trae una fórmula "=SUM(V{a}:V{b})" que suma
+    el Debito de cada bloque semanal para dar el total de pagos del mes --
+    como esa sección se pega tal cual del mes anterior (ver
+    _lottery_paste_footer, a propósito no toca referencias a los bloques
+    de arriba), esa fórmula seguía apuntando al rango de filas del mes
+    VIEJO, no del nuevo -- pedido explícito del usuario 2026-09-10: un
+    bloque que en realidad se paga el mes que viene (el que se traslada,
+    o el último que se pasa de fecha) podía quedar mal incluido o excluido
+    de este total según dónde cayera por casualidad el rango viejo.
+
+    Se ubica la celda por patrón (columna V de la primera fila de la
+    sección pegada, con una fórmula "=SUM(V#:V#)") en vez de asumir una
+    posición fija -- si no matchea (la plantilla cambió, o esta hoja no
+    tiene esa fórmula ahí), no se toca nada, para no sobrescribir algo
+    inesperado a ciegas.
+    """
+    if debito_rows is None:
+        return False
+    cell = sheet.cell(row=footer_start_new, column=22)  # V
+    if not (isinstance(cell.value, str) and _LOTTERY_DEBITO_TOTAL_RE.match(cell.value.strip())):
+        return False
+    cell.value = "=SUM(" + ",".join(f"V{row}" for row in debito_rows) + ")" if debito_rows else 0
+    return True
+
+
 def prepare_next_month_lottery(upload_path):
     """
     Función pública del sub-módulo Mes Nuevo -- Lottery: recibe la ruta de
@@ -1699,6 +1751,37 @@ def prepare_next_month_lottery(upload_path):
             'No pude interpretar la fecha del texto de "Chase Bank" (columna W) del último '
             "bloque -- los bloques nuevos quedaron sin esa fecha, completala a mano."
         )
+
+    # ---- Auto-corrección si la fecha del último bloque no sigue la cadencia
+    # de +7 días esperada respecto al bloque anterior -- typo real
+    # encontrado 2026-09-10 en un archivo real (dos bloques seguidos con la
+    # MISMA fecha tipeada, rompiendo la cadencia e imposible cronológicamente
+    # -- el segundo bloque cubre días posteriores, no puede pagarse el mismo
+    # día que el anterior). Pedido explícito del usuario: no solo avisar,
+    # corregirlo solo. Se compara contra la fecha del anteúltimo bloque (+7
+    # días); si no coincide con la del último, se usa la esperada en vez de
+    # confiar en el texto tal cual tipeado -- tanto para calcular los
+    # bloques nuevos como en el propio texto que se traslada al mes nuevo
+    # (así el error no se arrastra hacia adelante).
+    if chase_date is not None and total_blocks >= 2:
+        prev_debito_row = last_block_start - _LOTTERY_BLOCK_ROWS + 8
+        prev_chase_text = sheet.cell(row=prev_debito_row, column=23).value
+        prev_chase_date, _prev_match, _prev_day_first = _parse_chase_bank_date(prev_chase_text, next_date)
+        if prev_chase_date is not None:
+            expected_chase_date = prev_chase_date + timedelta(days=7)
+            if expected_chase_date != chase_date:
+                summary["warnings"].append(
+                    'La fecha de "Chase Bank" del último bloque '
+                    f"({chase_date:%d/%m/%Y}) no seguía la cadencia semanal esperada respecto al "
+                    f"bloque anterior ({prev_chase_date:%d/%m/%Y}) -- probablemente un typo al "
+                    f"cargarla a mano. Se corrigió sola a {expected_chase_date:%d/%m/%Y} (+7 días "
+                    "del bloque anterior), tanto para calcular los bloques nuevos como en el texto "
+                    "que se traslada."
+                )
+                carried_chase_text = _render_chase_bank_text(
+                    carried_chase_text, chase_match, chase_day_first, expected_chase_date
+                )
+                chase_date = expected_chase_date
 
     # ---- Plantilla de estilo (del primer bloque -- estructuralmente igual a todos) ----
     style_rows = _lottery_capture_style(sheet, _LOTTERY_FIRST_ROW)
@@ -1770,12 +1853,25 @@ def prepare_next_month_lottery(upload_path):
     # ---- Pegar tal cual la sección de liquidación (capturada arriba),
     # justo debajo del último bloque nuevo -- mismo formato, sin actualizar
     # ninguna referencia, igual que pedido explícito del usuario 2026-09-05.
+    debito_total_fixed = False
     if footer_rows:
         footer_start_new = _LOTTERY_FIRST_ROW + _LOTTERY_BLOCK_ROWS * total_new_blocks
         _lottery_paste_footer(
             sheet, footer_start_new, footer_rows, footer_merges,
             footer_start_old, footer_end_old,
         )
+        debito_rows_in_month = _lottery_debito_rows_in_month(
+            chase_date, total_new_blocks, next_year, next_month
+        )
+        debito_total_fixed = _lottery_fix_monthly_debito_total(
+            sheet, footer_start_new, debito_rows_in_month
+        )
+        if not debito_total_fixed and chase_date is not None:
+            summary["warnings"].append(
+                'No encontré la fórmula de total de Debito (columna V, "=SUM(V#:V#)") en la '
+                "sección de liquidación para recalcularla sola -- revisá ese total a mano, "
+                "puede seguir apuntando a los bloques del mes anterior."
+            )
 
     sheet.title = f"{next_month:02d}.{next_year:04d}"
     chase_note = (
@@ -1784,13 +1880,19 @@ def prepare_next_month_lottery(upload_path):
         if chase_date is not None
         else ""
     )
+    debito_total_note = (
+        " El total de Debito (columna V) de la liquidación ya se recalculó solo para incluir "
+        f"únicamente los pagos que caen en {MESES[next_month]}."
+        if debito_total_fixed
+        else ""
+    )
     summary["assumptions"].append(
         f"Se trasladó el último bloque de {MESES[month]} tal cual (con los datos que ya tenía) "
         f"como primer bloque de {MESES[next_month]}, y se agregaron {total_new_blocks - 1} "
-        "bloque(s) más en 0 para cubrir el resto del mes. La sección de liquidación al pie se "
-        "copió tal cual estaba en el mes anterior (mismo formato y fórmulas, sin actualizar "
-        "ninguna referencia) -- revisala a mano antes de usarla, las fórmulas todavía apuntan a "
-        f"los bloques del mes viejo.{chase_note}"
+        "bloque(s) más en 0 para cubrir el resto del mes. El resto de la sección de liquidación "
+        "al pie se copió tal cual estaba en el mes anterior (mismo formato y fórmulas, sin "
+        "actualizar ninguna referencia) -- revisala a mano antes de usarla, esas fórmulas "
+        f"todavía apuntan a los bloques del mes viejo.{chase_note}{debito_total_note}"
     )
 
     workdir = tempfile.mkdtemp(prefix="mes_nuevo_lottery_")
