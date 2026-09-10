@@ -195,7 +195,7 @@ def apply_chase_deposits(cierre_path, chase_path):
     return temp_path, summary
 
 
-def _collect_lottery_cuenta_final(lottery_path):
+def _collect_lottery_cuenta_final(lottery_path, relevant_dates):
     workbook = openpyxl.load_workbook(lottery_path, data_only=True)
     # Antes usaba workbook.active -- el libro de Lottery tiene una hoja por
     # mes sin un nombre fijo (ver reporte_diario._find_lottery_sheet, que ya
@@ -214,7 +214,17 @@ def _collect_lottery_cuenta_final(lottery_path):
         value = sheet.cell(row=row, column=LOTTERY_COL_CUENTA_FINAL).value
         if isinstance(value, (int, float)):
             values_by_date[date_key] = float(value)
-        else:
+        elif date_key in relevant_dates:
+            # El Excel de Lottery casi siempre trae días de fuera del mes de
+            # CAJA (el último bloque de 7 días de un mes se traslada tal cual
+            # al mes siguiente, ver "Módulo Mes Nuevo" en CLAUDE.md) -- un día
+            # de ESOS todavía sin CUENTA FINAL calculada (porque ese bloque
+            # no está cerrado, ni falta que lo esté) no es un problema real
+            # para esta carga, así que solo se avisa cuando el día faltante
+            # es uno que CAJA sí necesita (bug real reportado por el usuario:
+            # "no se pudieron cargar todos los días" saltaba siempre que
+            # Lottery tenía algún día de otro mes sin cerrar, aunque CAJA ya
+            # tuviera completos los días que le hacían falta).
             missing_dates.append(date_key)
 
     return values_by_date, missing_dates
@@ -222,28 +232,68 @@ def _collect_lottery_cuenta_final(lottery_path):
 
 def apply_lottery_cuenta_final(cierre_path, lottery_path):
     """Escribe N en CAJA con la columna X ("CUENTA FINAL") del Excel de Lottery."""
-    values_by_date, missing_dates = _collect_lottery_cuenta_final(lottery_path)
-    if not values_by_date and not missing_dates:
-        raise ValueError('No se encontraron fechas en la columna B del Excel de Lottery.')
-
     workbook = openpyxl.load_workbook(cierre_path, data_only=False)
     sheet = _get_caja_sheet(workbook)
+    caja_rows = list(_iter_caja_dates(sheet))
+    caja_dates = {date_key for _row, date_key in caja_rows}
+    caja_months = {(date_key.year, date_key.month) for date_key in caja_dates}
+
+    values_by_date, missing_dates = _collect_lottery_cuenta_final(lottery_path, caja_dates)
+    if not values_by_date and not missing_dates:
+        raise ValueError('No se encontraron fechas en la columna B del Excel de Lottery.')
 
     remaining = dict(values_by_date)
     written = {}
 
-    for row, date_key in _iter_caja_dates(sheet):
+    for row, date_key in caja_rows:
         if date_key in remaining:
             value = round(remaining.pop(date_key), 2)
             sheet.cell(row=row, column=CAJA_COL_LOTTERY, value=value)
             written[date_key] = value
+
+    # Lo que queda en `remaining` y NO es del mes de CAJA es el bloque de 7
+    # días del mes vecino que el Lottery siempre trae de fábrica (ver
+    # "Módulo Mes Nuevo" en CLAUDE.md) -- pasa todos los meses, no es una
+    # fila faltante real, así que ni siquiera se avisa. Solo importa (y se
+    # devuelve) un día sin matchear que SÍ es del mes de este Cierre --
+    # ahí sí sería señal real de que a CAJA le falta esa fila.
+    unmatched_same_month = {
+        date_key: value for date_key, value in remaining.items()
+        if (date_key.year, date_key.month) in caja_months
+    }
 
     temp_path = _create_temp_workbook_path()
     workbook.save(temp_path)
 
     summary = {
         "written": written,
-        "unmatched": remaining,
+        "unmatched": unmatched_same_month,
         "missing_cached_value": missing_dates,
     }
     return temp_path, summary
+
+
+def apply_chase_and_lottery(cierre_path, chase_path, lottery_path):
+    """
+    Corre Chase (K/S/T) y Lottery (N) en una sola pasada sobre el mismo Excel
+    Cierre -- pedido explícito del usuario para no tener que descargar el
+    resultado de Chase y volver a subirlo como si fuera el Cierre original
+    antes de poder cargar Lottery.
+    """
+    intermediate_path, chase_summary = apply_chase_deposits(cierre_path, chase_path)
+    try:
+        final_path, lottery_summary = apply_lottery_cuenta_final(intermediate_path, lottery_path)
+    finally:
+        try:
+            os.remove(intermediate_path)
+        except OSError:
+            pass
+
+    summary = {
+        "deposits_unmatched": chase_summary["deposits_unmatched"],
+        "food_ice_unmatched": chase_summary["food_ice_unmatched"],
+        "gettel_days_written": chase_summary["gettel_days_written"],
+        "lottery_unmatched": lottery_summary["unmatched"],
+        "missing_cached_value": lottery_summary["missing_cached_value"],
+    }
+    return final_path, summary

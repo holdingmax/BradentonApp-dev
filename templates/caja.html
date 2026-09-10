@@ -6,40 +6,27 @@
 <div class="page-header">
   <span class="eyebrow">Caja</span>
   <h1>Depósitos Chase y Cuenta Final Lottery</h1>
-  <p class="page-subtitle">Dos flujos independientes sobre la hoja CAJA del mismo Excel Cierre — Chase completa K (Depósitos) y S (Food Truck / Máquina de Hielo), Lottery completa N (Cuenta Final). La fila se ubica por la fecha de la columna A.</p>
-</div>
-<div class="card">
-  <h2>Excel Cierre</h2>
-  <p class="muted">Compartido por los dos cuadros de abajo — se completa una sola vez.</p>
-  <label class="muted">Excel Cierre (hoja CAJA)</label>
-  <input type="file" id="caja-shared-master" class="shared-master-input" accept=".xlsx,.xlsm" required>
-  <button type="button" class="btn-secondary clear-file-btn" data-target="caja-shared-master" style="margin-top: 10px;">Limpiar</button>
+  <p class="page-subtitle">Completa la hoja CAJA del Excel Cierre en un solo paso — Chase llena Depósitos, Food Truck / Máquina de Hielo, Lottery Cuenta Final.</p>
 </div>
 
 <div class="card">
-  <h2>Chase → K (Depósitos) y S (Food Truck / Hielo)</h2>
-  <p class="muted">Extracto de Chase ya categorizado por la pestaña Chase Bank. Se toman las filas con Detalle "DEPOSITO"/"DEPOSITO GETTEL" (columna K) o "FOOD TRUCK"/"DEPOSITO VENTA ICE" (columna S), sumadas por día.</p>
-  <form method="post" action="{{ url_for('caja_chase') }}" enctype="multipart/form-data" class="needs-shared-master ajax-process-form chain-master-result">
-    <input type="file" name="master_file" class="hidden-master-mirror" style="display:none">
-    <label class="muted">Extracto de Chase (ya categorizado)</label>
+  <form method="post" action="{{ url_for('caja_procesar') }}" enctype="multipart/form-data" class="ajax-process-form">
+    <h2>Excel Cierre</h2>
+    <input type="file" name="master_file" id="caja-master-file" accept=".xlsx,.xlsm" required>
+    <button type="button" class="btn-secondary clear-file-btn" data-target="caja-master-file" style="margin-top: 10px;">Limpiar</button>
+
+    <h2 style="margin-top: 22px;">Chase</h2>
+    <p class="muted">Extracto de Chase ya categorizado por la pestaña Chase Bank. Se toman las filas con Detalle "DEPOSITO"/"DEPOSITO GETTEL" o "FOOD TRUCK"/"DEPOSITO VENTA ICE", sumadas por día.</p>
     <input type="file" name="chase_file" id="caja-chase-file" accept=".xlsx,.xlsm" required>
-    <div class="form-actions">
-      <button type="submit">Procesar</button>
-      <button type="button" class="btn-secondary clear-file-btn" data-target="caja-chase-file">Limpiar</button>
-    </div>
-  </form>
-</div>
+    <button type="button" class="btn-secondary clear-file-btn" data-target="caja-chase-file" style="margin-top: 10px;">Limpiar</button>
 
-<div class="card">
-  <h2>Lottery → N (Cuenta Final)</h2>
-  <p class="muted">Excel de Lottery (columna X, "CUENTA FINAL"), matcheado por la fecha real de cada fila (columna B).</p>
-  <form method="post" action="{{ url_for('caja_lottery') }}" enctype="multipart/form-data" class="needs-shared-master ajax-process-form chain-master-result">
-    <input type="file" name="master_file" class="hidden-master-mirror" style="display:none">
-    <label class="muted">Excel de Lottery</label>
+    <h2 style="margin-top: 22px;">Lottery</h2>
+    <p class="muted">Excel de Lottery matcheado por la fecha real de cada fila.</p>
     <input type="file" name="lottery_file" id="caja-lottery-file" accept=".xlsx,.xlsm" required>
-    <div class="form-actions">
+    <button type="button" class="btn-secondary clear-file-btn" data-target="caja-lottery-file" style="margin-top: 10px;">Limpiar</button>
+
+    <div class="form-actions" style="margin-top: 22px;">
       <button type="submit">Procesar</button>
-      <button type="button" class="btn-secondary clear-file-btn" data-target="caja-lottery-file">Limpiar</button>
     </div>
   </form>
 </div>

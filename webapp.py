@@ -34,7 +34,7 @@ from chase_rules import (
     list_display_rules as list_chase_display_rules,
     process_chase_categorization,
 )
-from caja import apply_chase_deposits, apply_lottery_cuenta_final
+from caja import apply_chase_and_lottery
 from cmv_costo import update_master_costo_todos_bulk
 from cupones_append import (
     MonthlyReportFullyDuplicateError,
@@ -1392,72 +1392,61 @@ def caja():
     return render_template("caja.html", **THEME_BY_KEY["caja"])
 
 
-@app.route("/caja/chase", methods=["POST"])
-def caja_chase():
+@app.route("/caja/procesar", methods=["POST"])
+def caja_procesar():
     master_upload = request.files.get("master_file")
     chase_upload = request.files.get("chase_file")
+    lottery_upload = request.files.get("lottery_file")
     if master_upload is None or not master_upload.filename:
         return _error_response("Seleccioná el Excel Cierre.")
     if chase_upload is None or not chase_upload.filename:
         return _error_response("Seleccioná el Excel de Chase ya categorizado.")
-
-    try:
-        workdir = _new_workspace_dir()
-        master_path, master_filename = _save_upload_to_workspace(master_upload, workdir=workdir)
-        chase_path, _chase_filename = _save_upload_to_workspace(chase_upload, workdir=workdir)
-        temp_path, summary = apply_chase_deposits(master_path, chase_path)
-    except Exception as exc:
-        return _error_response(f"Error: {exc}")
-
-    notice_parts = []
-    if summary["deposits_unmatched"]:
-        notice_parts.append(
-            "Depósitos sin fecha en CAJA (no se cargaron): "
-            + _format_date_amounts(summary["deposits_unmatched"])
-        )
-    if summary["food_ice_unmatched"]:
-        notice_parts.append(
-            "Food Truck/Hielo sin fecha en CAJA (no se cargaron): "
-            + _format_date_amounts(summary["food_ice_unmatched"])
-        )
-
-    return _success_response(
-        temp_path, master_filename, notice=" ".join(notice_parts) or None, notice_level="error"
-    )
-
-
-@app.route("/caja/lottery", methods=["POST"])
-def caja_lottery():
-    master_upload = request.files.get("master_file")
-    lottery_upload = request.files.get("lottery_file")
-    if master_upload is None or not master_upload.filename:
-        return _error_response("Seleccioná el Excel Cierre.")
     if lottery_upload is None or not lottery_upload.filename:
         return _error_response("Seleccioná el Excel de Lottery.")
 
     try:
         workdir = _new_workspace_dir()
         master_path, master_filename = _save_upload_to_workspace(master_upload, workdir=workdir)
+        chase_path, _chase_filename = _save_upload_to_workspace(chase_upload, workdir=workdir)
         lottery_path, _lottery_filename = _save_upload_to_workspace(lottery_upload, workdir=workdir)
-        temp_path, summary = apply_lottery_cuenta_final(master_path, lottery_path)
+        temp_path, summary = apply_chase_and_lottery(master_path, chase_path, lottery_path)
     except Exception as exc:
         return _error_response(f"Error: {exc}")
 
-    notice_parts = []
-    if summary["unmatched"]:
-        notice_parts.append(
-            "Fechas de Lottery sin fila en CAJA (no se cargaron): "
-            + _format_date_amounts(summary["unmatched"])
+    # Los 4 posibles son "error" -- algo que el usuario tiene que revisar o
+    # cargar a mano, el dato no quedó reflejado en ningún lado. El caso
+    # esperable de todos los meses (el bloque de 7 días del mes vecino que
+    # el Lottery siempre trae, ver "Módulo Mes Nuevo") ya ni siquiera llega
+    # acá -- se filtra en caja.py: apply_lottery_cuenta_final antes de armar
+    # el resumen, así que si "lottery_unmatched" tiene algo, es un día del
+    # mes de este Cierre que de verdad no encontró fila.
+    error_parts = []
+    if summary["deposits_unmatched"]:
+        error_parts.append(
+            "Depósitos sin fecha en CAJA (no se cargaron): "
+            + _format_date_amounts(summary["deposits_unmatched"])
+        )
+    if summary["food_ice_unmatched"]:
+        error_parts.append(
+            "Food Truck/Hielo sin fecha en CAJA (no se cargaron): "
+            + _format_date_amounts(summary["food_ice_unmatched"])
+        )
+    if summary["lottery_unmatched"]:
+        error_parts.append(
+            "Fechas de Lottery del mes de este Cierre sin fila en CAJA (no se cargaron): "
+            + _format_date_amounts(summary["lottery_unmatched"])
         )
     if summary["missing_cached_value"]:
         dates_str = ", ".join(d.strftime("%d/%m") for d in sorted(summary["missing_cached_value"]))
-        notice_parts.append(
+        error_parts.append(
             "Días sin CUENTA FINAL calculada en el Lottery (abrilo y guardalo en Excel para "
             f"que recalcule las fórmulas, después volvé a intentar): {dates_str}"
         )
 
+    notice_parts = error_parts
+    notice_level = "error" if error_parts else "warning"
     return _success_response(
-        temp_path, master_filename, notice=" ".join(notice_parts) or None, notice_level="error"
+        temp_path, master_filename, notice=" ".join(notice_parts) or None, notice_level=notice_level
     )
 
 
