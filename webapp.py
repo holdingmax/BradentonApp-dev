@@ -58,6 +58,7 @@ from mes_nuevo import prepare_next_month, prepare_next_month_lottery
 from monthly_sales import process_monthly_sales
 from proveedores import append_supplier_invoices, append_supplier_payments
 from reporte_diario import process_lottery, process_reporte_diario, process_store_info
+from balance_mensual import replace_mayor_sheets
 
 def _load_or_create_secret_key():
     """
@@ -218,6 +219,7 @@ _ICON_TRUCK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke
 _ICON_REGISTER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="10" width="18" height="10" rx="1"/><path d="M6 10V7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v3"/><path d="M9 15h6"/></svg>'
 _ICON_CHECKLIST = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6a1 1 0 0 1 1 1v1H8V4a1 1 0 0 1 1-1z"/><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M8.5 12.5l2 2 4-4"/></svg>'
 _ICON_REFRESH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15.3-6.4L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.3 6.4L3 16"/><path d="M3 21v-5h5"/></svg>'
+_ICON_SCALE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M8 21h8"/><path d="M5 7h14"/><path d="M5 7l-3.5 6.5a3.2 3.2 0 0 0 6.4 0z"/><path d="M19 7l-3.5 6.5a3.2 3.2 0 0 0 6.4 0z"/></svg>'
 
 TOOLS = [
     {
@@ -299,6 +301,16 @@ TOOLS = [
         "description": "Depósitos Chase y Cuenta Final Lottery hacia las columnas K/N/S de CAJA.",
         "accent": "#EA580C",
         "accent_soft": "#FCE3D2",
+    },
+    {
+        "key": "balance_mensual",
+        "code": "BM",
+        "icon": _ICON_SCALE,
+        "label": "Balance Mensual",
+        "url": "/balance-mensual",
+        "description": "Reemplaza el Mayor de las cuentas simples del Excel de Balance del mes (Adm Fees, Seguros, etc.).",
+        "accent": "#78350F",
+        "accent_soft": "#F5E4CE",
     },
 ]
 
@@ -1499,6 +1511,45 @@ def caja_procesar():
     notice_level = "error" if error_parts else "warning"
     return _success_response(
         temp_path, master_filename, notice=" ".join(notice_parts) or None, notice_level=notice_level
+    )
+
+
+@app.route("/balance-mensual")
+def balance_mensual():
+    return render_template("balance_mensual.html", **THEME_BY_KEY["balance_mensual"])
+
+
+@app.route("/balance-mensual/procesar", methods=["POST"])
+def balance_mensual_procesar():
+    balance_upload = request.files.get("balance_file")
+    mayor_uploads = request.files.getlist("mayor_files")
+    if balance_upload is None or not balance_upload.filename:
+        return _error_response("Seleccioná el Excel de Balance del mes.")
+    if not any(upload and upload.filename for upload in mayor_uploads):
+        return _error_response("Seleccioná uno o más Mayores para reemplazar.")
+
+    try:
+        workdir = _new_workspace_dir()
+        balance_path, balance_filename = _save_upload_to_workspace(balance_upload, workdir=workdir)
+        mayor_paths = _save_uploads_to_workspace(mayor_uploads, workdir=workdir)
+        temp_path, summary = replace_mayor_sheets(balance_path, mayor_paths)
+    except Exception as exc:
+        return _error_response(f"Error: {exc}")
+
+    if temp_path is None:
+        return _error_response("Ninguno de los Mayores subidos corresponde a una hoja soportada todavía.")
+
+    notice_parts = []
+    if summary["unsupported"]:
+        names = ", ".join(sorted(set(summary["unsupported"])))
+        notice_parts.append(f"Hoja(s) todavía sin soporte automático (cargalas a mano): {names}.")
+    if summary["unmatched"]:
+        notice_parts.append(
+            f"{len(summary['unmatched'])} Mayor(es) subido(s) no corresponden a ninguna cuenta conocida -- revisá que sean los archivos correctos."
+        )
+
+    return _success_response(
+        temp_path, balance_filename, notice=" ".join(notice_parts) or None, notice_level="warning"
     )
 
 

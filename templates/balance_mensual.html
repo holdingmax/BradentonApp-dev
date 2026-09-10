@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block crumbs %}
+<nav class="crumbs"><span class="current">Balance Mensual</span></nav>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <span class="eyebrow">Herramientas</span>
+  <h1>Balance Mensual</h1>
+  <p class="page-subtitle">Reemplaza, en el Excel de Balance del mes, el contenido de las hojas que se completan pegando el Mayor de una cuenta contable — subí el Balance y uno o más Mayores juntos, cada uno se identifica solo por su propia línea "Cuenta: ...".</p>
+</div>
+
+<div class="card">
+  <h2>Archivos</h2>
+  <p class="muted">Por ahora soporta: reemplazo directo en Adm Fees, Seguros, Com y Gtos Bcarios, Com Lottery, Alq Food Truck y Sale tax; reemplazo con composición de saldo pendiente en 2.J.H. WILLIAMS OIL y pintado de depósitos/gastos en Caja; y pegado del mes nuevo (sin reemplazar los anteriores) en Otros Gtos y Reparaciones. El resto de las hojas del Balance se van a ir sumando más adelante.</p>
+  <form method="post" action="{{ url_for('balance_mensual_procesar') }}" enctype="multipart/form-data" class="ajax-process-form">
+    <label class="muted">Excel de Balance (Bce ...)</label>
+    <input type="file" name="balance_file" id="balance-mensual-file" accept=".xlsx" required>
+    <button type="button" class="btn-secondary clear-file-btn" data-target="balance-mensual-file" style="margin-top: 10px;">Limpiar</button>
+
+    <h2 style="margin-top: 22px;">Mayores a reemplazar</h2>
+    <p class="muted">Elegí uno o varios Mayores juntos (.xls o .xlsx) — no hace falta indicar a mano a qué hoja va cada uno.</p>
+    <input type="file" name="mayor_files" id="balance-mensual-mayores" accept=".xls,.xlsx" multiple required>
+    <button type="button" class="btn-secondary clear-file-btn" data-target="balance-mensual-mayores" style="margin-top: 10px;">Limpiar</button>
+
+    <div class="form-actions" style="margin-top: 22px;">
+      <button type="submit">Procesar</button>
+    </div>
+  </form>
+</div>
+{% endblock %}
