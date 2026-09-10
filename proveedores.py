@@ -1353,6 +1353,83 @@ def _extract_signarama_invoice(pdf_path):
     return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
 
 
+def _extract_skyharvest_invoice(pdf_path):
+    """
+    SkyHarvest USA LLC -- factura fotografiada (CamScanner), casi siempre
+    con el propio cheque de pago grapado debajo en la misma página (se
+    ignora, igual que cualquier otro cheque bundleado). El N° ("Invoice
+    {n}") y el total leen limpio del documento en la única muestra vista.
+
+    Trampa real de fecha: el documento trae DOS fechas bien distintas --
+    "DATE" (fecha de generación de la factura, ej. 08/25/2026) y "SHIP
+    DATE" (fecha real de entrega, ej. 09/01/2026). Se usa SHIP DATE: el
+    pie de la factura dice "COD" (se paga contra entrega) y el cheque
+    adjunto está fechado el mismo día que SHIP DATE, no que DATE -- y
+    SHIP DATE es además la fecha que ya trae el nombre de archivo
+    ("Invoice {N} {DD.MM.YYYY}.pdf", mismo formato que Flori-Gas/LMT). Se
+    cruzan ambas fuentes cuando el nombre de archivo tiene ese formato, y
+    se falla si no coinciden -- si el nombre de archivo no lo tiene, se
+    seguiría confiando solo en lo leído del documento.
+
+    El monto sale de "PLEASE PAY" (header, junto a DATE/DUE DATE) -- en la
+    única muestra vista, la caja "TOTAL DUE" del pie (mismo importe,
+    fondo oscuro igual que PLEASE PAY) sale garabateada por el OCR
+    ("$332 39562" en vez de "$323.62"), así que no se usa como ancla
+    primaria. Como respaldo, si no aparece "PLEASE PAY" se usa el
+    "TOTAL" del resumen de renglones (nunca "SUBTOTAL": ancla con \\b para
+    no matchear adentro de esa palabra).
+    """
+    _ensure_pdfplumber()
+    _ensure_pytesseract()
+    with pdfplumber.open(pdf_path) as pdf:
+        image = _extract_page_image(pdf.pages[0])
+    if image is None:
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se encontró la imagen escaneada de la factura SkyHarvest."
+        )
+    text = pytesseract.image_to_string(image)
+
+    invoice_match = re.search(r"Invoice\s+(\d+)", text, re.IGNORECASE)
+    ship_date_match = re.search(r"SHIP DATE[\s\S]{0,40}?(\d{1,2}/\d{1,2}/\d{4})", text, re.IGNORECASE)
+    amount_match = re.search(r"PLEASE\s*PAY\D{0,15}?\$?\s*([\d,]+\.\d{2})", text, re.IGNORECASE)
+    if not amount_match:
+        amount_match = re.search(r"\bTOTAL\s+\$?\s*([\d,]+\.\d{2})", text, re.IGNORECASE)
+
+    if not (invoice_match and ship_date_match and amount_match):
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha de envío/total del PDF de "
+            "SkyHarvest."
+        )
+
+    invoice_no = int(invoice_match.group(1))
+    invoice_date = datetime.strptime(ship_date_match.group(1), "%m/%d/%Y")
+    amount = float(amount_match.group(1).replace(",", ""))
+
+    filename_match = re.search(
+        r"Invoice\s+(\d+)\s+(\d{1,2})\.(\d{1,2})\.(\d{4})",
+        os.path.basename(pdf_path),
+        re.IGNORECASE,
+    )
+    if filename_match:
+        filename_invoice_no = int(filename_match.group(1))
+        day, month, year = filename_match.group(2), filename_match.group(3), filename_match.group(4)
+        filename_date = datetime(int(year), int(month), int(day))
+        if filename_invoice_no != invoice_no:
+            raise ValueError(
+                f"{os.path.basename(pdf_path)}: el N° de factura leído del documento ({invoice_no}) "
+                f"no coincide con el del nombre de archivo ({filename_invoice_no}) -- revise cuál es "
+                "el correcto y cárguela manualmente."
+            )
+        if filename_date.date() != invoice_date.date():
+            raise ValueError(
+                f"{os.path.basename(pdf_path)}: la fecha de envío leída del documento "
+                f"({invoice_date:%d/%m/%Y}) no coincide con la fecha del nombre de archivo "
+                f"({filename_date:%d/%m/%Y}) -- revise cuál es la correcta y cárguela manualmente."
+            )
+
+    return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
+
+
 # ---- Coca-Cola y Pepsi: un PDF puede traer más de una factura ----
 #
 # A diferencia de los 22 proveedores de arriba (siempre 1 PDF = 1 factura),
@@ -1917,6 +1994,13 @@ SUPPLIER_REGISTRY = {
         "resumen_label": "SIGNARAMA",
         "detect": lambda text: "bradentonsigns" in text.lower(),
         "extract": _extract_signarama_invoice,
+    },
+    "skyharvest": {
+        "label": "SkyHarvest USA LLC",
+        "sheet_name": "SKY",
+        "resumen_label": "SKY",
+        "detect": lambda text: "skyharvest" in text.lower(),
+        "extract": _extract_skyharvest_invoice,
     },
     "coca": {
         "label": "Coca-Cola Beverages Florida LLC",
