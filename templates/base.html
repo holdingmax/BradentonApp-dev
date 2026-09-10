@@ -60,7 +60,7 @@
       color: var(--text);
       -webkit-font-smoothing: antialiased;
     }
-    a { color: inherit; }
+    a { color: inherit; cursor: default; }
 
     /* ---------- Header ---------- */
     header.topbar {
@@ -161,9 +161,12 @@
       color: var(--text-muted-on-brand);
       padding: 6px 12px;
       border-radius: 999px;
+      display: inline-block;
+      transition: transform 0.08s ease;
     }
     .section-switch-item:hover { color: var(--text-on-brand); }
     .section-switch-item.active { color: var(--text-on-brand); background: var(--surface-alt); }
+    .section-switch-item:active { transform: scale(0.95); }
 
     .topbar-left { grid-column: 1; justify-self: start; min-width: 0; margin-left: -14px; display: flex; align-items: center; flex-wrap: wrap; row-gap: 6px; overflow: hidden; }
 
@@ -226,8 +229,10 @@
       border-radius: 8px;
       text-decoration: none;
       color: var(--text);
+      transition: transform 0.08s ease;
     }
     a.search-result-item:hover, a.search-result-item.highlighted { background: var(--surface-alt); }
+    a.search-result-item:active { transform: scale(0.98); }
     .search-result-badge {
       width: 30px;
       height: 30px;
@@ -263,7 +268,7 @@
       border-left: 1px solid var(--border);
       border-radius: 0;
       padding: 0 24px 0 16px;
-      cursor: pointer;
+      cursor: default;
       color: var(--text-on-brand);
       font: inherit;
       font-size: 13px;
@@ -314,8 +319,10 @@
       border-radius: 6px;
       font-size: 13px;
       color: var(--text-soft);
+      transition: transform 0.08s ease;
     }
     a.account-dropdown-item:hover { background: var(--surface-alt); color: var(--text); }
+    a.account-dropdown-item:active { transform: scale(0.97); }
 
     /* ---------- Layout ---------- */
     main {
@@ -373,6 +380,7 @@
       box-shadow: var(--shadow-md);
       transform: translateY(-1px);
     }
+    a.tool-card:active { transform: scale(0.98); }
     .tool-card-badge {
       min-width: 42px;
       height: 42px;
@@ -459,11 +467,12 @@
       border-radius: 8px;
       font-weight: 700;
       font-size: 14px;
-      cursor: pointer;
+      cursor: default;
       margin-top: 18px;
-      transition: filter 0.12s ease;
+      transition: filter 0.12s ease, transform 0.08s ease;
     }
     button:hover { filter: brightness(0.92); }
+    button:not(:disabled):active { transform: scale(0.96); }
     button:disabled { opacity: 0.45; cursor: not-allowed; filter: none; }
     button.btn-secondary {
       background: var(--surface-alt);
@@ -564,20 +573,24 @@
               <div class="name">{{ current_user.id if current_user.is_authenticated else "Sin iniciar sesión" }}</div>
               <div class="hint">{{ "Administrador" if current_user.is_authenticated and current_user.is_admin else "Bradenton Gas Station USA LLC" }}</div>
             </div>
+            <a class="account-dropdown-item" href="{{ url_for('manual') }}" style="text-decoration: none;">Manual de Usuario</a>
             {% if current_user.is_authenticated and current_user.is_admin %}
-            <a class="account-dropdown-item" href="{{ url_for('admin_users') }}" style="text-decoration: none; cursor: pointer;">Gestionar usuarios</a>
+            <a class="account-dropdown-item" href="{{ url_for('admin_users') }}" style="text-decoration: none;">Gestionar usuarios</a>
             {% endif %}
-            <a class="account-dropdown-item" href="{{ url_for('perfil_password') }}" style="text-decoration: none; cursor: pointer;">Cambiar contraseña</a>
-            <a class="account-dropdown-item" href="{{ url_for('logout') }}" style="text-decoration: none; cursor: pointer;">Cerrar sesión</a>
+            <a class="account-dropdown-item" href="{{ url_for('perfil_password') }}" style="text-decoration: none;">Cambiar contraseña</a>
+            <a class="account-dropdown-item" href="{{ url_for('logout') }}" style="text-decoration: none;">Cerrar sesión</a>
           </div>
         </div>
       </div>
     </div>
   </header>
-  <main>
+  <main class="{% block main_class %}{% endblock %}">
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% for category, message in messages %}
-        <div class="flash-{{ category }}">{{ message }}</div>
+        <div class="flash-{{ category }}" style="display:flex; justify-content:space-between; align-items:flex-start; gap:14px;">
+          <div>{{ message }}</div>
+          <button type="button" aria-label="Cerrar aviso" onclick="this.parentElement.style.display='none';" style="background:none;border:none;font-size:18px;line-height:1;flex-shrink:0;color:inherit;padding:0;">×</button>
+        </div>
       {% endfor %}
     {% endwith %}
     <div id="global-notice" style="display:none;"></div>
@@ -871,7 +884,7 @@
         closeBtn.type = 'button';
         closeBtn.setAttribute('aria-label', 'Cerrar aviso');
         closeBtn.textContent = '×';
-        closeBtn.style.cssText = 'background:none;border:none;cursor:pointer;font-size:18px;line-height:1;flex-shrink:0;color:inherit;padding:0;';
+        closeBtn.style.cssText = 'background:none;border:none;font-size:18px;line-height:1;flex-shrink:0;color:inherit;padding:0;';
         closeBtn.addEventListener('click', hideNotice);
         box.appendChild(closeBtn);
       }
