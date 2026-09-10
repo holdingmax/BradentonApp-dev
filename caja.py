@@ -31,6 +31,7 @@ CAJA_SHEET_NAME = "CAJA"
 CAJA_DATA_START_ROW = 4
 CAJA_COL_DATE = 1  # A — Fecha del día de negocio (la que se usa para matchear)
 CAJA_COL_CHASE_DEPOSITS = 11  # K
+CAJA_COL_EXPENSES_CASH = 13  # M — gastos pagados con caja (cada celda con un comentario del proveedor/persona pagada)
 CAJA_COL_LOTTERY = 14  # N
 CAJA_COL_FOOD_ICE = 19  # S
 CAJA_COL_FOOD_ICE_LABEL = 20  # T — de qué se trata el importe de S (Food Truck / ICE MACHINE)

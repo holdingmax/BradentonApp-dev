@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block crumbs %}
+<nav class="crumbs"><span class="current">Caja</span></nav>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <span class="eyebrow">Controles</span>
+  <h1>Caja</h1>
+  <p class="page-subtitle">Cruza la hoja CAJA del Excel Cierre contra el Mayor de la cuenta Chase Bank (Ice Machine / Food Truck) y el Mayor de la cuenta Caja.</p>
+</div>
+
+<div class="card">
+  <h2>Archivos del período</h2>
+  <p class="muted">No se descarga ni se modifica nada — solo se lee y se muestra el resultado acá abajo. El período se toma de la propia hoja CAJA; los dos Mayores deberían cubrir ese mismo mes (línea "Desde: ... Hasta: ..." de cada uno).</p>
+  <form method="post" enctype="multipart/form-data">
+    <label class="muted">Excel Cierre</label>
+    <input type="file" name="cierre_file" accept=".xlsx,.xlsm" required>
+    <label class="muted">Mayor de la cuenta Chase Bank (.xls o .xlsx)</label>
+    <input type="file" name="mayor_chase_file" accept=".xls,.xlsx" required>
+    <label class="muted">Mayor de la cuenta Caja (.xls o .xlsx)</label>
+    <input type="file" name="mayor_caja_file" accept=".xls,.xlsx" required>
+    <div class="form-actions">
+      <button type="submit">Verificar</button>
+    </div>
+  </form>
+</div>
+
+{% if result %}
+<div class="card">
+  <h2>Resultado — {{ "%02d"|format(result.period_month) }}/{{ result.period_year }}</h2>
+
+  {% if result.period_warnings %}
+  {% for warning in result.period_warnings %}
+  <div class="flash-warning" style="margin-bottom: 10px;">{{ warning }}</div>
+  {% endfor %}
+  {% endif %}
+
+  {% if result.ambiguous_food_ice_days %}
+  <div class="flash-warning" style="margin-bottom: 10px;">Día(s) con Food Truck e Ice Machine combinados en la misma celda de CAJA (no se pudieron separar, quedaron afuera de ambos totales): {{ result.ambiguous_food_ice_days|join(", ") }}.</div>
+  {% endif %}
+
+  <div class="caja-stat-row">
+    {% for check in result.checks %}
+    <div class="caja-stat">
+      <span class="caja-stat-label">{{ check.label }}</span>
+      <span class="caja-stat-sub">CAJA: ${{ "{:,.2f}".format(check.caja_value) }} — Mayor: ${{ "{:,.2f}".format(check.mayor_value) }}</span>
+      <span class="caja-stat-value {{ 'caja-stat-ok' if check.ok else 'caja-stat-bad' }}">${{ "{:,.2f}".format(check.diff) }}</span>
+    </div>
+    {% endfor %}
+  </div>
+
+  {% if result.all_ok %}
+  <div class="flash-success" style="margin-top: 18px;">Coincide.</div>
+  {% else %}
+  <div class="flash-warning" style="margin-top: 18px;">Atención: al menos un chequeo no coincide — revisar el detalle de gastos de abajo y, para Ice Machine/Food Truck/columna K, comparar directamente contra las filas del Mayor correspondiente.</div>
+  {% endif %}
+
+  {% if result.expense_detail %}
+  <h2 style="margin-top: 28px; margin-bottom: 14px;">Gastos en efectivo (columna M), por día</h2>
+  <div class="caja-table-wrap">
+    <table class="caja-table">
+      <thead>
+        <tr>
+          <th>Fecha</th>
+          <th>Monto</th>
+          <th>Nombre(s) del comentario</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for entry in result.expense_detail %}
+        <tr>
+          <td class="caja-col-name">{{ entry.fecha.strftime("%d/%m/%Y") if entry.fecha.strftime else entry.fecha }}</td>
+          <td>${{ "{:,.2f}".format(entry.amount) }}</td>
+          <td>
+            {% for item in entry.names %}
+            <span class="caja-name-pill {{ 'caja-name-found' if item.found else 'caja-name-missing' }}">{{ item.name or "(sin nombre)" }}</span>
+            {% endfor %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted" style="margin-top: 8px;">Verde = se encontró una fila en el Mayor de Caja cuya Descripción menciona ese nombre. Rojo = no se encontró — puede ser un gasto que falta cargar en contabilidad, o simplemente un nombre que el Mayor describe distinto.</p>
+  {% endif %}
+</div>
+
+<style>
+  .caja-stat-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px;
+    margin-top: 4px;
+  }
+  .caja-stat {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 16px 18px;
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  .caja-stat-label {
+    font-size: 12px;
+    color: var(--text-soft);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+  .caja-stat-sub {
+    font-size: 12px;
+    color: var(--text-soft);
+  }
+  .caja-stat-value {
+    font-size: 20px;
+    font-weight: 700;
+  }
+  .caja-stat-ok { color: var(--success); }
+  .caja-stat-bad { color: var(--warning); }
+
+  .caja-table-wrap {
+    overflow-x: auto;
+    margin-top: 4px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  .caja-table {
+    width: 100%;
+    min-width: 420px;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 13.5px;
+  }
+  .caja-table th,
+  .caja-table td {
+    padding: 9px 14px;
+    text-align: left;
+  }
+  .caja-table thead th {
+    background: var(--accent-soft);
+    color: var(--text);
+    font-weight: 700;
+    border-bottom: 1px solid var(--border);
+  }
+  .caja-col-name { font-weight: 600; white-space: nowrap; }
+  .caja-table tbody tr {
+    border-bottom: 1px solid var(--border);
+  }
+  .caja-table tbody tr:nth-child(even) {
+    background: var(--surface-alt);
+  }
+  .caja-name-pill {
+    display: inline-block;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 600;
+    margin: 2px 4px 2px 0;
+  }
+  .caja-name-found { background: color-mix(in srgb, var(--success) 18%, transparent); color: var(--success); }
+  .caja-name-missing { background: color-mix(in srgb, var(--warning) 18%, transparent); color: var(--warning); }
+</style>
+{% endif %}
+{% endblock %}

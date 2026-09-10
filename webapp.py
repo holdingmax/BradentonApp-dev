@@ -48,6 +48,7 @@ from gettel_toyota_parser import (
     merge_gettel_toyota_pdf_into_master,
     process_gettel_pagos,
 )
+from controles_caja import check_caja_mayores
 from controles_cierre_mensual import check_department_sales_monthly, check_store_info_monthly
 from controles_cupones import check_cupones_pending
 from controles_lottery_mensual import check_lottery_monthly
@@ -348,6 +349,16 @@ CONTROLS = [
         "description": "Cruza la Existencia Final según contabilidad contra la valuación de Chevron Category Cost Report.",
         "accent": "#059669",
         "accent_soft": "#D1FAE5",
+    },
+    {
+        "key": "caja",
+        "code": "CJ",
+        "icon": _ICON_CHECKLIST,
+        "label": "Caja",
+        "url": "/controles/caja",
+        "description": "Cruza depósitos Ice Machine/Food Truck y columna K, y gastos en efectivo (columna M), contra los Mayores de Chase y de Caja.",
+        "accent": "#EA580C",
+        "accent_soft": "#FCE3D2",
     },
 ]
 
@@ -684,6 +695,41 @@ def control_valuacion_descargar():
         flash("El archivo ya no está disponible -- volvé a correr el control de nuevo.", "error")
         return redirect(url_for("control_valuacion"))
     return send_file(path, as_attachment=True, download_name=filename)
+
+
+@app.route("/controles/caja", methods=["GET", "POST"])
+def control_caja():
+    # Mismo criterio que los otros controles: solo lectura, reporte en
+    # pantalla, sin ajax-process-form ni _success_response. A diferencia de
+    # los otros 4, esta ruta sí hace POST/Redirect/GET -- pedido explícito
+    # del usuario (2026-09-10): que al recargar la página (F5) el cuadro de
+    # comparación anterior desaparezca y quede limpia. El resultado viaja
+    # en `session` (formateado a tipos JSON simples desde controles_caja.py)
+    # y se lee con `.pop()`, así que se muestra una sola vez -- justo
+    # después de enviar el formulario -- y cualquier recarga posterior de
+    # esa misma página ya no lo encuentra.
+    if request.method == "POST":
+        cierre_upload = request.files.get("cierre_file")
+        mayor_chase_upload = request.files.get("mayor_chase_file")
+        mayor_caja_upload = request.files.get("mayor_caja_file")
+        if cierre_upload is None or not cierre_upload.filename:
+            flash("Seleccioná el Excel Cierre.", "error")
+        elif mayor_chase_upload is None or not mayor_chase_upload.filename:
+            flash("Seleccioná el Mayor de la cuenta Chase Bank.", "error")
+        elif mayor_caja_upload is None or not mayor_caja_upload.filename:
+            flash("Seleccioná el Mayor de la cuenta Caja.", "error")
+        else:
+            try:
+                workdir = _new_workspace_dir()
+                cierre_path, _cierre_filename = _save_upload_to_workspace(cierre_upload, workdir=workdir)
+                mayor_chase_path, _mayor_chase_filename = _save_upload_to_workspace(mayor_chase_upload, workdir=workdir)
+                mayor_caja_path, _mayor_caja_filename = _save_upload_to_workspace(mayor_caja_upload, workdir=workdir)
+                session["caja_control_result"] = check_caja_mayores(cierre_path, mayor_chase_path, mayor_caja_path)
+            except Exception as exc:
+                flash(f"Error: {exc}", "error")
+        return redirect(url_for("control_caja"))
+    result = session.pop("caja_control_result", None)
+    return render_template("control_caja.html", result=result, **THEME_BY_KEY["caja"])
 
 
 def _save_to_downloads_and_build_notice(output_path, summary):
