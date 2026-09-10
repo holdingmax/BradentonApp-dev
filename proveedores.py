@@ -92,6 +92,12 @@ GREEN_FILL = "FF92D050"
 YELLOW_FILL = "FFFFFF00"
 MONTH_FILL_COLORS = (GREEN_FILL, YELLOW_FILL)
 
+# Cantidad mínima de filas con el formato del "cuadro" (borde + fórmula de
+# BALANCE que arrastra el saldo) que siempre debe quedar preparada después
+# de la última fila escrita -- ver _ensure_box_buffer.
+BOX_BUFFER_ROWS = 20
+BOX_ALL_COLUMNS = tuple(range(1, 8))  # A..G, a diferencia de INVOICE_ROW_COLUMNS (que salta HABER)
+
 # Pestaña de la hoja: celeste mientras el proveedor tenga saldo pendiente
 # (le debemos), sin color cuando el saldo vuelve a 0. Mismo celeste que el
 # usuario ya venía usando a mano en algunas hojas del libro real (ej.
@@ -2097,6 +2103,66 @@ def _find_last_month_color(sheet, from_row):
     return None
 
 
+def _row_has_box_border(sheet, row):
+    border = sheet.cell(row=row, column=COL_BALANCE).border
+    return any((border.left.style, border.right.style, border.top.style, border.bottom.style))
+
+
+def _last_boxed_row(sheet, from_row):
+    """
+    Última fila, buscando desde from_row hacia abajo, que todavía tiene el
+    formato de "cuadro" del ledger (borde en la columna BALANCE) -- más
+    allá de esto no queda ninguna fila con borde ni fórmula preparada para
+    recibir una carga futura. Devuelve from_row - 1 si from_row mismo ya
+    está fuera del cuadro.
+    """
+    row = from_row
+    last = from_row - 1
+    while row <= sheet.max_row and _row_has_box_border(sheet, row):
+        last = row
+        row += 1
+    return last
+
+
+def _ensure_box_buffer(sheet, from_row):
+    """
+    Garantiza que después de from_row (ya escrito) sigan existiendo al
+    menos BOX_BUFFER_ROWS filas con el formato del "cuadro" (borde +
+    fórmula de BALANCE que arrastra el saldo) -- si el cuadro se está por
+    quedar corto, lo extiende copiando el borde de su última fila y
+    encadenando la fórmula, para que la próxima carga siempre tenga lugar
+    ya formateado esperándola en vez de aterrizar en celdas sin ningún
+    borde.
+
+    Bug real encontrado el 2026-09-09: la hoja SKY (recién agregada, poco
+    historial todavía) apenas tenía cuadro preparado hasta su propia
+    última fila real -- la primera factura cargada terminó exactamente en
+    el último renglón con borde, sin dejar nada de margen para la
+    próxima. Solo se copian borde y formato de número (nunca fuente ni
+    relleno) para no arrastrar el negrita/color propio de una fila de
+    factura hacia las filas en blanco nuevas.
+    """
+    last_boxed = _last_boxed_row(sheet, from_row)
+    available = last_boxed - from_row
+    if available >= BOX_BUFFER_ROWS:
+        return
+    for _ in range(BOX_BUFFER_ROWS - available):
+        row = last_boxed + 1
+        for col in BOX_ALL_COLUMNS:
+            ref_cell = sheet.cell(row=last_boxed, column=col)
+            new_cell = sheet.cell(row=row, column=col)
+            new_cell.border = copy(ref_cell.border)
+            new_cell.number_format = ref_cell.number_format
+        sheet.cell(
+            row=row,
+            column=COL_BALANCE,
+            value=f"=+{sheet.cell(row=last_boxed, column=COL_BALANCE).coordinate}"
+            f"+{sheet.cell(row=row, column=COL_DEBE).coordinate}"
+            f"-{sheet.cell(row=row, column=COL_HABER).coordinate}",
+        )
+        last_boxed = row
+
+
 def _compute_sheet_balance(sheet):
     """
     Suma DEBE y HABER directamente en vez de leer la fórmula de BALANCE,
@@ -2721,6 +2787,7 @@ def append_supplier_invoices(ledger_path, pdf_paths):
                 _write_invoice_row(sheet, target_row, style_row, balance_ref_row, color, invoice)
                 if needs_shift:
                     _reformulate_rows_below(sheet, target_row)
+                _ensure_box_buffer(sheet, target_row)
             except (ValueError, TypeError, AttributeError) as exc:
                 # No hay forma de deshacer limpio un insert_rows/repunteo de
                 # RESUMEN COMPRAS ya aplicado -- si la falla ocurre DESPUÉS
@@ -3223,6 +3290,7 @@ def append_supplier_payments(ledger_path, bank_path):
                 _append_payment_row(sheet, target_row, style_row, previous_balance_row, payment)
                 if needs_shift:
                     _reformulate_rows_below(sheet, target_row)
+                _ensure_box_buffer(sheet, target_row)
             except (ValueError, TypeError, AttributeError) as exc:
                 unmatched.append({"supplier": sheet_title, "detail": f"{payment['description']!r} ({sheet_title}): {exc}"})
                 continue
