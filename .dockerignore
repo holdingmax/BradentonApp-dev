@@ -1,0 +1,14 @@
+# No meter nunca datos/secretos locales dentro de la imagen si alguna vez
+# se construye a mano desde esta carpeta (un deploy real via Render clona
+# el repo de GitHub, que ya no tiene estos archivos -- esto es una segunda
+# capa de seguridad, no la única).
+__pycache__/
+*.pyc
+.git/
+.claude/
+users.json
+.flask_secret_key
+.env
+
+# Copias de prueba/scratch que no deben viajar a ningún lado.
+*.testeo.xlsx
