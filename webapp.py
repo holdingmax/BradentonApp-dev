@@ -505,8 +505,13 @@ def _open_result_for_user(path):
     la PC del usuario" en CLAUDE.md) mientras que un click real en
     "Procesar" sí lo abre.
     """
+    if os.name != "nt":
+        # os.startfile no existe fuera de Windows (Render corre Linux) --
+        # ahí no hay "abrir en Excel" posible, el navegador ya sirve la
+        # descarga igual, así que no hacemos nada.
+        return
     try:
-        os.startfile(path)  # noqa: solo se despliega en Windows
+        os.startfile(path)
     except OSError:
         pass
 
@@ -1554,12 +1559,23 @@ def balance_mensual_procesar():
 
 
 if __name__ == "__main__":
+    # Render (y cualquier plataforma similar) fija la variable de entorno
+    # PORT y espera que el proceso escuche en 0.0.0.0 -- escuchar solo en
+    # 127.0.0.1 (el default de Flask sin "host" explícito) deja el server
+    # arrancado pero inalcanzable desde afuera del contenedor. En la PC del
+    # usuario, sin PORT seteada, esto sigue exactamente igual que siempre
+    # (127.0.0.1:5000).
+    port_env = os.environ.get("PORT")
+    port = int(port_env) if port_env else 5000
+    host = "0.0.0.0" if port_env else "127.0.0.1"
+
     # El modo debug (reloader + debugger interactivo de Werkzeug) prendido
-    # por default preserva el flujo de desarrollo local de siempre -- hoy no
-    # es un riesgo real porque sin "host" explícito Flask solo escucha en
-    # 127.0.0.1 (nadie fuera de esta PC llega a la página del debugger, que
-    # permite correr código Python arbitrario desde el navegador). Pero hay
-    # que apagarlo con BRADENTON_DEBUG=0 (o no dejarlo prendido por default)
-    # antes de que esto corra en Render/Toolbox, donde sí quedaría expuesto.
-    debug_mode = os.environ.get("BRADENTON_DEBUG", "1") == "1"
-    app.run(debug=debug_mode, port=5000)
+    # por default preserva el flujo de desarrollo local de siempre -- ahí no
+    # es un riesgo real porque solo escucha en 127.0.0.1 (nadie fuera de esta
+    # PC llega a la página del debugger, que permite correr código Python
+    # arbitrario desde el navegador). Pero una vez que el host pasa a
+    # 0.0.0.0 (Render) ese mismo debugger quedaría expuesto a cualquiera, así
+    # que ahí el default cambia a apagado -- BRADENTON_DEBUG sigue pudiendo
+    # forzarlo a "1" a mano si hiciera falta debuggear ahí puntualmente.
+    debug_mode = os.environ.get("BRADENTON_DEBUG", "1" if host == "127.0.0.1" else "0") == "1"
+    app.run(debug=debug_mode, host=host, port=port)
