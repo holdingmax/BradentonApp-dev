@@ -1004,6 +1004,10 @@ def cmv_ventas():
         notice_parts.append(
             f"{len(summary['sheets_failed'])} hoja(s) de departamento no se pudieron actualizar."
         )
+    if summary.get("resumen_failed"):
+        notice_parts.append(
+            "No se pudo actualizar la hoja RESUMEN (los departamentos sí se guardaron bien)."
+        )
 
     return _success_response(
         temp_master_path,

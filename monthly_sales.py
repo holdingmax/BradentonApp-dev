@@ -1567,7 +1567,15 @@ def _inject_sales_into_master(master_path, file_paths):
             sheets_failed.append({"sheet": sheet_name, "error": str(exc)})
             continue
 
-    update_resumen_department_links(workbook)
+    # Mismo criterio de aislamiento que el loop de arriba: si la hoja RESUMEN
+    # no se encuentra (nombre inesperado en algún maestro puntual) o falla al
+    # actualizarse, no debe perderse el trabajo de los departamentos que sí
+    # se escribieron bien (bug real de aislamiento, CLAUDE.md 2026-09-11).
+    resumen_failed = None
+    try:
+        update_resumen_department_links(workbook)
+    except (ValueError, TypeError, AttributeError, KeyError) as exc:
+        resumen_failed = str(exc)
 
     temp_path = _create_temp_master_path()
     abs_temp_path = os.path.abspath(temp_path)
@@ -1578,6 +1586,7 @@ def _inject_sales_into_master(master_path, file_paths):
         "failed_files": failed_files,
         "unmapped_departments": sorted(unmapped),
         "sheets_failed": sheets_failed,
+        "resumen_failed": resumen_failed,
     }
     return temp_path, summary
 
