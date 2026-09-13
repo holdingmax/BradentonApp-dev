@@ -149,4 +149,21 @@
     font-size: 12px;
   }
 </style>
+<script>
+  // Tocar afuera de un "corregir"/"categorizar" abierto lo cierra solo, sin
+  // hacer falta tocar "Guardar" -- pedido explícito del usuario (2026-09-15):
+  // si no se hizo ningún cambio, un clic afuera alcanza para salir de la
+  // edición. El toggle nativo del propio <summary> (abrir/cerrar) no se
+  // toca -- esto solo cierra los que quedaron abiertos cuando el clic fue
+  // a otro lado (otra fila, otro control, o afuera de la tabla).
+  (function () {
+    document.addEventListener('click', function (event) {
+      document.querySelectorAll('details.chase-categorize[open]').forEach(function (el) {
+        if (!el.contains(event.target)) {
+          el.removeAttribute('open');
+        }
+      });
+    });
+  })();
+</script>
 {% endblock %}
