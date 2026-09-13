@@ -87,6 +87,14 @@ def _ensure_schema(conn):
     # "Total Sales" (impreso tal cual por el reporte, columna R) --
     # agregadas 2026-09-12, ver CLAUDE.md.
     _ensure_columns(conn, "daily_reports", {"other_amount": "REAL", "total_sales": "REAL"})
+    # Monto del departamento "LOCAL ACCT" del Department Sales Report (2026-
+    # 09-15, aclaración del usuario) -- se guarda acá, aparte de
+    # daily_report_departments, porque ese departamento NUNCA debe
+    # aparecer como una fila más (ver reporte_diario.extract_department_
+    # sales_for_day) -- este campo alimenta SOLO la categoría "Gettel" de
+    # Ventas por Departamento (ver group_department_sales/get_day_local_
+    # acct_amount/get_month_local_acct_amount).
+    _ensure_columns(conn, "daily_reports", {"local_acct_amount": "REAL"})
     conn.commit()
 
 
@@ -122,7 +130,7 @@ def _now():
     return datetime.now().isoformat(timespec="seconds")
 
 
-def replace_department_sales(report_date, records, pdf_filename=None):
+def replace_department_sales(report_date, records, pdf_filename=None, local_acct_amount=None):
     """
     Reemplaza TODO el día de golpe con lo recién leído del PDF (source=
     "ocr") -- mismo criterio que ya usa hoy la escritura del Excel
@@ -130,6 +138,12 @@ def replace_department_sales(report_date, records, pdf_filename=None):
     sea una carga vieja o una corrección manual). `records` es la lista tal
     cual la devuelve reporte_diario.extract_department_sales_for_day:
     [{"department", "count", "amount"}, ...].
+
+    `local_acct_amount` (mismo `extract_department_sales_for_day`, aparte
+    de `records`) reemplaza también el campo del mismo nombre en
+    daily_reports -- `None` si el PDF no trajo "LOCAL ACCT" ese día, para
+    que reprocesar un día que ya no lo tiene lo borre en vez de dejar un
+    valor viejo pegado.
     """
     key = _date_key(report_date)
     now = _now()
@@ -146,12 +160,13 @@ def replace_department_sales(report_date, records, pdf_filename=None):
             )
         conn.execute(
             """
-            INSERT INTO daily_reports (date, pdf_filename, updated_at) VALUES (?, ?, ?)
+            INSERT INTO daily_reports (date, pdf_filename, local_acct_amount, updated_at) VALUES (?, ?, ?, ?)
             ON CONFLICT(date) DO UPDATE SET
                 pdf_filename = COALESCE(excluded.pdf_filename, daily_reports.pdf_filename),
+                local_acct_amount = excluded.local_acct_amount,
                 updated_at = excluded.updated_at
             """,
-            (key, pdf_filename, now),
+            (key, pdf_filename, _to_float(local_acct_amount), now),
         )
         conn.commit()
     finally:
@@ -195,6 +210,23 @@ def delete_department_row(report_date, department):
             (key, department),
         )
         conn.commit()
+    finally:
+        conn.close()
+
+
+def delete_departments_for_date(report_date):
+    """
+    Borra TODOS los departamentos de un día (para poder recargarlo desde
+    cero -- pedido explícito del usuario 2026-09-15, checkbox de eliminar en
+    Ventas por Departamento). No toca Store Info de ese día -- son dos
+    extracciones independientes, mismo criterio que el resto del módulo.
+    """
+    key = _date_key(report_date)
+    conn = _connect()
+    try:
+        cur = conn.execute("DELETE FROM daily_report_departments WHERE date = ?", (key,))
+        conn.commit()
+        return cur.rowcount
     finally:
         conn.close()
 
@@ -450,6 +482,87 @@ def get_month_department_amounts(year, month, department):
     finally:
         conn.close()
     return {row["date"]: row["amount"] for row in rows}
+
+
+def get_day_local_acct_amount(report_date):
+    """
+    Monto de "LOCAL ACCT" (departamento del Department Sales Report,
+    guardado aparte -- ver replace_department_sales) para un solo día --
+    alimenta ÚNICAMENTE la categoría "Gettel" del resumen por categoría de
+    ese día (reporte_diario.group_department_sales). 0.0 si el día no tiene
+    nada guardado (nunca None, mismo criterio que get_day_gettel_amount de
+    gettel_db, que este campo reemplaza para este propósito puntual).
+    """
+    key = _date_key(report_date)
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT local_acct_amount FROM daily_reports WHERE date = ?", (key,)).fetchone()
+    finally:
+        conn.close()
+    return (row["local_acct_amount"] if row else None) or 0.0
+
+
+def get_month_local_acct_amount(year, month):
+    """Suma de "LOCAL ACCT" del mes -- alimenta la categoría "Gettel" del resumen mensual de Ventas por Departamento."""
+    prefix = f"{year:04d}-{month:02d}-"
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT SUM(local_acct_amount) AS total FROM daily_reports WHERE date LIKE ?",
+            (f"{prefix}%",),
+        ).fetchone()
+    finally:
+        conn.close()
+    return row["total"] or 0.0
+
+
+def set_local_acct_amount(report_date, amount):
+    """
+    Corrige/backfillea SOLO este campo de un día, sin tocar nada más --
+    usado para reprocesar días ya guardados antes de que este campo
+    existiera (ver replace_department_sales para el camino normal, que lo
+    reemplaza junto con el resto del día).
+    """
+    key = _date_key(report_date)
+    now = _now()
+    conn = _connect()
+    try:
+        conn.execute(
+            """
+            INSERT INTO daily_reports (date, local_acct_amount, updated_at) VALUES (?, ?, ?)
+            ON CONFLICT(date) DO UPDATE SET
+                local_acct_amount = excluded.local_acct_amount,
+                updated_at = excluded.updated_at
+            """,
+            (key, _to_float(amount), now),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_month_local_accounts(year, month):
+    """
+    {"YYYY-MM-DD": local_accounts} de Store Info para todo el mes -- usado
+    por Gettel/Toyota para cruzar contra la columna real "Local Account"
+    del Excel Gettel-Toyota (ver CLAUDE.md, corrección 2026-09-15). Este es
+    el campo chico de Store Info (sección Method of Payment Totals), NO el
+    departamento "LOCAL ACCT" del Department Sales Report -- confirmado
+    contra el Excel real (Gettel-Toyota 08.2026, columna "Local Account")
+    que sus valores coinciden EXACTOS con este campo, día por día, mientras
+    que el departamento "LOCAL ACCT" del PDF solo aparece esporádicamente
+    (cargos puntuales grandes, no una cifra diaria) y nunca coincide.
+    """
+    prefix = f"{year:04d}-{month:02d}-"
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT date, local_accounts FROM daily_reports WHERE date LIKE ? AND local_accounts IS NOT NULL",
+            (f"{prefix}%",),
+        ).fetchall()
+    finally:
+        conn.close()
+    return {row["date"]: row["local_accounts"] for row in rows}
 
 
 def list_known_departments():

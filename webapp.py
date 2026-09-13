@@ -528,7 +528,14 @@ THEME_BY_KEY = {
 # en TODAS las páginas, no solo en los índices de sección.
 @app.context_processor
 def inject_search_index():
-    return {"SEARCH_INDEX": TOOLS + CONTROLS + CARGA_DATOS_TOOLS}
+    # TOOLS (Herramientas/Excels: CMV, Gettel/Toyota, Reporte Diario, Lottery,
+    # Proveedores) se sacó de la búsqueda -- pedido explícito del usuario
+    # (2026-09-15): ya no usa ese lado para nada (solo Carga de Datos), y
+    # buscar el nombre de un módulo y tocar el resultado equivocado lo
+    # mandaba ahí sin querer, con un Excel pidiéndose de la nada. El módulo
+    # en sí sigue existiendo (alcanzable por URL directa si hiciera falta),
+    # solo se sacó de la búsqueda para no ofrecerlo por error.
+    return {"SEARCH_INDEX": CONTROLS + CARGA_DATOS_TOOLS}
 
 
 def _new_workspace_dir():
@@ -567,6 +574,87 @@ def _save_uploads_to_workspace(uploads, workdir=None):
         temp_path, _filename = _save_upload_to_workspace(upload, workdir=workdir)
         paths.append(temp_path)
     return paths
+
+
+# ---------------------------------------------------------------------------
+# Chequeo de fecha del nombre de archivo vs. la fecha leída del PDF --
+# pedido explícito del usuario (2026-09-15): "por probar intente subir
+# varios pdf con fecha de agosto y me dejo subirlos... tomar la fecha de
+# algun lado, ya sea del titulo del pdf o de la fecha dentro de la
+# factura, para evitar cargar pdf por error a un mes que no les
+# corresponda". Aplica solo donde UN archivo = UNA fecha puntual (Reporte
+# Diario, Lottery Daily Sales Report, EFT, facturas de Proveedores) -- los
+# módulos donde un solo archivo cubre todo un mes (Gettel/Toyota, CMV
+# Ventas) no tienen "la fecha equivocada" que chequear de esta forma.
+# ---------------------------------------------------------------------------
+
+_REPORTE_DIARIO_FILENAME_DATE_RE = re.compile(r"(\d{1,2})[.\-](\d{1,2})\s*$")
+_FULL_DATE_DMY_RE = re.compile(r"(?<!\d)(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2,4})(?!\d)")
+_FULL_DATE_YMD_RE = re.compile(r"(?<!\d)(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})(?!\d)")
+
+
+def _reporte_filename_day_month(filename):
+    """
+    "Close Store DD-MM.pdf" (sin año, siempre al final del nombre) -- el
+    formato ya conocido de este proyecto para Reporte Diario. Devuelve
+    (día, mes) o None si el nombre no termina en ese patrón exacto -- nunca
+    arriesga un falso positivo adivinando sobre un nombre distinto.
+    """
+    stem = os.path.splitext(filename)[0]
+    match = _REPORTE_DIARIO_FILENAME_DATE_RE.search(stem)
+    if not match:
+        return None
+    day, month = int(match.group(1)), int(match.group(2))
+    if not (1 <= day <= 31 and 1 <= month <= 12):
+        return None
+    return (day, month)
+
+
+def _filename_date_candidates(filename):
+    """
+    Cualquier fecha completa (día+mes+año) que aparezca en el nombre de
+    archivo, en cualquier separador (./-) y en cualquiera de los dos
+    órdenes (día-mes o mes-día, ya que este proyecto tiene archivos de
+    ambos estilos -- "Invoice N DD.MM.YYYY.pdf" vs. reportes de EE.UU. tipo
+    "..._8-1-2026.pdf") -- se prueban las dos lecturas y se descartan las
+    que no sean una fecha válida. Un año de 2 dígitos se interpreta como
+    20XX. Nunca produce falsos positivos sobre un N° de factura suelto
+    porque exige un separador entre los 3 grupos, no solo dígitos pegados.
+    """
+    stem = os.path.splitext(filename)[0]
+    candidates = set()
+    for match in _FULL_DATE_DMY_RE.finditer(stem):
+        a, b, y = match.groups()
+        year = int(y) if len(y) == 4 else 2000 + int(y)
+        for day, month in ((int(a), int(b)), (int(b), int(a))):
+            try:
+                candidates.add(date(year, month, day))
+            except ValueError:
+                pass
+    for match in _FULL_DATE_YMD_RE.finditer(stem):
+        y, a, b = match.groups()
+        year = int(y)
+        for day, month in ((int(a), int(b)), (int(b), int(a))):
+            try:
+                candidates.add(date(year, month, day))
+            except ValueError:
+                pass
+    return candidates
+
+
+def _filename_date_mismatch(filename, target_date):
+    """
+    True si el nombre de archivo trae una fecha completa (día+mes+año) y
+    NINGUNA coincide con `target_date` -- False si coincide alguna, o si el
+    nombre no trae ninguna fecha completa (no hay nada que chequear, se
+    deja pasar como siempre). `target_date` acepta date o datetime.
+    """
+    if hasattr(target_date, "date") and not isinstance(target_date, date):
+        target_date = target_date.date()
+    candidates = _filename_date_candidates(filename)
+    if not candidates:
+        return False
+    return target_date not in candidates
 
 
 def _is_ajax_request():
@@ -668,7 +756,16 @@ def home():
 
 @app.route("/excels")
 def excels_index():
-    return render_template("index.html", tools=TOOLS)
+    # Ya no muestra la grilla de Herramientas -- pedido explícito del
+    # usuario (2026-09-15): "el único modulo que le cargamos un excel es a
+    # chase y a CMV [y eso ya lo hace por Carga de Datos]... no hace falta"
+    # -- confirmó que no usa nada de este lado. Mismo criterio que "/" (ver
+    # home() arriba): redirige en vez de 404, para que un link/favorito
+    # viejo no se encuentre con un error -- solo deja de mostrar contenido
+    # de Excels. Los módulos en sí (TOOLS, sus rutas propias como /cmv,
+    # /reporte, etc.) no se tocaron -- si el usuario pide sacarlos también,
+    # es un pedido aparte, módulo por módulo (mismo criterio de siempre).
+    return redirect(url_for("carga_datos_index"))
 
 
 @app.route("/carga-datos")
@@ -727,42 +824,75 @@ def carga_datos_reporte_diario_subir():
     days_complete = set()
     days_partial = set()
     files_unreadable = 0
+    date_mismatches = 0
     first_date = None
 
     for pdf_path in pdf_paths:
         filename = os.path.basename(pdf_path)
+        filename_day_month = _reporte_filename_day_month(filename)
         day_date = None
         got_departments = False
         got_store_info = False
+        file_had_mismatch = False
+
+        def _check_filename_date(candidate_date):
+            # Pedido explícito del usuario (2026-09-15): el nombre de archivo
+            # "Close Store DD-MM.pdf" ya trae la fecha real -- si no
+            # coincide con la que se acaba de leer del contenido, es
+            # síntoma de haber agarrado el PDF equivocado (ej. de otro mes)
+            # -- se corta ahí en vez de guardarlo con una fecha dudosa.
+            if filename_day_month and (candidate_date.day, candidate_date.month) != filename_day_month:
+                raise ValueError(
+                    f"la fecha leída ({candidate_date.isoformat()}) no coincide con la fecha "
+                    f"del nombre de archivo ({filename_day_month[0]:02d}-{filename_day_month[1]:02d})"
+                )
 
         try:
             result = extract_department_sales_for_day(pdf_path)
-            day_date = result["date"]
-            pdf_relpath = reportes_db.store_pdf_copy(day_date, pdf_path, filename)
-            reportes_db.replace_department_sales(day_date, result["records"], pdf_filename=pdf_relpath)
+            candidate_date = result["date"]
+            _check_filename_date(candidate_date)
+            pdf_relpath = reportes_db.store_pdf_copy(candidate_date, pdf_path, filename)
+            reportes_db.replace_department_sales(
+                candidate_date, result["records"], pdf_filename=pdf_relpath,
+                local_acct_amount=result.get("local_acct_amount"),
+            )
+            day_date = candidate_date
             got_departments = True
         except Exception as exc:
+            if "no coincide con la fecha del nombre" in str(exc):
+                file_had_mismatch = True
             print(f"[carga-datos/reporte-diario] departamentos de {pdf_path}: {exc}")
 
-        try:
-            result = extract_store_info_for_day(pdf_path)
-            day_date = result["date"]
-            pdf_relpath = reportes_db.store_pdf_copy(day_date, pdf_path, filename)
-            reportes_db.upsert_store_info(day_date, result["fields"], source="ocr", pdf_filename=pdf_relpath)
-            got_store_info = True
-        except Exception as exc:
-            print(f"[carga-datos/reporte-diario] store info de {pdf_path}: {exc}")
+        if not file_had_mismatch:
+            try:
+                result = extract_store_info_for_day(pdf_path)
+                candidate_date = result["date"]
+                _check_filename_date(candidate_date)
+                pdf_relpath = reportes_db.store_pdf_copy(candidate_date, pdf_path, filename)
+                reportes_db.upsert_store_info(candidate_date, result["fields"], source="ocr", pdf_filename=pdf_relpath)
+                day_date = candidate_date
+                got_store_info = True
+            except Exception as exc:
+                if "no coincide con la fecha del nombre" in str(exc):
+                    file_had_mismatch = True
+                print(f"[carga-datos/reporte-diario] store info de {pdf_path}: {exc}")
 
-        try:
-            fields = extract_lottery_department_fields_from_pdf(pdf_path)
-            lottery_relpath = lottery_db.store_pdf_copy(fields["report_date"], pdf_path, filename)
-            lottery_db.upsert_department_fields(
-                fields["report_date"], fields["online_count"], fields["online_net_sales"],
-                fields["skoff_count"], fields["skoff_net_sales"], source="ocr", pdf_filename=lottery_relpath,
-            )
-        except Exception as exc:
-            print(f"[carga-datos/reporte-diario] ONLINE/SKOFF de {pdf_path}: {exc}")
+        if not file_had_mismatch:
+            try:
+                fields = extract_lottery_department_fields_from_pdf(pdf_path)
+                _check_filename_date(fields["report_date"])
+                lottery_relpath = lottery_db.store_pdf_copy(fields["report_date"], pdf_path, filename)
+                lottery_db.upsert_department_fields(
+                    fields["report_date"], fields["online_count"], fields["online_net_sales"],
+                    fields["skoff_count"], fields["skoff_net_sales"], source="ocr", pdf_filename=lottery_relpath,
+                )
+            except Exception as exc:
+                print(f"[carga-datos/reporte-diario] ONLINE/SKOFF de {pdf_path}: {exc}")
 
+        if file_had_mismatch:
+            date_mismatches += 1
+            files_unreadable += 1
+            continue
         if day_date is None:
             files_unreadable += 1
             continue
@@ -781,8 +911,13 @@ def carga_datos_reporte_diario_subir():
     if days_partial:
         dates_txt = ", ".join(sorted(d.isoformat() for d in days_partial))
         parts.append(f"{len(days_partial)} día(s) quedaron incompletos ({dates_txt}) — completalos a mano.")
-    if files_unreadable:
-        parts.append(f"{files_unreadable} archivo(s) no se pudieron leer en absoluto.")
+    if date_mismatches:
+        parts.append(
+            f"{date_mismatches} archivo(s) rechazados: la fecha real del PDF no coincide con la del "
+            "nombre de archivo — revisá que no sea de otro mes."
+        )
+    if files_unreadable - date_mismatches:
+        parts.append(f"{files_unreadable - date_mismatches} archivo(s) no se pudieron leer en absoluto.")
 
     if not parts:
         flash("No se pudo guardar nada de este lote.", "error")
@@ -817,10 +952,19 @@ def carga_datos_lottery_subir():
     pdf_paths = _save_uploads_to_workspace(pdf_uploads)
     saved_dates = []
     failed = 0
+    date_mismatches = 0
     for pdf_path in pdf_paths:
+        filename = os.path.basename(pdf_path)
         try:
             fields = extract_lottery_receipt_fields_from_sales_report(pdf_path)
-            filename = os.path.basename(pdf_path)
+            # Mismo chequeo que Reporte Diario (2026-09-15): estos PDF del
+            # portal de Lottery ya traen su propia fecha en el nombre
+            # (ej. "..._8-1-2026.pdf") -- si no coincide con la que se leyó
+            # del contenido, se rechaza en vez de guardarlo bajo una fecha
+            # dudosa.
+            if _filename_date_mismatch(filename, fields["report_date"]):
+                date_mismatches += 1
+                raise ValueError("la fecha leída no coincide con la del nombre de archivo")
             pdf_relpath = lottery_db.store_pdf_copy(fields["report_date"], pdf_path, filename)
             lottery_db.upsert_sales_report_fields(fields["report_date"], fields, source="ocr", pdf_filename=pdf_relpath)
             saved_dates.append(fields["report_date"])
@@ -831,8 +975,13 @@ def carga_datos_lottery_subir():
     parts = []
     if saved_dates:
         parts.append(f"{len(saved_dates)} día(s) guardado(s).")
-    if failed:
-        parts.append(f"{failed} archivo(s) no se pudieron leer.")
+    if date_mismatches:
+        parts.append(
+            f"{date_mismatches} archivo(s) rechazados: la fecha real no coincide con la del "
+            "nombre de archivo — revisá que no sea de otro mes."
+        )
+    if failed - date_mismatches:
+        parts.append(f"{failed - date_mismatches} archivo(s) no se pudieron leer.")
     if not parts:
         flash("No se pudo guardar nada de este lote.", "error")
     else:
@@ -1680,7 +1829,10 @@ def _persist_reporte_diario_departments(pdf_paths, progress_callback=None):
         try:
             filename = os.path.basename(pdf_path)
             pdf_relpath = reportes_db.store_pdf_copy(result["date"], pdf_path, filename)
-            reportes_db.replace_department_sales(result["date"], result["records"], pdf_filename=pdf_relpath)
+            reportes_db.replace_department_sales(
+                result["date"], result["records"], pdf_filename=pdf_relpath,
+                local_acct_amount=result.get("local_acct_amount"),
+            )
         except Exception as exc:
             print(f"[reportes_db] no se pudo guardar departamentos de {pdf_path}: {exc}")
 
@@ -1962,12 +2114,12 @@ def reporte_historial():
     # a "Ver/editar". Solo las categorías con algo cargado ese día.
     for day in overview:
         day_groups, _unmatched = group_department_sales(
-            day["department_detail"], gettel_amount=gettel_db.get_day_gettel_amount(day["date"])
+            day["department_detail"], local_acct_amount=reportes_db.get_day_local_acct_amount(day["date"])
         )
         day["category_groups"] = [g for g in day_groups if g["amount"] or g["count"]]
     department_totals = reportes_db.get_month_department_totals(year, month)
     department_groups, department_unmatched = group_department_sales(
-        department_totals, gettel_amount=gettel_db.get_month_gettel_amount(year, month)
+        department_totals, local_acct_amount=reportes_db.get_month_local_acct_amount(year, month)
     )
     prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
     next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
@@ -1988,6 +2140,31 @@ def reporte_historial():
         today_iso=today.isoformat(),
         **THEME_BY_KEY["reporte"],
     )
+
+
+@app.route("/reporte/historial/eliminar", methods=["POST"])
+def reporte_historial_eliminar():
+    """
+    Elimina Ventas por Departamento de uno o más días seleccionados con
+    checkbox -- pedido explícito del usuario (2026-09-15), para poder
+    borrar días que quedaron mal (ej. con el nombre viejo "GETTEL/TOYOTA")
+    y volver a cargarlos limpio. Nunca toca Store Info de esos días -- son
+    dos extracciones independientes, mismo criterio que el resto del
+    módulo.
+    """
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    selected_dates = request.form.getlist("dates")
+    deleted = 0
+    for date_str in selected_dates:
+        rows = reportes_db.delete_departments_for_date(date_str)
+        if rows:
+            deleted += 1
+    if deleted:
+        flash(f"{deleted} día(s) de Ventas por Departamento eliminados.", "success")
+    else:
+        flash("No se seleccionó ningún día con departamentos cargados.", "error")
+    return redirect(url_for("reporte_historial", year=year, month=month))
 
 
 @app.route("/reporte/store-info/historial")
@@ -2061,7 +2238,7 @@ def reporte_dia(report_date):
 
     day = reportes_db.get_day(parsed_date)
     department_groups, department_unmatched = group_department_sales(
-        day["departments"], gettel_amount=gettel_db.get_day_gettel_amount(parsed_date)
+        day["departments"], local_acct_amount=reportes_db.get_day_local_acct_amount(parsed_date)
     )
     return render_template(
         "reporte_dia.html",
@@ -2248,6 +2425,7 @@ def carga_datos_eft_subir():
     missing_ddc_total = 0
     skipped_total = 0
     failed = 0
+    date_mismatches = 0
     last_saved_date = None
 
     for pdf_upload in pdf_uploads:
@@ -2256,6 +2434,20 @@ def carga_datos_eft_subir():
             header_data, paid_invoices, credit_coupons, skipped_coupon_rows = extract_eft_data(pdf_path)
             if not credit_coupons:
                 raise ValueError("no se extrajeron cupones de tarjeta de crédito")
+
+            eft_date = header_data.get("eft_date")
+            try:
+                parsed = datetime.strptime(eft_date, "%m/%d/%Y") if eft_date else None
+            except ValueError:
+                parsed = None
+            # Mismo chequeo que Reporte Diario/Lottery (2026-09-15): estos
+            # PDF suelen traer su propia fecha en el nombre (ej. "EFT
+            # Nº21062 03.08.2026.pdf") -- si no coincide con la fecha real
+            # leída del PDF, se rechaza en vez de guardarlo bajo una fecha
+            # dudosa.
+            if parsed and _filename_date_mismatch(filename, parsed):
+                date_mismatches += 1
+                raise ValueError("la fecha leída no coincide con la del nombre de archivo")
 
             net_total = sum(float(c.get("paid_amount") or 0.0) for c in credit_coupons)
             existing = eft_db.find_existing_deposit(
@@ -2270,11 +2462,6 @@ def carga_datos_eft_subir():
             missing_ddc_total += sum(1 for c in credit_coupons if not c.get("coupon"))
             skipped_total += skipped_coupon_rows or 0
 
-            eft_date = header_data.get("eft_date")
-            try:
-                parsed = datetime.strptime(eft_date, "%m/%d/%Y") if eft_date else None
-            except ValueError:
-                parsed = None
             if parsed and (last_saved_date is None or parsed > last_saved_date):
                 last_saved_date = parsed
             try:
@@ -2298,8 +2485,13 @@ def carga_datos_eft_subir():
         parts.append(f"{missing_ddc_total} cupón(es) sin número DDC -- se puede agregar a mano abajo.")
     if skipped_total:
         parts.append(f"{skipped_total} fila(s) de cupón no se pudieron leer.")
-    if failed:
-        parts.append(f"{failed} archivo(s) no se pudieron procesar.")
+    if date_mismatches:
+        parts.append(
+            f"{date_mismatches} archivo(s) rechazados: la fecha real no coincide con la del "
+            "nombre de archivo — revisá que no sea de otro mes."
+        )
+    if failed - date_mismatches:
+        parts.append(f"{failed - date_mismatches} archivo(s) no se pudieron procesar.")
     if not parts:
         parts.append("No se guardó ningún EFT de este lote.")
     flash(
@@ -2696,13 +2888,19 @@ def carga_datos_gettel_historial():
 
     days_by_date = {d["date"]: d for d in gettel_db.get_month_days(year, month)}
     # "Local Account" -- la fila que el Excel real cruza contra Gettel+Toyota
-    # (DIF = Local Account - Gettel - Toyota) -- sale del departamento
-    # "LOCAL ACCT" del Department Sales Report (ver reporte_diario.
-    # extract_department_sales_for_day), no de Gettel/Toyota ni de Store
-    # Info. Pedido explícito del usuario (2026-09-14): "no estas poniendo
-    # la fila que habia... se hacia una diferencia entre lo que habia ese
-    # dia en local account contra lo que se junto en gettel y toyota".
-    local_account_by_date = reportes_db.get_month_department_amounts(year, month, "LOCAL ACCT")
+    # (DIF = Local Account - Gettel - Toyota). CORREGIDO 2026-09-15: se
+    # confirmó contra el Excel real (Gettel-Toyota 08.2026, columna "Local
+    # Account") que esta cifra es el campo CHICO de Store Info (Method of
+    # Payment Totals, reportes_db.get_month_local_accounts) -- coincide
+    # EXACTO día por día (ej. 523.63 el 07/08, 812.29 el 03/08). El
+    # departamento "LOCAL ACCT" del Department Sales Report (usado antes)
+    # era la fuente equivocada -- solo aparece esporádicamente (cargos
+    # puntuales grandes, no una cifra diaria) y nunca coincide con la
+    # columna real -- por eso la mayoría de los días quedaban sin Local
+    # Account y el DIF de los días que sí tenían ese departamento daba un
+    # número gigante y sin sentido (pedido explícito del usuario, aclaró
+    # que las ventas de Gettel que "aparecían mal" eran ese DIF fantasma).
+    local_account_by_date = reportes_db.get_month_local_accounts(year, month)
     _blank_gettel_day = {
         "date": None, "gettel_amount": None, "gettel_gallons": None,
         "toyota_amount": None, "toyota_gallons": None,
@@ -2938,6 +3136,22 @@ def carga_datos_documentos(module_key):
         month = today.month
 
     docs = documents_db.list_documents(module_key, year, month)
+    # Proveedores: mostrar como carpetas por proveedor en vez de una lista
+    # plana -- pedido explícito del usuario (2026-09-15): "muestra a los
+    # proveedores como si fueran carpetas que expandiendolas ves todos los
+    # pdf juntos, no muestres todos como estas haciendo ahora uno encima
+    # del otro". `label` ya guarda el nombre del proveedor (ver
+    # carga_datos_proveedores_subir) -- se agrupa por ese campo, sin tocar
+    # el resto de los módulos (que siguen con la lista plana de siempre).
+    supplier_groups = None
+    if module_key == "proveedores":
+        by_supplier = {}
+        for doc in docs:
+            key = doc.get("label") or "Sin proveedor identificado"
+            by_supplier.setdefault(key, []).append(doc)
+        supplier_groups = [
+            {"label": label, "docs": by_supplier[label]} for label in sorted(by_supplier)
+        ]
     prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
     next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
 
@@ -2947,6 +3161,7 @@ def carga_datos_documentos(module_key):
         module_title=info["title"],
         back_url=url_for(info["back_endpoint"]),
         docs=docs,
+        supplier_groups=supplier_groups,
         year=year,
         month=month,
         month_name=_MONTH_NAMES_ES[month - 1],
@@ -3051,6 +3266,7 @@ def carga_datos_proveedores_subir():
     saved = []
     duplicates = []
     failed = []
+    date_mismatches = []
 
     for path in paths:
         filename = os.path.basename(path)
@@ -3060,7 +3276,22 @@ def carga_datos_proveedores_subir():
             failed.append({"filename": filename, "error": str(exc), "supplier": None})
             continue
 
+        # Chequeo de fecha del nombre de archivo (2026-09-15, pedido
+        # explícito del usuario -- "al igual que con las facturas de
+        # proveedores"): varios proveedores ya nombran el PDF con su propia
+        # fecha (Flori-Gas, LMT, SkyHarvest, etc.) -- si el nombre trae una
+        # fecha completa y no coincide con la leída de la factura, se
+        # rechaza esa factura en vez de guardarla/archivarla bajo un mes
+        # que podría no ser el suyo. Un nombre sin fecha completa (la
+        # mayoría de los proveedores) no se toca -- nada que cruzar.
+        valid_invoices = []
         for invoice in invoices:
+            if _filename_date_mismatch(filename, invoice["date"]):
+                date_mismatches.append({"filename": filename, "supplier": supplier_label})
+                continue
+            valid_invoices.append(invoice)
+
+        for invoice in valid_invoices:
             ok = proveedores_db.save_invoice(
                 supplier_key, supplier_label, invoice["date"], invoice["invoice_no"],
                 invoice["amount"], source_filename=filename,
@@ -3070,9 +3301,9 @@ def carga_datos_proveedores_subir():
             else:
                 duplicates.append({"filename": filename, "supplier": supplier_label})
 
-        if invoices:
+        if valid_invoices:
             try:
-                doc_when = invoices[0]["date"]
+                doc_when = valid_invoices[0]["date"]
                 documents_db.store_document(
                     "proveedores", path, filename, doc_when.year, doc_when.month, label=supplier_label
                 )
@@ -3084,13 +3315,18 @@ def carga_datos_proveedores_subir():
         parts.append(f"{len(saved)} factura(s) guardada(s).")
     if duplicates:
         parts.append(f"{len(duplicates)} factura(s) ya estaban cargadas y se omitieron.")
+    if date_mismatches:
+        parts.append(_group_by_supplier_message(
+            "Rechazadas (la fecha no coincide con el nombre del archivo)", date_mismatches, "factura(s)"
+        ))
     if failed:
         parts.append(_group_by_supplier_message("No se pudieron cargar", failed, "factura(s)"))
     if not parts:
         parts.append("No se guardó ninguna factura de este lote.")
     flash(
         " ".join(parts),
-        "success" if (saved and not duplicates and not failed) else ("error" if not saved else "warning"),
+        "success" if (saved and not duplicates and not failed and not date_mismatches)
+        else ("error" if not saved else "warning"),
     )
 
     if saved:
@@ -3108,6 +3344,20 @@ def carga_datos_proveedores_historial():
         month = today.month
 
     groups = proveedores_db.get_month_invoices(year, month)
+    # N° de factura -> link al PDF original guardado (2026-09-15, pedido
+    # explícito del usuario) -- se cruza por nombre de archivo exacto
+    # (proveedores_db.save_invoice y documents_db.store_document guardan el
+    # mismo nombre de archivo tal cual se subió), sin filtrar por mes -- la
+    # factura puede haberse subido en un mes distinto al de su propia
+    # fecha de negocio. Sin dato adjunto (documento ya borrado, o la
+    # factura es vieja y se cargó antes de que esto existiera) el N° de
+    # factura queda como texto plano, mismo criterio que el link de EFT.
+    docs_by_filename = {}
+    for doc in documents_db.list_all_documents("proveedores"):
+        docs_by_filename.setdefault(doc["filename"], doc)
+    for group in groups:
+        for inv in group["invoices"]:
+            inv["document"] = docs_by_filename.get(inv.get("source_filename"))
     prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
     next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
 

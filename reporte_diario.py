@@ -1372,22 +1372,29 @@ def extract_department_sales_for_day(pdf_path):
         period = extract_store_info_from_pdf(pdf_path)
     business_date = period["from_date"] + timedelta(days=1)
 
-    # El departamento real del reporte es "LOCAL ACCT" -- lo normaliza a
-    # "GETTEL/TOYOTA" DEPARTMENT_NAME_NORMALIZATION/_fallback_department_
-    # alias porque así se llama la columna real del Excel Cierre donde ese
-    # monto se escribe (ver _write_amount_cell) -- pero acá, del lado Carga
-    # de Datos, eso pierde el nombre real y lo confunde con la venta de los
-    # vendedores Gettel/Toyota (que es otro negocio aparte, ver gettel_db).
-    # Se restaura el nombre real solo en lo que se guarda/muestra acá --
-    # nunca se toca la normalización compartida que usa la escritura del
-    # Excel real. Pedido explícito del usuario (2026-09-14): "el nombre del
-    # departamento sale como LOCAL ACCT... hay que ponerlo tambien como si
-    # fuera la venta de un departamento".
-    records = [
-        {**r, "department": "LOCAL ACCT"} if r.get("department") == "GETTEL/TOYOTA" else r
-        for r in records
-    ]
-    return {"date": business_date, "records": records}
+    # El departamento real del reporte es "LOCAL ACCT" -- la normalización
+    # compartida (DEPARTMENT_NAME_NORMALIZATION/_fallback_department_alias)
+    # lo renombra a "GETTEL/TOYOTA" porque así se llama la columna real del
+    # Excel Cierre donde ese monto se escribe (ver _write_amount_cell) --
+    # eso no se toca, sigue igual para la escritura del Excel real.
+    #
+    # Acá, del lado Carga de Datos, este departamento sigue sin guardarse
+    # como una fila más de daily_report_departments -- no aparece en el
+    # detalle crudo del día, ni en "Total del mes por departamento", ni
+    # sumado a RESTO (pedido explícito del usuario 2026-09-15: "LOCAL ACCT"
+    # es un monto de cuenta/pago, no una venta real de mercadería). Pero su
+    # monto SÍ se devuelve aparte (local_acct_amount) -- pedido explícito
+    # del usuario (mismo día, aclaración posterior): cuando el PDF de cierre
+    # trae este monto, tiene que ser lo único que alimente la categoría
+    # "Gettel" de Ventas por Departamento (ver group_department_sales) --
+    # los reportes de cupones del vendedor (gettel_db, "hoja de Rick") NUNCA
+    # tienen que aparecer ahí, solo dentro del módulo Gettel/Toyota.
+    local_acct_records = [r for r in records if r.get("department") == "GETTEL/TOYOTA"]
+    local_acct_amount = (
+        sum(r.get("amount") or 0.0 for r in local_acct_records) if local_acct_records else None
+    )
+    records = [r for r in records if r.get("department") != "GETTEL/TOYOTA"]
+    return {"date": business_date, "records": records, "local_acct_amount": local_acct_amount}
 
 
 # Agrupamiento de departamentos en las 6 categorías de "Resumen Venta"/
@@ -1398,11 +1405,11 @@ def extract_department_sales_for_day(pdf_path):
 # "Reply to Report c-Store" hacia Store Info -- pedido explícito: "ahora se
 # va a poder hacer de forma automatica con solo cargar un reporte diario".
 # "Gettel" en la hoja real es la ÚNICA fuente de la categoría (llamada
-# "CAR WASH/ICE" en Resumen Venta, columna "VS" en Store Info) -- pero
-# "GETTEL" nunca aparece como departamento en el Department Sales Report
-# del PDF de cierre diario (es un negocio aparte, sin relación con el POS
-# de la gasolinera) -- queda siempre en 0 acá hasta que se cargue desde
-# algún otro lado. Los grupos siguen el orden real de las hojas.
+# "CAR WASH/ICE" en Resumen Venta, columna "VS" en Store Info) -- "GETTEL"
+# rara vez aparece como departamento propio en el Department Sales Report
+# (a veces sí, ver el parámetro local_acct_amount de group_department_sales
+# más abajo), así que queda en 0 hasta que el PDF de cierre traiga algo de
+# "LOCAL ACCT" ese día. Los grupos siguen el orden real de las hojas.
 DEPARTMENT_GROUPS = (
     # "MAJ PAK" (con espacio) -- así queda guardado por extract_department_
     # sales_for_day/parse_elistar_daily_pdf_page, aunque el PDF y el Excel
@@ -1420,19 +1427,30 @@ DEPARTMENT_GROUPS = (
 )
 
 
-def group_department_sales(records, gettel_amount=None):
+def group_department_sales(records, local_acct_amount=None):
     """
     Agrupa una lista de departamentos (cada uno {"department", "count",
     "amount"} -- una fila de daily_report_departments, de un día o ya
     sumados por mes) en las 6 categorías de arriba.
 
-    `gettel_amount`, si viene (no None), reemplaza el monto de la
-    categoría "Gettel" -- esa venta NUNCA sale del PDF de cierre diario
-    (es un negocio aparte), así que `records` nunca trae nada para ese
-    grupo por sí solo; el caller (webapp.py) le pasa acá la suma real del
-    día/mes desde gettel_db, sacada de los reportes de cupones de Gettel
-    (pedido explícito del usuario 2026-09-12, cuarta tanda). Sin este
-    parámetro, la categoría sigue en $0 como antes.
+    `local_acct_amount`, si viene (no None), se SUMA al monto de la
+    categoría "Gettel" -- viene del departamento "LOCAL ACCT" que el PDF
+    de cierre trae de forma esporádica (ver extract_department_sales_for_
+    day, que lo saca de `records` para no mostrarlo como una venta más de
+    mercadería, pero devuelve su monto aparte para este único uso). El
+    caller (webapp.py) le pasa la suma real del día/mes desde
+    reportes_db.get_day_local_acct_amount/get_month_local_acct_amount.
+
+    Hasta el 2026-09-15 esta categoría se alimentaba en cambio de
+    gettel_db (los reportes de cupones de combustible del vendedor, "hoja
+    de Rick") -- pedido explícito del usuario, revertido ese mismo día:
+    "eso que yo cargo de hoja de rick... esta mal que se vaya a las ventas
+    de reporte diario, solo debe ir [al módulo Gettel/Toyota]... cuando en
+    el reporte diario llegue algo de local account, ahí sí debería salir
+    gettel, pero no de la otra forma" -- gettel_db sigue existiendo y
+    alimentando el módulo Gettel/Toyota (Monto/Galones/Local Account/DIF),
+    pero ya no tiene ninguna conexión con Ventas por Departamento. Sin
+    este parámetro, la categoría sigue en $0 como antes.
 
     Devuelve (groups, unmatched): `groups` en el mismo orden que las hojas
     reales, cada uno {"label", "count", "amount"}. Un departamento real que
@@ -1443,6 +1461,20 @@ def group_department_sales(records, gettel_amount=None):
     se incluyen para no dejar ventas reales fuera de las categorías. `
     unmatched` queda siempre vacío -- se conserva en la firma para no tener
     que tocar los callers/templates que todavía lo reciben.
+
+    "LOCAL ACCT" es la ÚNICA excepción a la regla de arriba -- pedido
+    explícito del usuario (2026-09-15, tras ver un día real con RESTO
+    disparado a $8.457 por esto): no es una venta de mercadería como
+    BOILED PEANUTS/FLOWER/HBA/ICECREAM, es un monto de cuenta/pago (mismo
+    concepto que el campo "Local Accounts" de Store Info, ver
+    reportes_db.get_month_local_accounts, que alimenta el DIF de
+    Gettel/Toyota) -- sumarlo a RESTO lo distorsiona con un cargo puntual
+    grande que no tiene nada que ver con ventas reales de otros
+    departamentos. Nunca llega a `records` (extract_department_sales_for_
+    day ya lo saca antes de guardar), así que no aparece en el detalle
+    crudo del día ni en "Total del mes por departamento" -- pero sí termina
+    sumado a la categoría "Gettel" (nunca a RESTO), a través del parámetro
+    `local_acct_amount` de arriba.
     """
     totals_by_department = {}
     for record in records:
@@ -1453,21 +1485,21 @@ def group_department_sales(records, gettel_amount=None):
         bucket["count"] += record.get("count") or 0
         bucket["amount"] += record.get("amount") or 0.0
 
-    matched_departments = set()
+    matched_departments = {"LOCAL ACCT"}
     groups = []
     for label, members in DEPARTMENT_GROUPS:
         count = sum(totals_by_department.get(member, {}).get("count", 0) for member in members)
         amount = sum(totals_by_department.get(member, {}).get("amount", 0.0) for member in members)
         matched_departments.update(member for member in members if member in totals_by_department)
-        if label == "Gettel" and gettel_amount is not None:
+        if label == "Gettel" and local_acct_amount is not None:
             # "GETTEL" a veces SÍ aparece como departamento real en el
             # Department Sales Report del PDF (pedido explícito del
             # usuario 2026-09-14: "las ventas de gettel te van a aparecer
             # al lado de los demas departamentos") -- se suma al monto de
-            # los reportes de cupones del vendedor (gettel_db), nunca lo
-            # reemplaza, para no perder en silencio una venta real ya
-            # impresa en el PDF de cierre.
-            amount += gettel_amount
+            # "LOCAL ACCT" de ese mismo PDF (ver docstring de arriba),
+            # nunca lo reemplaza, para no perder en silencio una venta real
+            # ya impresa en el PDF de cierre.
+            amount += local_acct_amount
         groups.append({"label": label, "count": count, "amount": round(amount, 2)})
 
     resto_group = next(g for g in groups if g["label"] == "RESTO")

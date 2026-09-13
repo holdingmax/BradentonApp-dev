@@ -1,8 +1,7 @@
 {% extends "base.html" %}
 {% block main_class %}main-full{% endblock %}
 {% block crumbs %}
-{% set _app_side = session.get('app_side', 'carga_datos') %}
-<nav class="crumbs"><a href="{{ url_for('carga_datos_index') if _app_side == 'carga_datos' else url_for('reporte') }}">Reporte Diario</a><span class="current">Reportes guardados</span></nav>
+<nav class="crumbs"><a href="{{ url_for('carga_datos_index') }}">Reporte Diario</a><span class="current">Reportes guardados</span></nav>
 {% endblock %}
 {% block content %}
 {% set cat_colors = {'TABACCO': 0, 'SODA': 1, 'BEER/WINE': 2, 'LOTERY/LOTTO': 3, 'Gettel': 4, 'RESTO': 5} %}
@@ -22,44 +21,57 @@
     <a href="{{ url_for('reporte_historial', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
   </div>
 
-  <div class="historial-table-wrap">
-    <table class="historial-table">
-      <thead>
-        <tr>
-          <th>Día</th>
-          <th>Departamentos</th>
-          <th>Total ventas</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for day in overview %}
-        <tr class="{{ 'historial-row-today' if day.date == today_iso else '' }}">
-          <td class="historial-col-day">{{ "%02d"|format(day.day) }}</td>
-          <td>
-            {% if day.department_count %}
-            <span class="historial-badge historial-badge-{{ 'mixed' if day.department_sources|length > 1 else day.department_sources[0] }}"
-                  title="{% for d in day.department_detail %}{{ d.department }}: ${{ '%.2f'|format(d.amount) }}&#10;{% endfor %}">
-              {{ day.department_count }} depto.{% if day.department_sources|length > 1 %} (mixto){% elif day.department_sources[0] == 'manual' %} (manual){% endif %}
-            </span>
-            <div class="dept-preview">
-              {% for g in day.category_groups %}<span class="dept-preview-item cat-{{ cat_colors.get(g.label, 5) }}">{{ g.label }} <strong>${{ "{:,.0f}".format(g.amount) }}</strong></span>{% endfor %}
-            </div>
-            {% else %}
-            <span class="muted">—</span>
-            {% endif %}
-          </td>
-          <td>
-            {% if day.department_total is not none %}${{ "{:,.2f}".format(day.department_total) }}{% else %}<span class="muted">—</span>{% endif %}
-          </td>
-          <td class="historial-col-action">
-            <a href="{{ url_for('reporte_dia', report_date=day.date) }}">{{ 'Ver / editar' if (day.department_count or day.store_info_source) else 'Cargar a mano' }}</a>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+  <form method="post" action="{{ url_for('reporte_historial_eliminar') }}" onsubmit="return confirm('¿Eliminar Ventas por Departamento de los días seleccionados? Store Info de esos días no se toca.');">
+    <input type="hidden" name="year" value="{{ year }}">
+    <input type="hidden" name="month" value="{{ month }}">
+    <div class="dept-delete-toolbar">
+      <label class="muted dept-delete-selectall">
+        <input type="checkbox" id="dept-select-all" onclick="document.querySelectorAll('.dept-delete-check').forEach(function(cb){cb.checked = this.checked;}, this);">
+        Seleccionar todos
+      </label>
+      <button type="submit" class="btn-danger-soft">Eliminar seleccionados</button>
+    </div>
+    <div class="historial-table-wrap">
+      <table class="historial-table">
+        <thead>
+          <tr>
+            <th></th>
+            <th>Día</th>
+            <th>Departamentos</th>
+            <th>Total ventas</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for day in overview %}
+          <tr class="{{ 'historial-row-today' if day.date == today_iso else '' }}">
+            <td class="historial-col-check"><input type="checkbox" class="dept-delete-check" name="dates" value="{{ day.date }}"></td>
+            <td class="historial-col-day">{{ "%02d"|format(day.day) }}</td>
+            <td>
+              {% if day.department_count %}
+              <span class="historial-badge historial-badge-{{ 'mixed' if day.department_sources|length > 1 else day.department_sources[0] }}"
+                    title="{% for d in day.department_detail %}{{ d.department }}: ${{ '%.2f'|format(d.amount) }}&#10;{% endfor %}">
+                {{ day.department_count }} depto.{% if day.department_sources|length > 1 %} (mixto){% elif day.department_sources[0] == 'manual' %} (manual){% endif %}
+              </span>
+              <div class="dept-preview">
+                {% for g in day.category_groups %}<span class="dept-preview-item cat-{{ cat_colors.get(g.label, 5) }}">{{ g.label }} <strong>${{ "{:,.0f}".format(g.amount) }}</strong></span>{% endfor %}
+              </div>
+              {% else %}
+              <span class="muted">—</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if day.department_total is not none %}${{ "{:,.2f}".format(day.department_total) }}{% else %}<span class="muted">—</span>{% endif %}
+            </td>
+            <td class="historial-col-action">
+              <a href="{{ url_for('reporte_dia', report_date=day.date) }}">{{ 'Ver / editar' if (day.department_count or day.store_info_source) else 'Cargar a mano' }}</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </form>
 </div>
 
 <div class="card" style="margin-top: 18px;">
@@ -151,6 +163,13 @@
   .historial-row-today { outline: 2px solid var(--accent); outline-offset: -2px; }
   .historial-col-day { font-weight: 700; width: 40px; }
   .historial-col-action { text-align: right; white-space: nowrap; }
+  .historial-col-check { width: 28px; text-align: center; }
+  .dept-delete-toolbar {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    margin-top: 14px; flex-wrap: wrap;
+  }
+  .dept-delete-selectall { display: flex; align-items: center; gap: 6px; font-size: 12.5px; }
+  .dept-delete-toolbar button { margin-top: 0; }
   .historial-badge {
     display: inline-block;
     padding: 3px 9px;
