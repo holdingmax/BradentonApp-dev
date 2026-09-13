@@ -950,18 +950,10 @@
         <button type="button" class="rail-toggle-btn" onclick="toggleAppRail()" aria-label="Mostrar/ocultar barra lateral">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
         </button>
-        {% set _app_side = session.get('app_side', 'carga_datos') %}
-        {% if _app_side == 'carga_datos' %}
         <nav class="section-switch">
           <a class="section-switch-item{{ ' active' if not request.path.startswith('/carga-datos/controles') else '' }}" href="{{ url_for('carga_datos_index') }}">Herramientas</a>
           <a class="section-switch-item{{ ' active' if request.path.startswith('/carga-datos/controles') else '' }}" href="{{ url_for('carga_datos_controles') }}">Controles</a>
         </nav>
-        {% else %}
-        <nav class="section-switch">
-          <a class="section-switch-item{{ ' active' if not request.path.startswith('/controles') else '' }}" href="{{ url_for('excels_index') }}">Herramientas</a>
-          <a class="section-switch-item{{ ' active' if request.path.startswith('/controles') else '' }}" href="{{ url_for('controles') }}">Controles</a>
-        </nav>
-        {% endif %}
         {% block crumbs %}{% endblock %}
       </div>
       <div class="topbar-search" id="topbar-search">

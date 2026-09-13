@@ -1,8 +1,7 @@
 {% extends "base.html" %}
 {% block main_class %}main-full{% endblock %}
 {% block crumbs %}
-{% set _app_side = session.get('app_side', 'carga_datos') %}
-<nav class="crumbs"><a href="{{ url_for('carga_datos_index') if _app_side == 'carga_datos' else url_for('lottery') }}">Lottery</a><span class="current">Reportes guardados</span></nav>
+<nav class="crumbs"><a href="{{ url_for('carga_datos_index') }}">Lottery</a><span class="current">Reportes guardados</span></nav>
 {% endblock %}
 {% block content %}
 {% macro fmt(x) -%}

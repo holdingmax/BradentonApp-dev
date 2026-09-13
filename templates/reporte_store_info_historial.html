@@ -1,8 +1,7 @@
 {% extends "base.html" %}
 {% block main_class %}main-full{% endblock %}
 {% block crumbs %}
-{% set _app_side = session.get('app_side', 'carga_datos') %}
-<nav class="crumbs"><a href="{{ url_for('carga_datos_index') if _app_side == 'carga_datos' else url_for('reporte') }}">Reporte Diario</a><span class="current">Store Info</span></nav>
+<nav class="crumbs"><a href="{{ url_for('carga_datos_index') }}">Reporte Diario</a><span class="current">Store Info</span></nav>
 {% endblock %}
 {% block content %}
 <div class="page-header">
