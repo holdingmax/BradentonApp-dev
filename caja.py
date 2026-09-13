@@ -1,51 +1,39 @@
 """
-Módulo Caja: actualiza las columnas K, N, S y T de la hoja "CAJA" del Excel
-Cierre mensual con datos ya cargados en otros dos Excel (Chase y Lottery).
+Módulo Caja -- Carga de Datos: cruza en el momento lo que ya guardaron Chase
+Bank, Lottery y Reporte Diario (Store Info), más los Gastos cargados a mano
+acá mismo (ver caja_db.py) -- sin subir ni escribir ningún Excel, mismo
+criterio que un módulo de Controles.
 
-- K (depósitos Chase): filas con Detalle "DEPOSITO" o "DEPOSITO GETTEL" (esta
-  última se marca además con un comentario en la celda). No se filtra por el
-  Type del banco — DEPOSIT/MISC_CREDIT son inconsistentes para un mismo tipo
-  de depósito físico real, el Detalle ya categorizado por el módulo Chase
-  Bank es la única fuente confiable.
-- S/T (Food Truck / máquina de hielo): filas con Detalle "FOOD TRUCK" o
-  "DEPOSITO VENTA ICE" — T queda con la etiqueta ("Food Truck"/"ICE MACHINE",
-  o ambas si un día combina las dos). "VENTA ICE" sin el prefijo "DEPOSITO"
-  es la venta electrónica de la máquina, no un depósito físico, y no cuenta.
-- N (Lottery): columna X ("CUENTA FINAL") del Excel de Lottery, matcheada
-  por la fecha de su columna B (la fecha real de cada fila, no la A).
-
-En los tres casos la fila de CAJA se ubica por su columna A (fecha del día
-de negocio) — nunca por la C (que es esa misma fecha +1 día).
+Pedido explícito del usuario (2026-09-12, cuarta tanda): "caja no es algo
+que tendria que estar en el modulo de herramientas ya que no se le tiene
+que cargar ningun PDF o excel para completar" -- el viejo módulo de
+Herramientas (`/caja`, escribía las columnas K/N/S/T del Excel Cierre real a
+partir de 3 Excel subidos: Cierre + Chase + Lottery) se eliminó del todo.
+Quedan acá, sin relación con eso, las piezas de solo lectura que sigue
+usando Controles → Caja (`controles_caja.py`) para leer la hoja CAJA real de
+un Excel Cierre recién subido y validarla contra los Mayores de Chase/Caja
+-- `_get_caja_sheet`/`_iter_caja_dates`/las constantes CAJA_COL_*.
 """
 
-import os
-import tempfile
+import calendar
 from datetime import date, datetime
 
-import openpyxl
-from openpyxl.comments import Comment
-
-from reporte_diario import _find_lottery_sheet
+import caja_db
+import chase_db
+import lottery_db
+import reportes_db
 
 CAJA_SHEET_NAME = "CAJA"
 CAJA_DATA_START_ROW = 4
 CAJA_COL_DATE = 1  # A — Fecha del día de negocio (la que se usa para matchear)
 CAJA_COL_CHASE_DEPOSITS = 11  # K
 CAJA_COL_EXPENSES_CASH = 13  # M — gastos pagados con caja (cada celda con un comentario del proveedor/persona pagada)
-CAJA_COL_LOTTERY = 14  # N
 CAJA_COL_FOOD_ICE = 19  # S
 CAJA_COL_FOOD_ICE_LABEL = 20  # T — de qué se trata el importe de S (Food Truck / ICE MACHINE)
 
-CHASE_COL_POSTING_DATE = 2  # B
-CHASE_COL_AMOUNT = 4  # D
-CHASE_COL_DETALLE = 8  # H — ya categorizado por el módulo Chase Bank
-
 CHASE_DETALLE_DEPOSITO = "DEPOSITO"
-# Depósito de la máquina/casino Gettel: cuenta como depósito normal en K, pero
-# se marca con un comentario en la celda para que quede visible qué día es.
+# Depósito de la máquina/casino Gettel: cuenta como depósito normal en K.
 CHASE_DETALLE_GETTEL = "DEPOSITO GETTEL"
-GETTEL_COMMENT_TEXT = "Este día incluye el depósito de Gettel."
-GETTEL_COMMENT_AUTHOR = "Caja"
 
 # Nota: el Detalle real de un depósito físico de hielo es "DEPOSITO VENTA ICE"
 # (Type DEPOSIT) — "VENTA ICE" a secas es la venta reportada por la máquina vía
@@ -58,15 +46,6 @@ FOOD_ICE_LABELS = {
 }
 # Orden fijo de presentación cuando un mismo día combina ambos.
 FOOD_ICE_LABEL_ORDER = (CHASE_DETALLE_ICE, CHASE_DETALLE_FOOD_TRUCK)
-
-LOTTERY_COL_DATE_B = 2
-LOTTERY_COL_CUENTA_FINAL = 24  # X
-
-
-def _create_temp_workbook_path():
-    fd, temp_path = tempfile.mkstemp(suffix=".xlsx", prefix="caja_")
-    os.close(fd)
-    return temp_path
 
 
 def _normalize_date(value):
@@ -102,30 +81,44 @@ def _format_food_ice_label(detalle_keys):
     return ", ".join(labels)
 
 
-def _collect_chase_amounts(chase_path):
-    workbook = openpyxl.load_workbook(chase_path, data_only=True)
-    sheet = workbook.active
+# ---------------------------------------------------------------------------
+# Caja -- Carga de Datos (2026-09-12, ampliado más tarde el mismo día): el
+# mismo cruce K/S/T/N de arriba, pero leído directo de chase_db/lottery_db
+# en vez de un Excel -- pedido explícito del usuario: "el modulo de caja...
+# se completaria automaticamente con los datos que haya guardado en el
+# chase de tal mes". Ampliado a pedido explícito del usuario para replicar
+# TODA la hoja CAJA real, no solo K/N/S/T -- se investigó la hoja real
+# (Cierre 08-26.xlsx) con openpyxl antes de escribir nada acá, confirmando
+# columna por columna qué es fórmula/qué se pisa a mano:
+#   E Total SALES = Store Info!R, F Cash = Store Info!S,
+#   G TC = Store Info!T (suma de "credit_terms"), H Other = Store Info!U,
+#   J Total Revenue = Store Info!W (ya guardado tal cual, no hace falta
+#   recalcularlo -- Store Info!W es la MISMA suma que J calcularía),
+#   K CHASE = Depósitos, L OUT CASH y M EXPENSES CASH = a mano (nada más
+#   los tiene), N lottery = Cuenta Final, O DIF EFECT = F-K+H-L-M-N (fórmula
+#   real confirmada contra el archivo), P Saldo = Saldo(día anterior)+O.
+# Solo L/M (a mano) y el Saldo Inicial/Final de cada mes necesitan guardado
+# propio (caja_db.py) -- todo lo demás se recalcula en el momento, sin
+# escribir nada, mismo espíritu que los módulos de Controles.
+# ---------------------------------------------------------------------------
 
+def _collect_chase_amounts_from_db(year, month):
+    """Mismo criterio de detección que _collect_chase_amounts, pero sobre las filas ya guardadas en chase_db (columna Detalle) en vez de un Excel."""
     deposits_by_date = {}
     food_ice_by_date = {}
     food_ice_labels_by_date = {}
     gettel_dates = set()
 
-    for row in range(2, sheet.max_row + 1):
-        detalle = sheet.cell(row=row, column=CHASE_COL_DETALLE).value
-        detalle_norm = str(detalle).strip().upper() if detalle else ""
-
-        # No se filtra por Type ("DEPOSIT" vs "MISC_CREDIT"/etc.): el banco categoriza
-        # de forma inconsistente el Type de depósitos físicos reales del mismo día (se
-        # confirmó con datos reales que DEPOSITO/DEPOSITO GETTEL/FOOD TRUCK/DEPOSITO
-        # VENTA ICE aparecen indistintamente como DEPOSIT o MISC_CREDIT, siempre con la
-        # Descripción cruda "DEPOSIT") — el Detalle, ya categorizado por el módulo Chase
-        # Bank, es la única fuente confiable acá. "VENTA ICE" sin el prefijo "DEPOSITO"
-        # (venta electrónica de la máquina vía ACH_CREDIT, no un depósito físico) queda
-        # afuera solo porque no matchea ninguna de las claves de FOOD_ICE_LABELS.
-        date_key = _normalize_date(sheet.cell(row=row, column=CHASE_COL_POSTING_DATE).value)
-        amount = sheet.cell(row=row, column=CHASE_COL_AMOUNT).value
-        if date_key is None or not isinstance(amount, (int, float)):
+    for tx in chase_db.get_month_transactions(year, month):
+        detalle_norm = (tx.get("detalle") or "").strip().upper()
+        if not detalle_norm:
+            continue
+        try:
+            date_key = datetime.strptime(tx["posting_date"], "%Y-%m-%d").date()
+        except (TypeError, ValueError):
+            continue
+        amount = tx.get("amount")
+        if amount is None:
             continue
 
         if detalle_norm == CHASE_DETALLE_DEPOSITO:
@@ -140,161 +133,188 @@ def _collect_chase_amounts(chase_path):
     return deposits_by_date, food_ice_by_date, food_ice_labels_by_date, gettel_dates
 
 
-def apply_chase_deposits(cierre_path, chase_path):
-    """Escribe K (DEPOSITO/GETTEL) y S (FOOD TRUCK / hielo) en CAJA desde el Chase."""
-    deposits_by_date, food_ice_by_date, food_ice_labels_by_date, gettel_dates = _collect_chase_amounts(
-        chase_path
+def _resolve_opening_balance(year, month, _chain=True):
+    """
+    El Saldo Inicial de un mes es, por default, el Saldo Final del mes
+    anterior -- pedido explícito del usuario (2026-09-12): "el saldo
+    inicial de la caja de un mes deberia ser el saldo final de la caja del
+    mes anterior". Si el usuario ya fijó un Saldo Inicial a mano para ESTE
+    mes (caja_db.set_month_opening_balance), ese manda SIEMPRE -- este
+    chequeo corre primero sin importar `_chain`, así que un override manual
+    nunca se pisa, ni siquiera cuando esta función se llama para resolver
+    el mes ANTERIOR de otro mes (ver más abajo).
+
+    Si no hay override para este mes, y `_chain` es True, se encadena del
+    mes anterior: su propio ajuste manual de Saldo Final si lo tiene, o si
+    no, su Saldo corrido calculado -- recorriendo su propio reporte una
+    sola vez con `_chain=False` (nunca se recursa un tercer mes hacia
+    atrás; alcanza con un solo salto). Si el mes anterior tampoco tiene
+    ningún dato, default 0.0 -- queda flaggeado (opening_source="default")
+    para que la pantalla pueda pedirle al usuario que lo cargue a mano.
+    """
+    settings = caja_db.get_month_settings(year, month)
+    if settings and settings.get("opening_balance") is not None:
+        return settings["opening_balance"], "manual"
+    if not _chain:
+        return 0.0, "default"
+
+    prev_year, prev_month = (year - 1, 12) if month == 1 else (year, month - 1)
+    prev_settings = caja_db.get_month_settings(prev_year, prev_month)
+    if prev_settings and prev_settings.get("closing_balance_override") is not None:
+        return prev_settings["closing_balance_override"], "prev_month_override"
+
+    prev_report = build_month_report_from_db(prev_year, prev_month, _recursion_guard=False)
+    if prev_report["rows"]:
+        return prev_report["computed_closing_balance"], "prev_month_computed"
+    return 0.0, "default"
+
+
+_EMPTY_TOTALS_FIELDS = (
+    "total_sales", "cash", "tc", "other_amount", "total_revenue",
+    "deposit", "food_ice", "cuenta_final", "expenses_cash", "dif_efect",
+)
+
+
+def _empty_future_month_report(year, month):
+    """
+    Un mes que todavía no empezó no tiene ningún dato posible -- pedido
+    explícito del usuario (2026-09-12): "los meses siguientes al actual
+    deberian aparecer con todos los datos en 0 obviamente". Se corta acá,
+    sin ni siquiera intentar encadenar un Saldo Inicial -- proyectar un
+    saldo hacia un mes que no ocurrió todavía sería confuso, no informativo.
+    """
+    days_in_month = calendar.monthrange(year, month)[1]
+    rows = [
+        {
+            "date": date(year, month, day).isoformat(),
+            "day": day,
+            "total_sales": 0.0, "cash": 0.0, "tc": 0.0, "other_amount": 0.0, "total_revenue": 0.0,
+            "deposit": 0.0, "is_gettel": False, "food_ice": 0.0, "food_ice_label": "",
+            "expenses_cash": 0.0, "cuenta_final": 0.0, "dif_efect": 0.0, "saldo": 0.0,
+        }
+        for day in range(1, days_in_month + 1)
+    ]
+    return {
+        "rows": rows,
+        "totals": {field: 0.0 for field in _EMPTY_TOTALS_FIELDS},
+        "total_lottery": None,
+        "opening_balance": 0.0,
+        "opening_source": "future",
+        "computed_closing_balance": 0.0,
+        "closing_balance_override": None,
+        "effective_closing_balance": 0.0,
+    }
+
+
+def build_month_report_from_db(year, month, _recursion_guard=True):
+    """
+    Un renglón por día del mes, mismas columnas que la hoja CAJA real (ver
+    el bloque de comentarios de arriba) -- calculado en el momento contra
+    chase_db/lottery_db/reportes_db/caja_db, sin necesitar ningún Excel ni
+    subir nada nuevo acá (Chase/Lottery/Reporte Diario ya se cargan por sus
+    propios módulos; Gastos se cargan a mano acá mismo, ver
+    caja_db.set_day_expenses). OUT CASH (columna L del Excel real) se sacó
+    del todo 2026-09-12 -- pedido explícito del usuario, "no se usa".
+    """
+    if (year, month) > (date.today().year, date.today().month):
+        return _empty_future_month_report(year, month)
+
+    deposits_by_date, food_ice_by_date, food_ice_labels_by_date, gettel_dates = _collect_chase_amounts_from_db(
+        year, month
     )
-    if not deposits_by_date and not food_ice_by_date:
-        raise ValueError(
-            "No se encontraron depósitos (Detalle DEPOSITO / DEPOSITO GETTEL / FOOD TRUCK / "
-            "DEPOSITO VENTA ICE) en el Chase. ¿Ya pasó por el módulo Chase Bank para categorizarse?"
+    store_info_by_date = {row["date"]: row for row in reportes_db.get_month_store_info(year, month)}
+    expenses_by_date = caja_db.get_month_expenses(year, month)
+
+    days_in_month = calendar.monthrange(year, month)[1]
+
+    opening_balance, opening_source = _resolve_opening_balance(year, month, _chain=_recursion_guard)
+    running_saldo = opening_balance
+
+    rows = []
+    totals = {field: 0.0 for field in _EMPTY_TOTALS_FIELDS}
+    any_lottery = False
+
+    for day in range(1, days_in_month + 1):
+        d = date(year, month, day)
+        key = d.isoformat()
+
+        deposit = deposits_by_date.get(d)
+        food_ice = food_ice_by_date.get(d)
+        food_ice_label = _format_food_ice_label(food_ice_labels_by_date.get(d, set()))
+
+        lottery_day = lottery_db.get_day(d)
+        cuenta_final = None
+        if lottery_day is not None:
+            cuenta_final = lottery_db.decorate_day(lottery_day).get("cuenta_final")
+        if cuenta_final is not None:
+            any_lottery = True
+
+        info = store_info_by_date.get(key) or {}
+        total_sales = info.get("total_sales")
+        cash = info.get("cash")
+        tc = round(sum(info.get("credit_terms") or []), 2) if info else None
+        other_amount = info.get("other_amount")
+        total_revenue = info.get("total_revenue")
+
+        expenses_cash = expenses_by_date.get(key)
+
+        # DIF EFECT =+F-K+H-M-N (fórmula real de la hoja CAJA, confirmada
+        # contra el archivo -- sin el término L/OUT CASH, sacado del todo)
+        # -- una celda en blanco vale 0 en la aritmética de Excel, así que
+        # acá también: un día sin nada cargado todavía da DIF EFECT 0 y el
+        # Saldo sigue igual al del día anterior, ni más ni menos, igual que
+        # pasaría abriendo la hoja real con esas celdas vacías.
+        dif_efect = round(
+            (cash or 0.0) - (deposit or 0.0) + (other_amount or 0.0)
+            - (expenses_cash or 0.0) - (cuenta_final or 0.0),
+            2,
+        )
+        running_saldo = round(running_saldo + dif_efect, 2)
+
+        totals["total_sales"] += total_sales or 0.0
+        totals["cash"] += cash or 0.0
+        totals["tc"] += tc or 0.0
+        totals["other_amount"] += other_amount or 0.0
+        totals["total_revenue"] += total_revenue or 0.0
+        totals["deposit"] += deposit or 0.0
+        totals["food_ice"] += food_ice or 0.0
+        totals["cuenta_final"] += cuenta_final or 0.0
+        totals["expenses_cash"] += expenses_cash or 0.0
+        totals["dif_efect"] += dif_efect
+
+        rows.append(
+            {
+                "date": key,
+                "day": day,
+                "total_sales": round(total_sales, 2) if total_sales is not None else None,
+                "cash": round(cash, 2) if cash is not None else None,
+                "tc": tc,
+                "other_amount": round(other_amount, 2) if other_amount is not None else None,
+                "total_revenue": round(total_revenue, 2) if total_revenue is not None else None,
+                "deposit": round(deposit, 2) if deposit is not None else None,
+                "is_gettel": d in gettel_dates,
+                "food_ice": round(food_ice, 2) if food_ice is not None else None,
+                "food_ice_label": food_ice_label,
+                "expenses_cash": expenses_cash,
+                "cuenta_final": round(cuenta_final, 2) if cuenta_final is not None else None,
+                "dif_efect": dif_efect,
+                "saldo": running_saldo,
+            }
         )
 
-    workbook = openpyxl.load_workbook(cierre_path, data_only=False)
-    sheet = _get_caja_sheet(workbook)
+    settings = caja_db.get_month_settings(year, month)
+    closing_override = settings.get("closing_balance_override") if settings else None
+    computed_closing = rows[-1]["saldo"] if rows else round(opening_balance, 2)
 
-    remaining_deposits = dict(deposits_by_date)
-    remaining_food_ice = dict(food_ice_by_date)
-    deposits_written = {}
-    food_ice_written = {}
-    gettel_days_written = []
-
-    for row, date_key in _iter_caja_dates(sheet):
-        if date_key in remaining_deposits:
-            amount = round(remaining_deposits.pop(date_key), 2)
-            cell = sheet.cell(row=row, column=CAJA_COL_CHASE_DEPOSITS, value=amount)
-            if date_key in gettel_dates:
-                cell.comment = Comment(GETTEL_COMMENT_TEXT, GETTEL_COMMENT_AUTHOR)
-                gettel_days_written.append(date_key)
-            elif cell.comment is not None and cell.comment.text == GETTEL_COMMENT_TEXT:
-                # Un día reprocesado que YA NO clasifica como depósito de
-                # Gettel (ej. se corrigió la regla de Chase) antes se
-                # quedaba con este comentario viejo e incorrecto para
-                # siempre, porque el comentario solo se agregaba, nunca se
-                # sacaba.
-                cell.comment = None
-            deposits_written[date_key] = amount
-        if date_key in remaining_food_ice:
-            amount = round(remaining_food_ice.pop(date_key), 2)
-            sheet.cell(row=row, column=CAJA_COL_FOOD_ICE, value=amount)
-            label_text = _format_food_ice_label(food_ice_labels_by_date.get(date_key, set()))
-            if label_text:
-                sheet.cell(row=row, column=CAJA_COL_FOOD_ICE_LABEL, value=label_text)
-            food_ice_written[date_key] = amount
-
-    temp_path = _create_temp_workbook_path()
-    workbook.save(temp_path)
-
-    summary = {
-        "deposits_written": deposits_written,
-        "food_ice_written": food_ice_written,
-        "deposits_unmatched": remaining_deposits,
-        "food_ice_unmatched": remaining_food_ice,
-        "gettel_days_written": gettel_days_written,
+    return {
+        "rows": rows,
+        "totals": {k: round(v, 2) for k, v in totals.items()},
+        "total_lottery": round(totals["cuenta_final"], 2) if any_lottery else None,
+        "opening_balance": round(opening_balance, 2),
+        "opening_source": opening_source,
+        "computed_closing_balance": computed_closing,
+        "closing_balance_override": round(closing_override, 2) if closing_override is not None else None,
+        "effective_closing_balance": round(
+            closing_override if closing_override is not None else computed_closing, 2
+        ),
     }
-    return temp_path, summary
-
-
-def _collect_lottery_cuenta_final(lottery_path, relevant_dates):
-    workbook = openpyxl.load_workbook(lottery_path, data_only=True)
-    # Antes usaba workbook.active -- el libro de Lottery tiene una hoja por
-    # mes sin un nombre fijo (ver reporte_diario._find_lottery_sheet, que ya
-    # resuelve este mismo archivo por nombre único o por firma de encabezado
-    # en la fila 3), así que si la hoja activa al guardar no era la del mes
-    # correcto, esto leía fechas/valores de un mes distinto en silencio.
-    sheet = _find_lottery_sheet(workbook)
-
-    values_by_date = {}
-    missing_dates = []
-
-    for row in range(1, sheet.max_row + 1):
-        date_key = _normalize_date(sheet.cell(row=row, column=LOTTERY_COL_DATE_B).value)
-        if date_key is None:
-            continue
-        value = sheet.cell(row=row, column=LOTTERY_COL_CUENTA_FINAL).value
-        if isinstance(value, (int, float)):
-            values_by_date[date_key] = float(value)
-        elif date_key in relevant_dates:
-            # El Excel de Lottery casi siempre trae días de fuera del mes de
-            # CAJA (el último bloque de 7 días de un mes se traslada tal cual
-            # al mes siguiente, ver "Módulo Mes Nuevo" en CLAUDE.md) -- un día
-            # de ESOS todavía sin CUENTA FINAL calculada (porque ese bloque
-            # no está cerrado, ni falta que lo esté) no es un problema real
-            # para esta carga, así que solo se avisa cuando el día faltante
-            # es uno que CAJA sí necesita (bug real reportado por el usuario:
-            # "no se pudieron cargar todos los días" saltaba siempre que
-            # Lottery tenía algún día de otro mes sin cerrar, aunque CAJA ya
-            # tuviera completos los días que le hacían falta).
-            missing_dates.append(date_key)
-
-    return values_by_date, missing_dates
-
-
-def apply_lottery_cuenta_final(cierre_path, lottery_path):
-    """Escribe N en CAJA con la columna X ("CUENTA FINAL") del Excel de Lottery."""
-    workbook = openpyxl.load_workbook(cierre_path, data_only=False)
-    sheet = _get_caja_sheet(workbook)
-    caja_rows = list(_iter_caja_dates(sheet))
-    caja_dates = {date_key for _row, date_key in caja_rows}
-    caja_months = {(date_key.year, date_key.month) for date_key in caja_dates}
-
-    values_by_date, missing_dates = _collect_lottery_cuenta_final(lottery_path, caja_dates)
-    if not values_by_date and not missing_dates:
-        raise ValueError('No se encontraron fechas en la columna B del Excel de Lottery.')
-
-    remaining = dict(values_by_date)
-    written = {}
-
-    for row, date_key in caja_rows:
-        if date_key in remaining:
-            value = round(remaining.pop(date_key), 2)
-            sheet.cell(row=row, column=CAJA_COL_LOTTERY, value=value)
-            written[date_key] = value
-
-    # Lo que queda en `remaining` y NO es del mes de CAJA es el bloque de 7
-    # días del mes vecino que el Lottery siempre trae de fábrica (ver
-    # "Módulo Mes Nuevo" en CLAUDE.md) -- pasa todos los meses, no es una
-    # fila faltante real, así que ni siquiera se avisa. Solo importa (y se
-    # devuelve) un día sin matchear que SÍ es del mes de este Cierre --
-    # ahí sí sería señal real de que a CAJA le falta esa fila.
-    unmatched_same_month = {
-        date_key: value for date_key, value in remaining.items()
-        if (date_key.year, date_key.month) in caja_months
-    }
-
-    temp_path = _create_temp_workbook_path()
-    workbook.save(temp_path)
-
-    summary = {
-        "written": written,
-        "unmatched": unmatched_same_month,
-        "missing_cached_value": missing_dates,
-    }
-    return temp_path, summary
-
-
-def apply_chase_and_lottery(cierre_path, chase_path, lottery_path):
-    """
-    Corre Chase (K/S/T) y Lottery (N) en una sola pasada sobre el mismo Excel
-    Cierre -- pedido explícito del usuario para no tener que descargar el
-    resultado de Chase y volver a subirlo como si fuera el Cierre original
-    antes de poder cargar Lottery.
-    """
-    intermediate_path, chase_summary = apply_chase_deposits(cierre_path, chase_path)
-    try:
-        final_path, lottery_summary = apply_lottery_cuenta_final(intermediate_path, lottery_path)
-    finally:
-        try:
-            os.remove(intermediate_path)
-        except OSError:
-            pass
-
-    summary = {
-        "deposits_unmatched": chase_summary["deposits_unmatched"],
-        "food_ice_unmatched": chase_summary["food_ice_unmatched"],
-        "gettel_days_written": chase_summary["gettel_days_written"],
-        "lottery_unmatched": lottery_summary["unmatched"],
-        "missing_cached_value": lottery_summary["missing_cached_value"],
-    }
-    return final_path, summary

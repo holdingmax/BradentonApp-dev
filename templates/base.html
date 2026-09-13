@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}{% if request.path.startswith('/controles') %}Controles{% elif request.path.startswith('/mes-nuevo') %}Mes Nuevo{% else %}Herramientas{% endif %}{% endblock %}</title>
+  <title>{% block title %}{% if request.path.startswith('/controles') or request.path.startswith('/carga-datos/controles') %}Controles{% else %}Herramientas{% endif %}{% endblock %}</title>
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='logo.png') }}">
   <style>
     :root {
@@ -132,6 +132,40 @@
       color: var(--text-muted-on-brand);
       font-weight: 500;
     }
+    /* Botón para fijar/soltar la barra lateral -- pedido explícito del
+       usuario 2026-09-11: vive en la barra de arriba, no adentro de la
+       barra lateral (para que quede siempre accesible en el mismo lugar,
+       sin importar si la barra está colapsada o fijada) -- justo donde
+       arranca el contenido del header, pegado al borde de la propia barra
+       lateral. Fijar ya NO persiste entre páginas (ver toggleAppRail más
+       abajo): cada carga de página arranca siempre colapsada, pedido
+       explícito del usuario ("si...recarga la página, la barra lateral se
+       debería cerrar"). */
+    .rail-toggle-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 32px;
+      height: 32px;
+      flex-shrink: 0;
+      background: transparent;
+      border: none;
+      border-radius: 8px;
+      color: var(--text-soft);
+      font: inherit;
+      /* padding/margin-top reseteados a 0 -- sin esto, el `button { padding:
+         10px 20px; margin-top: 18px; }` genérico (pensado para los botones
+         "Procesar" de un form) se colaba acá también, porque esta clase
+         nunca declaraba su propio `padding`/`margin-top` para ganarle por
+         especificidad -- inflaba el botón mucho más allá de los 32x32
+         declarados y lo empujaba hacia abajo, descentrando el ícono. Bug
+         real encontrado el 2026-09-12 al medir el centro real del botón
+         contra el ícono de la barra lateral (90px vs. 30px). */
+      padding: 0;
+      margin: 0 4px 0 0;
+    }
+    .rail-toggle-btn:hover { background: var(--surface-alt); color: var(--text-on-brand); }
+    .rail-toggle-btn svg { width: 18px; height: 18px; flex-shrink: 0; }
     nav.crumbs {
       display: flex;
       align-items: center;
@@ -325,11 +359,182 @@
     a.account-dropdown-item:active { transform: scale(0.97); }
 
     /* ---------- Layout ---------- */
+    /* Todo lo que no es la barra lateral (.app-rail, más abajo) vive
+       adentro de .app-shell, corrido a la derecha del ancho de la barra --
+       colapsada por default, más ancha cuando el usuario la fija abierta
+       (body.rail-pinned). */
+    .app-shell {
+      margin-left: 60px;
+      transition: margin-left 0.15s ease;
+      min-width: 0;
+    }
+    body.rail-pinned .app-shell { margin-left: 224px; }
+
     main {
       max-width: 1080px;
       margin: 0 auto;
       padding: 36px 24px 64px;
     }
+    /* Pedido explícito del usuario (2026-09-11): las pantallas que
+       reemplazan la función de un Excel (mostrar mucha info a la vez, ej.
+       Store Info o Lottery de todo el mes) necesitan usar TODO el ancho
+       real disponible de punta a punta -- un ancho más grande pero igual
+       centrado/acotado (lo que se probó primero) no alcanzaba, seguía
+       obligando a hacer zoom hacia afuera para ver una tabla ancha
+       entera. Cada página activa esto sola con el bloque "main_class" en
+       "main-full", nunca global -- Herramientas/Controles no se tocan. */
+    main.main-full { max-width: none; padding-left: 32px; padding-right: 32px; }
+
+    /* Barra lateral GLOBAL de "ver datos guardados" -- pedido explícito
+       del usuario 2026-09-11 (con capturas de referencia de otra app de
+       gestión que usa este mismo patrón): una columna angosta con solo
+       íconos, fija al borde izquierdo real de la pantalla, visible en
+       CUALQUIER página (no solo en Carga de Datos) -- da acceso al
+       panorama de lo ya guardado desde cualquier lado de la app. Colapsada
+       siempre al cargar la página (nunca persiste, ver toggleAppRail más
+       abajo); pasar el mouse por un ítem despliega su panel sin tener que
+       fijarla; el botón de la barra de arriba (.rail-toggle-btn, no vive
+       acá adentro) la fija expandida (ícono + texto visibles, panel
+       siempre abierto en línea) hasta que se vuelva a tocar o se navegue a
+       otra página. Nunca lleva accesos para CARGAR un reporte nuevo
+       -- eso vive únicamente en Herramientas, donde siempre vivió -- solo
+       accesos para VER lo que ya está guardado. */
+    .app-rail {
+      position: fixed;
+      top: 0;
+      left: 0;
+      bottom: 0;
+      width: 60px;
+      background: #111827;
+      z-index: 40;
+      display: flex;
+      flex-direction: column;
+      transition: width 0.15s ease;
+      overflow: visible;
+    }
+    body.rail-pinned .app-rail { width: 224px; }
+    /* Marca de la app arriba de la barra -- pedido explícito del usuario
+       2026-09-11 (con más capturas de referencia): el logo tiene que vivir
+       ACÁ (no en el topbar, que ya no lo repite) -- completo (ícono +
+       "Bradenton App") cuando la barra está fijada expandida, solo el
+       ícono cuando está colapsada. Nunca es un link -- clickearlo no tiene
+       que hacer nada, mucho menos volver a la pantalla de elegir lado (esa
+       decisión ya se toma al entrar, y para cambiarla está el botón junto
+       al de cuenta). */
+    .app-rail-brand {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+      padding: 14px 8px;
+      flex-shrink: 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    }
+    .app-rail-brand-mark { height: 26px; width: auto; flex-shrink: 0; display: block; }
+    .app-rail-brand-word { display: none; color: #fff; font-weight: 700; font-size: 14px; white-space: nowrap; }
+    body.rail-pinned .app-rail-brand {
+      flex-direction: row;
+      justify-content: flex-start;
+      padding: 14px 16px;
+    }
+    body.rail-pinned .app-rail-brand-word { display: inline; }
+    /* overflow: visible en los dos ejes a propósito -- "overflow-y: auto"
+       solo (sin overflow-x) hace que el navegador compute overflow-x como
+       "auto" también (mismo comportamiento ya documentado para el dropdown
+       del botón de cambio de lado y las tablas anchas), así que el flyout
+       de "Ver Datos" (position:absolute, se sale del ancho de 60px de la
+       barra colapsada) quedaba recortado -- "no ocurre nada" al pasar el
+       mouse, pedido explícito del usuario (2026-09-12) para corregir. Un
+       solo ítem hoy, no hace falta scroll vertical todavía -- si algún día
+       hay muchos y no entran, se resuelve ahí, no preventivamente acá. */
+    .app-rail-items { flex: 1 1 auto; overflow: visible; padding: 8px 0; }
+    .app-rail-item { position: relative; }
+    .app-rail-item-row {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 13px 20px;
+      color: #cbd5e1;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+    .app-rail-item:hover .app-rail-item-row { background: rgba(255, 255, 255, 0.08); color: #fff; }
+    .app-rail-icon { width: 20px; height: 20px; flex-shrink: 0; }
+    .app-rail-icon svg { width: 20px; height: 20px; display: block; }
+    .app-rail-label { font-size: 13px; font-weight: 600; display: none; flex: 1 1 auto; }
+    body.rail-pinned .app-rail-label { display: inline; }
+    /* Flechita que indica si el panel está abierto -- solo tiene sentido
+       fijada expandida (colapsada, el panel ya es un flyout de hover, no
+       hace falta ningún indicador). Pedido explícito del usuario
+       (2026-09-14): con la barra fijada, los 9 paneles aparecían TODOS
+       abiertos a la vez y varios quedaban fuera de la pantalla -- ahora
+       cada ítem arranca cerrado y se abre individualmente al tocarlo. */
+    .app-rail-chevron { display: none; width: 14px; height: 14px; flex-shrink: 0; color: rgba(255, 255, 255, 0.45); transition: transform 0.12s ease; }
+    body.rail-pinned .app-rail-chevron { display: block; }
+    .app-rail-item.expanded .app-rail-chevron { transform: rotate(90deg); color: #fff; }
+    /* El panel (header + links) es UN SOLO bloque en el DOM -- de
+       colapsada, se posiciona como flyout a la derecha del ícono y solo
+       aparece con :hover; fijada, pasa a vivir en línea debajo del ícono
+       pero SOLO se muestra si el usuario tocó esa fila (.expanded) -- ver
+       el JS de toggleAppRailItem más abajo. */
+    .app-rail-panel {
+      position: absolute;
+      left: 60px;
+      top: 0;
+      min-width: 220px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 0 10px 10px 0;
+      box-shadow: var(--shadow-md);
+      padding: 10px;
+      display: none;
+      z-index: 45;
+    }
+    .app-rail-item:hover .app-rail-panel { display: block; }
+    /* Título del módulo dentro del panel -- solo hace falta colapsada (el
+       flyout de hover, sin ningún otro texto alrededor que diga sobre qué
+       módulo estás parado, ver pedido del usuario); fijada expandida ya
+       queda dicho por .app-rail-label en la fila de arriba, mostrarlo acá
+       también sería el mismo texto duplicado que ya se sacó una vez. */
+    .app-rail-panel-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-soft); padding: 4px 8px 8px; }
+    body.rail-pinned .app-rail-panel-title { display: none; }
+    body.rail-pinned .app-rail-panel {
+      position: static;
+      display: none;
+      background: none;
+      border: none;
+      box-shadow: none;
+      padding: 0 12px 12px 52px;
+    }
+    body.rail-pinned .app-rail-item.expanded .app-rail-panel { display: block; }
+    a.app-rail-panel-link {
+      display: block;
+      padding: 8px;
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text);
+      text-decoration: none;
+    }
+    a.app-rail-panel-link:hover { background: var(--surface-alt); }
+    body.rail-pinned a.app-rail-panel-link { color: #e2e8f0; padding: 6px 8px; }
+    body.rail-pinned a.app-rail-panel-link:hover { background: rgba(255, 255, 255, 0.08); }
+    a.app-rail-panel-link.app-rail-panel-link-upload { color: var(--accent, #0B6FAE); }
+    body.rail-pinned a.app-rail-panel-link.app-rail-panel-link-upload { color: #7dd3fc; }
+    .app-rail-soon { display: flex; align-items: center; gap: 6px; padding: 8px; font-size: 13px; color: var(--text-soft); }
+    body.rail-pinned .app-rail-soon { color: rgba(255, 255, 255, 0.35); padding: 6px 8px; }
+    .app-rail-soon-tag {
+      margin-left: auto;
+      font-size: 9.5px;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: var(--text-soft);
+      background: var(--surface-alt);
+      padding: 1px 6px;
+      border-radius: 999px;
+    }
+    body.rail-pinned .app-rail-soon-tag { background: rgba(255, 255, 255, 0.1); color: rgba(255, 255, 255, 0.5); }
+
     .page-header { margin-bottom: 24px; }
     .eyebrow {
       display: inline-block;
@@ -381,6 +586,18 @@
       transform: translateY(-1px);
     }
     a.tool-card:active { transform: scale(0.98); }
+    /* Variante no clickeable (ej. "Próximamente") -- mismo cascarón visual
+       que a.tool-card, sin los estados de hover/click de un link real. */
+    span.tool-card {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px 20px;
+      box-shadow: var(--shadow-sm);
+    }
     .tool-card-badge {
       min-width: 42px;
       height: 42px;
@@ -410,6 +627,18 @@
       margin-top: 18px;
     }
     .form-actions button { margin-top: 0; }
+
+    /* Grilla de campos sueltos (label + input) para pantallas de detalle
+       tipo "un día" -- compartida entre reporte_dia.html y lottery_dia.html,
+       promovida acá cuando el segundo template la necesitó igual. */
+    .dia-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: 12px 16px;
+      margin-bottom: 14px;
+    }
+    .dia-grid label.muted { margin: 0 0 4px; }
+    .dia-input-readonly { background: var(--surface) !important; border-color: transparent !important; font-weight: 600; }
 
     /* ---------- Responsive ---------- */
     @media (max-width: 640px) {
@@ -535,21 +764,212 @@
       width: min(640px, calc(100% - 32px));
       box-shadow: 0 10px 30px rgba(15, 23, 42, 0.18);
     }
+
+    /* Barra de progreso de carga de PDFs (o cualquier archivo) -- pedido
+       explícito del usuario 2026-09-11: si se interrumpe la carga a mitad
+       de camino, se corta -- necesita saber cuánto tiene que quedarse en
+       pantalla. Se inyecta con JS dentro de cada form.ajax-process-form
+       (ver el script más abajo), en TODOS los módulos por igual, sin tener
+       que tocar cada template. El color de la barra es el accent del
+       propio módulo (var(--accent), ya seteado por página) -- "acorde al
+       color del módulo" sale gratis, sin código extra por módulo. */
+    .upload-progress-wrap { display: none; margin-top: 12px; }
+    .upload-progress-wrap.active { display: block; }
+    .upload-progress-track {
+      height: 8px;
+      border-radius: 999px;
+      background: var(--border);
+      overflow: hidden;
+    }
+    .upload-progress-fill {
+      height: 100%;
+      width: 0%;
+      background: var(--accent);
+      border-radius: 999px;
+      transition: width 0.2s ease;
+    }
+    /* Tras subir el archivo, el servidor sigue procesando (OCR, escritura
+       de Excel) sin ninguna señal de progreso más fina -- en vez de dejar
+       la barra trabada en 100% (falsa sensación de "ya terminó"), pasa a
+       un rayado animado que deja claro que todavía sigue en curso. */
+    .upload-progress-wrap.indeterminate .upload-progress-fill {
+      width: 100%;
+      background-image: linear-gradient(135deg, var(--accent) 25%, var(--accent-soft) 25%, var(--accent-soft) 50%, var(--accent) 50%, var(--accent) 75%, var(--accent-soft) 75%, var(--accent-soft) 100%);
+      background-size: 28px 28px;
+      animation: upload-progress-stripes 0.9s linear infinite;
+    }
+    @keyframes upload-progress-stripes {
+      from { background-position: 0 0; }
+      to { background-position: 28px 0; }
+    }
+    .upload-progress-label {
+      font-size: 12px;
+      color: var(--text-soft);
+      margin-top: 6px;
+    }
   </style>
 </head>
 <body>
+  <nav class="app-rail" id="app-rail">
+    <div class="app-rail-brand">
+      <img class="app-rail-brand-mark" src="{{ url_for('static', filename='logo.png') }}" alt="Bradenton">
+      <span class="app-rail-brand-word">Bradenton App</span>
+    </div>
+    <div class="app-rail-items">
+      <div class="app-rail-item">
+        <div class="app-rail-item-row" onclick="toggleAppRailItem(this)">
+          <span class="app-rail-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20V13M2 20h20"/></svg>
+          </span>
+          <span class="app-rail-label">Ventas por Departamento</span>
+          <svg class="app-rail-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
+        </div>
+        <div class="app-rail-panel">
+          <div class="app-rail-panel-title">Ventas por Departamento</div>
+          <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('carga_datos_reporte_diario') }}">Cargar PDF</a>
+          <a class="app-rail-panel-link" href="{{ url_for('reporte_historial') }}">Ver guardado</a>
+          <a class="app-rail-panel-link" href="{{ url_for('reporte_documentos') }}">Documentos</a>
+        </div>
+      </div>
+      <div class="app-rail-item">
+        <div class="app-rail-item-row" onclick="toggleAppRailItem(this)">
+          <span class="app-rail-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="16" x2="13" y2="16"/></svg>
+          </span>
+          <span class="app-rail-label">Store Info</span>
+          <svg class="app-rail-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
+        </div>
+        <div class="app-rail-panel">
+          <div class="app-rail-panel-title">Store Info</div>
+          <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('carga_datos_reporte_diario') }}">Cargar PDF</a>
+          <a class="app-rail-panel-link" href="{{ url_for('reporte_store_info_historial') }}">Ver guardado</a>
+          <a class="app-rail-panel-link" href="{{ url_for('reporte_documentos') }}">Documentos</a>
+        </div>
+      </div>
+      <div class="app-rail-item">
+        <div class="app-rail-item-row" onclick="toggleAppRailItem(this)">
+          <span class="app-rail-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10 12 4l9 6"/><path d="M4 10v9M9 10v9M15 10v9M20 10v9"/><path d="M2 21h20"/></svg>
+          </span>
+          <span class="app-rail-label">Chase Bank</span>
+          <svg class="app-rail-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
+        </div>
+        <div class="app-rail-panel">
+          <div class="app-rail-panel-title">Chase Bank</div>
+          <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('chase') }}">Cargar extracto</a>
+          <a class="app-rail-panel-link" href="{{ url_for('chase_historial') }}">Movimientos guardados</a>
+        </div>
+      </div>
+      <div class="app-rail-item">
+        <div class="app-rail-item-row" onclick="toggleAppRailItem(this)">
+          <span class="app-rail-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 8h13l-4-4"/><path d="M17 16H4l4 4"/></svg>
+          </span>
+          <span class="app-rail-label">EFT y Cupones</span>
+          <svg class="app-rail-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
+        </div>
+        <div class="app-rail-panel">
+          <div class="app-rail-panel-title">EFT y Cupones</div>
+          <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('carga_datos_eft') }}">Cargar EFT / Cupones</a>
+          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_eft_historial') }}">Ver guardado</a>
+          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_documentos', module_key='eft') }}">Documentos</a>
+        </div>
+      </div>
+      <div class="app-rail-item">
+        <div class="app-rail-item-row" onclick="toggleAppRailItem(this)">
+          <span class="app-rail-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="13" rx="2"/><circle cx="12" cy="13.5" r="2.4"/><path d="M2 7l2.5-4h15L22 7"/></svg>
+          </span>
+          <span class="app-rail-label">Caja</span>
+          <svg class="app-rail-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
+        </div>
+        <div class="app-rail-panel">
+          <div class="app-rail-panel-title">Caja</div>
+          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_caja') }}">Ver guardado / Documentos</a>
+        </div>
+      </div>
+      <div class="app-rail-item">
+        <div class="app-rail-item-row" onclick="toggleAppRailItem(this)">
+          <span class="app-rail-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13l1.5-4.5A2 2 0 0 1 6.4 7h11.2a2 2 0 0 1 1.9 1.5L21 13"/><path d="M3 13v4a1 1 0 0 0 1 1h1a1 1 0 0 0 1-1v-1h12v1a1 1 0 0 0 1 1h1a1 1 0 0 0 1-1v-4"/><circle cx="7.5" cy="17" r="1.6"/><circle cx="16.5" cy="17" r="1.6"/></svg>
+          </span>
+          <span class="app-rail-label">Gettel / Toyota</span>
+          <svg class="app-rail-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
+        </div>
+        <div class="app-rail-panel">
+          <div class="app-rail-panel-title">Gettel / Toyota</div>
+          <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('carga_datos_gettel') }}">Cargar</a>
+          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_gettel_historial') }}">Ver guardado</a>
+          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_documentos', module_key='gettel_toyota') }}">Documentos</a>
+        </div>
+      </div>
+      <div class="app-rail-item">
+        <div class="app-rail-item-row" onclick="toggleAppRailItem(this)">
+          <span class="app-rail-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>
+          </span>
+          <span class="app-rail-label">CMV</span>
+          <svg class="app-rail-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
+        </div>
+        <div class="app-rail-panel">
+          <div class="app-rail-panel-title">CMV</div>
+          <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('carga_datos_cmv') }}">Cargar</a>
+          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_cmv_costo_historial') }}">Costo</a>
+          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_cmv_ventas_historial') }}">Ventas</a>
+          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_documentos', module_key='cmv_costo') }}">Documentos (Costo)</a>
+          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_documentos', module_key='cmv_ventas') }}">Documentos (Ventas)</a>
+        </div>
+      </div>
+      <div class="app-rail-item">
+        <div class="app-rail-item-row" onclick="toggleAppRailItem(this)">
+          <span class="app-rail-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2"/><line x1="9.5" y1="6" x2="9.5" y2="18" stroke-dasharray="2.2 2.2"/><circle cx="6" cy="12" r="0.6" fill="currentColor" stroke="none"/><circle cx="18" cy="12" r="0.6" fill="currentColor" stroke="none"/></svg>
+          </span>
+          <span class="app-rail-label">Lottery</span>
+          <svg class="app-rail-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
+        </div>
+        <div class="app-rail-panel">
+          <div class="app-rail-panel-title">Lottery</div>
+          <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('carga_datos_lottery') }}">Cargar PDF</a>
+          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_lottery_historial') }}">Cuadro del mes</a>
+          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_lottery_documentos') }}">PDFs cargados</a>
+          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_lottery_resumen_mensual') }}">Resumen mensual</a>
+        </div>
+      </div>
+      <div class="app-rail-item">
+        <div class="app-rail-item-row" onclick="toggleAppRailItem(this)">
+          <span class="app-rail-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="7" width="13" height="10" rx="1"/><path d="M14 10h4l3 3v4h-7z"/><circle cx="6" cy="18.5" r="1.6"/><circle cx="17.5" cy="18.5" r="1.6"/></svg>
+          </span>
+          <span class="app-rail-label">Proveedores</span>
+          <svg class="app-rail-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
+        </div>
+        <div class="app-rail-panel">
+          <div class="app-rail-panel-title">Proveedores</div>
+          <span class="app-rail-soon">Todavía no se suma <span class="app-rail-soon-tag">Pronto</span></span>
+        </div>
+      </div>
+    </div>
+  </nav>
+  <div class="app-shell">
   <header class="topbar">
     <div class="topbar-inner">
       <div class="topbar-left">
-        <a class="brand" href="{{ url_for('index') }}">
-          <img class="brand-mark" src="{{ url_for('static', filename='logo.png') }}" alt="Bradenton">
-          <span class="brand-word">Bradenton <span>App</span></span>
-        </a>
+        <button type="button" class="rail-toggle-btn" onclick="toggleAppRail()" aria-label="Mostrar/ocultar barra lateral">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
+        {% set _app_side = session.get('app_side', 'carga_datos') %}
+        {% if _app_side == 'carga_datos' %}
         <nav class="section-switch">
-          <a class="section-switch-item{{ ' active' if not request.path.startswith('/controles') and not request.path.startswith('/mes-nuevo') else '' }}" href="{{ url_for('index') }}">Herramientas</a>
-          <a class="section-switch-item{{ ' active' if request.path.startswith('/controles') else '' }}" href="{{ url_for('controles') }}">Controles</a>
-          <a class="section-switch-item{{ ' active' if request.path.startswith('/mes-nuevo') else '' }}" href="{{ url_for('mes_nuevo_index') }}">Mes Nuevo</a>
+          <a class="section-switch-item{{ ' active' if not request.path.startswith('/carga-datos/controles') else '' }}" href="{{ url_for('carga_datos_index') }}">Herramientas</a>
+          <a class="section-switch-item{{ ' active' if request.path.startswith('/carga-datos/controles') else '' }}" href="{{ url_for('carga_datos_controles') }}">Controles</a>
         </nav>
+        {% else %}
+        <nav class="section-switch">
+          <a class="section-switch-item{{ ' active' if not request.path.startswith('/controles') else '' }}" href="{{ url_for('excels_index') }}">Herramientas</a>
+          <a class="section-switch-item{{ ' active' if request.path.startswith('/controles') else '' }}" href="{{ url_for('controles') }}">Controles</a>
+        </nav>
+        {% endif %}
         {% block crumbs %}{% endblock %}
       </div>
       <div class="topbar-search" id="topbar-search">
@@ -596,7 +1016,28 @@
     <div id="global-notice" style="display:none;"></div>
     {% block content %}{% endblock %}
   </main>
+  </div>
   <script>
+    // Barra lateral global (.app-rail) -- "fijada abierta" dura solo
+    // mientras dure esta vista de página (nunca persiste entre navegaciones
+    // ni sobrevive un F5) -- pedido explícito del usuario 2026-09-11: si se
+    // expande y después se entra a un link o se recarga, tiene que volver a
+    // arrancar colapsada. El botón que la fija vive en la barra de arriba
+    // (.rail-toggle-btn), no adentro de la barra lateral misma.
+    function toggleAppRail() {
+      document.body.classList.toggle('rail-pinned');
+    }
+    // Cada ítem de la barra lateral arranca cerrado cuando la barra está
+    // fijada expandida -- pedido explícito del usuario (2026-09-14): antes
+    // los 9 paneles se mostraban TODOS abiertos a la vez y varios quedaban
+    // fuera de la pantalla. Tocar la fila abre/cierra solo su propio panel
+    // (no afecta a los demás, se pueden tener varios abiertos a la vez si
+    // hace falta comparar). Sin efecto visual mientras la barra está
+    // colapsada (ahí el panel sigue siendo un flyout de :hover, como ya
+    // era).
+    function toggleAppRailItem(row) {
+      row.parentElement.classList.toggle('expanded');
+    }
     // Búsqueda de módulos (header) -- pedido explícito del usuario
     // 2026-09-06: buscar por nombre desde cualquier página y encontrar los
     // módulos relacionados de las 3 secciones (Herramientas/Controles/Mes
@@ -754,15 +1195,21 @@
     // "clic afuera para cerrar" ni Escape -- bug real encontrado en la
     // auditoría 2026-09-06 (asimetría entre los dos dropdowns del header).
     (function () {
-      var accountMenu = document.getElementById('account-menu');
-      if (!accountMenu) return;
+      var dismissibleIds = ['account-menu'];
       document.addEventListener('click', function (e) {
-        if (accountMenu.classList.contains('open') && !e.target.closest('#account-menu')) {
-          accountMenu.classList.remove('open');
-        }
+        dismissibleIds.forEach(function (id) {
+          var menu = document.getElementById(id);
+          if (menu && menu.classList.contains('open') && !e.target.closest('#' + id)) {
+            menu.classList.remove('open');
+          }
+        });
       });
       document.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape') accountMenu.classList.remove('open');
+        if (e.key !== 'Escape') return;
+        dismissibleIds.forEach(function (id) {
+          var menu = document.getElementById(id);
+          if (menu) menu.classList.remove('open');
+        });
       });
     })();
 
@@ -846,22 +1293,65 @@
       });
     })();
 
+    // Barra de progreso de carga -- helper compartido entre el mecanismo de
+    // abajo (form.ajax-process-form, que descarga un archivo) y el de más
+    // abajo todavía (cualquier otro form multipart, que recarga la página
+    // con el resultado) -- misma barra visual en los dos casos, solo cambia
+    // qué pasa cuando termina la subida.
+    function attachUploadProgress(form) {
+      var progressWrap = document.createElement('div');
+      progressWrap.className = 'upload-progress-wrap';
+      progressWrap.innerHTML =
+        '<div class="upload-progress-track"><div class="upload-progress-fill"></div></div>' +
+        '<div class="upload-progress-label"></div>';
+      form.appendChild(progressWrap);
+      var progressFill = progressWrap.querySelector('.upload-progress-fill');
+      var progressLabel = progressWrap.querySelector('.upload-progress-label');
+      return {
+        set: function (pct, text, indeterminate) {
+          progressWrap.classList.add('active');
+          progressWrap.classList.toggle('indeterminate', !!indeterminate);
+          if (!indeterminate) progressFill.style.width = pct + '%';
+          progressLabel.textContent = text;
+        },
+        reset: function () {
+          progressWrap.classList.remove('active', 'indeterminate');
+          progressFill.style.width = '0%';
+          progressLabel.textContent = '';
+        },
+      };
+    }
+
     // Aviso instantáneo en todos los módulos: cualquier <form> con
-    // class="ajax-process-form" se manda por fetch en vez de dejar que el
-    // navegador navegue -- necesario porque la respuesta de estas rutas es
-    // una descarga de archivo (send_file), nunca una página HTML nueva, así
-    // que un flash() de Flask quedaría en cola de sesión y aparecería recién
-    // en la próxima página que el usuario visite, totalmente fuera de
-    // contexto (bug real, ya documentado en CLAUDE.md). Con fetch, el error
-    // (JSON + 400) o el aviso de éxito parcial (header X-App-Notice) se
-    // puede mostrar en el momento, arriba de la página, sin esperar a nada.
-    // El servidor ya abrió el resultado en Excel (misma PC, ver
-    // _open_result_for_user en webapp.py) -- acá no se dispara ninguna
-    // descarga a la carpeta Descargas, pedido explícito del usuario
+    // class="ajax-process-form" se manda por XMLHttpRequest en vez de dejar
+    // que el navegador navegue -- necesario porque la respuesta de estas
+    // rutas es una descarga de archivo (send_file), nunca una página HTML
+    // nueva, así que un flash() de Flask quedaría en cola de sesión y
+    // aparecería recién en la próxima página que el usuario visite,
+    // totalmente fuera de contexto (bug real, ya documentado en
+    // CLAUDE.md). El error (JSON + 400) o el aviso de éxito parcial (header
+    // X-App-Notice) se puede mostrar en el momento, arriba de la página,
+    // sin esperar a nada. El servidor ya abrió el resultado en Excel (misma
+    // PC, ver _open_result_for_user en webapp.py) -- acá no se dispara
+    // ninguna descarga a la carpeta Descargas, pedido explícito del usuario
     // (2026-09-02). Un CustomEvent "ajaxprocess:success" con el blob se
     // dispara igual para que una página puntual (ej. Proveedores, que
     // encadena el resultado al input compartido) pueda reusarlo sin que
     // este mecanismo genérico sepa nada de eso.
+    //
+    // Se usa XMLHttpRequest en vez de fetch (2026-09-11, pedido explícito
+    // del usuario) para poder mostrar una barra de progreso real de la
+    // carga -- fetch no expone el progreso de subida de forma simple y
+    // ampliamente soportada, XHR sí vía xhr.upload.onprogress. Esto
+    // importa porque si el usuario cierra la pestaña o navega a otro lado
+    // a mitad de una carga de PDFs, la carga se corta -- la barra (con el
+    // color del módulo, var(--accent), ya seteado por página) le muestra
+    // cuánto falta para poder despegarse de la pantalla con confianza.
+    // Después de que el navegador termina de subir el archivo, el servidor
+    // sigue procesando (OCR, escritura de Excel) sin ninguna señal de
+    // progreso más granular -- ahí la barra pasa a un estado "indeterminado"
+    // (rayado animado) en vez de quedarse trabada en 100%, para no dar la
+    // falsa impresión de que ya terminó.
     (function () {
       function noticeBox() {
         return document.getElementById('global-notice');
@@ -901,6 +1391,8 @@
       }
 
       document.querySelectorAll('form.ajax-process-form').forEach(function (form) {
+        var progress = attachUploadProgress(form);
+
         form.addEventListener('submit', function (event) {
           if (form.classList.contains('needs-shared-master')) {
             var mirror = form.querySelector('.hidden-master-mirror');
@@ -910,6 +1402,7 @@
           }
           event.preventDefault();
           hideNotice();
+          progress.reset();
 
           var submitBtn = form.querySelector('button[type=submit]');
           var originalLabel = submitBtn ? submitBtn.textContent : null;
@@ -918,73 +1411,291 @@
             submitBtn.textContent = 'Procesando...';
           }
 
-          fetch(form.action, {
-            method: 'POST',
-            body: new FormData(form),
-            headers: { 'X-Ajax-Request': '1' },
-          })
-            .then(function (response) {
-              if (!response.ok) {
-                return response.json().then(function (data) {
-                  throw new Error(data.error || 'Error al procesar.');
-                });
-              }
-              var noticeHeader = response.headers.get('X-App-Notice');
-              var noticeLevel = response.headers.get('X-App-Notice-Level') || 'warning';
-              var filename = parseFilename(response.headers.get('Content-Disposition')) || 'resultado.xlsx';
-              return response.blob().then(function (blob) {
-                return {
-                  blob: blob,
-                  filename: filename,
-                  notice: noticeHeader ? decodeURIComponent(noticeHeader) : null,
-                  noticeLevel: noticeLevel,
-                };
-              });
-            })
-            .then(function (result) {
-              // El servidor ya abrió el resultado en Excel (misma PC) --
-              // acá no se dispara ninguna descarga a la carpeta Descargas,
-              // pedido explícito del usuario. El blob se conserva solo para
-              // que una página puntual (ej. Proveedores, que encadena
-              // Facturas -> Pagos) lo pueda reusar via este evento.
-              //
-              // Excepción: un form "force-download" (Mes Nuevo) SÍ dispara
-              // la descarga real a la carpeta Descargas (pedido explícito
-              // del usuario 2026-09-06: quiere ver el pop típico de
-              // descarga del navegador) con el mecanismo clásico de blob
-              // URL + <a download> sintético -- el servidor ya borró de
-              // Descargas cualquier archivo previo con el mismo nombre
-              // (ver _save_to_downloads_and_build_notice en webapp.py) para
-              // que el navegador guarde el nuevo con el nombre exacto en
-              // vez de sufijarlo "(1)".
-              if (form.classList.contains('force-download')) {
-                var blobUrl = URL.createObjectURL(result.blob);
-                var link = document.createElement('a');
-                link.href = blobUrl;
-                link.download = result.filename;
-                document.body.appendChild(link);
-                link.click();
-                link.remove();
-                setTimeout(function () { URL.revokeObjectURL(blobUrl); }, 1000);
-              }
+          function finish() {
+            progress.reset();
+            if (submitBtn) {
+              submitBtn.disabled = false;
+              submitBtn.textContent = originalLabel;
+            }
+          }
 
-              form.dispatchEvent(new CustomEvent('ajaxprocess:success', {
-                detail: { blob: result.blob, filename: result.filename },
-              }));
+          var xhr = new XMLHttpRequest();
+          xhr.open('POST', form.action, true);
+          xhr.responseType = 'blob';
+          xhr.setRequestHeader('X-Ajax-Request', '1');
 
-              if (result.notice) {
-                showNotice(result.notice, result.noticeLevel);
+          xhr.upload.addEventListener('progress', function (e) {
+            if (!e.lengthComputable) {
+              progress.set(0, 'Subiendo... no cierres ni cambies de pestaña.', true);
+              return;
+            }
+            var pct = Math.round((e.loaded / e.total) * 100);
+            progress.set(pct, 'Subiendo... ' + pct + '% -- no cierres ni cambies de pestaña.');
+          });
+          xhr.upload.addEventListener('load', function () {
+            progress.set(100, 'Procesando en el servidor... no cierres esta pestaña.', true);
+          });
+
+          xhr.onerror = function () {
+            showNotice('Error de red al procesar.', 'error');
+            finish();
+          };
+
+          xhr.onload = function () {
+            var ok = xhr.status >= 200 && xhr.status < 300;
+            if (!ok) {
+              var reader = new FileReader();
+              reader.onload = function () {
+                var message = 'Error al procesar.';
+                try {
+                  var data = JSON.parse(reader.result);
+                  if (data && data.error) message = data.error;
+                } catch (parseErr) {
+                  // respuesta no-JSON inesperada, se muestra el mensaje genérico
+                }
+                showNotice(message, 'error');
+                finish();
+              };
+              reader.onerror = function () {
+                showNotice('Error al procesar.', 'error');
+                finish();
+              };
+              reader.readAsText(xhr.response);
+              return;
+            }
+
+            var noticeHeader = xhr.getResponseHeader('X-App-Notice');
+            var noticeLevel = xhr.getResponseHeader('X-App-Notice-Level') || 'warning';
+            var filename = parseFilename(xhr.getResponseHeader('Content-Disposition')) || 'resultado.xlsx';
+            var blob = xhr.response;
+
+            // El servidor ya abrió el resultado en Excel (misma PC) -- acá
+            // no se dispara ninguna descarga a la carpeta Descargas,
+            // pedido explícito del usuario. El blob se conserva solo para
+            // que una página puntual (ej. Proveedores, que encadena
+            // Facturas -> Pagos) lo pueda reusar vía este evento.
+            form.dispatchEvent(new CustomEvent('ajaxprocess:success', {
+              detail: { blob: blob, filename: filename },
+            }));
+
+            if (noticeHeader) {
+              showNotice(decodeURIComponent(noticeHeader), noticeLevel);
+            }
+            finish();
+          };
+
+          xhr.send(new FormData(form));
+        });
+      });
+    })();
+
+    // Carga en segundo plano con progreso REAL -- pedido explícito del
+    // usuario (2026-09-14): "no queria que la barra de progreso fuera una
+    // decoracion... queria que muestre el progreso real de cuanto le falta"
+    // + "ver si ese proceso podria hacerse por aparte mientras se trabaja
+    // en otra cosa". A diferencia de los dos mecanismos de arriba (la
+    // conexión XHR abierta ES el procesamiento -- cerrarla corta la
+    // carga), acá el POST solo sube los archivos y devuelve un job_id al
+    // toque; el trabajo pesado sigue en un hilo del servidor (ver jobs.py)
+    // sin importar qué haga el navegador después. Esta pestaña sondea
+    // /jobs/<id>/status cada 1.2s y mueve la barra con el porcentaje real
+    // (PDFs ya procesados / total) -- nunca un rayado indeterminado fingido.
+    (function () {
+      document.querySelectorAll('form.background-job-form').forEach(function (form) {
+        var progress = attachUploadProgress(form);
+        var pollTimer = null;
+
+        form.addEventListener('submit', function (event) {
+          if (form.classList.contains('needs-shared-master')) {
+            var mirror = form.querySelector('.hidden-master-mirror');
+            if (mirror && mirror.files.length === 0) {
+              return; // deja que needs-shared-master (arriba) bloquee y avise
+            }
+          }
+          event.preventDefault();
+          progress.reset();
+
+          var submitBtn = form.querySelector('button[type=submit]');
+          var originalLabel = submitBtn ? submitBtn.textContent : null;
+          if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Procesando...';
+          }
+
+          function finish() {
+            if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+            if (submitBtn) {
+              submitBtn.disabled = false;
+              submitBtn.textContent = originalLabel;
+            }
+          }
+
+          function poll(jobId) {
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', '/jobs/' + jobId + '/status', true);
+            xhr.onload = function () {
+              if (xhr.status !== 200) {
+                progress.set(0, 'No se pudo consultar el progreso.', true);
+                pollTimer = setTimeout(function () { poll(jobId); }, 2000);
+                return;
               }
-            })
-            .catch(function (err) {
-              showNotice(err.message, 'error');
-            })
-            .finally(function () {
-              if (submitBtn) {
-                submitBtn.disabled = false;
-                submitBtn.textContent = originalLabel;
+              var data = JSON.parse(xhr.responseText);
+              if (data.status === 'running' && data.phase === 'saving') {
+                // Los PDF ya se leyeron -- ahora se están guardando en la
+                // página (vuelve a leer cada uno, más lento que la lectura
+                // de arriba porque no corre en paralelo) -- progreso real
+                // de ESTE paso, no el mismo número de antes repetido.
+                var savePct = data.total > 0 ? Math.round((data.done / data.total) * 100) : 0;
+                progress.set(savePct, 'Guardando en la página: ' + data.done + ' de ' + data.total + ' (' + savePct + '%) -- puede tardar varios minutos más, no cierres esta pestaña.');
+                pollTimer = setTimeout(function () { poll(jobId); }, 1200);
+              } else if (data.status === 'running') {
+                var pct = data.total > 0 ? Math.round((data.done / data.total) * 100) : 0;
+                progress.set(pct, data.done + ' de ' + data.total + ' PDF procesados (' + pct + '%) -- podés cambiar de pestaña, sigue solo en el servidor.');
+                pollTimer = setTimeout(function () { poll(jobId); }, 1200);
+              } else if (data.status === 'done') {
+                progress.set(100, 'Listo -- ' + data.done + ' de ' + data.total + ' PDF procesados.');
+                if (data.notice) {
+                  var box = document.getElementById('global-notice');
+                  if (box) {
+                    box.className = data.notice_level === 'error' ? 'flash-error' : (data.notice_level === 'warning' ? 'flash-warning' : 'flash-success');
+                    box.style.display = 'block';
+                    box.textContent = data.notice;
+                  }
+                }
+                setTimeout(function () { progress.reset(); }, 2500);
+                finish();
+              } else if (data.status === 'error') {
+                progress.reset();
+                alert(data.error || 'Error al procesar.');
+                finish();
+              } else if (data.status === 'not_found') {
+                progress.reset();
+                alert('Se perdió el seguimiento de esta carga (el servidor se reinició). Revisá en "Ver guardado" si algo quedó cargado, y volvé a intentar si hace falta.');
+                finish();
+              } else {
+                progress.reset();
+                finish();
               }
-            });
+            };
+            xhr.onerror = function () {
+              pollTimer = setTimeout(function () { poll(jobId); }, 2000);
+            };
+            xhr.send();
+          }
+
+          var startXhr = new XMLHttpRequest();
+          startXhr.open('POST', form.action, true);
+          startXhr.setRequestHeader('X-Ajax-Request', '1');
+          startXhr.upload.addEventListener('progress', function (e) {
+            if (!e.lengthComputable) {
+              progress.set(0, 'Subiendo... no cierres ni cambies de pestaña.', true);
+              return;
+            }
+            var pct = Math.round((e.loaded / e.total) * 100);
+            progress.set(pct, 'Subiendo... ' + pct + '%.');
+          });
+          startXhr.upload.addEventListener('load', function () {
+            progress.set(0, 'Subida completa -- arrancando en el servidor...', true);
+          });
+          startXhr.onerror = function () {
+            progress.reset();
+            alert('Error de red al procesar.');
+            finish();
+          };
+          startXhr.onload = function () {
+            if (startXhr.status < 200 || startXhr.status >= 300) {
+              progress.reset();
+              try {
+                var errData = JSON.parse(startXhr.responseText);
+                alert(errData.error || 'Error al procesar.');
+              } catch (parseErr) {
+                alert('Error al procesar.');
+              }
+              finish();
+              return;
+            }
+            var started = JSON.parse(startXhr.responseText);
+            poll(started.job_id);
+          };
+          startXhr.send(new FormData(form));
+        });
+      });
+    })();
+
+    // Misma barra de progreso que arriba, pero para el resto de los forms
+    // que suben archivo y NO son "ajax-process-form" -- los de Controles
+    // (re-renderizan la misma página con el resultado adentro) y los de
+    // Carga de Datos (redirigen a otra página tras guardar). Ninguno de los
+    // dos descarga un archivo, así que no hace falta nada de lo de arriba
+    // (blob, X-App-Notice, etc.) -- alcanza con mostrar el progreso de
+    // subida y, cuando el servidor termina, reemplazar la página entera por
+    // la respuesta real (document.write), como si hubiera sido una
+    // navegación común -- misma razón de fondo que el resto de esta barra:
+    // pedido explícito del usuario 2026-09-11, "con cualquier módulo de
+    // cualquier PDF". Se salta a propósito cualquier form ajax-process-form
+    // (ya tiene su propio manejo arriba) o marcado con "no-progress".
+    (function () {
+      document.querySelectorAll('form[enctype="multipart/form-data"]').forEach(function (form) {
+        if (form.classList.contains('ajax-process-form') || form.classList.contains('no-progress') || form.classList.contains('background-job-form')) {
+          return;
+        }
+        var progress = attachUploadProgress(form);
+
+        form.addEventListener('submit', function (event) {
+          if (form.classList.contains('needs-shared-master')) {
+            var mirror = form.querySelector('.hidden-master-mirror');
+            if (mirror && mirror.files.length === 0) {
+              return; // deja que needs-shared-master (arriba) bloquee y avise
+            }
+          }
+          event.preventDefault();
+          progress.reset();
+
+          var submitBtn = form.querySelector('button[type=submit]');
+          var originalLabel = submitBtn ? submitBtn.textContent : null;
+          if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Procesando...';
+          }
+
+          var xhr = new XMLHttpRequest();
+          xhr.open('POST', form.action, true);
+
+          xhr.upload.addEventListener('progress', function (e) {
+            if (!e.lengthComputable) {
+              progress.set(0, 'Subiendo... no cierres ni cambies de pestaña.', true);
+              return;
+            }
+            var pct = Math.round((e.loaded / e.total) * 100);
+            progress.set(pct, 'Subiendo... ' + pct + '% -- no cierres ni cambies de pestaña.');
+          });
+          xhr.upload.addEventListener('load', function () {
+            progress.set(100, 'Procesando... no cierres esta pestaña.', true);
+          });
+
+          xhr.onerror = function () {
+            progress.reset();
+            if (submitBtn) {
+              submitBtn.disabled = false;
+              submitBtn.textContent = originalLabel;
+            }
+            alert('Error de red al procesar. Volvé a intentarlo.');
+          };
+          xhr.onload = function () {
+            // xhr sigue redirects solo -- si el servidor mandó un 302 (ej.
+            // Carga de Datos, que redirige al historial tras guardar), acá
+            // ya llegó la respuesta FINAL (200), pero la URL de la barra de
+            // direcciones se queda en la del form -- se corrige a mano para
+            // que quede consistente con lo que se está mostrando.
+            if (xhr.responseURL && xhr.responseURL !== window.location.href) {
+              try { window.history.replaceState(null, '', xhr.responseURL); } catch (histErr) {}
+            }
+            document.open();
+            document.write(xhr.responseText);
+            document.close();
+          };
+
+          xhr.send(new FormData(form));
         });
       });
     })();
@@ -1010,6 +1721,52 @@
           sharedInput.dispatchEvent(new Event('change', { bubbles: true }));
         });
       });
+    })();
+
+    // Aviso de cambios sin guardar -- pedido explícito del usuario
+    // (2026-09-12, cuarta tanda): "si intento hacer cambios sin guardar y
+    // quiero cambiar de modulo, deberia salir un mensaje de que hizo
+    // cambios y no los guardo, puede ignorar este mensaje si solo quiere
+    // salir de ahi". Cualquier <form data-warn-unsaved> (Caja, Reporte
+    // Diario/Store Info, Lottery día a día -- pantallas de "esto ya está
+    // cargado, corregilo y Guardá") queda marcado "sucio" apenas el
+    // usuario toca un campo; navegar (un link) o cerrar/recargar la
+    // pestaña con algo sucio pendiente muestra una confirmación -- elegir
+    // "Aceptar" descarta el aviso y deja salir igual, nunca bloquea de
+    // forma permanente. Guardar (submit) de ESE form lo vuelve a marcar
+    // limpio -- nunca se guarda nada por las dudas, el submit real sigue
+    // siendo el único que persiste el cambio.
+    (function () {
+      var dirtyForms = new Set();
+      document.querySelectorAll('form[data-warn-unsaved]').forEach(function (form) {
+        form.addEventListener('input', function () { dirtyForms.add(form); });
+        form.addEventListener('change', function () { dirtyForms.add(form); });
+        form.addEventListener('submit', function () { dirtyForms.delete(form); });
+      });
+      if (!dirtyForms.size && !document.querySelector('form[data-warn-unsaved]')) return;
+
+      function anyDirty() { return dirtyForms.size > 0; }
+
+      window.addEventListener('beforeunload', function (event) {
+        if (!anyDirty()) return;
+        event.preventDefault();
+        event.returnValue = '';
+      });
+
+      document.addEventListener('click', function (event) {
+        if (!anyDirty()) return;
+        var link = event.target.closest('a[href]');
+        if (!link) return;
+        var confirmed = window.confirm(
+          'Hiciste cambios en este formulario que todavía no guardaste -- si salís ahora se van a perder. ¿Salir igual?'
+        );
+        if (!confirmed) {
+          event.preventDefault();
+          event.stopPropagation();
+        } else {
+          dirtyForms.clear();
+        }
+      }, true);
     })();
   </script>
 </body>

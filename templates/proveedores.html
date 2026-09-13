@@ -7,6 +7,9 @@
   <span class="eyebrow">Proveedores</span>
   <h1>Facturas y Pagos</h1>
   <p class="page-subtitle">Dos flujos independientes sobre el mismo Excel de Proveedores — Facturas agrega filas "invoice" detectando el proveedor de cada PDF, Pagos agrega filas "OP" a partir del extracto de Chase ya categorizado.</p>
+  {% if current_user.is_admin %}
+  <p style="margin-top: 10px;"><a href="{{ url_for('proveedores_nuevo') }}">+ Agregar un proveedor nuevo (sin código)</a></p>
+  {% endif %}
 </div>
 <details class="card">
   <summary style="cursor: pointer; font-weight: 600;">Lista de proveedores</summary>

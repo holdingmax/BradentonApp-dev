@@ -682,6 +682,21 @@ def _summarize_origin_workbook(source_workbook):
     return gettel_totals, toyota_totals
 
 
+def summarize_origin_workbook(source_path):
+    """
+    Public wrapper (Carga de Datos, 2026-09-12) sobre `_summarize_origin_
+    workbook` -- abre el Excel de origen por ruta y devuelve (gettel_totals,
+    toyota_totals) sin necesitar ningún Excel de destino, a diferencia de
+    `merge_gettel_toyota_into_master` (que sí lo necesita para escribir).
+    """
+    _ensure_openpyxl()
+    workbook = load_workbook(os.path.abspath(source_path), data_only=True)
+    try:
+        return _summarize_origin_workbook(workbook)
+    finally:
+        workbook.close()
+
+
 # ---------------------------------------------------------------------------
 # Scanned/photographed report parsing (OCR)
 #

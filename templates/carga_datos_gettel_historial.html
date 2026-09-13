@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block main_class %}main-full{% endblock %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ url_for('carga_datos_gettel') }}">Gettel / Toyota</a><span class="current">Guardado</span></nav>
+{% endblock %}
+{% block content %}
+{% macro fmt(x) -%}
+{%- if x is none -%}—{%- else -%}{{ "{:,.2f}".format(x) }}{%- endif -%}
+{%- endmacro %}
+<div class="page-header">
+  <h1>Gettel / Toyota</h1>
+  <p class="page-subtitle">Monto y Galones por día, ya guardados desde los reportes de cupones subidos. Esta misma suma es la que ahora completa la categoría "Gettel" de Ventas por Departamento. La columna "Local Account" sale del departamento así llamado en el Department Sales Report (aparece pocas veces en el mes) y se compara sola contra Gettel + Toyota, igual que en el Excel real.</p>
+</div>
+
+<div class="card">
+  <div class="historial-nav">
+    <a href="{{ url_for('carga_datos_gettel_historial', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
+    <div class="historial-nav-title">
+      <h2>{{ month_name }} {{ year }}</h2>
+      <a href="{{ url_for('carga_datos_gettel_historial') }}" class="muted">Ir al mes actual</a>
+    </div>
+    <a href="{{ url_for('carga_datos_gettel_historial', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
+  </div>
+
+  {% if days %}
+  <div class="historial-table-wrap" style="margin-top: 18px;">
+    <table class="historial-table">
+      <thead>
+        <tr>
+          <th rowspan="2">Fecha</th>
+          <th colspan="2">Gettel</th>
+          <th colspan="2">Toyota</th>
+          <th rowspan="2">Local Account</th>
+          <th rowspan="2">DIF</th>
+        </tr>
+        <tr>
+          <th>Monto</th><th>Galones</th><th>Monto</th><th>Galones</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in days %}
+        <tr>
+          <td class="historial-col-day">{{ d.date }}</td>
+          <td>${{ fmt(d.gettel_amount) }}</td>
+          <td>{{ fmt(d.gettel_gallons) }}</td>
+          <td>${{ fmt(d.toyota_amount) }}</td>
+          <td>{{ fmt(d.toyota_gallons) }}</td>
+          <td>{{ '$' + fmt(d.local_account) if d.local_account is not none else '—' }}</td>
+          <td>
+            {% if d.dif is not none %}
+            <span class="dif-badge {{ 'dif-ok' if d.dif|abs < 0.01 else 'dif-mismatch' }}">${{ fmt(d.dif) }}</span>
+            {% else %}—{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr class="reporte-totals-row">
+          <td>Total</td>
+          <td>${{ fmt(totals.gettel_amount) }}</td>
+          <td>{{ fmt(totals.gettel_gallons) }}</td>
+          <td>${{ fmt(totals.toyota_amount) }}</td>
+          <td>{{ fmt(totals.toyota_gallons) }}</td>
+          <td>${{ fmt(totals.local_account) }}</td>
+          <td></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted" style="margin-top: 18px;">Todavía no hay nada cargado este mes. <a href="{{ url_for('carga_datos_gettel') }}">Subir cupones</a>.</p>
+  {% endif %}
+</div>
+
+<style>
+  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .historial-nav-btn { text-decoration: none; display: inline-block; }
+  .historial-nav-title { text-align: center; }
+  .historial-nav-title h2 { margin: 0; }
+  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
+  .historial-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
+  .historial-table { width: 100%; min-width: 420px; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .historial-table th, .historial-table td { padding: 9px 14px; text-align: left; }
+  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr { border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
+  .historial-col-day { font-weight: 700; }
+  .reporte-totals-row td { font-weight: 700; background: var(--surface-alt); border-top: 2px solid var(--border); }
+  .dif-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+  .dif-ok { background: var(--success-soft); color: var(--success); }
+  .dif-mismatch { background: var(--warning-soft); color: var(--warning); }
+</style>
+{% endblock %}

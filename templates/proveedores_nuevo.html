@@ -1,0 +1,370 @@
+{% extends "base.html" %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ url_for('proveedores') }}">Proveedores</a><span class="current">Agregar Proveedor Nuevo</span></nav>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <span class="eyebrow">Proveedores</span>
+  <h1>Agregar Proveedor Nuevo</h1>
+  <p class="page-subtitle">Para facturas simples de leer (texto limpio, sin escritura a mano) — subís una factura de muestra, le indicás dónde está el N° de Factura, la Fecha y el Monto Total, y de ahí en más ese proveedor se carga solo desde "Cargar Facturas". Antes de empezar, creá a mano la hoja del proveedor en el Excel de Proveedores (copiando una pestaña existente y borrando sus datos viejas).</p>
+</div>
+
+<div class="card">
+  <h2>1. Datos del proveedor y factura de muestra</h2>
+  <label class="muted">Nombre del proveedor</label>
+  <input type="text" id="wiz-label" placeholder="Ej. Nombre del Proveedor SA">
+
+  <label class="muted">Nombre de la hoja en el Excel (ya creada a mano)</label>
+  <input type="text" id="wiz-sheet-name" placeholder="Ej. NOMBREPROV">
+
+  <label class="muted">Etiqueta en RESUMEN COMPRAS (dejalo igual que el nombre de hoja si no sabés)</label>
+  <input type="text" id="wiz-resumen-label" placeholder="Ej. NOMBREPROV">
+
+  <label class="muted">Palabra que identifica a este proveedor (aparece en todas sus facturas, y en ninguna de otro proveedor)</label>
+  <input type="text" id="wiz-detect-keyword" placeholder="Ej. el nombre del proveedor tal cual aparece en la factura">
+
+  <label class="muted">Factura de muestra (PDF)</label>
+  <input type="file" id="wiz-sample-pdf" accept=".pdf">
+
+  <label class="muted">N° de Factura (tal cual lo ves en la factura)</label>
+  <input type="text" id="wiz-invoice-no" placeholder="Ej. 188412">
+
+  <label class="muted">Fecha (tal cual la ves, ej. 08/15/2026)</label>
+  <input type="text" id="wiz-date" placeholder="Ej. 08/15/2026">
+
+  <label class="muted">Monto Total (tal cual lo ves, ej. 1,234.56)</label>
+  <input type="text" id="wiz-amount" placeholder="Ej. 1,234.56">
+
+  <div class="form-actions">
+    <button type="button" id="wiz-analyze-btn">Analizar</button>
+  </div>
+  <p id="wiz-error" class="flash-error" style="display:none; margin-top: 14px; margin-bottom: 0;"></p>
+</div>
+
+<div class="card" id="wizard-step2" style="display:none;">
+  <h2>2. Confirmá dónde está cada dato</h2>
+  <label class="muted">Texto leído de la factura (para revisar que se haya leído bien)</label>
+  <pre id="wiz-preview-text" style="white-space: pre-wrap; background: var(--surface-alt); border: 1px solid var(--border); border-radius: 8px; padding: 12px; font-size: 12px; max-height: 220px; overflow: auto; margin: 0 0 16px;"></pre>
+
+  <div id="wiz-fields-container"></div>
+
+  <div class="form-actions" id="wiz-confirm-row" style="display:none;">
+    <button type="button" id="wiz-confirm-choices-btn" class="btn-secondary">Confirmar elección y volver a analizar</button>
+  </div>
+</div>
+
+<div class="card" id="wizard-step3" style="display:none;">
+  <h2>3. Regla lista</h2>
+  <ul id="wiz-summary-list" class="muted" style="margin: 0 0 16px; padding-left: 18px;"></ul>
+
+  <label class="muted">Probar con otra factura real del mismo proveedor (opcional, recomendado)</label>
+  <input type="file" id="wiz-test-pdf" accept=".pdf">
+  <div class="form-actions">
+    <button type="button" id="wiz-test-btn" class="btn-secondary">Probar con otra factura</button>
+  </div>
+  <p id="wiz-test-result" class="muted" style="margin-top: 10px; white-space: pre-wrap;"></p>
+
+  <form method="post" action="{{ url_for('proveedores_nuevo_guardar') }}" id="wiz-save-form" style="margin-top: 18px;">
+    <input type="hidden" name="label" id="wiz-save-label">
+    <input type="hidden" name="sheet_name" id="wiz-save-sheet-name">
+    <input type="hidden" name="resumen_label" id="wiz-save-resumen-label">
+    <input type="hidden" name="detect_keyword" id="wiz-save-detect-keyword">
+    <input type="hidden" name="resolved_fields_json" id="wiz-save-fields-json">
+    <div class="form-actions">
+      <button type="submit">Guardar proveedor</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Proveedores agregados desde acá</h2>
+  {% if dynamic_suppliers %}
+  <div style="overflow-x: auto;">
+  <table style="width:100%; border-collapse: collapse; font-size: 13.5px;">
+    <thead>
+      <tr style="text-align:left; border-bottom: 1px solid var(--border);">
+        <th style="padding: 8px 6px;">Proveedor</th>
+        <th style="padding: 8px 6px;">Hoja</th>
+        <th style="padding: 8px 6px;">Se detecta por</th>
+        <th style="padding: 8px 6px;">Agregado por</th>
+        <th style="padding: 8px 6px; width: 90px;"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for supplier in dynamic_suppliers %}
+      <tr style="border-bottom: 1px solid var(--border);">
+        <td style="padding: 8px 6px;">{{ supplier.label }}</td>
+        <td style="padding: 8px 6px;">{{ supplier.sheet_name }}</td>
+        <td style="padding: 8px 6px;" class="muted">"{{ supplier.detect_keyword }}"</td>
+        <td style="padding: 8px 6px;" class="muted">{{ supplier.created_by or "—" }}</td>
+        <td style="padding: 8px 6px; text-align:right;">
+          <form method="post" action="{{ url_for('proveedores_nuevo_eliminar') }}" onsubmit="return confirm('¿Eliminar este proveedor? Para corregirlo tenés que volver a armarlo desde cero.');">
+            <input type="hidden" name="clave" value="{{ supplier.clave }}">
+            <button type="submit" class="btn-danger-soft" style="margin-top:0;">Eliminar</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="muted" style="margin:0;">Todavía no se agregó ningún proveedor desde acá.</p>
+  {% endif %}
+</div>
+
+<script>
+  (function () {
+    var FIELD_LABELS = {{ field_labels | tojson }};
+    var FIELDS = {{ fields | tojson }};
+
+    var chosenOccurrenceIndex = {};
+    var lastFieldResults = {};
+
+    var errorBox = document.getElementById('wiz-error');
+    var analyzeBtn = document.getElementById('wiz-analyze-btn');
+    var step2 = document.getElementById('wizard-step2');
+    var step3 = document.getElementById('wizard-step3');
+    var previewBox = document.getElementById('wiz-preview-text');
+    var fieldsContainer = document.getElementById('wiz-fields-container');
+    var confirmRow = document.getElementById('wiz-confirm-row');
+    var confirmBtn = document.getElementById('wiz-confirm-choices-btn');
+    var testBtn = document.getElementById('wiz-test-btn');
+    var testResult = document.getElementById('wiz-test-result');
+    var saveForm = document.getElementById('wiz-save-form');
+
+    function showError(message) {
+      errorBox.textContent = message;
+      errorBox.style.display = '';
+    }
+    function hideError() {
+      errorBox.style.display = 'none';
+    }
+
+    function describeOccurrence(anchor, index) {
+      if (index === 0) return 'usamos la primera vez que aparece "' + anchor + '"';
+      if (index === -1) return 'usamos la última vez que aparece "' + anchor + '"';
+      return 'usamos la aparición N°' + (index + 1) + ' de "' + anchor + '"';
+    }
+
+    function renderFields(fields) {
+      lastFieldResults = fields;
+      fieldsContainer.innerHTML = '';
+      var anyAmbiguous = false;
+      var allResolved = true;
+
+      FIELDS.forEach(function (field) {
+        var info = fields[field] || {};
+        var wrap = document.createElement('div');
+        wrap.style.marginBottom = '18px';
+
+        var title = document.createElement('div');
+        title.style.fontWeight = '600';
+        title.style.marginBottom = '6px';
+        title.textContent = FIELD_LABELS[field];
+        wrap.appendChild(title);
+
+        if (info.status === 'resolved') {
+          var ok = document.createElement('div');
+          ok.style.color = 'var(--success)';
+          ok.textContent = '✓ Se identifica por el texto "' + info.anchor + '" (' +
+            describeOccurrence(info.anchor, info.occurrence_index) + ').';
+          wrap.appendChild(ok);
+        } else if (info.status === 'ambiguous') {
+          allResolved = false;
+          anyAmbiguous = true;
+          var hint = document.createElement('p');
+          hint.className = 'muted';
+          hint.style.margin = '0 0 8px';
+          hint.textContent = 'Ese valor aparece más de una vez en la factura -- elegí cuál es el correcto:';
+          wrap.appendChild(hint);
+          (info.candidates || []).forEach(function (candidate) {
+            var label = document.createElement('label');
+            label.style.display = 'block';
+            label.style.padding = '8px 10px';
+            label.style.border = '1px solid var(--border)';
+            label.style.borderRadius = '8px';
+            label.style.marginBottom = '6px';
+            label.style.fontSize = '12.5px';
+            label.style.cursor = 'default';
+
+            var radio = document.createElement('input');
+            radio.type = 'radio';
+            radio.name = 'wiz-candidate-' + field;
+            radio.value = candidate.index;
+            radio.style.marginRight = '8px';
+            radio.style.width = 'auto';
+            radio.style.height = 'auto';
+
+            label.appendChild(radio);
+            label.appendChild(document.createTextNode('"...' + candidate.context + '..."'));
+            wrap.appendChild(label);
+          });
+        } else {
+          allResolved = false;
+          var err = document.createElement('div');
+          err.style.color = 'var(--error)';
+          err.textContent = '✗ ' + (info.message || 'No se pudo resolver este campo.');
+          wrap.appendChild(err);
+          var tip = document.createElement('p');
+          tip.className = 'muted';
+          tip.style.margin = '4px 0 0';
+          tip.textContent = 'Corregí el valor arriba (paso 1) y volvé a analizar.';
+          wrap.appendChild(tip);
+        }
+
+        fieldsContainer.appendChild(wrap);
+      });
+
+      confirmRow.style.display = anyAmbiguous ? '' : 'none';
+      return allResolved;
+    }
+
+    function buildResolvedFieldsPayload() {
+      var payload = {};
+      FIELDS.forEach(function (field) {
+        var info = lastFieldResults[field];
+        if (info && info.status === 'resolved') {
+          payload[field] = {
+            anchor: info.anchor,
+            occurrence_index: info.occurrence_index,
+          };
+          if (info.date_format) payload[field].date_format = info.date_format;
+        }
+      });
+      return payload;
+    }
+
+    function renderSummary(fields) {
+      var list = document.getElementById('wiz-summary-list');
+      list.innerHTML = '';
+      FIELDS.forEach(function (field) {
+        var info = fields[field];
+        var li = document.createElement('li');
+        li.textContent = FIELD_LABELS[field] + ': ' + describeOccurrence(info.anchor, info.occurrence_index) + '.';
+        list.appendChild(li);
+      });
+    }
+
+    function populateSaveForm() {
+      document.getElementById('wiz-save-label').value = document.getElementById('wiz-label').value.trim();
+      document.getElementById('wiz-save-sheet-name').value = document.getElementById('wiz-sheet-name').value.trim();
+      document.getElementById('wiz-save-resumen-label').value = document.getElementById('wiz-resumen-label').value.trim();
+      document.getElementById('wiz-save-detect-keyword').value = document.getElementById('wiz-detect-keyword').value.trim();
+      document.getElementById('wiz-save-fields-json').value = JSON.stringify(buildResolvedFieldsPayload());
+    }
+
+    function analyze() {
+      var sampleInput = document.getElementById('wiz-sample-pdf');
+      if (!sampleInput.files.length) {
+        showError('Subí una factura de muestra en PDF.');
+        return;
+      }
+      hideError();
+      analyzeBtn.disabled = true;
+      analyzeBtn.textContent = 'Analizando...';
+
+      var formData = new FormData();
+      formData.append('sample_pdf', sampleInput.files[0]);
+      formData.append('sample_invoice_no', document.getElementById('wiz-invoice-no').value);
+      formData.append('sample_date', document.getElementById('wiz-date').value);
+      formData.append('sample_amount', document.getElementById('wiz-amount').value);
+      formData.append('chosen_occurrence_index_json', JSON.stringify(chosenOccurrenceIndex));
+
+      fetch('{{ url_for("proveedores_nuevo_analizar") }}', {
+        method: 'POST',
+        body: formData,
+      })
+        .then(function (response) {
+          return response.json().then(function (data) {
+            return { ok: response.ok, data: data };
+          });
+        })
+        .then(function (result) {
+          if (!result.ok) {
+            showError(result.data.error || 'No se pudo analizar la factura.');
+            step2.style.display = 'none';
+            step3.style.display = 'none';
+            return;
+          }
+          previewBox.textContent = result.data.preview_text || '(sin texto)';
+          step2.style.display = '';
+          var allResolved = renderFields(result.data.fields);
+          if (allResolved) {
+            renderSummary(result.data.fields);
+            populateSaveForm();
+            step3.style.display = '';
+          } else {
+            step3.style.display = 'none';
+          }
+        })
+        .catch(function () {
+          showError('No se pudo conectar con el servidor. Probá de nuevo.');
+        })
+        .finally(function () {
+          analyzeBtn.disabled = false;
+          analyzeBtn.textContent = 'Analizar';
+        });
+    }
+
+    analyzeBtn.addEventListener('click', function () {
+      chosenOccurrenceIndex = {};
+      analyze();
+    });
+
+    confirmBtn.addEventListener('click', function () {
+      FIELDS.forEach(function (field) {
+        var selected = document.querySelector('input[name="wiz-candidate-' + field + '"]:checked');
+        if (selected) {
+          chosenOccurrenceIndex[field] = parseInt(selected.value, 10);
+        }
+      });
+      analyze();
+    });
+
+    testBtn.addEventListener('click', function () {
+      var testInput = document.getElementById('wiz-test-pdf');
+      if (!testInput.files.length) {
+        testResult.textContent = 'Subí una segunda factura de muestra primero.';
+        testResult.style.color = 'var(--error)';
+        return;
+      }
+      testResult.style.color = '';
+      testResult.textContent = 'Probando...';
+
+      var formData = new FormData();
+      formData.append('sample_pdf', testInput.files[0]);
+      formData.append('resolved_fields_json', JSON.stringify(buildResolvedFieldsPayload()));
+
+      fetch('{{ url_for("proveedores_nuevo_probar") }}', {
+        method: 'POST',
+        body: formData,
+      })
+        .then(function (response) {
+          return response.json().then(function (data) {
+            return { ok: response.ok, data: data };
+          });
+        })
+        .then(function (result) {
+          if (!result.ok) {
+            testResult.style.color = 'var(--error)';
+            testResult.textContent = result.data.error || 'No se pudo leer esa factura con la regla armada.';
+            return;
+          }
+          testResult.style.color = 'var(--success)';
+          testResult.textContent = 'Se leyó: N° de Factura ' + result.data.invoice_no +
+            ', Fecha ' + result.data.date + ', Monto Total $' + result.data.amount +
+            ' -- compará esto contra la factura real antes de guardar.';
+        })
+        .catch(function () {
+          testResult.style.color = 'var(--error)';
+          testResult.textContent = 'No se pudo conectar con el servidor. Probá de nuevo.';
+        });
+    });
+
+    saveForm.addEventListener('submit', function () {
+      populateSaveForm();
+    });
+  })();
+</script>
+{% endblock %}

@@ -10,8 +10,13 @@ Un módulo por vez: hoy solo está Chase Bank. El resto se va sumando
 igual que el desktop, probando cada uno antes de seguir con el próximo.
 """
 
+import json
 import os
+import re
 import tempfile
+import threading
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from datetime import date, datetime
 from urllib.parse import quote
 
 from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, session, url_for
@@ -25,28 +30,32 @@ from flask_login import (
 )
 
 import auth
+import chase_db
 from chase_rules import (
     add_dynamic_rule as add_chase_rule,
+    build_chase_export_workbook,
     delete_dynamic_rule_by_index as delete_chase_custom_rule,
     delete_master_rule_by_index as delete_chase_master_rule,
     edit_dynamic_rule_by_index as edit_chase_custom_rule,
     edit_master_rule_by_index as edit_chase_master_rule,
+    extract_chase_transactions,
     list_display_rules as list_chase_display_rules,
-    process_chase_categorization,
 )
-from caja import apply_chase_and_lottery
-from cmv_costo import update_master_costo_todos_bulk
-from cupones_append import (
-    MonthlyReportFullyDuplicateError,
-    NoPendingCouponsError,
-    append_monthly_cupones,
-    resync_cupones_only,
-)
-from eft_cta_cte import EFT_DUPLICATE_ALERT, eft_already_loaded_in_workbook, extract_eft_data, update_excel_workbook
+import caja_db
+from caja import build_month_report_from_db as build_caja_month_report
+from cmv_costo import _consolidate_department_files, update_master_costo_todos_bulk
+import eft_db
+from eft_cta_cte import EFT_DUPLICATE_ALERT, extract_eft_data
+from cupones_append import expand_monthly_records_for_storage, read_monthly_coupon_rows
 from gettel_toyota_parser import (
+    detect_vendor_from_ocr_text,
     merge_gettel_toyota_into_master,
     merge_gettel_toyota_pdf_into_master,
     process_gettel_pagos,
+    summarize_origin_workbook,
+    summarize_pdf_report,
+    VENDOR_GETTEL,
+    VENDOR_TOYOTA,
 )
 from controles_caja import check_caja_mayores
 from controles_cierre_mensual import check_department_sales_monthly, check_store_info_monthly
@@ -54,10 +63,35 @@ from controles_cupones import check_cupones_pending
 from controles_lottery_mensual import check_lottery_monthly
 from controles_mercaderia import check_mercaderia_invoices
 from controles_valuacion import check_and_complete_valuation
-from mes_nuevo import prepare_next_month, prepare_next_month_lottery
-from monthly_sales import process_monthly_sales
+from monthly_sales import _resolve_sheet_name, parse_monthly_sales_file, process_monthly_sales
 from proveedores import append_supplier_invoices, append_supplier_payments
-from reporte_diario import process_lottery, process_reporte_diario, process_store_info
+from proveedores_dynamic_extractors import (
+    FIELD_LABELS as DYNAMIC_FIELD_LABELS,
+    FIELDS as DYNAMIC_FIELDS,
+    PDF_READ_EXCEPTIONS as DYNAMIC_PDF_READ_EXCEPTIONS,
+    add_dynamic_supplier,
+    analyze_sample as analyze_dynamic_sample,
+    build_rule_fields as build_dynamic_rule_fields,
+    delete_dynamic_supplier,
+    extract_with_dynamic_rule,
+    list_dynamic_suppliers_display,
+)
+from reporte_diario import (
+    extract_department_sales_for_day,
+    extract_lottery_department_fields_from_pdf,
+    extract_lottery_receipt_fields_from_sales_report,
+    extract_store_info_for_day,
+    group_department_sales,
+    process_lottery,
+    process_reporte_diario,
+    process_store_info,
+)
+import reportes_db
+import lottery_db
+import gettel_db
+import cmv_db
+import documents_db
+import jobs
 from balance_mensual import replace_mayor_sheets
 
 def _load_or_create_secret_key():
@@ -110,10 +144,51 @@ def require_login():
     return None
 
 
+# Endpoints alcanzables desde LOS DOS lados de la bifurcación Carga de
+# Datos/Excels (ej. /reporte/historial, linkeado tanto desde reporte.html
+# como desde la barra lateral global) o transversales a los dos (cuenta,
+# manual) -- no cambian session["app_side"], solo lo leen. Ver
+# _track_app_side más abajo.
+_NEUTRAL_SIDE_ENDPOINTS = {
+    "reporte_historial",
+    "reporte_store_info_historial",
+    "reporte_dia",
+    "reporte_dia_pdf",
+    "reporte_dia_departamentos",
+    "reporte_dia_store_info",
+    "manual",
+    "perfil_password",
+    "admin_users",
+}
+
+
+@app.before_request
+def _track_app_side():
+    """
+    Recuerda de qué lado de la bifurcación Carga de Datos/Excels está el
+    usuario (session["app_side"]) para que las páginas COMPARTIDAS (ej.
+    /reporte/historial, sin ningún prefijo de URL que las distinga) sepan
+    qué barra de navegación mostrar arriba -- pedido explícito del usuario
+    (2026-09-11): "ninguna redirección puede llevarte a la página de excel"
+    estando del lado de Carga de Datos, y viceversa. El prefijo de la URL
+    solo no alcanza para esas páginas neutras, hace falta memoria de sesión.
+    Default "carga_datos" (no "excels") desde que se sacó el chooser inicial
+    (ver "/") -- ese es el lado al que cae cualquiera apenas inicia sesión.
+    """
+    if not current_user.is_authenticated:
+        return
+    if request.endpoint is None or request.endpoint in ("login", "static", "logout"):
+        return
+    if request.endpoint in _NEUTRAL_SIDE_ENDPOINTS:
+        session.setdefault("app_side", "carga_datos")
+        return
+    session["app_side"] = "carga_datos" if request.path.startswith("/carga-datos") else "excels"
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if current_user.is_authenticated:
-        return redirect(url_for("index"))
+        return redirect(url_for("carga_datos_index"))
 
     if request.method == "POST":
         username = request.form.get("username", "").strip()
@@ -124,7 +199,7 @@ def login():
         else:
             remember = bool(request.form.get("remember"))
             login_user(WebUser(username, user.get("is_admin", False)), remember=remember)
-            return redirect(url_for("index"))
+            return redirect(url_for("carga_datos_index"))
 
     return render_template("login.html")
 
@@ -162,7 +237,7 @@ def perfil_password():
 def admin_users():
     if not current_user.is_admin:
         flash("No tenés permiso para acceder a esta página.", "error")
-        return redirect(url_for("index"))
+        return redirect(url_for("carga_datos_index"))
 
     if request.method == "POST":
         action = request.form.get("action")
@@ -218,20 +293,9 @@ _ICON_EXCHANGE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" str
 _ICON_TRUCK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="7" width="13" height="10" rx="1"/><path d="M14 10h4l3 3v4h-7z"/><circle cx="6" cy="18.5" r="1.6"/><circle cx="17.5" cy="18.5" r="1.6"/></svg>'
 _ICON_REGISTER = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="10" width="18" height="10" rx="1"/><path d="M6 10V7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v3"/><path d="M9 15h6"/></svg>'
 _ICON_CHECKLIST = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6a1 1 0 0 1 1 1v1H8V4a1 1 0 0 1 1-1z"/><rect x="5" y="4" width="14" height="17" rx="2"/><path d="M8.5 12.5l2 2 4-4"/></svg>'
-_ICON_REFRESH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15.3-6.4L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.3 6.4L3 16"/><path d="M3 21v-5h5"/></svg>'
 _ICON_SCALE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M8 21h8"/><path d="M5 7h14"/><path d="M5 7l-3.5 6.5a3.2 3.2 0 0 0 6.4 0z"/><path d="M19 7l-3.5 6.5a3.2 3.2 0 0 0 6.4 0z"/></svg>'
 
 TOOLS = [
-    {
-        "key": "chase",
-        "code": "CH",
-        "icon": _ICON_BANK,
-        "label": "Chase Bank",
-        "url": "/chase",
-        "description": "Categoriza movimientos bancarios contra las reglas de Detalle.",
-        "accent": "#16A34A",
-        "accent_soft": "#DCF3E3",
-    },
     {
         "key": "cmv",
         "code": "CMV",
@@ -273,16 +337,6 @@ TOOLS = [
         "accent_soft": "#D7EFFB",
     },
     {
-        "key": "eft",
-        "code": "EFT",
-        "icon": _ICON_EXCHANGE,
-        "label": "Cupones y EFT",
-        "url": "/eft",
-        "description": "PDF de EFT bancario a Cta Cte, y reporte mensual de Cupones.",
-        "accent": "#3B5BDB",
-        "accent_soft": "#DDE3FA",
-    },
-    {
         "key": "proveedores",
         "code": "PR",
         "icon": _ICON_TRUCK,
@@ -291,16 +345,6 @@ TOOLS = [
         "description": "Facturas de compra por proveedor y pagos vía Chase al Cta Cte.",
         "accent": "#DB2777",
         "accent_soft": "#FBD9EA",
-    },
-    {
-        "key": "caja",
-        "code": "CJ",
-        "icon": _ICON_REGISTER,
-        "label": "Caja",
-        "url": "/caja",
-        "description": "Depósitos Chase y Cuenta Final Lottery hacia las columnas K/N/S de CAJA.",
-        "accent": "#EA580C",
-        "accent_soft": "#FCE3D2",
     },
     {
         "key": "balance_mensual",
@@ -380,50 +424,101 @@ CONTROLS = [
     },
 ]
 
-# Tercera sección de la app, aparte de Herramientas y Controles: prepara la
-# carpeta/archivo del mes siguiente a partir del cierre del mes actual
-# (mismo trabajo que Alfonso hacía a mano con la carpeta "Lienzo en blanco"
-# para Book Keeping, y el traslado de bloques semanales para Lottery -- ver
-# mes_nuevo.py y CLAUDE.md "Módulo Mes Nuevo"). Igual que Controles, es una
-# página índice (grilla de tarjetas) con un módulo por sub-flujo -- acá solo
-# van a existir estos dos, pedido explícito del usuario 2026-09-05.
-MES_NUEVO = [
+# Tercera sección de la app, hermana de Herramientas/Controles pero del OTRO
+# lado de la bifurcación "Carga de Datos vs. Excels" (ver CLAUDE.md) -- cada
+# entrada acá es un módulo que YA NO escribe ningún Excel, solo lee/extrae y
+# guarda en una base propia (mismo patrón, key/code/icon/label/url/
+# description/accent, que TOOLS/CONTROLS). Se va sumando de a uno, en el
+# orden en que cada módulo de Herramientas se convierte (empezando por
+# Reporte Diario/Lottery, después Chase Bank) -- ver "Conversión módulo por
+# módulo a Carga de Datos" en CLAUDE.md.
+CARGA_DATOS_TOOLS = [
     {
-        "key": "mes_nuevo_book_keeping",
-        "code": "MN",
-        "icon": _ICON_REFRESH,
-        "label": "Book Keeping",
-        "url": "/mes-nuevo/book-keeping",
-        "description": "Sube el .zip del mes que se cierra, descarga el .zip del mes siguiente ya preparado.",
-        "accent": "#B45309",
-        "accent_soft": "#FDECD1",
-    },
-    {
-        "key": "mes_nuevo_lottery",
-        "code": "LT",
-        "icon": _ICON_REFRESH,
-        "label": "Lottery",
-        "url": "/mes-nuevo/lottery",
-        "description": "Sube el Excel de Lottery del mes que se cierra, descarga el del mes siguiente ya preparado.",
+        "key": "carga_reporte",
+        "code": "RD",
+        "icon": _ICON_CALENDAR,
+        "label": "Reportes Diarios",
+        "url": "/carga-datos/reporte-diario",
+        "description": "Subí el PDF de cierre diario — Departamentos y Store Info quedan guardados solos, día por día.",
         "accent": "#0284C7",
         "accent_soft": "#D7EFFB",
+    },
+    {
+        "key": "carga_lottery",
+        "code": "LT",
+        "icon": _ICON_TICKET,
+        "label": "Lottery",
+        "url": "/carga-datos/lottery",
+        "description": "Subí el Daily Sales Report — bloques de 7 días con Subtotal y Debito calculados solos, igual que el Excel.",
+        "accent": "#0284C7",
+        "accent_soft": "#D7EFFB",
+    },
+    {
+        "key": "carga_chase",
+        "code": "CH",
+        "icon": _ICON_BANK,
+        "label": "Chase Bank",
+        "url": "/carga-datos/chase",
+        "description": "Subí el extracto de Chase — cada movimiento queda categorizado y guardado solo, sin generar ningún Excel.",
+        "accent": "#16A34A",
+        "accent_soft": "#DCF3E3",
+    },
+    {
+        "key": "carga_eft",
+        "code": "EFT",
+        "icon": _ICON_EXCHANGE,
+        "label": "EFT y Cupones",
+        "url": "/carga-datos/eft",
+        "description": "Subí el PDF de EFT y el reporte mensual de Cupones — se cruzan solos por DDC, sin generar ningún Excel.",
+        "accent": "#3B5BDB",
+        "accent_soft": "#DDE3FA",
+    },
+    {
+        "key": "carga_caja",
+        "code": "CJ",
+        "icon": _ICON_REGISTER,
+        "label": "Caja",
+        "url": "/carga-datos/caja",
+        "description": "Depósitos, Food Truck/Ice y Lottery del mes, completados solos con lo que ya guardaron Chase y Lottery — sin subir nada nuevo.",
+        "accent": "#EA580C",
+        "accent_soft": "#FCE3D2",
+    },
+    {
+        "key": "carga_gettel",
+        "code": "GT",
+        "icon": _ICON_CAR,
+        "label": "Gettel / Toyota",
+        "url": "/carga-datos/gettel",
+        "description": "Subí el Excel o PDF de cupones de Gettel/Toyota — Monto y Galones por día quedan guardados solos, sin generar ningún Excel.",
+        "accent": "#0D9488",
+        "accent_soft": "#D6F1EE",
+    },
+    {
+        "key": "carga_cmv",
+        "code": "CMV",
+        "icon": _ICON_COINS,
+        "label": "CMV",
+        "url": "/carga-datos/cmv",
+        "description": "Costo por UPC y ventas mensuales por departamento — guardados solos, sin generar ningún Excel.",
+        "accent": "#7C3AED",
+        "accent_soft": "#E9E0FC",
     },
 ]
 
 THEME_BY_KEY = {
     tool["key"]: {"accent": tool["accent"], "accent_soft": tool["accent_soft"]}
-    for tool in TOOLS + CONTROLS + MES_NUEVO
+    for tool in TOOLS + CONTROLS + CARGA_DATOS_TOOLS
 }
 
 # Índice para la barra de búsqueda del header (base.html) -- pedido
 # explícito del usuario 2026-09-06: buscar un módulo por nombre desde
 # cualquier página, entendiendo palabras parecidas (typos), mostrando
-# todos los módulos relacionados de las 3 secciones a la vez. Se inyecta
+# todos los módulos relacionados de las secciones a la vez. Se inyecta
 # solo (sin que cada ruta tenga que pasarlo) porque base.html lo necesita
-# en TODAS las páginas, no solo en los 3 índices de sección.
+# en TODAS las páginas, no solo en los índices de sección.
 @app.context_processor
 def inject_search_index():
-    return {"SEARCH_INDEX": TOOLS + CONTROLS + MES_NUEVO}
+    return {"SEARCH_INDEX": TOOLS + CONTROLS + CARGA_DATOS_TOOLS}
 
 
 def _new_workspace_dir():
@@ -487,7 +582,7 @@ def _error_response(message):
     if _is_ajax_request():
         return jsonify({"error": message}), 400
     flash(message, "error")
-    return redirect(request.referrer or url_for("index"))
+    return redirect(request.referrer or url_for("carga_datos_index"))
 
 
 def _open_result_for_user(path):
@@ -516,7 +611,7 @@ def _open_result_for_user(path):
         pass
 
 
-def _success_response(temp_path, download_name, notice=None, notice_level="warning", open_result=True):
+def _success_response(temp_path, download_name, notice=None, notice_level="warning"):
     """
     Abre el archivo procesado en Excel (ver _open_result_for_user) y lo sirve
     en la respuesta -- ya no fuerza la descarga a la carpeta Descargas del
@@ -525,13 +620,6 @@ def _success_response(temp_path, download_name, notice=None, notice_level="warni
     de la respuesta porque Proveedores lo reusa para encadenar Facturas →
     Pagos sin que el usuario tenga que volver a seleccionarlo (ver
     chain-master-result en proveedores.html).
-
-    `open_result=False` salta el os.startfile -- pensado para un resultado
-    que no es un Excel para mirar sino un .zip para mover a otro lado (Mes
-    Nuevo, pedido explícito del usuario 2026-09-04: ahí el JS dispara una
-    descarga real a la carpeta Descargas en su lugar, ver "force-download"
-    en base.html -- abrirlo con el visor de zip de Windows no serviría de
-    nada).
 
     El aviso opcional (éxito parcial: algo no se pudo cargar solo) tiene que
     mostrarse en el momento aunque la respuesta sea una descarga de archivo,
@@ -544,8 +632,7 @@ def _success_response(temp_path, download_name, notice=None, notice_level="warni
     mejor esfuerzo -- caso raro, todos los formularios de módulo ya mandan
     el pedido por fetch.
     """
-    if open_result:
-        _open_result_for_user(temp_path)
+    _open_result_for_user(temp_path)
     response = send_file(temp_path, as_attachment=True, download_name=download_name)
     if notice:
         if _is_ajax_request():
@@ -557,8 +644,365 @@ def _success_response(temp_path, download_name, notice=None, notice_level="warni
 
 
 @app.route("/")
-def index():
+def home():
+    """
+    Ya no hay que elegir un lado al entrar -- pedido explícito del usuario
+    (2026-09-12): "ya solo queda lo de cargar datos en esa pagina no vamos a
+    necesitar los excels, ya estan guardado el proyecto donde estan los
+    excels" (la copia congelada, ver CLAUDE.md). Carga de Datos pasa a ser
+    el destino directo; Excels/Controles siguen andando igual para lo que
+    todavía no se convirtió, alcanzables por búsqueda o por URL directa.
+    """
+    return redirect(url_for("carga_datos_index"))
+
+
+@app.route("/excels")
+def excels_index():
     return render_template("index.html", tools=TOOLS)
+
+
+@app.route("/carga-datos")
+def carga_datos_index():
+    # Caja no tiene ningún upload propio (cruza en el momento lo que ya
+    # guardaron Chase/Lottery/Reporte Diario) -- pedido explícito del
+    # usuario (2026-09-12, cuarta tanda): no le corresponde una tarjeta acá
+    # ("no se le tiene que cargar ningun PDF o excel para completar"), solo
+    # queda accesible desde la barra lateral (grupo Book Keeping).
+    upload_tools = [tool for tool in CARGA_DATOS_TOOLS if tool["key"] != "carga_caja"]
+    return render_template("carga_datos_index.html", tools=upload_tools)
+
+
+@app.route("/carga-datos/controles")
+def carga_datos_controles():
+    """
+    Scaffold vacío, mismo criterio que /controles cuando arrancó sin ningún
+    módulo -- Carga de Datos pasa a tener su propia pareja Herramientas/
+    Controles (pedido explícito del usuario 2026-09-11), sin mezclar con la
+    de Excels. Sin módulos propios todavía.
+    """
+    return render_template("carga_datos_controles.html")
+
+
+@app.route("/carga-datos/reporte-diario")
+def carga_datos_reporte_diario():
+    """
+    Carga directa de Reporte Diario del lado Carga de Datos -- solo PDF, sin
+    ningún campo de Excel (pedido explícito del usuario 2026-09-11, parte del
+    plan de dejar este lado autosuficiente para subir datos sin depender de
+    Herramientas). Ver carga_datos_reporte_diario_subir más abajo.
+    """
+    return render_template("carga_datos_reporte_diario.html", **THEME_BY_KEY["reporte"])
+
+
+@app.route("/carga-datos/reporte-diario/subir", methods=["POST"])
+def carga_datos_reporte_diario_subir():
+    """
+    Guarda directo en reportes_db/lottery_db -- nunca genera ni toca ningún
+    Excel (a diferencia de /reporte/ventas y /reporte/store-info, que
+    siguen viviendo del lado Excels). Usa las mismas funciones de extracción
+    "puras" que ya alimentan el guardado-espejo de ese otro lado
+    (extract_department_sales_for_day / extract_store_info_for_day /
+    extract_lottery_department_fields_from_pdf) -- acá son el ÚNICO camino
+    de escritura, no un paso adicional después de un Excel. Cada PDF se
+    procesa aislado (puede acertar Departamentos, Store Info, ninguno, o los
+    dos) para que un archivo con problema no tumbe el resto del lote.
+    """
+    pdf_uploads = request.files.getlist("pdf_files")
+    if not pdf_uploads or not any(u.filename for u in pdf_uploads):
+        flash("Seleccioná uno o más PDF de cierre diario.", "error")
+        return redirect(url_for("carga_datos_reporte_diario"))
+
+    pdf_paths = _save_uploads_to_workspace(pdf_uploads)
+
+    days_complete = set()
+    days_partial = set()
+    files_unreadable = 0
+    first_date = None
+
+    for pdf_path in pdf_paths:
+        filename = os.path.basename(pdf_path)
+        day_date = None
+        got_departments = False
+        got_store_info = False
+
+        try:
+            result = extract_department_sales_for_day(pdf_path)
+            day_date = result["date"]
+            pdf_relpath = reportes_db.store_pdf_copy(day_date, pdf_path, filename)
+            reportes_db.replace_department_sales(day_date, result["records"], pdf_filename=pdf_relpath)
+            got_departments = True
+        except Exception as exc:
+            print(f"[carga-datos/reporte-diario] departamentos de {pdf_path}: {exc}")
+
+        try:
+            result = extract_store_info_for_day(pdf_path)
+            day_date = result["date"]
+            pdf_relpath = reportes_db.store_pdf_copy(day_date, pdf_path, filename)
+            reportes_db.upsert_store_info(day_date, result["fields"], source="ocr", pdf_filename=pdf_relpath)
+            got_store_info = True
+        except Exception as exc:
+            print(f"[carga-datos/reporte-diario] store info de {pdf_path}: {exc}")
+
+        try:
+            fields = extract_lottery_department_fields_from_pdf(pdf_path)
+            lottery_relpath = lottery_db.store_pdf_copy(fields["report_date"], pdf_path, filename)
+            lottery_db.upsert_department_fields(
+                fields["report_date"], fields["online_count"], fields["online_net_sales"],
+                fields["skoff_count"], fields["skoff_net_sales"], source="ocr", pdf_filename=lottery_relpath,
+            )
+        except Exception as exc:
+            print(f"[carga-datos/reporte-diario] ONLINE/SKOFF de {pdf_path}: {exc}")
+
+        if day_date is None:
+            files_unreadable += 1
+            continue
+        if first_date is None or day_date < first_date:
+            first_date = day_date
+        if got_departments and got_store_info:
+            days_complete.add(day_date)
+        elif got_departments or got_store_info:
+            days_partial.add(day_date)
+        else:
+            files_unreadable += 1
+
+    parts = []
+    if days_complete:
+        parts.append(f"{len(days_complete)} día(s) guardado(s) completos.")
+    if days_partial:
+        dates_txt = ", ".join(sorted(d.isoformat() for d in days_partial))
+        parts.append(f"{len(days_partial)} día(s) quedaron incompletos ({dates_txt}) — completalos a mano.")
+    if files_unreadable:
+        parts.append(f"{files_unreadable} archivo(s) no se pudieron leer en absoluto.")
+
+    if not parts:
+        flash("No se pudo guardar nada de este lote.", "error")
+    else:
+        flash(" ".join(parts), "warning" if (days_partial or files_unreadable) else "success")
+
+    if first_date:
+        return redirect(url_for("reporte_historial", year=first_date.year, month=first_date.month))
+    return redirect(url_for("carga_datos_reporte_diario"))
+
+
+@app.route("/carga-datos/lottery")
+def carga_datos_lottery():
+    """Carga directa de Lottery (Daily Sales Report) del lado Carga de Datos -- solo PDF."""
+    return render_template("carga_datos_lottery.html", **THEME_BY_KEY["lottery"])
+
+
+@app.route("/carga-datos/lottery/subir", methods=["POST"])
+def carga_datos_lottery_subir():
+    """
+    Análogo a carga_datos_reporte_diario_subir, para el Daily Sales Report
+    de Florida Lottery -- único camino de escritura, sin ningún Excel de
+    por medio. ONLINE/SKOFF ya se completan solos al subir Reporte Diario
+    (ver carga_datos_reporte_diario_subir) -- acá solo hace falta el resto
+    de las columnas de este documento.
+    """
+    pdf_uploads = request.files.getlist("pdf_files")
+    if not pdf_uploads or not any(u.filename for u in pdf_uploads):
+        flash("Seleccioná uno o más PDF de Daily Sales Report.", "error")
+        return redirect(url_for("carga_datos_lottery"))
+
+    pdf_paths = _save_uploads_to_workspace(pdf_uploads)
+    saved_dates = []
+    failed = 0
+    for pdf_path in pdf_paths:
+        try:
+            fields = extract_lottery_receipt_fields_from_sales_report(pdf_path)
+            filename = os.path.basename(pdf_path)
+            pdf_relpath = lottery_db.store_pdf_copy(fields["report_date"], pdf_path, filename)
+            lottery_db.upsert_sales_report_fields(fields["report_date"], fields, source="ocr", pdf_filename=pdf_relpath)
+            saved_dates.append(fields["report_date"])
+        except Exception as exc:
+            print(f"[carga-datos/lottery] {pdf_path}: {exc}")
+            failed += 1
+
+    parts = []
+    if saved_dates:
+        parts.append(f"{len(saved_dates)} día(s) guardado(s).")
+    if failed:
+        parts.append(f"{failed} archivo(s) no se pudieron leer.")
+    if not parts:
+        flash("No se pudo guardar nada de este lote.", "error")
+    else:
+        flash(" ".join(parts), "warning" if failed else "success")
+
+    if saved_dates:
+        first = min(saved_dates)
+        return redirect(url_for("carga_datos_lottery_historial", year=first.year, month=first.month))
+    return redirect(url_for("carga_datos_lottery"))
+
+
+@app.route("/carga-datos/lottery/historial")
+def carga_datos_lottery_historial():
+    """Reporte mensual en bloques de 7 días -- ver lottery_db.build_month_blocks / CLAUDE.md."""
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    blocks = lottery_db.build_month_blocks(year, month)
+    debit_total = lottery_db.monthly_debit_total(year, month)
+    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+
+    return render_template(
+        "lottery_historial.html",
+        blocks=blocks,
+        debit_total=debit_total,
+        year=year,
+        month=month,
+        month_name=_MONTH_NAMES_ES[month - 1],
+        prev_year=prev_year,
+        prev_month=prev_month,
+        next_year=next_year,
+        next_month=next_month,
+        today_iso=today.isoformat(),
+        **THEME_BY_KEY["lottery"],
+    )
+
+
+@app.route("/carga-datos/lottery/bloque/<int:iso_year>/<int:iso_week>/chase", methods=["POST"])
+def carga_datos_lottery_bloque_chase(iso_year, iso_week):
+    chase_date_raw = (request.form.get("chase_bank_date") or "").strip()
+    try:
+        chase_date = datetime.strptime(chase_date_raw, "%Y-%m-%d").date() if chase_date_raw else None
+    except ValueError:
+        flash("Fecha inválida.", "error")
+    else:
+        corrected = lottery_db.set_block_chase_date(iso_year, iso_week, chase_date)
+        message = "Fecha de Chase Bank guardada." if chase_date else "Fecha de Chase Bank borrada."
+        if corrected:
+            # Auto-corrección de la cadencia (pedido explícito del usuario
+            # 2026-09-12) -- avisar cuáles otros bloques se realinearon solos
+            # para que no parezca magia si el usuario nota el cambio después.
+            message += f" {len(corrected)} otro(s) bloque(s) se realinearon solos a la cadencia de 7 días."
+        flash(message, "success")
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    return redirect(url_for("carga_datos_lottery_historial", year=year, month=month))
+
+
+@app.route("/carga-datos/lottery/dia/<report_date>")
+def carga_datos_lottery_dia(report_date):
+    try:
+        parsed_date = _parse_report_date(report_date)
+    except ValueError:
+        flash("Fecha inválida.", "error")
+        return redirect(url_for("carga_datos_lottery_historial"))
+
+    day = lottery_db.get_day(parsed_date) or lottery_db.blank_day(parsed_date)
+    day = lottery_db.decorate_day(day)
+    return render_template(
+        "lottery_dia.html",
+        report_date=parsed_date,
+        day=day,
+        **THEME_BY_KEY["lottery"],
+    )
+
+
+@app.route("/carga-datos/lottery/dia/<report_date>", methods=["POST"])
+def carga_datos_lottery_dia_guardar(report_date):
+    fields = {name: request.form.get(name, "").strip() for name in lottery_db.ALL_DAY_FIELDS}
+    fields = {name: value for name, value in fields.items() if value != ""}
+    try:
+        lottery_db.upsert_manual_day(report_date, fields)
+    except ValueError:
+        flash("No se pudo guardar: revisá que los montos sean números válidos.", "error")
+        return redirect(url_for("carga_datos_lottery_dia", report_date=report_date))
+
+    flash("Día guardado.", "success")
+    return redirect(url_for("carga_datos_lottery_dia", report_date=report_date))
+
+
+@app.route("/carga-datos/lottery/dia/<report_date>/pdf/<kind>")
+def carga_datos_lottery_dia_pdf(report_date, kind):
+    day = lottery_db.get_day(report_date)
+    column = {"department": "department_pdf_filename", "sales_report": "sales_report_pdf_filename"}.get(kind)
+    relpath = day.get(column) if day and column else None
+    path = lottery_db.absolute_pdf_path(relpath) if relpath else None
+    if not path or not os.path.isfile(path):
+        flash("No hay ningún PDF guardado para este día.", "error")
+        return redirect(url_for("carga_datos_lottery_dia", report_date=report_date))
+    return send_file(path)
+
+
+@app.route("/carga-datos/lottery/documentos")
+def carga_datos_lottery_documentos():
+    """PDFs diarios ya guardados este mes -- ver lottery_db.get_month_pdf_list."""
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    pdfs = lottery_db.get_month_pdf_list(year, month)
+    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+
+    return render_template(
+        "lottery_documentos.html",
+        pdfs=pdfs,
+        year=year,
+        month=month,
+        month_name=_MONTH_NAMES_ES[month - 1],
+        prev_year=prev_year,
+        prev_month=prev_month,
+        next_year=next_year,
+        next_month=next_month,
+        **THEME_BY_KEY["lottery"],
+    )
+
+
+@app.route("/carga-datos/lottery/resumen-mensual")
+def carga_datos_lottery_resumen_mensual():
+    """
+    El PDF de resumen mensual de Lottery -- solo para guardarlo y poder
+    verlo después, no se lee ni se procesa (a diferencia del cuadro
+    semanal). Reusa documents_db.py -- mismo patrón que EFT/Gettel/CMV.
+    """
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    docs = documents_db.list_documents("lottery_resumen_mensual", year, month)
+    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+
+    return render_template(
+        "lottery_resumen_mensual.html",
+        docs=docs,
+        year=year,
+        month=month,
+        month_name=_MONTH_NAMES_ES[month - 1],
+        prev_year=prev_year,
+        prev_month=prev_month,
+        next_year=next_year,
+        next_month=next_month,
+        **THEME_BY_KEY["lottery"],
+    )
+
+
+@app.route("/carga-datos/lottery/resumen-mensual/subir", methods=["POST"])
+def carga_datos_lottery_resumen_mensual_subir():
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    upload = request.files.get("resumen_file")
+    if not year or not month or not (1 <= month <= 12):
+        flash("Elegí a qué mes corresponde este resumen.", "error")
+        return redirect(url_for("carga_datos_lottery_resumen_mensual"))
+    if upload is None or not upload.filename:
+        flash("Seleccioná el PDF del resumen mensual.", "error")
+        return redirect(url_for("carga_datos_lottery_resumen_mensual", year=year, month=month))
+
+    path, filename = _save_upload_to_workspace(upload)
+    documents_db.store_document("lottery_resumen_mensual", path, filename, year, month)
+    flash("Resumen mensual guardado.", "success")
+    return redirect(url_for("carga_datos_lottery_resumen_mensual", year=year, month=month))
 
 
 @app.route("/controles")
@@ -755,103 +1199,18 @@ def control_caja():
     return render_template("control_caja.html", result=result, **THEME_BY_KEY["caja"])
 
 
-def _save_to_downloads_and_build_notice(output_path, summary):
-    """
-    Deja el camino libre para que el navegador descargue el resultado a
-    Descargas con el nombre exacto -- pedido explícito del usuario
-    (2026-09-06): quiere ver el pop típico de descarga del navegador, así
-    que la descarga ahora la dispara el JS del lado del cliente (ver
-    "force-download" en base.html, y la clase en los forms de Mes Nuevo) en
-    vez de que el servidor escriba el archivo directo. El problema es que
-    el navegador renombra con "(1)" en vez de reemplazar si ya existe un
-    archivo con ese nombre en Descargas (pedido explícito 2026-09-04: no
-    quiere tener que borrar el anterior a mano) -- por eso, si ya hay uno
-    con el mismo nombre, se borra ACÁ antes de que el navegador descargue
-    el nuevo, para que quede con el nombre exacto sin duplicar.
-    Devuelve el aviso corto: solo lo que sí requiere revisar a mano, o un
-    simple "listo" si no hay nada de eso (el detalle de "assumptions" ya no
-    se muestra en el popup). Compartido entre los dos sub-módulos de Mes
-    Nuevo (Book Keeping y Lottery) -- misma lógica exacta para los dos.
-    """
-    try:
-        downloads_dir = os.path.join(os.path.expanduser("~"), "Downloads")
-        downloads_target = os.path.join(downloads_dir, os.path.basename(output_path))
-        if os.path.exists(downloads_target):
-            os.remove(downloads_target)
-    except OSError as exc:
-        summary.setdefault("warnings", []).append(f"No pude limpiar el archivo anterior en Descargas: {exc}")
-
-    if summary.get("warnings"):
-        return f"{len(summary['warnings'])} cosa(s) para revisar a mano: " + " | ".join(summary["warnings"])
-    return "Copia creada en Descargas correctamente."
-
-
-@app.route("/mes-nuevo")
-def mes_nuevo_index():
-    return render_template("mes_nuevo_index.html", modules=MES_NUEVO)
-
-
-@app.route("/mes-nuevo/book-keeping", methods=["GET", "POST"])
-def mes_nuevo_book_keeping():
-    if request.method == "GET":
-        return render_template("mes_nuevo_book_keeping.html", **THEME_BY_KEY["mes_nuevo_book_keeping"])
-
-    upload = request.files.get("zip_file")
-    if upload is None or not upload.filename:
-        return _error_response("Seleccioná el .zip de la carpeta del mes.")
-    if not upload.filename.lower().endswith(".zip"):
-        return _error_response("El archivo tiene que ser un .zip.")
-
-    try:
-        workdir = _new_workspace_dir()
-        zip_path, _filename = _save_upload_to_workspace(upload, workdir=workdir)
-        output_zip, summary = prepare_next_month(zip_path)
-    except Exception as exc:
-        return _error_response(f"Error: {exc}")
-
-    notice = _save_to_downloads_and_build_notice(output_zip, summary)
-    return _success_response(
-        output_zip,
-        os.path.basename(output_zip),
-        notice=notice,
-        notice_level="warning" if summary.get("warnings") else "success",
-        open_result=False,
-    )
-
-
-@app.route("/mes-nuevo/lottery", methods=["GET", "POST"])
-def mes_nuevo_lottery():
-    if request.method == "GET":
-        return render_template("mes_nuevo_lottery.html", **THEME_BY_KEY["mes_nuevo_lottery"])
-
-    upload = request.files.get("xlsx_file")
-    if upload is None or not upload.filename:
-        return _error_response("Seleccioná el Excel de Lottery del mes que se cierra.")
-    if not upload.filename.lower().endswith((".xlsx", ".xlsm")):
-        return _error_response("El archivo tiene que ser un .xlsx.")
-
-    try:
-        workdir = _new_workspace_dir()
-        upload_path, _filename = _save_upload_to_workspace(upload, workdir=workdir)
-        output_path, summary = prepare_next_month_lottery(upload_path)
-    except Exception as exc:
-        return _error_response(f"Error: {exc}")
-
-    notice = _save_to_downloads_and_build_notice(output_path, summary)
-    return _success_response(
-        output_path,
-        os.path.basename(output_path),
-        notice=notice,
-        notice_level="warning" if summary.get("warnings") else "success",
-        open_result=False,
-    )
-
-
-@app.route("/chase", methods=["GET", "POST"])
+@app.route("/carga-datos/chase", methods=["GET", "POST"])
 def chase():
+    """
+    Categoriza el extracto de Chase y lo guarda en chase_db.py -- ya NO
+    genera ni descarga ningún Excel (2026-09-11, ver CLAUDE.md "Conversión
+    de Chase Bank a Carga de Datos"). Cada carga recategoriza fresca contra
+    las reglas vigentes -- subir el mismo extracto (o uno solapado) de
+    nuevo actualiza el Detalle guardado en vez de duplicar el movimiento.
+    """
     if request.method == "GET":
         return render_template(
-            "chase.html", chase_rules=list_chase_display_rules(), **THEME_BY_KEY["chase"]
+            "chase.html", chase_rules=list_chase_display_rules(), **THEME_BY_KEY["carga_chase"]
         )
 
     upload = request.files.get("chase_file")
@@ -862,12 +1221,12 @@ def chase():
     filename = None
     try:
         temp_path, filename = _save_upload_to_workspace(upload)
-        updated_count, total_rows = process_chase_categorization(temp_path)
+        rows, total_rows = extract_chase_transactions(temp_path)
     except Exception as exc:
-        # pandas/openpyxl a veces incrustan la ruta completa (que contiene
-        # el nombre real del archivo) en el texto de su propia excepción --
-        # a diferencia de otros módulos, acá no hay una capa propia que
-        # arme un mensaje corto antes, así que se scrubea el texto crudo.
+        # pandas a veces incrusta la ruta completa (que contiene el nombre
+        # real del archivo) en el texto de su propia excepción -- a
+        # diferencia de otros módulos, acá no hay una capa propia que arme
+        # un mensaje corto antes, así que se scrubea el texto crudo.
         message = str(exc)
         if temp_path:
             message = message.replace(temp_path, "el archivo")
@@ -875,19 +1234,39 @@ def chase():
             message = message.replace(filename, "el archivo")
         return _error_response(f"Error: {message}")
 
-    return _success_response(temp_path, filename)
+    if not rows:
+        return _error_response("No se encontró ningún movimiento con fecha válida en el archivo.")
+
+    inserted, updated = chase_db.upsert_transactions(rows, source_filename=filename)
+    skipped = total_rows - len(rows)
+    uncategorized = sum(1 for row in rows if not row["detalle"])
+
+    parts = [f"{len(rows)} movimiento(s) guardado(s) ({inserted} nuevo(s), {updated} actualizado(s))."]
+    if uncategorized:
+        parts.append(f"{uncategorized} sin ninguna regla que matcheara.")
+    if skipped:
+        parts.append(f"{skipped} fila(s) sin fecha válida, no se guardaron.")
+    flash(" ".join(parts), "warning" if (uncategorized or skipped) else "success")
+
+    first_date = min(row["posting_date"] for row in rows)
+    return redirect(url_for("chase_historial", year=first_date.year, month=first_date.month))
 
 
-def _require_admin_for_chase_rules():
+def _require_admin(message):
+    """
+    Gate genérico para acciones admin-only (reglas de Chase, agregar
+    proveedores nuevos sin código, etc.) -- flashea `message` y devuelve
+    False si el usuario logueado no es admin.
+    """
     if not current_user.is_admin:
-        flash("Solo un administrador puede gestionar las reglas de Chase.", "error")
+        flash(message, "error")
         return False
     return True
 
 
-@app.route("/chase/rules/save", methods=["POST"])
+@app.route("/carga-datos/chase/rules/save", methods=["POST"])
 def chase_rules_save():
-    if not _require_admin_for_chase_rules():
+    if not _require_admin("Solo un administrador puede gestionar las reglas de Chase."):
         return redirect(url_for("chase"))
 
     keyword = request.form.get("keyword", "")
@@ -918,9 +1297,9 @@ def chase_rules_save():
     return redirect(url_for("chase"))
 
 
-@app.route("/chase/rules/delete", methods=["POST"])
+@app.route("/carga-datos/chase/rules/delete", methods=["POST"])
 def chase_rules_delete():
-    if not _require_admin_for_chase_rules():
+    if not _require_admin("Solo un administrador puede gestionar las reglas de Chase."):
         return redirect(url_for("chase"))
 
     rule_type = request.form.get("rule_type", "").strip()
@@ -940,6 +1319,87 @@ def chase_rules_delete():
     except ValueError as exc:
         flash(str(exc), "error")
     return redirect(url_for("chase"))
+
+
+@app.route("/carga-datos/chase/historial")
+def chase_historial():
+    """Movimientos de Chase guardados de un mes, ordenados por fecha -- ver chase_db.py."""
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    transactions = chase_db.get_month_transactions(year, month)
+    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+
+    return render_template(
+        "chase_historial.html",
+        transactions=transactions,
+        year=year,
+        month=month,
+        month_name=_MONTH_NAMES_ES[month - 1],
+        prev_year=prev_year,
+        prev_month=prev_month,
+        next_year=next_year,
+        next_month=next_month,
+        known_details=chase_db.list_known_details(),
+        **THEME_BY_KEY["carga_chase"],
+    )
+
+
+@app.route("/carga-datos/chase/exportar")
+def chase_exportar():
+    """
+    Descarga un Excel NUEVO (nunca toca ningún archivo del banco) con los
+    movimientos ya categorizados de un mes -- pedido explícito del usuario
+    (2026-09-14), ver chase_rules.build_chase_export_workbook.
+    """
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    transactions = chase_db.get_month_transactions(year, month)
+    if not transactions:
+        flash("No hay ningún movimiento guardado ese mes para exportar.", "error")
+        return redirect(url_for("chase_historial", year=year, month=month))
+
+    workspace_dir = tempfile.mkdtemp(prefix="chase_export_")
+    dest_path = os.path.join(workspace_dir, f"Chase {month:02d}-{year}.xlsx")
+    build_chase_export_workbook(transactions, year, month, dest_path)
+    return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
+
+
+@app.route("/carga-datos/chase/categorizar", methods=["POST"])
+def chase_categorizar():
+    """
+    Categorización manual de un movimiento puntual -- pedido explícito del
+    usuario (2026-09-12): "los datos sin categorizar del chase se puedan
+    categorizar". Queda pegado (detalle_source="manual") aunque se vuelva a
+    subir el mismo extracto después, ver chase_db.set_manual_detalle.
+    """
+    posting_date = request.form.get("posting_date", "").strip()
+    description = request.form.get("description", "")
+    amount_raw = request.form.get("amount", "").strip()
+    detalle = request.form.get("detalle", "").strip()
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+
+    try:
+        amount = float(amount_raw)
+    except ValueError:
+        flash("No se pudo identificar el movimiento (monto inválido).", "error")
+        return redirect(url_for("chase_historial", year=year, month=month))
+
+    ok = chase_db.set_manual_detalle(posting_date, description, amount, detalle)
+    if ok:
+        flash("Detalle guardado." if detalle else "Detalle borrado.", "success")
+    else:
+        flash("No se encontró ese movimiento -- puede que ya no esté guardado.", "error")
+    return redirect(url_for("chase_historial", year=year, month=month))
 
 
 @app.route("/cmv")
@@ -1145,6 +1605,143 @@ def _reporte_batch_notice(summary, day_key="calendar_day"):
     return " ".join(parts) or None
 
 
+def _parse_paths_concurrently(pdf_paths, parse_fn, progress_callback=None):
+    """
+    Corre parse_fn(pdf_path) para cada PDF, en paralelo cuando hay más de
+    uno -- mismo patrón (y mismo tope de workers) que reporte_diario.py:
+    _parse_pdfs_concurrently, reusado acá para los guardados-espejo de
+    Reporte Diario.
+
+    Bug real encontrado reproduciendo el reporte del usuario ("se tardó
+    mucho y después no cargó nada", 2026-09-14): los guardados-espejo
+    releían cada PDF SECUENCIAL, uno por uno -- con un lote de 5 PDFs
+    reales esto agregó ~8 minutos de trabajo después de que la lectura
+    principal (que sí corre en paralelo) ya había terminado. Acá se lee en
+    paralelo igual que la lectura principal -- la escritura en la base
+    (rápida) sigue siendo secuencial después, sobre los resultados ya
+    parseados.
+
+    Devuelve {pdf_path: (parsed_value, error)} -- exactamente uno de los
+    dos es None. `progress_callback(pdf_path)`, si viene, se llama apenas
+    termina de parsearse cada PDF (éxito o error).
+    """
+    def _parse_one(pdf_path):
+        try:
+            return pdf_path, parse_fn(pdf_path), None
+        except Exception as exc:
+            return pdf_path, None, exc
+        finally:
+            if progress_callback:
+                progress_callback(pdf_path)
+
+    results = {}
+    if len(pdf_paths) <= 1:
+        for pdf_path in pdf_paths:
+            path, value, error = _parse_one(pdf_path)
+            results[path] = (value, error)
+    else:
+        max_workers = min(len(pdf_paths), os.cpu_count() or 4, 6)
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [executor.submit(_parse_one, pdf_path) for pdf_path in pdf_paths]
+            for future in as_completed(futures):
+                path, value, error = future.result()
+                results[path] = (value, error)
+    return results
+
+
+def _persist_reporte_diario_departments(pdf_paths, progress_callback=None):
+    """
+    Guarda en reportes_db (además de escribir el Excel de siempre, que ya
+    pasó antes de llamar a esto) los departamentos de cada PDF del lote --
+    "memoria" nueva de la página, ver CLAUDE.md. Nunca puede romper la
+    respuesta principal: el Excel ya se generó bien antes de llegar acá,
+    así que cualquier problema en este paso se ignora en silencio (queda
+    solo en la consola del servidor) en vez de tapar la descarga real.
+
+    `progress_callback(pdf_path)`, si viene, se llama después de leer cada
+    PDF (ver _parse_paths_concurrently) -- para que un lote grande siga
+    mostrando avance real en vez de parecer trabado.
+    """
+    outcomes = _parse_paths_concurrently(pdf_paths, extract_department_sales_for_day, progress_callback)
+    for pdf_path, (result, error) in outcomes.items():
+        if error is not None:
+            print(f"[reportes_db] no se pudo guardar departamentos de {pdf_path}: {error}")
+            continue
+        try:
+            filename = os.path.basename(pdf_path)
+            pdf_relpath = reportes_db.store_pdf_copy(result["date"], pdf_path, filename)
+            reportes_db.replace_department_sales(result["date"], result["records"], pdf_filename=pdf_relpath)
+        except Exception as exc:
+            print(f"[reportes_db] no se pudo guardar departamentos de {pdf_path}: {exc}")
+
+
+def _persist_lottery_department_fields(pdf_paths, progress_callback=None):
+    """
+    Primer paso del "interconectado" entre módulos de Carga de Datos (pedido
+    explícito del usuario 2026-09-11): el PDF de cierre diario de Reporte
+    Diario ya trae, en su Department Sales Report, las mismas filas
+    ONLINE/SKOFF que Lottery necesita para D/E/N/O -- exactamente lo mismo
+    que ya hacía el Excel (un solo PDF alimentando dos libros distintos).
+    Se llama junto con _persist_reporte_diario_departments (tanto desde el
+    lado Excels como desde Carga de Datos) para que subir un PDF de Reporte
+    Diario UNA sola vez ya deje esa parte de Lottery lista, sin otro upload
+    aparte -- solo falta el "Daily Sales Report" del portal de Lottery
+    (F/G/H/I/K/P/Q/R/S), que es un documento realmente distinto. Aislado por
+    PDF y nunca puede romper la respuesta principal, mismo criterio que el
+    resto de estos guardados-espejo. `progress_callback` -- ver
+    _persist_reporte_diario_departments.
+    """
+    outcomes = _parse_paths_concurrently(pdf_paths, extract_lottery_department_fields_from_pdf, progress_callback)
+    for pdf_path, (fields, error) in outcomes.items():
+        if error is not None:
+            print(f"[lottery_db] no se pudo guardar ONLINE/SKOFF de {pdf_path}: {error}")
+            continue
+        try:
+            filename = os.path.basename(pdf_path)
+            pdf_relpath = lottery_db.store_pdf_copy(fields["report_date"], pdf_path, filename)
+            lottery_db.upsert_department_fields(
+                fields["report_date"], fields["online_count"], fields["online_net_sales"],
+                fields["skoff_count"], fields["skoff_net_sales"], source="ocr", pdf_filename=pdf_relpath,
+            )
+        except Exception as exc:
+            print(f"[lottery_db] no se pudo guardar ONLINE/SKOFF de {pdf_path}: {exc}")
+
+
+def _persist_lottery_sales_report_fields(pdf_paths):
+    """
+    Análogo a _persist_lottery_department_fields, para el otro documento que
+    alimenta Lottery -- el "Daily Sales Report" del portal de Florida
+    Lottery (F/G/H/I/K/P/Q/R/S). Se llama desde el flujo de Excels
+    (/lottery/sales-report) además de Carga de Datos, para que subir ese
+    PDF por CUALQUIERA de los dos lados deje lottery_db al día -- mismo
+    criterio de "un solo upload, las dos memorias" que ya rige Reporte
+    Diario. Aislado por PDF, nunca puede romper la respuesta principal.
+    """
+    for pdf_path in pdf_paths:
+        try:
+            fields = extract_lottery_receipt_fields_from_sales_report(pdf_path)
+            filename = os.path.basename(pdf_path)
+            pdf_relpath = lottery_db.store_pdf_copy(fields["report_date"], pdf_path, filename)
+            lottery_db.upsert_sales_report_fields(fields["report_date"], fields, source="ocr", pdf_filename=pdf_relpath)
+        except Exception as exc:
+            print(f"[lottery_db] no se pudo guardar Daily Sales Report de {pdf_path}: {exc}")
+
+
+def _persist_reporte_diario_store_info(pdf_paths, progress_callback=None):
+    """Análogo a _persist_reporte_diario_departments, para Store Info. `progress_callback` -- ver ese docstring."""
+    outcomes = _parse_paths_concurrently(pdf_paths, extract_store_info_for_day, progress_callback)
+    for pdf_path, (result, error) in outcomes.items():
+        if error is not None:
+            print(f"[reportes_db] no se pudo guardar Store Info de {pdf_path}: {error}")
+            continue
+        try:
+            filename = os.path.basename(pdf_path)
+            pdf_relpath = reportes_db.store_pdf_copy(result["date"], pdf_path, filename)
+            reportes_db.upsert_store_info(result["date"], result["fields"], source="ocr", pdf_filename=pdf_relpath)
+        except Exception as exc:
+            print(f"[reportes_db] no se pudo guardar Store Info de {pdf_path}: {exc}")
+
+
 @app.route("/reporte/ventas", methods=["POST"])
 def reporte_ventas():
     saved, error = _reporte_pdf_upload()
@@ -1156,6 +1753,9 @@ def reporte_ventas():
         temp_path, summary = process_reporte_diario(master_path, pdf_paths)
     except Exception as exc:
         return _error_response(f"Error: {exc}")
+
+    _persist_reporte_diario_departments(pdf_paths)
+    _persist_lottery_department_fields(pdf_paths)
 
     return _success_response(temp_path, master_filename, notice=_reporte_batch_notice(summary))
 
@@ -1172,7 +1772,386 @@ def reporte_store_info():
     except Exception as exc:
         return _error_response(f"Error: {exc}")
 
+    _persist_reporte_diario_store_info(pdf_paths)
+
     return _success_response(temp_path, master_filename, notice=_reporte_batch_notice(summary))
+
+
+# ---------------------------------------------------------------------------
+# Carga en segundo plano -- pedido explícito del usuario (2026-09-14): "la
+# pagina tarda mucho en cargar los reportes diarios varios a la vez... ver
+# si ese proceso podria hacerse por aparte mientras se trabaja en otra
+# cosa" + "queria que muestre el progreso real... que vaya moviendo el
+# porcentaje". Reusa las mismas process_reporte_diario/process_store_info
+# de siempre (con un progress_callback opcional nuevo, ver reporte_diario.py)
+# -- nada de la lógica de negocio se duplica, esto solo mueve el trabajo
+# pesado a un hilo aparte y expone su avance real por polling (ver jobs.py).
+# Rutas nuevas y separadas de /reporte/ventas y /reporte/store-info de
+# arriba -- esas dos siguen intactas, sin ningún riesgo de regresión.
+# ---------------------------------------------------------------------------
+
+def _run_reporte_ventas_job(job_id, master_path, pdf_paths, master_filename):
+    """
+    Corre en su propio hilo (ver reporte_ventas_async) -- TODO el cuerpo va
+    envuelto en un try/except, no solo la llamada a process_reporte_diario.
+    Antes, una excepción en cualquiera de los pasos de después (guardado-
+    espejo, abrir el resultado, armar el aviso) quedaba sin atrapar -- un
+    hilo de Python que revienta así no tira abajo el servidor, pero tampoco
+    avisa a nadie: el job se quedaba pegado en "running" para siempre y el
+    navegador seguía sondeando sin que nada cambie nunca (bug real,
+    encontrado reproduciendo el reporte del usuario de "se tardó mucho y
+    después no cargó nada" -- ver CLAUDE.md).
+    """
+    def on_progress(done, total):
+        jobs.update_job(job_id, done=done, total=total)
+
+    try:
+        temp_path, summary = process_reporte_diario(master_path, pdf_paths, progress_callback=on_progress)
+
+        # A partir de acá no hay más progreso por-PDF de la lectura -- el
+        # Excel ya se escribió y falta el guardado-espejo (que vuelve a leer
+        # cada PDF, más lento que la lectura de arriba porque no corre en
+        # paralelo) -- "phase" le avisa al navegador que siga esperando en
+        # vez de parecer trabado en 100%, y "done"/"total" se reusan para
+        # el progreso REAL de este segundo paso (2 guardados por PDF acá:
+        # departamentos + Lottery), no una cuenta regresiva inventada.
+        save_total = len(pdf_paths) * 2
+        save_done = [0]
+
+        def on_save_progress(_pdf_path):
+            save_done[0] += 1
+            jobs.update_job(job_id, done=save_done[0], total=save_total)
+
+        jobs.update_job(job_id, phase="saving", done=0, total=save_total)
+        _persist_reporte_diario_departments(pdf_paths, progress_callback=on_save_progress)
+        _persist_lottery_department_fields(pdf_paths, progress_callback=on_save_progress)
+        _open_result_for_user(temp_path)
+        jobs.update_job(
+            job_id, status="done", done=save_total, total=save_total,
+            result_path=temp_path, result_filename=master_filename,
+            notice=_reporte_batch_notice(summary),
+        )
+    except Exception as exc:
+        jobs.update_job(job_id, status="error", error=f"Error: {exc}")
+
+
+def _run_reporte_store_info_job(job_id, master_path, pdf_paths, master_filename):
+    """Análoga a _run_reporte_ventas_job -- ver ese docstring."""
+    def on_progress(done, total):
+        jobs.update_job(job_id, done=done, total=total)
+
+    try:
+        temp_path, summary = process_store_info(master_path, pdf_paths, progress_callback=on_progress)
+
+        save_total = len(pdf_paths)
+        save_done = [0]
+
+        def on_save_progress(_pdf_path):
+            save_done[0] += 1
+            jobs.update_job(job_id, done=save_done[0], total=save_total)
+
+        jobs.update_job(job_id, phase="saving", done=0, total=save_total)
+        _persist_reporte_diario_store_info(pdf_paths, progress_callback=on_save_progress)
+        _open_result_for_user(temp_path)
+        jobs.update_job(
+            job_id, status="done", done=save_total, total=save_total,
+            result_path=temp_path, result_filename=master_filename,
+            notice=_reporte_batch_notice(summary),
+        )
+    except Exception as exc:
+        jobs.update_job(job_id, status="error", error=f"Error: {exc}")
+
+
+@app.route("/reporte/ventas/async", methods=["POST"])
+def reporte_ventas_async():
+    saved, error = _reporte_pdf_upload()
+    if error is not None:
+        return error
+    master_path, master_filename, pdf_paths = saved
+
+    job_id = jobs.create_job(len(pdf_paths))
+    threading.Thread(
+        target=_run_reporte_ventas_job, args=(job_id, master_path, pdf_paths, master_filename), daemon=True
+    ).start()
+    return jsonify({"job_id": job_id, "total": len(pdf_paths)})
+
+
+@app.route("/reporte/store-info/async", methods=["POST"])
+def reporte_store_info_async():
+    saved, error = _reporte_pdf_upload()
+    if error is not None:
+        return error
+    master_path, master_filename, pdf_paths = saved
+
+    job_id = jobs.create_job(len(pdf_paths))
+    threading.Thread(
+        target=_run_reporte_store_info_job, args=(job_id, master_path, pdf_paths, master_filename), daemon=True
+    ).start()
+    return jsonify({"job_id": job_id, "total": len(pdf_paths)})
+
+
+@app.route("/jobs/<job_id>/status")
+def job_status(job_id):
+    job = jobs.get_job(job_id)
+    if job is None:
+        # 200, no 404 -- un job que no existe más (ej. el servidor se
+        # reinició a mitad de una carga) es un resultado válido a mostrarle
+        # al usuario, no una falla de red -- si fuera 404 el polling de
+        # base.html lo trataría como error de conexión y reintentaría para
+        # siempre en vez de avisar y frenar.
+        return jsonify({"status": "not_found"})
+    return jsonify(
+        {
+            "status": job["status"],
+            "phase": job.get("phase", "parsing"),
+            "done": job["done"],
+            "total": job["total"],
+            "notice": job.get("notice"),
+            "notice_level": job.get("notice_level"),
+            "error": job.get("error"),
+        }
+    )
+
+
+@app.route("/jobs/<job_id>/download")
+def job_download(job_id):
+    job = jobs.get_job(job_id)
+    if job is None or job.get("status") != "done" or not job.get("result_path"):
+        flash("Ese resultado ya no está disponible.", "error")
+        return redirect(url_for("reporte"))
+    return send_file(job["result_path"], as_attachment=True, download_name=job["result_filename"])
+
+
+_MONTH_NAMES_ES = [
+    "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
+    "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre",
+]
+
+
+@app.route("/reporte/historial")
+def reporte_historial():
+    """
+    Ventas por Departamento de un mes completo -- solo esa parte, ver
+    CLAUDE.md. Store Info vive en su propia página (reporte_store_info_
+    historial) -- pedido explícito del usuario (2026-09-12): separarlas en
+    la barra lateral "como si fueran los Excels de Ventas y de Cierre",
+    que en la vida real siempre fueron dos archivos distintos.
+    """
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    overview = reportes_db.get_month_overview(year, month)
+    # Vista previa por día -- pedido explícito del usuario (2026-09-12,
+    # cuarta tanda): el espacio de la fila alcanzaba para más que la lista
+    # de departamentos crudos ("datos inecesarios") -- ahora muestra las
+    # mismas 6 categorías (TABACCO/SODA/...) del resumen del mes, pero
+    # calculadas para ESE día puntual, para poder comparar días sin entrar
+    # a "Ver/editar". Solo las categorías con algo cargado ese día.
+    for day in overview:
+        day_groups, _unmatched = group_department_sales(
+            day["department_detail"], gettel_amount=gettel_db.get_day_gettel_amount(day["date"])
+        )
+        day["category_groups"] = [g for g in day_groups if g["amount"] or g["count"]]
+    department_totals = reportes_db.get_month_department_totals(year, month)
+    department_groups, department_unmatched = group_department_sales(
+        department_totals, gettel_amount=gettel_db.get_month_gettel_amount(year, month)
+    )
+    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+
+    return render_template(
+        "reporte_historial.html",
+        overview=overview,
+        department_totals=department_totals,
+        department_groups=department_groups,
+        department_unmatched=department_unmatched,
+        year=year,
+        month=month,
+        month_name=_MONTH_NAMES_ES[month - 1],
+        prev_year=prev_year,
+        prev_month=prev_month,
+        next_year=next_year,
+        next_month=next_month,
+        today_iso=today.isoformat(),
+        **THEME_BY_KEY["reporte"],
+    )
+
+
+@app.route("/reporte/store-info/historial")
+def reporte_store_info_historial():
+    """Store Info de un mes completo -- página propia, ver reporte_historial de arriba."""
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    store_info_rows = reportes_db.get_month_store_info(year, month)
+    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+
+    return render_template(
+        "reporte_store_info_historial.html",
+        store_info_rows=store_info_rows,
+        year=year,
+        month=month,
+        month_name=_MONTH_NAMES_ES[month - 1],
+        prev_year=prev_year,
+        prev_month=prev_month,
+        next_year=next_year,
+        next_month=next_month,
+        today_iso=today.isoformat(),
+        **THEME_BY_KEY["reporte"],
+    )
+
+
+def _parse_report_date(report_date):
+    if isinstance(report_date, date):
+        return report_date
+    return datetime.strptime(report_date, "%Y-%m-%d").date()
+
+
+@app.route("/reporte/documentos")
+def reporte_documentos():
+    """PDFs de cierre diario ya guardados este mes -- ver CLAUDE.md, barra lateral por módulo."""
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    pdfs = reportes_db.get_month_pdf_list(year, month)
+    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+
+    return render_template(
+        "reporte_documentos.html",
+        pdfs=pdfs,
+        year=year,
+        month=month,
+        month_name=_MONTH_NAMES_ES[month - 1],
+        prev_year=prev_year,
+        prev_month=prev_month,
+        next_year=next_year,
+        next_month=next_month,
+        **THEME_BY_KEY["reporte"],
+    )
+
+
+@app.route("/reporte/dia/<report_date>")
+def reporte_dia(report_date):
+    try:
+        parsed_date = _parse_report_date(report_date)
+    except ValueError:
+        flash("Fecha inválida.", "error")
+        return redirect(url_for("reporte_historial"))
+
+    day = reportes_db.get_day(parsed_date)
+    department_groups, department_unmatched = group_department_sales(
+        day["departments"], gettel_amount=gettel_db.get_day_gettel_amount(parsed_date)
+    )
+    return render_template(
+        "reporte_dia.html",
+        report_date=parsed_date,
+        departments=day["departments"],
+        department_groups=department_groups,
+        department_unmatched=department_unmatched,
+        store_info=day["store_info"],
+        pdf_filename=day["pdf_filename"],
+        printed_total_sales=day["printed_total_sales"],
+        printed_total_units=day["printed_total_units"],
+        known_departments=reportes_db.list_known_departments(),
+        **THEME_BY_KEY["reporte"],
+    )
+
+
+@app.route("/reporte/dia/<report_date>/pdf")
+def reporte_dia_pdf(report_date):
+    day = reportes_db.get_day(report_date)
+    path = reportes_db.absolute_pdf_path(day["pdf_filename"]) if day["pdf_filename"] else None
+    if not path or not os.path.isfile(path):
+        flash("No hay ningún PDF guardado para este día.", "error")
+        return redirect(url_for("reporte_dia", report_date=report_date))
+    return send_file(path)
+
+
+@app.route("/reporte/dia/<report_date>/departamentos", methods=["POST"])
+def reporte_dia_departamentos(report_date):
+    names = request.form.getlist("dept_name")
+    counts = request.form.getlist("dept_count")
+    amounts = request.form.getlist("dept_amount")
+    to_delete = set(request.form.getlist("dept_delete"))
+
+    saved = 0
+    skipped = 0
+    for name, count_raw, amount_raw in zip(names, counts, amounts):
+        name = name.strip()
+        if not name:
+            continue
+        if name in to_delete:
+            reportes_db.delete_department_row(report_date, name)
+            continue
+        count_raw = (count_raw or "").strip()
+        amount_raw = (amount_raw or "").strip()
+        if not count_raw and not amount_raw:
+            continue
+        try:
+            count = int(float(count_raw or 0))
+            amount = float(amount_raw or 0)
+        except ValueError:
+            skipped += 1
+            continue
+        reportes_db.upsert_department_row(report_date, name, count, amount, source="manual")
+        saved += 1
+
+    printed_sales_raw = (request.form.get("printed_total_sales") or "").strip()
+    printed_units_raw = (request.form.get("printed_total_units") or "").strip()
+    try:
+        printed_sales = float(printed_sales_raw) if printed_sales_raw else None
+        printed_units = float(printed_units_raw) if printed_units_raw else None
+        reportes_db.upsert_printed_totals(report_date, printed_sales, printed_units)
+    except ValueError:
+        skipped += 1
+
+    if skipped:
+        flash(f"{saved} departamento(s) guardado(s). {skipped} con un número/monto inválido, no se guardaron.", "warning")
+    else:
+        flash(f"{saved} departamento(s) guardado(s).", "success")
+    return redirect(url_for("reporte_dia", report_date=report_date))
+
+
+@app.route("/reporte/dia/<report_date>/store-info", methods=["POST"])
+def reporte_dia_store_info(report_date):
+    credit_terms_raw = request.form.get("credit_terms", "")
+    try:
+        credit_terms = [float(v.strip()) for v in credit_terms_raw.split(",") if v.strip()]
+        fields = {
+            "from_time": request.form.get("from_time") or None,
+            "to_time": request.form.get("to_time") or None,
+            "volume": request.form.get("volume", ""),
+            "sales_fuel": request.form.get("sales_fuel", ""),
+            "desc_comb": request.form.get("desc_comb", ""),
+            "non_fuel_total": request.form.get("non_fuel_total", ""),
+            "desc_otros": request.form.get("desc_otros", ""),
+            "tax_collect": request.form.get("tax_collect", ""),
+            "total_sales": request.form.get("total_sales", ""),
+            "cash": request.form.get("cash", ""),
+            "local_accounts": request.form.get("local_accounts", ""),
+            "other_amount": request.form.get("other_amount", ""),
+            "network_revenue": request.form.get("network_revenue", ""),
+            "total_revenue": request.form.get("total_revenue", ""),
+            "credit_terms": credit_terms,
+        }
+        reportes_db.upsert_store_info(report_date, fields, source="manual")
+    except ValueError:
+        flash("No se pudo guardar: revisá que los montos sean números válidos.", "error")
+        return redirect(url_for("reporte_dia", report_date=report_date))
+
+    flash("Store Info guardado.", "success")
+    return redirect(url_for("reporte_dia", report_date=report_date))
 
 
 @app.route("/lottery")
@@ -1207,6 +2186,8 @@ def lottery_sales_report():
     except Exception as exc:
         return _error_response(f"Error: {exc}")
 
+    _persist_lottery_sales_report_fields(pdf_paths)
+
     return _success_response(temp_path, master_filename, notice=_reporte_batch_notice(summary))
 
 
@@ -1222,88 +2203,808 @@ def lottery_department():
     except Exception as exc:
         return _error_response(f"Error: {exc}")
 
+    _persist_lottery_department_fields(pdf_paths)
+
     return _success_response(temp_path, master_filename, notice=_reporte_batch_notice(summary))
 
 
-@app.route("/eft")
-def eft():
-    return render_template("eft.html", **THEME_BY_KEY["eft"])
+@app.route("/carga-datos/eft")
+def carga_datos_eft():
+    """
+    Carga directa de EFT y Cupones del lado Carga de Datos -- solo PDF/
+    reporte mensual, sin ningún Excel. Ver eft_db.py.
+    """
+    return render_template("carga_datos_eft.html", **THEME_BY_KEY["carga_eft"])
 
 
-@app.route("/eft/cta-cte", methods=["POST"])
-def eft_cta_cte_route():
-    pdf_upload = request.files.get("pdf_file")
-    master_upload = request.files.get("master_file")
-    if pdf_upload is None or not pdf_upload.filename:
-        return _error_response("Seleccioná un archivo PDF de EFT.")
-    if master_upload is None or not master_upload.filename:
-        return _error_response("Seleccioná el Excel Ledger.")
+@app.route("/carga-datos/eft/subir", methods=["POST"])
+def carga_datos_eft_subir():
+    """
+    Extrae uno o más PDF de EFT (pedido explícito del usuario 2026-09-12:
+    "quiero que se puedan cargar varios pdf de eft de una sola vez") y los
+    guarda en eft_db -- nunca genera ni toca ningún Excel. Cada archivo se
+    aísla en su propio try/except (mismo criterio de todo el proyecto: un
+    PDF roto o duplicado no debe tirar abajo el resto del lote). Mismo
+    chequeo de duplicado que el lado Excels (RCV + fecha + neto), pero
+    contra la base en vez de un Ledger.
+    """
+    pdf_uploads = [f for f in request.files.getlist("pdf_file") if f and f.filename]
+    if not pdf_uploads:
+        flash("Seleccioná uno o más PDF de EFT.", "error")
+        return redirect(url_for("carga_datos_eft"))
 
-    try:
-        workdir = _new_workspace_dir()
-        pdf_path, _pdf_filename = _save_upload_to_workspace(pdf_upload, workdir=workdir)
-        master_path, master_filename = _save_upload_to_workspace(master_upload, workdir=workdir)
+    saved = 0
+    duplicates = 0
+    missing_ddc_total = 0
+    skipped_total = 0
+    failed = 0
+    last_saved_date = None
 
-        header_data, paid_invoices, credit_coupons, skipped_coupon_rows = extract_eft_data(pdf_path)
-        if eft_already_loaded_in_workbook(master_path, header_data, credit_coupons):
-            return _error_response(EFT_DUPLICATE_ALERT)
+    for pdf_upload in pdf_uploads:
+        try:
+            pdf_path, filename = _save_upload_to_workspace(pdf_upload)
+            header_data, paid_invoices, credit_coupons, skipped_coupon_rows = extract_eft_data(pdf_path)
+            if not credit_coupons:
+                raise ValueError("no se extrajeron cupones de tarjeta de crédito")
 
-        update_excel_workbook(master_path, header_data, paid_invoices, credit_coupons)
-    except Exception as exc:
-        return _error_response(f"Error: {exc}")
+            net_total = sum(float(c.get("paid_amount") or 0.0) for c in credit_coupons)
+            existing = eft_db.find_existing_deposit(
+                header_data.get("draft_no"), header_data.get("eft_date"), net_total
+            )
+            if existing:
+                duplicates += 1
+                continue
 
-    notice = None
-    if skipped_coupon_rows:
-        notice = (
-            f"{skipped_coupon_rows} fila(s) de cupón no se pudieron leer del PDF "
-            "(faltaban montos legibles) y no se cargaron — revisá el EFT a mano."
-        )
-    return _success_response(master_path, master_filename, notice=notice)
+            eft_db.save_eft(header_data, paid_invoices, credit_coupons, source_filename=filename)
+            saved += 1
+            missing_ddc_total += sum(1 for c in credit_coupons if not c.get("coupon"))
+            skipped_total += skipped_coupon_rows or 0
+
+            eft_date = header_data.get("eft_date")
+            try:
+                parsed = datetime.strptime(eft_date, "%m/%d/%Y") if eft_date else None
+            except ValueError:
+                parsed = None
+            if parsed and (last_saved_date is None or parsed > last_saved_date):
+                last_saved_date = parsed
+            try:
+                doc_when = parsed or datetime.now()
+                documents_db.store_document(
+                    "eft", pdf_path, filename, doc_when.year, doc_when.month,
+                    label=header_data.get("draft_no"),
+                )
+            except Exception as exc:
+                print(f"[documents_db] no se pudo guardar el documento de EFT {filename}: {exc}")
+        except Exception as exc:
+            print(f"[carga-datos/eft/subir] {pdf_upload.filename}: {exc}")
+            failed += 1
+
+    parts = []
+    if saved:
+        parts.append(f"{saved} EFT guardado(s).")
+    if duplicates:
+        parts.append(f"{duplicates} ya estaban cargado(s) y se omitieron.")
+    if missing_ddc_total:
+        parts.append(f"{missing_ddc_total} cupón(es) sin número DDC -- se puede agregar a mano abajo.")
+    if skipped_total:
+        parts.append(f"{skipped_total} fila(s) de cupón no se pudieron leer.")
+    if failed:
+        parts.append(f"{failed} archivo(s) no se pudieron procesar.")
+    if not parts:
+        parts.append("No se guardó ningún EFT de este lote.")
+    flash(
+        " ".join(parts),
+        "success" if (saved and not (duplicates or missing_ddc_total or skipped_total or failed)) else
+        ("error" if not saved else "warning"),
+    )
+
+    if last_saved_date:
+        return redirect(url_for("carga_datos_eft_historial", year=last_saved_date.year, month=last_saved_date.month))
+    return redirect(url_for("carga_datos_eft_historial"))
 
 
-@app.route("/eft/cupones", methods=["POST"])
-def eft_cupones():
-    master_upload = request.files.get("master_file")
+@app.route("/carga-datos/eft/cupones/subir", methods=["POST"])
+def carga_datos_eft_cupones_subir():
+    """
+    Lee el reporte mensual de Cupones y lo guarda en eft_db -- nunca genera
+    ni toca ningún Excel. Cada DDC queda cruzado en el momento contra los
+    EFT ya guardados (join en la lectura, ver eft_db.get_cupones_with_status),
+    no hace falta ningún paso de "resincronizar" aparte como en el Excel.
+    """
     monthly_upload = request.files.get("monthly_report_file")
-    if master_upload is None or not master_upload.filename:
-        return _error_response("Seleccioná el Excel Ledger.")
+    if monthly_upload is None or not monthly_upload.filename:
+        flash("Seleccioná el reporte mensual de Cupones.", "error")
+        return redirect(url_for("carga_datos_eft"))
 
     try:
-        workdir = _new_workspace_dir()
-        master_path, master_filename = _save_upload_to_workspace(master_upload, workdir=workdir)
-
-        if monthly_upload is not None and monthly_upload.filename:
-            monthly_path, _monthly_filename = _save_upload_to_workspace(monthly_upload, workdir=workdir)
-            saved_path, summary = append_monthly_cupones(master_path, monthly_path)
-        else:
-            saved_path, summary = resync_cupones_only(master_path)
-    except NoPendingCouponsError as exc:
-        return _error_response(str(exc))
-    except MonthlyReportFullyDuplicateError as exc:
-        return _error_response(str(exc))
+        monthly_path, filename = _save_upload_to_workspace(monthly_upload)
+        raw_rows = read_monthly_coupon_rows(monthly_path)
+        if not raw_rows:
+            raise ValueError("No se encontraron filas de cupones en el reporte mensual.")
+        records = expand_monthly_records_for_storage(raw_rows)
     except Exception as exc:
-        return _error_response(f"Error: {exc}")
+        flash(f"Error: {exc}", "error")
+        return redirect(url_for("carga_datos_eft"))
 
-    notice_parts = []
-    if summary.get("rows_skipped_duplicates"):
-        notice_parts.append(
-            f"{summary['rows_skipped_duplicates']} cupón(es) ya estaban cargado(s) y se omitieron solos."
+    inserted, updated = eft_db.upsert_cupones(records, source_filename=filename)
+    try:
+        today = date.today()
+        documents_db.store_document("eft", monthly_path, filename, today.year, today.month, label="Reporte mensual de Cupones")
+    except Exception as exc:
+        print(f"[documents_db] no se pudo guardar el reporte mensual de Cupones {filename}: {exc}")
+    flash(f"{len(records)} cupón(es) guardado(s) ({inserted} nuevo(s), {updated} actualizado(s)).", "success")
+    return redirect(url_for("carga_datos_eft_historial"))
+
+
+# Enlazar cada "factura que paga el EFT" con el documento real ya subido a
+# Documentos (módulo "eft") -- pedido explícito del usuario (2026-09-14):
+# "que pueda tocar con un link la invoice y eso lo va a reedirigir a la
+# factura que se pago, linkeado de los mismos documentos por el nombre de
+# invoice". No hay ninguna referencia guardada entre EFT y documento -- el
+# cruce se recalcula en el momento (nunca un valor fijo que pueda quedar
+# desactualizado) buscando el número de la factura (ej. "SI-212530" ->
+# "212530") como subcadena del nombre de archivo o la etiqueta del
+# documento -- así, subir un documento nuevo actualiza el link solo, sin
+# tocar nada del lado del EFT.
+_INVOICE_DIGITS_RE = re.compile(r"\d{4,}")
+
+
+def _invoice_number_digits(text):
+    if not text:
+        return None
+    match = _INVOICE_DIGITS_RE.search(text)
+    return match.group(0) if match else None
+
+
+def _match_invoice_document(invoice_text, docs):
+    digits = _invoice_number_digits(invoice_text)
+    if not digits:
+        return None
+    for doc in docs:
+        haystack = f"{doc.get('filename') or ''} {doc.get('label') or ''}"
+        if digits in (_invoice_number_digits(haystack) or ""):
+            return doc
+        if digits in haystack:
+            return doc
+    return None
+
+
+@app.route("/carga-datos/eft/historial")
+def carga_datos_eft_historial():
+    """
+    EFT del mes (con sus cupones/facturas, ordenados por la fecha del EFT) +
+    todos los Cupones guardados de forma histórica, agrupados por mes para
+    poder distinguir de un vistazo cuáles son de qué mes (pedido explícito
+    del usuario 2026-09-12) -- con su estado de cruce.
+    """
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    deposits = eft_db.get_month_deposits(year, month)
+    eft_docs = documents_db.list_all_documents("eft")
+    for entry in deposits:
+        # Autosuma por columna (pedido explícito del usuario 2026-09-12) --
+        # se calcula acá y no con el filtro |sum(attribute=...) de Jinja
+        # porque un monto en None (columna nullable) rompería ese filtro.
+        entry["totals"] = {
+            "gross": sum(float(c.get("gross_amount") or 0.0) for c in entry["coupons"]),
+            "fees": sum(float(c.get("fees_amount") or 0.0) for c in entry["coupons"]),
+            "paid": sum(float(c.get("paid_amount") or 0.0) for c in entry["coupons"]),
+        }
+        for inv in entry.get("paid_invoices") or []:
+            inv["document"] = _match_invoice_document(inv.get("invoice"), eft_docs)
+    cupon_groups = eft_db.get_cupones_grouped_by_month()
+    for group in cupon_groups:
+        group["label"] = f"{_MONTH_NAMES_ES[group['month'] - 1]} {group['year']}" if group["month"] else "Sin fecha"
+    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+
+    return render_template(
+        "carga_datos_eft_historial.html",
+        deposits=deposits,
+        cupon_groups=cupon_groups,
+        year=year,
+        month=month,
+        month_name=_MONTH_NAMES_ES[month - 1],
+        prev_year=prev_year,
+        prev_month=prev_month,
+        next_year=next_year,
+        next_month=next_month,
+        **THEME_BY_KEY["carga_eft"],
+    )
+
+
+@app.route("/carga-datos/eft/coupon/<int:eft_coupon_id>/ddc", methods=["POST"])
+def carga_datos_eft_coupon_ddc(eft_coupon_id):
+    """
+    Agrega (o corrige) a mano el DDC de una línea de EFT que el PDF no
+    traía -- pedido explícito del usuario (2026-09-12).
+    """
+    coupon_id = request.form.get("coupon_id", "").strip()
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    ok = eft_db.set_manual_coupon_id(eft_coupon_id, coupon_id)
+    if ok:
+        flash("Número DDC guardado." if coupon_id else "Número DDC borrado.", "success")
+    else:
+        flash("No se encontró esa línea de EFT.", "error")
+    return redirect(url_for("carga_datos_eft_historial", year=year, month=month))
+
+
+@app.route("/carga-datos/eft/<int:deposit_id>/eliminar", methods=["POST"])
+def carga_datos_eft_eliminar(deposit_id):
+    """
+    Borra un EFT ya cargado -- pedido explícito del usuario (2026-09-14):
+    "los EFT subidos no tienen forma de ser eliminados". Los documentos
+    guardados en Documentos (módulo "eft") NO se tocan -- son archivos
+    originales aparte, no dependen del registro del EFT.
+    """
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    ok = eft_db.delete_deposit(deposit_id)
+    flash("EFT eliminado." if ok else "Ese EFT ya no existe.", "success" if ok else "error")
+    return redirect(url_for("carga_datos_eft_historial", year=year, month=month))
+
+
+@app.route("/carga-datos/caja")
+def carga_datos_caja():
+    """
+    Caja del lado Carga de Datos -- pedido explícito del usuario
+    (2026-09-12): "que esta vez se completaria automaticamente con los
+    datos que haya guardado en el chase de tal mes... tendria que verse
+    como el cuadro del excel exactamente igual". No hay nada que subir acá
+    -- Chase y Lottery ya se cargan por sus propios módulos, este reporte
+    solo cruza lo que ya está guardado (ver caja.build_month_report_from_db).
+    """
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    report = build_caja_month_report(year, month)
+    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+
+    return render_template(
+        "carga_datos_caja_historial.html",
+        report=report,
+        expense_items=caja_db.get_month_expense_items(year, month),
+        attachments=caja_db.get_month_attachments(year, month),
+        year=year,
+        month=month,
+        month_name=_MONTH_NAMES_ES[month - 1],
+        prev_year=prev_year,
+        prev_month=prev_month,
+        next_year=next_year,
+        next_month=next_month,
+        today_iso=today.isoformat(),
+        **THEME_BY_KEY["carga_caja"],
+    )
+
+
+@app.route("/carga-datos/caja/gastos/agregar", methods=["POST"])
+def carga_datos_caja_gastos_agregar():
+    """
+    Agrega UN gasto en efectivo con su detalle (a quién se le pagó) --
+    pedido explícito del usuario (2026-09-12, cuarta tanda): "poder
+    escribirlos a mano en el sistema con un detalle de a quien
+    pertenecen". Reemplaza el form viejo de un solo monto por día (sin
+    detalle) -- un día puede tener varios gastos, cada uno con el suyo.
+    """
+    report_date = request.form.get("date")
+    amount_raw = (request.form.get("amount") or "").strip()
+    detail = request.form.get("detail")
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+
+    try:
+        amount = float(amount_raw)
+    except ValueError:
+        flash("El monto tiene que ser un número válido.", "error")
+        return redirect(url_for("carga_datos_caja", year=year, month=month))
+
+    caja_db.add_expense_item(report_date, amount, detail)
+    flash("Gasto agregado.", "success")
+    return redirect(url_for("carga_datos_caja", year=year, month=month))
+
+
+@app.route("/carga-datos/caja/gastos/<int:item_id>/eliminar", methods=["POST"])
+def carga_datos_caja_gastos_eliminar(item_id):
+    caja_db.delete_expense_item(item_id)
+    flash("Gasto eliminado.", "success")
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    return redirect(url_for("carga_datos_caja", year=year, month=month))
+
+
+@app.route("/carga-datos/caja/documentos/subir", methods=["POST"])
+def carga_datos_caja_documentos_subir():
+    """
+    "Sistema de almacenamiento" -- pedido explícito del usuario
+    (2026-09-12, cuarta tanda): "pasarle todos los excels de gastos con
+    caja y que esten ahi a mano para ver cuando estes parado en tal mes en
+    particular". Los archivos nunca se leen/parsean -- quedan solo de
+    referencia mientras se tipean los gastos a mano arriba.
+    """
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    uploads = request.files.getlist("documento_files")
+    saved = 0
+    for upload in uploads:
+        if not upload or not upload.filename:
+            continue
+        caja_db.store_attachment(year, month, upload)
+        saved += 1
+    flash(f"{saved} documento(s) guardado(s)." if saved else "Seleccioná al menos un archivo.", "success" if saved else "error")
+    return redirect(url_for("carga_datos_caja", year=year, month=month))
+
+
+@app.route("/carga-datos/caja/documentos/<int:attachment_id>")
+def carga_datos_caja_documento_descargar(attachment_id):
+    attachment = caja_db.get_attachment(attachment_id)
+    if not attachment or not os.path.isfile(attachment["stored_path"]):
+        flash("No se encontró ese documento.", "error")
+        return redirect(url_for("carga_datos_caja"))
+    return send_file(attachment["stored_path"], as_attachment=True, download_name=attachment["filename"])
+
+
+@app.route("/carga-datos/caja/documentos/<int:attachment_id>/eliminar", methods=["POST"])
+def carga_datos_caja_documento_eliminar(attachment_id):
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    caja_db.delete_attachment(attachment_id)
+    flash("Documento eliminado.", "success")
+    return redirect(url_for("carga_datos_caja", year=year, month=month))
+
+
+@app.route("/carga-datos/caja/saldo", methods=["POST"])
+def carga_datos_caja_saldo():
+    """
+    Saldo Inicial (editable, encadenado del mes anterior por default) y un
+    ajuste manual opcional de Saldo Final -- pedido explícito del usuario
+    (2026-09-12): "el saldo inicial de la caja de un mes deberia ser el
+    saldo final de la caja del mes anterior, este saldo se deberia poder
+    editar junto con el saldo final de ser necesario". Un campo vacío borra
+    el override (vuelve al valor encadenado/calculado).
+    """
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    opening_raw = (request.form.get("opening_balance") or "").strip()
+    closing_raw = (request.form.get("closing_balance_override") or "").strip()
+
+    try:
+        opening_value = float(opening_raw) if opening_raw else None
+        closing_value = float(closing_raw) if closing_raw else None
+        caja_db.set_month_opening_balance(year, month, opening_value)
+        caja_db.set_month_closing_override(year, month, closing_value)
+        flash("Saldo guardado.", "success")
+    except ValueError:
+        flash("No se pudo guardar: revisá que los montos sean números válidos.", "error")
+
+    return redirect(url_for("carga_datos_caja", year=year, month=month))
+
+
+@app.route("/carga-datos/gettel")
+def carga_datos_gettel():
+    """
+    Gettel / Toyota -- Carga de Datos (2026-09-12, cuarta tanda): mismo
+    origen que ya lee el módulo de Herramientas (Excel con hojas Gettel/
+    Toyota, o PDF/foto por separado de cada uno) pero guardado directo en
+    gettel_db, sin ningún Excel Cierre de destino -- pedido explícito del
+    usuario: "quiero que empieces a crear los modulos de... el excel ese
+    donde contengo los datos de gettel y toyota junto con sus gallons".
+    """
+    return render_template("carga_datos_gettel.html", **THEME_BY_KEY["carga_gettel"])
+
+
+@app.route("/carga-datos/gettel/subir", methods=["POST"])
+def carga_datos_gettel_subir():
+    uploads = request.files.getlist("source_files")
+    if not uploads or not any(u.filename for u in uploads):
+        flash("Seleccioná uno o más Excel/PDF de cupones de Gettel y/o Toyota.", "error")
+        return redirect(url_for("carga_datos_gettel"))
+
+    paths = _save_uploads_to_workspace(uploads)
+
+    days_gettel = set()
+    days_toyota = set()
+    files_failed = 0
+    first_date = None
+
+    for path in paths:
+        ext = os.path.splitext(path)[1].lower()
+        try:
+            if ext in (".xlsx", ".xlsm"):
+                gettel_totals, toyota_totals = summarize_origin_workbook(path)
+                if gettel_totals:
+                    gettel_db.upsert_vendor_totals("gettel", gettel_totals, source="excel")
+                    days_gettel.update(gettel_totals)
+                if toyota_totals:
+                    gettel_db.upsert_vendor_totals("toyota", toyota_totals, source="excel")
+                    days_toyota.update(toyota_totals)
+                batch_days = set(gettel_totals) | set(toyota_totals)
+            elif ext == ".pdf":
+                vendor = detect_vendor_from_ocr_text(path)
+                if vendor is None:
+                    raise ValueError("No se pudo determinar si el PDF es de Gettel o Toyota.")
+                totals_by_date, _diagnostics = summarize_pdf_report(path)
+                if not totals_by_date:
+                    raise ValueError("No se pudo leer ninguna fila del reporte.")
+                key = "gettel" if vendor == VENDOR_GETTEL[0] else "toyota"
+                gettel_db.upsert_vendor_totals(key, totals_by_date, source="pdf")
+                (days_gettel if key == "gettel" else days_toyota).update(totals_by_date)
+                batch_days = set(totals_by_date)
+            else:
+                raise ValueError("Formato no reconocido (subí un .xlsx o un .pdf).")
+        except Exception as exc:
+            print(f"[carga-datos/gettel] {path}: {exc}")
+            files_failed += 1
+            continue
+
+        if batch_days:
+            batch_first = min(batch_days)
+            if first_date is None or batch_first < first_date:
+                first_date = batch_first
+
+        try:
+            doc_when = batch_days and min(batch_days) or date.today()
+            documents_db.store_document(
+                "gettel_toyota", path, os.path.basename(path), doc_when.year, doc_when.month
+            )
+        except Exception as exc:
+            print(f"[documents_db] no se pudo guardar el documento de Gettel/Toyota {path}: {exc}")
+
+    parts = []
+    if days_gettel:
+        parts.append(f"Gettel: {len(days_gettel)} día(s) guardado(s).")
+    if days_toyota:
+        parts.append(f"Toyota: {len(days_toyota)} día(s) guardado(s).")
+    if files_failed:
+        parts.append(f"{files_failed} archivo(s) no se pudieron leer.")
+
+    if not parts:
+        flash("No se pudo guardar nada de este lote.", "error")
+    else:
+        flash(" ".join(parts), "warning" if files_failed else "success")
+
+    if first_date:
+        return redirect(url_for("carga_datos_gettel_historial", year=first_date.year, month=first_date.month))
+    return redirect(url_for("carga_datos_gettel"))
+
+
+@app.route("/carga-datos/gettel/historial")
+def carga_datos_gettel_historial():
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    days_by_date = {d["date"]: d for d in gettel_db.get_month_days(year, month)}
+    # "Local Account" -- la fila que el Excel real cruza contra Gettel+Toyota
+    # (DIF = Local Account - Gettel - Toyota) -- sale del departamento
+    # "LOCAL ACCT" del Department Sales Report (ver reporte_diario.
+    # extract_department_sales_for_day), no de Gettel/Toyota ni de Store
+    # Info. Pedido explícito del usuario (2026-09-14): "no estas poniendo
+    # la fila que habia... se hacia una diferencia entre lo que habia ese
+    # dia en local account contra lo que se junto en gettel y toyota".
+    local_account_by_date = reportes_db.get_month_department_amounts(year, month, "LOCAL ACCT")
+    _blank_gettel_day = {
+        "date": None, "gettel_amount": None, "gettel_gallons": None,
+        "toyota_amount": None, "toyota_gallons": None,
+    }
+    for day_key in local_account_by_date:
+        if day_key not in days_by_date:
+            days_by_date[day_key] = {**_blank_gettel_day, "date": day_key}
+
+    days = []
+    for day_key in sorted(days_by_date):
+        day = dict(days_by_date[day_key])
+        local_account = local_account_by_date.get(day_key)
+        day["local_account"] = local_account
+        if local_account is not None:
+            day["dif"] = round(local_account - (day.get("gettel_amount") or 0.0) - (day.get("toyota_amount") or 0.0), 2)
+        else:
+            day["dif"] = None
+        days.append(day)
+
+    totals = {
+        "gettel_amount": sum(d.get("gettel_amount") or 0.0 for d in days),
+        "gettel_gallons": sum(d.get("gettel_gallons") or 0.0 for d in days),
+        "toyota_amount": sum(d.get("toyota_amount") or 0.0 for d in days),
+        "toyota_gallons": sum(d.get("toyota_gallons") or 0.0 for d in days),
+        "local_account": sum(v or 0.0 for v in local_account_by_date.values()),
+    }
+    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+
+    return render_template(
+        "carga_datos_gettel_historial.html",
+        days=days,
+        totals=totals,
+        year=year,
+        month=month,
+        month_name=_MONTH_NAMES_ES[month - 1],
+        prev_year=prev_year,
+        prev_month=prev_month,
+        next_year=next_year,
+        next_month=next_month,
+        **THEME_BY_KEY["carga_gettel"],
+    )
+
+
+@app.route("/carga-datos/cmv")
+def carga_datos_cmv():
+    """
+    CMV -- Carga de Datos (2026-09-12, cuarta tanda): Costo por UPC y
+    Ventas mensuales por departamento, guardados directo en cmv_db, sin
+    generar ningún Excel -- pedido explícito del usuario: "quiero que
+    empieces a crear los modulos de lo que seria CMV donde cargariamos el
+    costo de los productos como en el excel, y tambien las ventas
+    mensuales que iran a cada departamento".
+    """
+    today = date.today()
+    return render_template(
+        "carga_datos_cmv.html",
+        current_year=today.year,
+        current_month=today.month,
+        month_names=_MONTH_NAMES_ES,
+        **THEME_BY_KEY["carga_cmv"],
+    )
+
+
+@app.route("/carga-datos/cmv/costo/subir", methods=["POST"])
+def carga_datos_cmv_costo_subir():
+    uploads = request.files.getlist("costo_files")
+    if not uploads or not any(u.filename for u in uploads):
+        flash("Seleccioná uno o más archivos de costo por departamento.", "error")
+        return redirect(url_for("carga_datos_cmv"))
+
+    paths = _save_uploads_to_workspace(uploads)
+    try:
+        combined, file_stats, failed_files = _consolidate_department_files(paths)
+    except ValueError as exc:
+        flash(f"Error: {exc}", "error")
+        return redirect(url_for("carga_datos_cmv"))
+
+    summary = cmv_db.replace_costs_for_departments(combined.to_dict("records"))
+
+    today = date.today()
+    for path in paths:
+        try:
+            documents_db.store_document("cmv_costo", path, os.path.basename(path), today.year, today.month)
+        except Exception as exc:
+            print(f"[documents_db] no se pudo guardar el documento de CMV Costo {path}: {exc}")
+
+    parts = [f"{summary['departments']} departamento(s), {summary['rows']} producto(s) guardados."]
+    if summary["price_changes"]:
+        parts.append(f"{summary['price_changes']} cambio(s) de precio detectado(s).")
+    if failed_files:
+        parts.append(f"{failed_files} archivo(s) no se pudieron leer.")
+    flash(" ".join(parts), "warning" if failed_files else "success")
+    return redirect(url_for("carga_datos_cmv_costo_historial"))
+
+
+@app.route("/carga-datos/cmv/costo/historial")
+def carga_datos_cmv_costo_historial():
+    departments = cmv_db.list_departments()
+    selected = request.args.get("dept") or (departments[0]["dept_name"] if departments else None)
+    rows = cmv_db.get_costs_by_department(selected) if selected else []
+    return render_template(
+        "carga_datos_cmv_costo_historial.html",
+        departments=departments,
+        selected=selected,
+        rows=rows,
+        price_changes=cmv_db.get_recent_price_changes(),
+        **THEME_BY_KEY["carga_cmv"],
+    )
+
+
+@app.route("/carga-datos/cmv/ventas/subir", methods=["POST"])
+def carga_datos_cmv_ventas_subir():
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    uploads = request.files.getlist("ventas_files")
+    if not year or not month or not (1 <= month <= 12):
+        flash("Elegí a qué mes corresponden estas ventas.", "error")
+        return redirect(url_for("carga_datos_cmv"))
+    if not uploads or not any(u.filename for u in uploads):
+        flash("Seleccioná uno o más archivos de ventas mensuales.", "error")
+        return redirect(url_for("carga_datos_cmv"))
+
+    paths = _save_uploads_to_workspace(uploads)
+
+    rows_by_dept = {}
+    unmapped_departments = set()
+    files_failed = 0
+    for path in paths:
+        try:
+            frame = parse_monthly_sales_file(path)
+        except Exception as exc:
+            print(f"[carga-datos/cmv/ventas] {path}: {exc}")
+            files_failed += 1
+            continue
+        try:
+            documents_db.store_document("cmv_ventas", path, os.path.basename(path), year, month)
+        except Exception as exc:
+            print(f"[documents_db] no se pudo guardar el documento de CMV Ventas {path}: {exc}")
+        for record in frame.to_dict("records"):
+            dept_name = _resolve_sheet_name(record.get("Dept Name"))
+            if dept_name is None:
+                unmapped_departments.add((record.get("Dept Name") or "").strip() or "(sin nombre)")
+                continue
+            rows_by_dept.setdefault(dept_name, []).append(
+                {
+                    "upc": record.get("UPC"),
+                    "name": record.get("Name"),
+                    "count": record.get("Count"),
+                    "amount": record.get("Retail/Amount"),
+                }
+            )
+
+    for dept_name, rows in rows_by_dept.items():
+        cmv_db.replace_month_department_sales(year, month, dept_name, rows)
+
+    parts = []
+    if rows_by_dept:
+        parts.append(
+            f"{len(rows_by_dept)} departamento(s), "
+            f"{sum(len(r) for r in rows_by_dept.values())} producto(s) guardados."
         )
-    if summary.get("unmatched_coupons"):
-        notice_parts.append(
-            f"{len(summary['unmatched_coupons'])} cupón(es) no matchearon contra ningún EFT todavía "
-            "(quedan pendientes, se reintentan solos en la próxima carga)."
-        )
-    if summary.get("rows_resynced_pending"):
-        notice_parts.append(
-            f"{summary['rows_resynced_pending']} fila(s) pendiente(s) de antes se actualizaron con este EFT."
-        )
-    if summary.get("possible_duplicate_coupon_rows"):
-        notice_parts.append(
-            f"{summary['possible_duplicate_coupon_rows']} fila(s) parecen cupones duplicados (mismo número "
-            "y mismos montos) -- se marcaron en rojo rosado para revisar a mano."
-        )
-    return _success_response(saved_path, master_filename, notice=" ".join(notice_parts) or None)
+    if unmapped_departments:
+        parts.append(f"{len(unmapped_departments)} departamento(s) sin hoja conocida, no se guardaron.")
+    if files_failed:
+        parts.append(f"{files_failed} archivo(s) no se pudieron leer.")
+    if not parts:
+        flash("No se pudo guardar nada de este lote.", "error")
+    else:
+        flash(" ".join(parts), "warning" if (unmapped_departments or files_failed) else "success")
+
+    return redirect(url_for("carga_datos_cmv_ventas_historial", year=year, month=month))
+
+
+@app.route("/carga-datos/cmv/ventas/historial")
+def carga_datos_cmv_ventas_historial():
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    totals = cmv_db.get_month_department_totals(year, month)
+    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+
+    return render_template(
+        "carga_datos_cmv_ventas_historial.html",
+        totals=totals,
+        year=year,
+        month=month,
+        month_name=_MONTH_NAMES_ES[month - 1],
+        prev_year=prev_year,
+        prev_month=prev_month,
+        next_year=next_year,
+        next_month=next_month,
+        **THEME_BY_KEY["carga_cmv"],
+    )
+
+
+# Módulos que guardan sus archivos originales vía documents_db (ver ese
+# módulo) -- cada entrada define el título/tema/link "volver" que usa la
+# página genérica de abajo. EFT junta dos módulos lógicos (PDF de EFT +
+# reporte mensual de Cupones) en una sola lista -- son el mismo "cajón" de
+# documentos para el usuario, aunque se guardan con distinta granularidad.
+_DOCUMENTS_MODULES = {
+    "eft": {"title": "EFT y Cupones", "theme": "carga_eft", "back_endpoint": "carga_datos_eft_historial"},
+    "gettel_toyota": {"title": "Gettel / Toyota", "theme": "carga_gettel", "back_endpoint": "carga_datos_gettel_historial"},
+    "cmv_costo": {"title": "CMV — Costo", "theme": "carga_cmv", "back_endpoint": "carga_datos_cmv_costo_historial"},
+    "cmv_ventas": {"title": "CMV — Ventas", "theme": "carga_cmv", "back_endpoint": "carga_datos_cmv_ventas_historial"},
+    "lottery_resumen_mensual": {"title": "Lottery — Resumen mensual", "theme": "lottery", "back_endpoint": "carga_datos_lottery_historial"},
+}
+
+
+@app.route("/carga-datos/documentos/<module_key>")
+def carga_datos_documentos(module_key):
+    """
+    Lista genérica de los archivos originales ya subidos para un módulo --
+    ver documents_db.py. Un solo template/ruta reusado por EFT, Gettel/
+    Toyota, CMV (Costo y Ventas por separado) y el resumen mensual de
+    Lottery, en vez de repetir la misma página 5 veces.
+    """
+    info = _DOCUMENTS_MODULES.get(module_key)
+    if info is None:
+        flash("Módulo de documentos desconocido.", "error")
+        return redirect(url_for("carga_datos_index"))
+
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    docs = documents_db.list_documents(module_key, year, month)
+    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+
+    return render_template(
+        "carga_datos_documentos.html",
+        module_key=module_key,
+        module_title=info["title"],
+        back_url=url_for(info["back_endpoint"]),
+        docs=docs,
+        year=year,
+        month=month,
+        month_name=_MONTH_NAMES_ES[month - 1],
+        prev_year=prev_year,
+        prev_month=prev_month,
+        next_year=next_year,
+        next_month=next_month,
+        **THEME_BY_KEY[info["theme"]],
+    )
+
+
+@app.route("/carga-datos/documentos/<module_key>/subir", methods=["POST"])
+def carga_datos_documentos_subir(module_key):
+    """
+    Subida manual de un documento cualquiera a este módulo -- pedido
+    explícito del usuario (2026-09-14): "no solo voy a subir los pdf de los
+    EFT o de cupones, voy a subir todo tipo de invoice que nos llegan de
+    J.H." (ej. facturas de servicios de J.H. Williams -- VPN, Network fee,
+    etc. -- que no son ni un EFT ni el reporte mensual de Cupones, pero
+    igual hay que poder guardarlas y verlas acá). Genérico para cualquier
+    módulo de _DOCUMENTS_MODULES, no solo EFT.
+    """
+    info = _DOCUMENTS_MODULES.get(module_key)
+    if info is None:
+        flash("Módulo de documentos desconocido.", "error")
+        return redirect(url_for("carga_datos_index"))
+
+    year = request.form.get("year", type=int) or date.today().year
+    month = request.form.get("month", type=int) or date.today().month
+    label = (request.form.get("label") or "").strip() or None
+    uploads = [f for f in request.files.getlist("documento_files") if f and f.filename]
+    if not uploads:
+        flash("Seleccioná uno o más archivos.", "error")
+        return redirect(url_for("carga_datos_documentos", module_key=module_key, year=year, month=month))
+
+    saved = 0
+    for upload in uploads:
+        try:
+            path, filename = _save_upload_to_workspace(upload)
+            documents_db.store_document(module_key, path, filename, year, month, label=label)
+            saved += 1
+        except Exception as exc:
+            print(f"[carga-datos/documentos/{module_key}/subir] {upload.filename}: {exc}")
+
+    if saved:
+        flash(f"{saved} documento(s) guardado(s).", "success")
+    else:
+        flash("No se pudo guardar ningún documento.", "error")
+    return redirect(url_for("carga_datos_documentos", module_key=module_key, year=year, month=month))
+
+
+@app.route("/carga-datos/documentos/<int:document_id>/descargar")
+def carga_datos_documento_descargar(document_id):
+    doc = documents_db.get_document(document_id)
+    if doc is None:
+        flash("Ese documento ya no existe.", "error")
+        return redirect(url_for("carga_datos_index"))
+    return send_file(doc["stored_path"], as_attachment=True, download_name=doc["filename"])
+
+
+@app.route("/carga-datos/documentos/<int:document_id>/eliminar", methods=["POST"])
+def carga_datos_documento_eliminar(document_id):
+    doc = documents_db.get_document(document_id)
+    if doc is None:
+        flash("Ese documento ya no existe.", "error")
+        return redirect(url_for("carga_datos_index"))
+    documents_db.delete_document(document_id)
+    flash("Documento eliminado.", "success")
+    return redirect(url_for("carga_datos_documentos", module_key=doc["module"], year=doc["year"], month=doc["month"]))
 
 
 @app.route("/proveedores")
@@ -1454,73 +3155,142 @@ def proveedores_pagos():
     return _proveedores_success(temp_path, master_filename, notices)
 
 
-def _format_date_amounts(date_amounts):
-    return ", ".join(
-        f"{d.strftime('%d/%m')} (${amount:,.2f})" for d, amount in sorted(date_amounts.items())
+def _dynamic_wizard_admin_error():
+    return jsonify({"error": "Solo un administrador puede agregar proveedores nuevos."}), 403
+
+
+@app.route("/proveedores/nuevo")
+def proveedores_nuevo():
+    if not current_user.is_admin:
+        flash("Solo un administrador puede agregar proveedores nuevos.", "error")
+        return redirect(url_for("proveedores"))
+    return render_template(
+        "proveedores_nuevo.html",
+        dynamic_suppliers=list_dynamic_suppliers_display(),
+        field_labels=DYNAMIC_FIELD_LABELS,
+        fields=DYNAMIC_FIELDS,
+        **THEME_BY_KEY["proveedores"],
     )
 
 
-@app.route("/caja")
-def caja():
-    return render_template("caja.html", **THEME_BY_KEY["caja"])
+@app.route("/proveedores/nuevo/analizar", methods=["POST"])
+def proveedores_nuevo_analizar():
+    """
+    Paso sin estado del asistente: recibe la factura de muestra + los 3
+    valores tipeados por el usuario (siempre los 3, en cada llamada) + lo
+    que ya se desambiguó en vueltas anteriores, y devuelve el análisis de
+    nuevo -- ver proveedores_dynamic_extractors.analyze_sample. El servidor
+    no guarda nada entre llamadas; el navegador mantiene el PDF y las
+    elecciones ya hechas y las reenvía cada vez.
+    """
+    if not current_user.is_admin:
+        return _dynamic_wizard_admin_error()
 
+    sample_upload = request.files.get("sample_pdf")
+    if sample_upload is None or not sample_upload.filename:
+        return jsonify({"error": "Subí una factura de muestra en PDF."}), 400
 
-@app.route("/caja/procesar", methods=["POST"])
-def caja_procesar():
-    master_upload = request.files.get("master_file")
-    chase_upload = request.files.get("chase_file")
-    lottery_upload = request.files.get("lottery_file")
-    if master_upload is None or not master_upload.filename:
-        return _error_response("Seleccioná el Excel Cierre.")
-    if chase_upload is None or not chase_upload.filename:
-        return _error_response("Seleccioná el Excel de Chase ya categorizado.")
-    if lottery_upload is None or not lottery_upload.filename:
-        return _error_response("Seleccioná el Excel de Lottery.")
+    sample_values = {
+        "invoice_no": request.form.get("sample_invoice_no", ""),
+        "date": request.form.get("sample_date", ""),
+        "amount": request.form.get("sample_amount", ""),
+    }
+    try:
+        chosen_occurrence_index = json.loads(request.form.get("chosen_occurrence_index_json") or "{}")
+    except (TypeError, ValueError):
+        chosen_occurrence_index = {}
 
     try:
-        workdir = _new_workspace_dir()
-        master_path, master_filename = _save_upload_to_workspace(master_upload, workdir=workdir)
-        chase_path, _chase_filename = _save_upload_to_workspace(chase_upload, workdir=workdir)
-        lottery_path, _lottery_filename = _save_upload_to_workspace(lottery_upload, workdir=workdir)
-        temp_path, summary = apply_chase_and_lottery(master_path, chase_path, lottery_path)
-    except Exception as exc:
-        return _error_response(f"Error: {exc}")
+        sample_path, _filename = _save_upload_to_workspace(sample_upload)
+        result = analyze_dynamic_sample(sample_path, sample_values, chosen_occurrence_index)
+    except DYNAMIC_PDF_READ_EXCEPTIONS as exc:
+        return jsonify({"error": f"No se pudo leer el PDF: {exc}"}), 400
 
-    # Los 4 posibles son "error" -- algo que el usuario tiene que revisar o
-    # cargar a mano, el dato no quedó reflejado en ningún lado. El caso
-    # esperable de todos los meses (el bloque de 7 días del mes vecino que
-    # el Lottery siempre trae, ver "Módulo Mes Nuevo") ya ni siquiera llega
-    # acá -- se filtra en caja.py: apply_lottery_cuenta_final antes de armar
-    # el resumen, así que si "lottery_unmatched" tiene algo, es un día del
-    # mes de este Cierre que de verdad no encontró fila.
-    error_parts = []
-    if summary["deposits_unmatched"]:
-        error_parts.append(
-            "Depósitos sin fecha en CAJA (no se cargaron): "
-            + _format_date_amounts(summary["deposits_unmatched"])
-        )
-    if summary["food_ice_unmatched"]:
-        error_parts.append(
-            "Food Truck/Hielo sin fecha en CAJA (no se cargaron): "
-            + _format_date_amounts(summary["food_ice_unmatched"])
-        )
-    if summary["lottery_unmatched"]:
-        error_parts.append(
-            "Fechas de Lottery del mes de este Cierre sin fila en CAJA (no se cargaron): "
-            + _format_date_amounts(summary["lottery_unmatched"])
-        )
-    if summary["missing_cached_value"]:
-        dates_str = ", ".join(d.strftime("%d/%m") for d in sorted(summary["missing_cached_value"]))
-        error_parts.append(
-            "Días sin CUENTA FINAL calculada en el Lottery (abrilo y guardalo en Excel para "
-            f"que recalcule las fórmulas, después volvé a intentar): {dates_str}"
-        )
+    return jsonify(result)
 
-    notice_parts = error_parts
-    notice_level = "error" if error_parts else "warning"
-    return _success_response(
-        temp_path, master_filename, notice=" ".join(notice_parts) or None, notice_level=notice_level
+
+@app.route("/proveedores/nuevo/probar", methods=["POST"])
+def proveedores_nuevo_probar():
+    """
+    Corre la regla ya resuelta (todavía sin guardar) contra una SEGUNDA
+    factura de muestra real, como dry run -- no persiste nada, solo
+    devuelve lo que se leería para que el usuario lo compare a ojo contra
+    esa factura antes de guardar de verdad.
+    """
+    if not current_user.is_admin:
+        return _dynamic_wizard_admin_error()
+
+    sample_upload = request.files.get("sample_pdf")
+    if sample_upload is None or not sample_upload.filename:
+        return jsonify({"error": "Subí una segunda factura de muestra en PDF."}), 400
+
+    try:
+        resolved_fields = json.loads(request.form.get("resolved_fields_json") or "{}")
+        rule_fields = build_dynamic_rule_fields(resolved_fields)
+    except (TypeError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    try:
+        sample_path, _filename = _save_upload_to_workspace(sample_upload)
+        extracted = extract_with_dynamic_rule(sample_path, {"fields": rule_fields})
+    except DYNAMIC_PDF_READ_EXCEPTIONS as exc:
+        return jsonify({"error": str(exc)}), 400
+
+    return jsonify(
+        {
+            "invoice_no": extracted["invoice_no"],
+            "date": extracted["date"].strftime("%d/%m/%Y"),
+            "amount": f'{extracted["amount"]:.2f}',
+        }
     )
+
+
+@app.route("/proveedores/nuevo/guardar", methods=["POST"])
+def proveedores_nuevo_guardar():
+    if not _require_admin("Solo un administrador puede agregar proveedores nuevos."):
+        return redirect(url_for("proveedores_nuevo"))
+
+    label = request.form.get("label", "").strip()
+    sheet_name = request.form.get("sheet_name", "").strip()
+    resumen_label = request.form.get("resumen_label", "").strip()
+    detect_keyword = request.form.get("detect_keyword", "").strip()
+
+    try:
+        resolved_fields = json.loads(request.form.get("resolved_fields_json") or "{}")
+        rule_fields = build_dynamic_rule_fields(resolved_fields)
+        clave = add_dynamic_supplier(
+            {
+                "label": label,
+                "sheet_name": sheet_name,
+                "resumen_label": resumen_label,
+                "detect_keyword": detect_keyword,
+                "fields": rule_fields,
+            },
+            created_by=current_user.id,
+        )
+    except (TypeError, ValueError) as exc:
+        flash(str(exc), "error")
+        return redirect(url_for("proveedores_nuevo"))
+
+    flash(
+        f"Proveedor \"{label}\" agregado. Ya podés cargar sus facturas desde \"Cargar Facturas\".",
+        "success",
+    )
+    return redirect(url_for("proveedores_nuevo"))
+
+
+@app.route("/proveedores/nuevo/eliminar", methods=["POST"])
+def proveedores_nuevo_eliminar():
+    if not _require_admin("Solo un administrador puede agregar proveedores nuevos."):
+        return redirect(url_for("proveedores_nuevo"))
+
+    clave = request.form.get("clave", "").strip()
+    try:
+        delete_dynamic_supplier(clave)
+        flash("Proveedor eliminado.", "success")
+    except ValueError as exc:
+        flash(str(exc), "error")
+    return redirect(url_for("proveedores_nuevo"))
 
 
 @app.route("/balance-mensual")
@@ -1582,4 +3352,10 @@ if __name__ == "__main__":
     # que ahí el default cambia a apagado -- BRADENTON_DEBUG sigue pudiendo
     # forzarlo a "1" a mano si hiciera falta debuggear ahí puntualmente.
     debug_mode = os.environ.get("BRADENTON_DEBUG", "1" if host == "127.0.0.1" else "0") == "1"
-    app.run(debug=debug_mode, host=host, port=port)
+    # threaded=True -- necesario para las cargas en segundo plano (ver
+    # jobs.py/CLAUDE.md): mientras un trabajo pesado corre en su propio
+    # hilo, el navegador sondea /jobs/<id>/status en paralelo -- sin esto,
+    # el servidor de desarrollo de Flask atiende una sola request a la vez
+    # y ese sondeo quedaría trabado detrás de la carga que se supone que
+    # tiene que poder consultar mientras corre.
+    app.run(debug=debug_mode, host=host, port=port, threaded=True)

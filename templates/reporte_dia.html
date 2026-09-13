@@ -1,0 +1,331 @@
+{% extends "base.html" %}
+{% block main_class %}main-full{% endblock %}
+{% block crumbs %}
+{% set _app_side = session.get('app_side', 'carga_datos') %}
+<nav class="crumbs"><a href="{{ url_for('carga_datos_index') if _app_side == 'carga_datos' else url_for('reporte') }}">Reporte Diario</a><a href="{{ url_for('reporte_historial') }}">Reportes guardados</a><span class="current">{{ report_date.strftime('%d/%m/%Y') }}</span></nav>
+{% endblock %}
+{% block content %}
+{% set loaded_amount = departments|sum(attribute='amount') %}
+{% set loaded_units = departments|sum(attribute='count') %}
+<div class="page-header">
+  <span class="eyebrow">Reporte Diario</span>
+  <h1>{{ report_date.strftime('%d/%m/%Y') }}</h1>
+  <p class="page-subtitle">
+    {% if not departments and not store_info %}
+    Todavía no hay nada guardado para este día — completá lo que tengas a mano en los formularios de abajo.
+    {% else %}
+    Corregí lo que haga falta y guardá — el cambio queda solo acá adentro, no toca el Excel real de este mes.
+    {% endif %}
+  </p>
+  {% if pdf_filename %}
+  <p style="margin-top: 8px;"><a href="{{ url_for('reporte_dia_pdf', report_date=report_date.isoformat()) }}">Ver el PDF original guardado de este día</a></p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Departamentos</h2>
+  <p class="muted">Dejá en blanco cualquier fila que no vayas a usar. Tildá "Eliminar" para sacar un departamento cargado por error.</p>
+  <form method="post" action="{{ url_for('reporte_dia_departamentos', report_date=report_date.isoformat()) }}" data-warn-unsaved>
+    <div style="overflow-x: auto;">
+      <table class="dia-table" id="dept-table">
+        <thead>
+          <tr><th>Departamento</th><th>Cantidad</th><th>Monto</th><th>Eliminar</th></tr>
+        </thead>
+        <tbody>
+          {% for dept in departments %}
+          <tr>
+            <td><input type="text" name="dept_name" value="{{ dept.department }}" readonly class="dia-input-readonly"></td>
+            <td><input type="number" step="1" name="dept_count" value="{{ dept.count }}"></td>
+            <td><input type="number" step="0.01" name="dept_amount" value="{{ dept.amount }}"></td>
+            <td class="dia-col-delete"><input type="checkbox" name="dept_delete" value="{{ dept.department }}"></td>
+          </tr>
+          {% endfor %}
+          <tr class="dept-new-row">
+            <td><input type="text" name="dept_name" list="known-departments" placeholder="Nuevo departamento"></td>
+            <td><input type="number" step="1" name="dept_count"></td>
+            <td><input type="number" step="0.01" name="dept_amount"></td>
+            <td></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <datalist id="known-departments">
+      {% for name in known_departments %}<option value="{{ name }}">{% endfor %}
+    </datalist>
+    <button type="button" class="btn-secondary" id="dept-add-row" style="margin-top: 10px;">+ Agregar fila</button>
+
+    <div class="dia-check-box">
+      <h3>¿El reporte se cargó bien?</h3>
+      <p class="muted">Tipeá el monto total y las unidades totales tal cual figuran impresos en el reporte de ventas — se comparan solos contra la suma de lo cargado arriba.</p>
+      <div class="dia-check-grid">
+        <div>
+          <label class="muted">Total $ impreso</label>
+          <input type="number" step="0.01" name="printed_total_sales" value="{{ printed_total_sales if printed_total_sales is not none else '' }}">
+        </div>
+        <div>
+          <label class="muted">Unidades totales impresas</label>
+          <input type="number" step="1" name="printed_total_units" value="{{ printed_total_units if printed_total_units is not none else '' }}">
+        </div>
+        <div class="dia-check-result">
+          <label class="muted">Suma ya cargada</label>
+          <div>${{ "{:,.2f}".format(loaded_amount) }} — {{ loaded_units|int }} unidades</div>
+        </div>
+      </div>
+      {% if printed_total_sales is not none or printed_total_units is not none %}
+        {% set sales_ok = printed_total_sales is none or (printed_total_sales - loaded_amount)|abs < 0.01 %}
+        {% set units_ok = printed_total_units is none or (printed_total_units - loaded_units)|abs < 0.01 %}
+        {% if sales_ok and units_ok %}
+        <p class="dia-check-badge dia-check-ok">Coincide con lo cargado.</p>
+        {% else %}
+        <p class="dia-check-badge dia-check-mismatch">
+          No coincide{% if not sales_ok %} — diferencia de ${{ "{:,.2f}".format((printed_total_sales - loaded_amount)|abs) }} en el monto{% endif %}{% if not units_ok %}{% if not sales_ok %},{% endif %} diferencia de {{ ((printed_total_units - loaded_units)|abs)|int }} unidades{% endif %}. Revisá los departamentos.
+        </p>
+        {% endif %}
+      {% endif %}
+    </div>
+
+    <div class="form-actions">
+      <button type="submit">Guardar</button>
+    </div>
+  </form>
+</div>
+
+{% set cat_colors = {'TABACCO': 0, 'SODA': 1, 'BEER/WINE': 2, 'LOTERY/LOTTO': 3, 'Gettel': 4, 'RESTO': 5} %}
+{% if departments %}
+<div class="card">
+  <h2>Resumen por categoría</h2>
+  <p class="muted">Las 6 categorías de "Reply to Report c-Store" — lo que antes se pegaba a mano en Store Info. "Gettel" no sale del reporte diario — se completa solo con lo ya cargado en <a href="{{ url_for('carga_datos_gettel_historial') }}">Gettel / Toyota</a> para este día.</p>
+  <div class="category-tiles">
+    {% for g in department_groups %}
+    <div class="category-tile cat-{{ cat_colors.get(g.label, 5) }}">
+      <div class="category-tile-label">{{ g.label }}</div>
+      <div class="category-tile-amount">${{ "{:,.2f}".format(g.amount) }}</div>
+      <div class="category-tile-count">{{ g.count }} unidad{{ 'es' if g.count != 1 }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% if department_unmatched %}
+  <p class="muted" style="margin-top: 14px;">Sin categoría conocida: {% for u in department_unmatched %}{{ u.department }} (${{ "{:,.2f}".format(u.amount) }}){{ ', ' if not loop.last }}{% endfor %}.</p>
+  {% endif %}
+</div>
+{% endif %}
+
+{% set credit_total = (store_info.credit_terms if store_info else [])|sum %}
+<div class="card">
+  <h2>Store Info</h2>
+  <p class="muted">Los mismos campos que ya completa la lectura automática del PDF.</p>
+
+  {% if store_info %}
+  <div class="storeinfo-summary">
+    <div class="storeinfo-summary-tile">
+      <div class="storeinfo-summary-label">Total Sales</div>
+      <div class="storeinfo-summary-amount">{{ "${:,.2f}".format(store_info.total_sales) if store_info.total_sales is not none else "—" }}</div>
+    </div>
+    <div class="storeinfo-summary-tile">
+      <div class="storeinfo-summary-label">Cash</div>
+      <div class="storeinfo-summary-amount">{{ "${:,.2f}".format(store_info.cash) if store_info.cash is not none else "—" }}</div>
+    </div>
+    <div class="storeinfo-summary-tile">
+      <div class="storeinfo-summary-label">Tarjeta / Crédito</div>
+      <div class="storeinfo-summary-amount">${{ "{:,.2f}".format(credit_total) }}</div>
+    </div>
+    <div class="storeinfo-summary-tile">
+      <div class="storeinfo-summary-label">Total Revenue</div>
+      <div class="storeinfo-summary-amount">{{ "${:,.2f}".format(store_info.total_revenue) if store_info.total_revenue is not none else "—" }}</div>
+    </div>
+  </div>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('reporte_dia_store_info', report_date=report_date.isoformat()) }}" data-warn-unsaved>
+    <h3 class="storeinfo-section-title">Horario del reporte</h3>
+    <div class="dia-grid">
+      <div>
+        <label class="muted">Hora desde</label>
+        <input type="time" name="from_time" value="{{ store_info.from_time if store_info else '' }}">
+      </div>
+      <div>
+        <label class="muted">Hora hasta</label>
+        <input type="time" name="to_time" value="{{ store_info.to_time if store_info else '' }}">
+      </div>
+    </div>
+
+    <h3 class="storeinfo-section-title">Combustible</h3>
+    <div class="dia-grid">
+      <div>
+        <label class="muted">Volume</label>
+        <input type="number" step="0.01" name="volume" value="{{ store_info.volume if store_info is not none else '' }}">
+      </div>
+      <div>
+        <label class="muted">Sales Fuel</label>
+        <input type="number" step="0.01" name="sales_fuel" value="{{ store_info.sales_fuel if store_info else '' }}">
+      </div>
+      <div>
+        <label class="muted">Desc. Comb</label>
+        <input type="number" step="0.01" name="desc_comb" value="{{ store_info.desc_comb if store_info else '' }}">
+      </div>
+    </div>
+
+    <h3 class="storeinfo-section-title">No combustible</h3>
+    <div class="dia-grid">
+      <div>
+        <label class="muted">Non Fuel Total</label>
+        <input type="number" step="0.01" name="non_fuel_total" value="{{ store_info.non_fuel_total if store_info else '' }}">
+      </div>
+      <div>
+        <label class="muted">Desc. Otros</label>
+        <input type="number" step="0.01" name="desc_otros" value="{{ store_info.desc_otros if store_info else '' }}">
+      </div>
+      <div>
+        <label class="muted">Tax Collect</label>
+        <input type="number" step="0.01" name="tax_collect" value="{{ store_info.tax_collect if store_info else '' }}">
+      </div>
+    </div>
+
+    <h3 class="storeinfo-section-title">Totales y método de pago</h3>
+    <div class="dia-grid">
+      <div>
+        <label class="muted">Total Sales</label>
+        <input type="number" step="0.01" name="total_sales" value="{{ store_info.total_sales if store_info and store_info.total_sales is not none else '' }}">
+      </div>
+      <div>
+        <label class="muted">Cash</label>
+        <input type="number" step="0.01" name="cash" value="{{ store_info.cash if store_info else '' }}">
+      </div>
+      <div>
+        <label class="muted">Local Accounts</label>
+        <input type="number" step="0.01" name="local_accounts" value="{{ store_info.local_accounts if store_info else '' }}">
+      </div>
+      <div>
+        <label class="muted">Other</label>
+        <input type="number" step="0.01" name="other_amount" value="{{ store_info.other_amount if store_info and store_info.other_amount is not none else '' }}">
+      </div>
+      <div>
+        <label class="muted">Network Revenue</label>
+        <input type="number" step="0.01" name="network_revenue" value="{{ store_info.network_revenue if store_info else '' }}">
+      </div>
+      <div>
+        <label class="muted">Total Revenue</label>
+        <input type="number" step="0.01" name="total_revenue" value="{{ store_info.total_revenue if store_info else '' }}">
+      </div>
+    </div>
+
+    <label class="muted">Montos de tarjeta/crédito (separados por coma si hay más de uno)</label>
+    <input type="text" name="credit_terms" id="credit-terms-input" value="{{ store_info.credit_terms|join(', ') if store_info else '' }}" placeholder="Ej. 500.00, 300.00">
+    <div class="muted" id="credit-terms-breakdown" style="margin-top: 6px;"></div>
+
+    <div class="form-actions">
+      <button type="submit">Guardar</button>
+    </div>
+  </form>
+</div>
+
+<style>
+  .dia-table { width: 100%; min-width: 520px; border-collapse: separate; border-spacing: 0; font-size: 13px; }
+  .dia-table th, .dia-table td { padding: 6px 8px; text-align: left; }
+  .dia-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
+  .dia-table tbody tr { border-bottom: 1px solid var(--border); }
+  .dia-table input[type=text], .dia-table input[type=number] { padding: 6px 8px; font-size: 12.5px; }
+  .dia-col-delete { text-align: center; }
+  .dia-col-delete input[type=checkbox] { width: 16px; height: 16px; }
+  .dia-check-box {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid var(--border);
+  }
+  .dia-check-box h3 { margin: 0 0 4px; font-size: 14px; }
+  .dia-check-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 12px 16px;
+    margin-top: 10px;
+  }
+  .dia-check-grid label.muted { display: block; margin: 0 0 4px; }
+  .dia-check-result div { padding: 9px 0; font-weight: 700; }
+  .dia-check-badge { margin: 12px 0 0; padding: 8px 12px; border-radius: 8px; font-size: 13px; font-weight: 600; }
+  .dia-check-ok { background: var(--success-soft); color: var(--success); }
+  .dia-check-mismatch { background: var(--warning-soft); color: var(--warning); }
+
+  .category-tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+    margin-top: 16px;
+  }
+  .category-tile {
+    padding: 14px 16px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--tile-color, var(--accent));
+    background: var(--surface-alt);
+  }
+  .category-tile-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--tile-color, var(--accent)); }
+  .category-tile-amount { font-size: 20px; font-weight: 700; margin-top: 6px; }
+  .category-tile-count { font-size: 12px; color: var(--text-soft); margin-top: 2px; }
+  .cat-0 { --tile-color: #78350F; }
+  .cat-1 { --tile-color: #0284C7; }
+  .cat-2 { --tile-color: #7C3AED; }
+  .cat-3 { --tile-color: #059669; }
+  .cat-4 { --tile-color: #EA580C; }
+  .cat-5 { --tile-color: #64748B; }
+
+  .storeinfo-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+    margin: 16px 0 20px;
+  }
+  .storeinfo-summary-tile {
+    padding: 14px 16px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--accent);
+    background: var(--surface-alt);
+  }
+  .storeinfo-summary-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--accent); }
+  .storeinfo-summary-amount { font-size: 20px; font-weight: 700; margin-top: 6px; }
+  .storeinfo-section-title {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--text-soft);
+    margin: 22px 0 4px;
+    padding-top: 14px;
+    border-top: 1px solid var(--border);
+  }
+  .storeinfo-section-title:first-of-type { margin-top: 0; padding-top: 0; border-top: none; }
+</style>
+<script>
+  (function () {
+    var addBtn = document.getElementById('dept-add-row');
+    var tbody = document.querySelector('#dept-table tbody');
+    if (!addBtn || !tbody) return;
+    addBtn.addEventListener('click', function () {
+      var template = document.querySelector('.dept-new-row');
+      var clone = template.cloneNode(true);
+      clone.querySelectorAll('input[type=text], input[type=number]').forEach(function (input) { input.value = ''; });
+      tbody.appendChild(clone);
+    });
+  })();
+  (function () {
+    // Pedido explícito del usuario (2026-09-14): el campo de tarjeta/
+    // crédito no mostraba cómo se armaba la suma -- acá se recalcula en
+    // vivo, mostrando cada monto individual y el resultado, cada vez que
+    // se edita el campo (además del resumen ya calculado del lado del
+    // servidor al cargar la página).
+    var input = document.getElementById('credit-terms-input');
+    var out = document.getElementById('credit-terms-breakdown');
+    if (!input || !out) return;
+    function recompute() {
+      var parts = input.value.split(',').map(function (s) { return s.trim(); }).filter(function (s) { return s !== ''; });
+      var amounts = parts.map(function (s) { return parseFloat(s.replace(',', '.')); }).filter(function (n) { return !isNaN(n); });
+      if (amounts.length === 0) { out.textContent = ''; return; }
+      var total = amounts.reduce(function (a, b) { return a + b; }, 0);
+      var formatted = amounts.map(function (n) { return '$' + n.toFixed(2); });
+      out.textContent = (amounts.length > 1 ? formatted.join(' + ') + ' = ' : '') + '$' + total.toFixed(2);
+    }
+    input.addEventListener('input', recompute);
+    recompute();
+  })();
+</script>
+{% endblock %}

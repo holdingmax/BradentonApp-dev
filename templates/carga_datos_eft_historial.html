@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+{% block main_class %}main-full{% endblock %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ url_for('carga_datos_eft') }}">EFT y Cupones</a><span class="current">Guardado</span></nav>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <span class="eyebrow">EFT y Cupones</span>
+  <h1>Guardado</h1>
+  <p class="page-subtitle">Los EFT quedan agrupados por mes (fecha del EFT); los Cupones son un listado único y acumulativo, igual que la hoja del Excel — sin abrir ningún Excel.</p>
+</div>
+
+<div class="card">
+  <div class="historial-nav">
+    <a href="{{ url_for('carga_datos_eft_historial', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
+    <div class="historial-nav-title">
+      <h2>EFT — {{ month_name }} {{ year }}</h2>
+      <a href="{{ url_for('carga_datos_eft_historial') }}" class="muted">Ir al mes actual</a>
+    </div>
+    <a href="{{ url_for('carga_datos_eft_historial', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
+  </div>
+
+  {% if deposits %}
+  {% for entry in deposits %}
+  {% set dep = entry.deposit %}
+  <div class="eft-deposit">
+    <div class="eft-deposit-head">
+      <span class="eft-deposit-title">EFT {{ dep.rcv_number }}</span>
+      <span class="muted">{{ dep.eft_date or '—' }}</span>
+      <span class="eft-deposit-totals">Gross ${{ "{:,.2f}".format(dep.gross_total or 0) }} · Fees ${{ "{:,.2f}".format(dep.fees_total or 0) }} · Neto ${{ "{:,.2f}".format(dep.net_total or 0) }}</span>
+      <form method="post" action="{{ url_for('carga_datos_eft_eliminar', deposit_id=dep.id) }}" onsubmit="return confirm('¿Eliminar este EFT? Los documentos guardados no se borran.');">
+        <input type="hidden" name="year" value="{{ year }}">
+        <input type="hidden" name="month" value="{{ month }}">
+        <button type="submit" class="btn-danger-soft">Eliminar</button>
+      </form>
+    </div>
+    {% if entry.paid_invoices %}
+    <div class="eft-invoices-highlight">
+      <span class="eft-invoices-label">Facturas que paga este EFT:</span>
+      {% for inv in entry.paid_invoices %}
+      {% set inv_number = inv.invoice[3:] if inv.invoice and inv.invoice.upper().startswith('SI-') else (inv.invoice or '—') %}
+      {% if inv.document %}
+      <a class="eft-invoice-pill eft-invoice-pill-linked" href="{{ url_for('carga_datos_documento_descargar', document_id=inv.document.id) }}" title="Ver {{ inv.document.filename }}">{{ inv_number }} — ${{ "{:,.2f}".format(inv.paid_amount or 0) }}</a>
+      {% else %}
+      <span class="eft-invoice-pill">{{ inv_number }} — ${{ "{:,.2f}".format(inv.paid_amount or 0) }}</span>
+      {% endif %}
+      {% endfor %}
+    </div>
+    {% endif %}
+    <div class="historial-table-wrap">
+      <table class="historial-table">
+        <thead>
+          <tr><th>Fecha</th><th>Factura</th><th>DDC</th><th>Gross</th><th>Fees</th><th>Pagado</th></tr>
+        </thead>
+        <tbody>
+          {% for c in entry.coupons %}
+          <tr>
+            <td class="historial-col-day">{{ c.date or '—' }}</td>
+            <td>{{ c.invoice or '—' }}</td>
+            <td>
+              {% if c.coupon %}
+              <span class="historial-badge {{ 'historial-badge-manual' if c.coupon_manual else 'historial-badge-ocr' }}">{{ c.coupon }}</span>
+              {% else %}
+              <span class="historial-badge historial-badge-error">Sin DDC</span>
+              {% endif %}
+              <details class="chase-categorize">
+                <summary>{{ 'corregir' if c.coupon else 'agregar DDC' }}</summary>
+                <form method="post" action="{{ url_for('carga_datos_eft_coupon_ddc', eft_coupon_id=c.id) }}">
+                  <input type="hidden" name="year" value="{{ year }}">
+                  <input type="hidden" name="month" value="{{ month }}">
+                  <input type="text" name="coupon_id" value="{{ c.coupon or '' }}" placeholder="DDC-#####">
+                  <button type="submit" class="btn-secondary">Guardar</button>
+                </form>
+              </details>
+            </td>
+            <td>{{ "{:,.2f}".format(c.gross_amount or 0) }}</td>
+            <td>{{ "{:,.2f}".format(c.fees_amount or 0) }}</td>
+            <td>{{ "{:,.2f}".format(c.paid_amount or 0) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+        <tfoot>
+          <tr class="eft-totals-row">
+            <td colspan="3">Total</td>
+            <td>{{ "{:,.2f}".format(entry.totals.gross) }}</td>
+            <td>{{ "{:,.2f}".format(entry.totals.fees) }}</td>
+            <td>{{ "{:,.2f}".format(entry.totals.paid) }}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  </div>
+  {% endfor %}
+  {% else %}
+  <p class="muted" style="margin-top: 18px;">Todavía no hay ningún EFT guardado este mes.</p>
+  {% endif %}
+</div>
+
+<div class="card" style="margin-top: 18px;">
+  <h2>Cupones</h2>
+  <p class="muted">Historial completo de todos los DDC guardados — pendientes hasta que algún EFT los confirme. Agrupados por mes para poder distinguir de un vistazo cuáles son de qué mes.</p>
+  {% if cupon_groups %}
+  <div class="historial-table-wrap">
+    <table class="historial-table">
+      <thead>
+        <tr><th>DDC</th><th>Fecha</th><th>Reportado</th><th>Estado</th></tr>
+      </thead>
+      <tbody>
+        {% for group in cupon_groups %}
+        <tr class="eft-month-divider">
+          <td colspan="4">{{ group.label }}</td>
+        </tr>
+        {% for cp in group.cupones %}
+        <tr>
+          <td>{{ cp.coupon_id }}</td>
+          <td class="historial-col-day">{{ cp.date or '—' }}</td>
+          <td>
+            {% if cp.reported_group_text %}
+            <span class="muted">Grupo: {{ cp.reported_group_text }} — ${{ "{:,.2f}".format(cp.reported_group_total or 0) }}</span>
+            {% else %}
+            ${{ "{:,.2f}".format(cp.net or 0) }}
+            {% endif %}
+          </td>
+          <td>
+            {% if cp.match %}
+            <span class="historial-badge historial-badge-ocr">EFT {{ cp.match.rcv_number }} ({{ cp.match.eft_date }})</span>
+            {% else %}
+            <span class="historial-badge historial-badge-manual">Pendiente</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted" style="margin-top: 18px;">Todavía no hay ningún cupón guardado.</p>
+  {% endif %}
+</div>
+
+<style>
+  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .historial-nav-btn { text-decoration: none; display: inline-block; }
+  .historial-nav-title { text-align: center; }
+  .historial-nav-title h2 { margin: 0; }
+  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
+  .historial-table-wrap { overflow-x: auto; margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; }
+  .historial-table { width: 100%; min-width: 480px; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .historial-table th, .historial-table td { padding: 9px 14px; text-align: left; }
+  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr { border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
+  .historial-col-day { font-weight: 700; white-space: nowrap; }
+  .historial-badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+  .historial-badge-ocr { background: var(--success-soft); color: var(--success); }
+  .historial-badge-manual { background: var(--accent-soft); color: var(--accent); }
+  .historial-badge-error { background: var(--error-soft); color: var(--error); }
+
+  .eft-deposit { padding: 16px 0; border-top: 1px solid var(--border); }
+  .eft-deposit:first-of-type { border-top: none; padding-top: 0; }
+  .eft-deposit-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+  .eft-deposit-title { font-weight: 700; font-size: 14.5px; }
+  .eft-deposit-totals { margin-left: auto; font-size: 12.5px; color: var(--text-soft); }
+  .eft-deposit-head form { margin: 0; }
+  .eft-deposit-head form button { margin-top: 0; padding: 5px 10px; font-size: 12px; }
+
+  /* Facturas que paga este EFT, resaltadas arriba del detalle -- pedido
+     explícito del usuario 2026-09-12. */
+  .eft-invoices-highlight {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    margin: 10px 0; padding: 10px 12px;
+    background: var(--accent-soft); border-radius: 8px;
+  }
+  .eft-invoices-label { font-size: 12px; font-weight: 700; color: var(--accent); margin-right: 2px; }
+  .eft-invoice-pill {
+    display: inline-block; padding: 4px 10px; border-radius: 999px;
+    background: var(--surface); font-size: 12px; font-weight: 600;
+    border: 1px solid var(--border);
+  }
+  /* Factura con un documento matcheado en Documentos -- clickeable, lleva
+     directo al PDF real de esa factura (pedido explícito del usuario
+     2026-09-14). */
+  a.eft-invoice-pill-linked {
+    color: var(--accent);
+    border-color: var(--accent);
+    text-decoration: none;
+  }
+  a.eft-invoice-pill-linked:hover { background: var(--accent-soft); }
+
+  /* Autosuma por columna, en negrita, al pie de cada tabla de EFT. */
+  .eft-totals-row td { font-weight: 700; background: var(--surface-alt); border-top: 2px solid var(--border); }
+
+  /* Diferenciador de mes en el listado histórico de Cupones. */
+  .eft-month-divider td {
+    background: var(--accent-soft); color: var(--accent);
+    font-weight: 700; font-size: 12.5px; text-transform: uppercase;
+    letter-spacing: 0.03em; padding: 7px 14px;
+  }
+
+  .chase-categorize { display: inline-block; margin-left: 6px; }
+  .chase-categorize summary { display: inline-block; font-size: 11.5px; color: var(--text-soft); text-decoration: underline; cursor: default; }
+  .chase-categorize summary:hover { color: var(--accent); }
+  .chase-categorize form { display: flex; gap: 6px; align-items: center; margin-top: 6px; }
+  .chase-categorize input[type=text] { width: 130px; padding: 5px 8px; font-size: 12.5px; }
+  .chase-categorize button { margin-top: 0; padding: 5px 10px; font-size: 12px; }
+</style>
+{% endblock %}

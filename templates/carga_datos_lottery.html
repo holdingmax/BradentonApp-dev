@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block crumbs %}
+<nav class="crumbs"><span class="current">Lottery</span></nav>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Lottery</h1>
+  <p class="page-subtitle">Subí el Daily Sales Report del portal de Florida Lottery — se guarda solo, sin generar ningún Excel. ONLINE/SKOFF ya se completan solos al subir el PDF de Reporte Diario. <a href="{{ url_for('carga_datos_lottery_historial') }}">Ver lo ya guardado</a>.</p>
+</div>
+
+<div class="card">
+  <h2>Daily Sales Report</h2>
+  <form method="post" action="{{ url_for('carga_datos_lottery_subir') }}" enctype="multipart/form-data">
+    <label class="muted">PDF del Daily Sales Report</label>
+    <input type="file" name="pdf_files" id="lottery-pdf-input" multiple accept="application/pdf" class="accumulate-files" required>
+    <div class="form-actions">
+      <button type="submit">Guardar</button>
+      <button type="button" class="btn-secondary clear-file-btn" data-target="lottery-pdf-input">Limpiar</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

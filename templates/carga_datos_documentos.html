@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ back_url }}">{{ module_title }}</a><span class="current">Documentos</span></nav>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>{{ module_title }} — Documentos</h1>
+  <p class="page-subtitle">Los archivos originales que ya subiste para este módulo, guardados tal cual para tenerlos a mano después — nunca se vuelven a leer, es solo para consultarlos.</p>
+</div>
+
+<div class="card">
+  <div class="historial-nav">
+    <a href="{{ url_for('carga_datos_documentos', module_key=module_key, year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
+    <div class="historial-nav-title">
+      <h2>{{ month_name }} {{ year }}</h2>
+      <a href="{{ url_for('carga_datos_documentos', module_key=module_key) }}" class="muted">Ir al mes actual</a>
+    </div>
+    <a href="{{ url_for('carga_datos_documentos', module_key=module_key, year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
+  </div>
+
+  <form method="post" action="{{ url_for('carga_datos_documentos_subir', module_key=module_key) }}" enctype="multipart/form-data" style="margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--border);">
+    <input type="hidden" name="year" value="{{ year }}">
+    <input type="hidden" name="month" value="{{ month }}">
+    <label class="muted">Subir archivo(s) a este mes</label>
+    <input type="file" name="documento_files" multiple required>
+    <label class="muted">Etiqueta (opcional, ej. nombre de la factura)</label>
+    <input type="text" name="label" placeholder="Ej. Invoice Nº212530 VPN Fee">
+    <div class="form-actions">
+      <button type="submit">Subir</button>
+    </div>
+  </form>
+
+  {% if docs %}
+  <ul class="doc-list" style="margin-top: 18px;">
+    {% for doc in docs %}
+    <li class="doc-list-item">
+      <div class="doc-list-info">
+        <a href="{{ url_for('carga_datos_documento_descargar', document_id=doc.id) }}">{{ doc.filename }}</a>
+        {% if doc.label %}<span class="doc-list-label">{{ doc.label }}</span>{% endif %}
+        <span class="muted doc-list-date">{{ doc.uploaded_at }}</span>
+      </div>
+      <form method="post" action="{{ url_for('carga_datos_documento_eliminar', document_id=doc.id) }}" onsubmit="return confirm('¿Eliminar este documento?');">
+        <button type="submit" class="btn-danger-soft">Eliminar</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% else %}
+  <p class="muted" style="margin-top: 18px;">Todavía no hay ningún documento guardado este mes.</p>
+  {% endif %}
+</div>
+
+<style>
+  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .historial-nav-btn { text-decoration: none; display: inline-block; }
+  .historial-nav-title { text-align: center; }
+  .historial-nav-title h2 { margin: 0; }
+  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
+  .doc-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  .doc-list-item {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-alt);
+    flex-wrap: wrap;
+  }
+  .doc-list-info { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .doc-list-label {
+    font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px;
+    background: var(--accent-soft); color: var(--accent);
+  }
+  .doc-list-date { font-size: 12px; }
+</style>
+{% endblock %}

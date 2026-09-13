@@ -7,6 +7,7 @@
   <span class="eyebrow">Reporte Diario</span>
   <h1>Ventas y Store Info</h1>
   <p class="page-subtitle">Un mismo Reporte Diario alimenta dos destinos distintos — Ventas por Departamento y Store Info, cada uno con su propio Excel.</p>
+  <p style="margin-top: 10px;"><a href="{{ url_for('reporte_historial') }}">Ver reportes guardados por día</a></p>
 </div>
 <div class="card">
   <h2>Reporte Diario</h2>
@@ -17,8 +18,8 @@
 
 <div class="card">
   <h2>Ventas por Departamento</h2>
-  <p class="muted">Excel de Ventas.</p>
-  <form method="post" action="{{ url_for('reporte_ventas') }}" enctype="multipart/form-data" class="needs-shared-master ajax-process-form">
+  <p class="muted">Excel de Ventas. Con varios PDF a la vez, el procesamiento sigue en el servidor aunque cambies de pestaña — la barra de abajo muestra el progreso real.</p>
+  <form method="post" action="{{ url_for('reporte_ventas_async') }}" enctype="multipart/form-data" class="needs-shared-master background-job-form">
     <input type="file" name="pdf_files" class="hidden-master-mirror" multiple style="display:none">
     <input type="file" name="master_file" id="reporte-ventas-master" accept=".xlsx,.xlsm" required>
     <div class="form-actions">
@@ -30,8 +31,8 @@
 
 <div class="card">
   <h2>Store Info</h2>
-  <p class="muted">Excel Cierre (hoja Store Info).</p>
-  <form method="post" action="{{ url_for('reporte_store_info') }}" enctype="multipart/form-data" class="needs-shared-master ajax-process-form">
+  <p class="muted">Excel Cierre (hoja Store Info). Con varios PDF a la vez, el procesamiento sigue en el servidor aunque cambies de pestaña — la barra de abajo muestra el progreso real.</p>
+  <form method="post" action="{{ url_for('reporte_store_info_async') }}" enctype="multipart/form-data" class="needs-shared-master background-job-form">
     <input type="file" name="pdf_files" class="hidden-master-mirror" multiple style="display:none">
     <input type="file" name="master_file" id="reporte-storeinfo-master" accept=".xlsx,.xlsm" required>
     <div class="form-actions">

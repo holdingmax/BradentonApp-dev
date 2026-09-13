@@ -4,16 +4,15 @@
 {% endblock %}
 {% block content %}
 <div class="page-header">
-  <span class="eyebrow">Chase Bank</span>
-  <h1>Categorización de movimientos</h1>
-  <p class="page-subtitle">Sube el extracto de Chase (CSV o Excel) y descargá el archivo con la columna Detalle ya categorizada según las reglas.</p>
+  <h1>Chase Bank</h1>
+  <p class="page-subtitle">Subí el extracto de Chase (CSV o Excel, tal cual lo bajás de la banca online) — cada movimiento queda categorizado y guardado solo, sin generar ningún Excel. Se puede volver a subir el mismo extracto (o uno solapado) cuantas veces haga falta: nunca duplica, solo actualiza. <a href="{{ url_for('chase_historial') }}">Ver lo ya guardado</a>.</p>
 </div>
 <div class="card">
   <h2>Extracto de Chase</h2>
-  <form method="post" enctype="multipart/form-data" class="ajax-process-form">
+  <form method="post" enctype="multipart/form-data">
     <input type="file" name="chase_file" id="chase-file-input" accept=".csv,.xlsx,.xlsm" required>
     <div class="form-actions">
-      <button type="submit">Procesar</button>
+      <button type="submit">Guardar</button>
       <button type="button" class="btn-secondary clear-file-btn" data-target="chase-file-input">Limpiar</button>
     </div>
   </form>

@@ -4,3 +4,4 @@ __pycache__/
 users.json
 .flask_secret_key
 .env
+reportes_data/

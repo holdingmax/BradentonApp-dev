@@ -10,8 +10,6 @@ import unicodedata
 from datetime import datetime
 
 import pandas as pd
-from openpyxl import load_workbook
-from openpyxl.styles import Font
 
 RULES_FILENAME = "chase_rules.json"  # Personalizadas -- added by an admin via the UI.
 MASTER_RULES_FILENAME = "chase_master_rules.json"  # Maestra -- seeded once from Alfonso's original hardcoded rules, then admin-editable.
@@ -330,9 +328,6 @@ def list_display_rules():
 # Categorization engine
 # ---------------------------------------------------------------------------
 
-EFT_RCV_EXACT_LABEL = "EFT RCV-"
-EFT_RCV_RED_FONT = Font(color="FF0000", bold=True)
-
 # Alfonso's original hardcoded rules, flattened into one seed list the first
 # time chase_master_rules.json gets created (see load_master_rules above) --
 # kept here as frozen historical data; the categorization engine never reads
@@ -433,23 +428,14 @@ def categorize_chase_description(description):
 
 
 # ---------------------------------------------------------------------------
-# Read / categorize / write pipeline
+# Read / categorize pipeline -- lee un extracto crudo y devuelve movimientos
+# categorizados listos para guardar (ver chase_db.py). Ya NO escribe ningún
+# Excel/CSV de salida -- esa parte (write_chase_excel_file/write_chase_csv_
+# file/process_chase_categorization) se eliminó del todo (2026-09-11,
+# pedido explícito del usuario: "sacar los módulos que sirven solo para
+# actualizar Excel, pero dejar toda la lógica de cómo lee datos"). Las
+# reglas de categorización de arriba no cambiaron un carácter.
 # ---------------------------------------------------------------------------
-
-CHASE_COL_POSTING_DATE = 2  # B
-CHASE_COL_AMOUNT = 4  # D
-CHASE_COL_BALANCE = 6  # F
-CHASE_DATE_NUMBER_FORMAT = "dd/mm/yyyy"
-CHASE_INTEGER_NUMBER_FORMAT = "0"
-CHASE_DECIMAL_NUMBER_FORMAT = "0.00"
-CHASE_DATA_START_ROW = 2
-
-
-def detalle_cell_is_empty(value):
-    """True when Chase Detalle (Column H) has no pre-existing content."""
-    if value is None or (isinstance(value, float) and pd.isna(value)):
-        return True
-    return str(value).strip() == ""
 
 
 def find_chase_column(df, name_hint, fallback_index):
@@ -464,32 +450,6 @@ def find_chase_column(df, name_hint, fallback_index):
     if 0 <= fallback_index < len(df.columns):
         return df.columns[fallback_index]
     return None
-
-
-def ensure_detalle_column(df):
-    """Ensure Detalle exists as column H (8th column); create if missing."""
-    detalle_col = find_chase_column(df, "Detalle", 7)
-    if detalle_col is not None:
-        return detalle_col
-
-    if len(df.columns) >= 8:
-        return df.columns[7]
-
-    while len(df.columns) < 7:
-        df[f"__col_{len(df.columns)}__"] = ""
-    df["Detalle"] = ""
-    return "Detalle"
-
-
-def apply_chase_amount_cell(cell, amount):
-    """Apply integer or Spanish-decimal Excel format based on the amount value."""
-    amount_float = float(amount)
-    if amount_float.is_integer():
-        cell.value = int(amount_float)
-        cell.number_format = CHASE_INTEGER_NUMBER_FORMAT
-    else:
-        cell.value = amount_float
-        cell.number_format = CHASE_DECIMAL_NUMBER_FORMAT
 
 
 def read_chase_activity_file(file_path):
@@ -579,144 +539,19 @@ def parse_posting_date_value(value):
         return None
 
 
-def sync_detalle_from_excel_workbook(df, file_path, detalle_col):
-    """Load pre-existing Column H values from Excel before categorization."""
-    extension = os.path.splitext(file_path)[1].lower()
-    if extension not in {".xlsx", ".xlsm"}:
-        return
-
-    workbook = load_workbook(file_path, read_only=True, data_only=True)
-    worksheet = workbook.active
-    try:
-        for row_offset, index in enumerate(df.index):
-            excel_row = CHASE_DATA_START_ROW + row_offset
-            cell_value = worksheet.cell(row=excel_row, column=8).value
-            if not detalle_cell_is_empty(cell_value):
-                df.at[index, detalle_col] = cell_value
-    finally:
-        workbook.close()
-
-
-def apply_chase_detalle_categorization(df, description_col, detalle_col):
+def extract_chase_transactions(file_path):
     """
-    Apply keyword rules to Detalle (Column H) only for empty cells.
+    Lee un extracto CRUDO de Chase (CSV o Excel, tal cual se baja de la
+    banca online -- nunca un archivo ya procesado por este módulo, que ya
+    no existe) y devuelve una lista de movimientos categorizados, listos
+    para guardar en chase_db.py -- ningún Excel se lee de vuelta ni se
+    escribe, cada carga se categoriza fresca contra las reglas vigentes.
 
-    Rows with any pre-existing Detalle value are left untouched.
-    """
-    updated_count = 0
-    for index in df.index:
-        current = df.at[index, detalle_col]
-        if not detalle_cell_is_empty(current):
-            continue
-
-        description = df.at[index, description_col]
-        category = categorize_chase_description(description)
-        if category:
-            df.at[index, detalle_col] = category
-            updated_count += 1
-    return updated_count
-
-
-def write_chase_excel_file(df, file_path, column_map):
-    """Write Chase data to Excel with dates, amounts, balance formulas, and formats."""
-    workbook = load_workbook(file_path)
-    worksheet = workbook.active
-
-    posting_idx = column_map["posting"]
-    amount_idx = column_map["amount"]
-
-    posting_col_name = df.columns[posting_idx]
-    amount_col_name = df.columns[amount_idx]
-    detalle_col_name = df.columns[column_map["detalle"]]
-
-    protected_detalle = {}
-    for row_offset, index in enumerate(df.index):
-        excel_row = CHASE_DATA_START_ROW + row_offset
-        existing_h = worksheet.cell(row=excel_row, column=8).value
-        if not detalle_cell_is_empty(existing_h):
-            protected_detalle[excel_row] = existing_h
-
-    for row_offset, index in enumerate(df.index):
-        excel_row = CHASE_DATA_START_ROW + row_offset
-
-        for col_num, col_name in enumerate(df.columns, start=1):
-            if col_num == 8 and excel_row in protected_detalle:
-                continue
-            worksheet.cell(row=excel_row, column=col_num, value=df.at[index, col_name])
-
-        posting_dt = parse_posting_date_value(df.at[index, posting_col_name])
-        cell_b = worksheet.cell(row=excel_row, column=CHASE_COL_POSTING_DATE)
-        if posting_dt:
-            cell_b.value = posting_dt
-            cell_b.number_format = CHASE_DATE_NUMBER_FORMAT
-        else:
-            cell_b.value = df.at[index, posting_col_name]
-
-        cell_d = worksheet.cell(row=excel_row, column=CHASE_COL_AMOUNT)
-        apply_chase_amount_cell(
-            cell_d, parse_amount_signed(df.at[index, amount_col_name])
-        )
-
-        cell_f = worksheet.cell(row=excel_row, column=CHASE_COL_BALANCE)
-        if excel_row == CHASE_DATA_START_ROW:
-            cell_f.value = f"=+F1+D{excel_row}"
-        else:
-            cell_f.value = f"=+F{excel_row - 1}+D{excel_row}"
-        cell_f.number_format = CHASE_DECIMAL_NUMBER_FORMAT
-
-        if excel_row not in protected_detalle:
-            detalle_value = str(df.at[index, detalle_col_name]).strip()
-            cell_h = worksheet.cell(row=excel_row, column=8)
-            cell_h.value = df.at[index, detalle_col_name]
-            if detalle_value == EFT_RCV_EXACT_LABEL:
-                cell_h.font = EFT_RCV_RED_FONT
-
-    workbook.save(file_path)
-
-
-def write_chase_csv_file(df, file_path, column_map):
-    """Write Chase CSV with formatted dates, floats, and balance formulas."""
-    posting_idx = column_map["posting"]
-    amount_idx = column_map["amount"]
-    balance_idx = column_map["balance"]
-    detalle_idx = column_map["detalle"]
-
-    output = df.copy()
-    for row_offset, index in enumerate(output.index):
-        posting_dt = parse_posting_date_value(output.at[index, output.columns[posting_idx]])
-        if posting_dt:
-            output.at[index, output.columns[posting_idx]] = posting_dt.strftime("%d/%m/%Y")
-
-        # La columna se leyó con dtype=str (read_chase_activity_file) --
-        # pandas 3.0 hace ese dtype estricto de verdad y rechaza asignarle
-        # un float nativo vía .at[] (TypeError: "Invalid value ... for
-        # dtype 'str'"), a diferencia de pandas <3.0 que lo toleraba en
-        # silencio. Se formatea a texto con coma decimal (el mismo display
-        # que ya documentaba esta función) antes de asignarlo, en vez de
-        # asignar el float crudo -- soluciona el TypeError y de paso fija
-        # el formato final que se escribe en el CSV.
-        signed_amount = parse_amount_signed(output.at[index, output.columns[amount_idx]])
-        output.at[index, output.columns[amount_idx]] = f"{signed_amount:.2f}".replace(".", ",")
-
-        excel_row = CHASE_DATA_START_ROW + row_offset
-        if excel_row == CHASE_DATA_START_ROW:
-            output.at[index, output.columns[balance_idx]] = f"=+F1+D{excel_row}"
-        else:
-            output.at[index, output.columns[balance_idx]] = (
-                f"=+F{excel_row - 1}+D{excel_row}"
-            )
-
-    output.to_csv(file_path, index=False)
-
-
-def process_chase_categorization(file_path):
-    """
-    Categorize Chase activity, format columns B/D/F, and save the workbook.
-
-    Column B: DD/MM/YYYY dates
-    Column D: signed floats with comma decimal display
-    Column F: F1 static baseline; F2 =+F1+D2; row 3+ =+F{r-1}+D{r}
-    Column H: Detalle keyword categorization
+    Cada dict: {"posting_date": date, "description": str, "amount": float,
+    "balance": float o None, "detalle": str o None, "type": str o None}.
+    Una fila sin fecha de posting parseable se descarta (se cuenta en la
+    diferencia entre len(resultado) y el total de filas del archivo, que el
+    llamador puede calcular con len(df) si hace falta).
     """
     df = read_chase_activity_file(file_path)
 
@@ -731,39 +566,69 @@ def process_chase_categorization(file_path):
         posting_col = find_chase_column(df, "Posting", 1)
     amount_col = find_chase_column(df, "Amount", 3)
     balance_col = find_chase_column(df, "Balance", 5)
+    type_col = find_chase_column(df, "Type", 0)
 
-    if posting_col is None or amount_col is None or balance_col is None:
+    if posting_col is None or amount_col is None:
         raise ValueError(
-            "No se encontraron las columnas requeridas (B: Posting Date, D: Amount, F: Balance)."
+            "No se encontraron las columnas requeridas (Posting Date, Amount)."
         )
 
-    detalle_col = ensure_detalle_column(df)
-    if detalle_col not in df.columns:
-        df[detalle_col] = ""
-
-    sync_detalle_from_excel_workbook(df, file_path, detalle_col)
-
-    updated_count = apply_chase_detalle_categorization(
-        df, description_col, detalle_col
-    )
-
-    column_map = {
-        "posting": list(df.columns).index(posting_col),
-        "amount": list(df.columns).index(amount_col),
-        "balance": list(df.columns).index(balance_col),
-        "detalle": list(df.columns).index(detalle_col),
-    }
-
-    extension = os.path.splitext(file_path)[1].lower()
-    if extension == ".csv":
-        write_chase_csv_file(df, file_path, column_map)
-    elif extension in {".xlsx", ".xlsm"}:
-        write_chase_excel_file(df, file_path, column_map)
-    elif extension == ".xls":
-        raise ValueError(
-            "El formato .xls antiguo no soporta fórmulas. Guarde como .xlsx e intente de nuevo."
+    rows = []
+    for _, row in df.iterrows():
+        posting_dt = parse_posting_date_value(row.get(posting_col))
+        if posting_dt is None:
+            continue
+        description = str(row.get(description_col, "") or "").strip()
+        amount = parse_amount_signed(row.get(amount_col))
+        balance = parse_amount_signed(row.get(balance_col)) if balance_col is not None else None
+        rows.append(
+            {
+                "posting_date": posting_dt.date(),
+                "description": description,
+                "amount": amount,
+                "balance": balance,
+                "detalle": categorize_chase_description(description),
+                "type": str(row.get(type_col, "") or "").strip() if type_col is not None else None,
+            }
         )
-    else:
-        raise ValueError(f"No se puede guardar un tipo de archivo no soportado '{extension}'.")
+    return rows, len(df)
 
-    return updated_count, len(df)
+
+def build_chase_export_workbook(rows, year, month, dest_path):
+    """
+    Excel NUEVO (no toca ningún archivo real del banco ni ninguna plantilla)
+    con los movimientos ya categorizados de un mes de chase_db, para que el
+    usuario pueda bajarlos -- pedido explícito del usuario (2026-09-14):
+    "quiero que el chase tenga una opcion de exportar el excel desde la
+    pagina ya con la categorizacion automatica hecha". `rows` es la lista
+    tal cual devuelve chase_db.get_month_transactions.
+    """
+    import openpyxl
+    from openpyxl.styles import Font
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Chase"
+
+    headers = ["Posting Date", "Description", "Amount", "Balance", "Detalle", "Type"]
+    sheet.append(headers)
+    for cell in sheet[1]:
+        cell.font = Font(bold=True)
+
+    for row in rows:
+        sheet.append(
+            [
+                row.get("posting_date"),
+                row.get("description"),
+                row.get("amount"),
+                row.get("balance"),
+                row.get("detalle") or "",
+                row.get("type") or "",
+            ]
+        )
+
+    for col_letter, width in zip("ABCDEF", (13, 42, 12, 12, 24, 16)):
+        sheet.column_dimensions[col_letter].width = width
+
+    workbook.save(dest_path)
+    return dest_path

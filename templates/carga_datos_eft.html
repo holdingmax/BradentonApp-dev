@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block crumbs %}
+<nav class="crumbs"><span class="current">EFT y Cupones</span></nav>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>EFT y Cupones</h1>
+  <p class="page-subtitle">Subí el PDF de EFT y/o el reporte mensual de Cupones — cada cupón queda cruzado solo contra el EFT que lo pagó, por su número DDC, sin generar ningún Excel. <a href="{{ url_for('carga_datos_eft_historial') }}">Ver lo ya guardado</a>.</p>
+</div>
+
+<div class="card">
+  <h2>EFT (PDF del banco)</h2>
+  <p class="muted">Cada cupón de tarjeta de crédito que trae el PDF queda guardado con su número DDC — si el PDF no trae el DDC de alguno, se puede agregar a mano después, en "Ver lo ya guardado". Se pueden elegir varios PDF de una sola vez.</p>
+  <form method="post" action="{{ url_for('carga_datos_eft_subir') }}" enctype="multipart/form-data">
+    <label class="muted">PDF de EFT (uno o más)</label>
+    <input type="file" name="pdf_file" id="eft-pdf-input" accept="application/pdf" multiple required>
+    <div class="form-actions">
+      <button type="submit">Guardar</button>
+      <button type="button" class="btn-secondary clear-file-btn" data-target="eft-pdf-input">Limpiar</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Cupones (reporte mensual de J.H. Williams)</h2>
+  <p class="muted">Cada DDC del reporte queda guardado como pendiente hasta que algún EFT (ya cargado, o uno que llegue después) confirme el pago — se cruzan solos, sin tener que resincronizar nada.</p>
+  <form method="post" action="{{ url_for('carga_datos_eft_cupones_subir') }}" enctype="multipart/form-data">
+    <label class="muted">Reporte mensual de Cupones (CSV o Excel)</label>
+    <input type="file" name="monthly_report_file" id="cupones-report-input" accept=".csv,.xlsx,.xlsm,.xls" required>
+    <div class="form-actions">
+      <button type="submit">Guardar</button>
+      <button type="button" class="btn-secondary clear-file-btn" data-target="cupones-report-input">Limpiar</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

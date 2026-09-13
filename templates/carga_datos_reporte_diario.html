@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block crumbs %}
+<nav class="crumbs"><span class="current">Reporte Diario</span></nav>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Reporte Diario</h1>
+  <p class="page-subtitle">Subí uno o más PDF de cierre diario — se guardan solos, sin generar ningún Excel. <a href="{{ url_for('reporte_historial') }}">Ver lo ya guardado</a>.</p>
+</div>
+
+<div class="card">
+  <h2>PDF de cierre diario</h2>
+  <p class="muted">Completa Ventas por Departamento y Store Info — y, del mismo PDF, las columnas ONLINE/SKOFF de Lottery.</p>
+  <form method="post" action="{{ url_for('carga_datos_reporte_diario_subir') }}" enctype="multipart/form-data">
+    <label class="muted">PDF de cierre diario</label>
+    <input type="file" name="pdf_files" id="reporte-diario-pdf-input" multiple accept="application/pdf" class="accumulate-files" required>
+    <div class="form-actions">
+      <button type="submit">Guardar</button>
+      <button type="button" class="btn-secondary clear-file-btn" data-target="reporte-diario-pdf-input">Limpiar</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

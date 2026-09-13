@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block main_class %}main-full{% endblock %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ url_for('carga_datos_cmv') }}">CMV</a><span class="current">Costo</span></nav>
+{% endblock %}
+{% block content %}
+{% macro fmt(x) -%}
+{%- if x is none -%}—{%- else -%}{{ "{:,.2f}".format(x) }}{%- endif -%}
+{%- endmacro %}
+<div class="page-header">
+  <h1>CMV — Costo por producto</h1>
+  <p class="page-subtitle">Lo ya guardado, un departamento a la vez.</p>
+</div>
+
+<div class="card">
+  {% if departments %}
+  <form method="get" style="margin-bottom: 16px;">
+    <label class="muted">Departamento</label>
+    <select name="dept" onchange="this.form.submit()">
+      {% for d in departments %}
+      <option value="{{ d.dept_name }}" {{ "selected" if d.dept_name == selected else "" }}>{{ d.dept_name }} ({{ d.count }})</option>
+      {% endfor %}
+    </select>
+  </form>
+  <div class="historial-table-wrap">
+    <table class="historial-table">
+      <thead>
+        <tr><th>UPC</th><th>Nombre</th><th>Costo</th><th>Precio</th></tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr>
+          <td>{{ row.upc }}</td>
+          <td>{{ row.name }}</td>
+          <td>${{ fmt(row.cost) }}</td>
+          <td>${{ fmt(row.price) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">Todavía no hay ningún costo cargado. <a href="{{ url_for('carga_datos_cmv') }}">Subir archivos de costo</a>.</p>
+  {% endif %}
+</div>
+
+{% if price_changes %}
+<div class="card" style="margin-top: 18px;">
+  <h2>Cambios de precio recientes</h2>
+  <div class="historial-table-wrap">
+    <table class="historial-table">
+      <thead>
+        <tr><th>Fecha</th><th>UPC</th><th>Nombre</th><th>Departamento</th><th>Antes</th><th>Ahora</th></tr>
+      </thead>
+      <tbody>
+        {% for c in price_changes %}
+        <tr>
+          <td>{{ c.changed_at[:10] }}</td>
+          <td>{{ c.upc }}</td>
+          <td>{{ c.name }}</td>
+          <td>{{ c.dept_name }}</td>
+          <td>${{ fmt(c.old_price) }}</td>
+          <td>${{ fmt(c.new_price) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<style>
+  .historial-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
+  .historial-table { width: 100%; min-width: 420px; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .historial-table th, .historial-table td { padding: 9px 14px; text-align: left; }
+  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr { border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
+</style>
+{% endblock %}

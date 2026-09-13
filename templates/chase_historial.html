@@ -1,0 +1,152 @@
+{% extends "base.html" %}
+{% block main_class %}main-full{% endblock %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ url_for('chase') }}">Chase Bank</a><span class="current">Movimientos guardados</span></nav>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <span class="eyebrow">Chase Bank</span>
+  <h1>Movimientos guardados</h1>
+  <p class="page-subtitle">Todo lo ya categorizado y guardado de este mes — sin tener que abrir ningún Excel. Podés cargar el extracto completo del mes de una vez, o de a poco (un rango corto por vez) — no se duplica nada. Un movimiento sin ninguna regla que lo categorice se puede corregir a mano acá abajo.</p>
+</div>
+<datalist id="chase-detalle-options">
+  {% for value in known_details %}<option value="{{ value }}">{% endfor %}
+</datalist>
+
+<div class="card">
+  <div class="historial-nav">
+    <a href="{{ url_for('chase_historial', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
+    <div class="historial-nav-title">
+      <h2>{{ month_name }} {{ year }}</h2>
+      <a href="{{ url_for('chase_historial') }}" class="muted">Ir al mes actual</a>
+    </div>
+    <a href="{{ url_for('chase_historial', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
+  </div>
+
+  {% if transactions %}
+  <div style="margin-top: 12px; text-align: right;">
+    <a href="{{ url_for('chase_exportar', year=year, month=month) }}" class="btn-secondary">Exportar Excel del mes</a>
+  </div>
+  {% endif %}
+
+  {% if transactions %}
+  <div class="historial-table-wrap">
+    <table class="historial-table">
+      <thead>
+        <tr>
+          <th>Fecha</th>
+          <th>Descripción</th>
+          <th>Monto</th>
+          <th>Balance</th>
+          <th>Detalle</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for tx in transactions %}
+        <tr>
+          <td class="historial-col-day">{{ tx.posting_date[8:10] }}/{{ tx.posting_date[5:7] }}</td>
+          <td>{{ tx.description }}</td>
+          <td class="{{ 'chase-amount-neg' if tx.amount < 0 else 'chase-amount-pos' }}">{{ "{:,.2f}".format(tx.amount) }}</td>
+          <td>{{ "{:,.2f}".format(tx.balance) if tx.balance is not none else '—' }}</td>
+          <td class="chase-detalle-cell">
+            <div class="chase-detalle-row">
+              {% if tx.detalle %}
+              <span class="historial-badge {{ 'historial-badge-manual' if tx.detalle_source == 'manual' else 'historial-badge-ocr' }}">{{ tx.detalle }}</span>
+              {% else %}
+              <span class="historial-badge historial-badge-error">Sin categorizar</span>
+              {% endif %}
+              <details class="chase-categorize">
+                <summary>{{ 'corregir' if tx.detalle else 'categorizar' }}</summary>
+                <form method="post" action="{{ url_for('chase_categorizar') }}">
+                  <input type="hidden" name="posting_date" value="{{ tx.posting_date }}">
+                  <input type="hidden" name="description" value="{{ tx.description }}">
+                  <input type="hidden" name="amount" value="{{ tx.amount }}">
+                  <input type="hidden" name="year" value="{{ year }}">
+                  <input type="hidden" name="month" value="{{ month }}">
+                  <input type="text" name="detalle" value="{{ tx.detalle or '' }}" list="chase-detalle-options" placeholder="Detalle">
+                  <button type="submit" class="btn-secondary">Guardar</button>
+                </form>
+              </details>
+            </div>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted" style="margin-top: 18px;">Todavía no hay ningún movimiento guardado este mes.</p>
+  {% endif %}
+</div>
+
+<style>
+  .historial-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .historial-nav-btn { text-decoration: none; display: inline-block; }
+  .historial-nav-title { text-align: center; }
+  .historial-nav-title h2 { margin: 0; }
+  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
+  .historial-table-wrap {
+    overflow-x: auto;
+    margin-top: 18px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  .historial-table { width: 100%; min-width: 480px; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .historial-table th, .historial-table td { padding: 9px 14px; text-align: left; }
+  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr { border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
+  .historial-col-day { font-weight: 700; width: 40px; }
+  .historial-badge {
+    display: inline-block;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .historial-badge-ocr { background: var(--success-soft); color: var(--success); }
+  .historial-badge-manual { background: var(--accent-soft); color: var(--accent); }
+  .historial-badge-error { background: var(--error-soft); color: var(--error); }
+  .chase-amount-neg { color: var(--error); }
+  .chase-amount-pos { color: var(--success); }
+
+  /* Cada asiento tiene un Detalle de largo distinto -- sin esto, "corregir"
+     quedaba flotando pegado al badge, corriéndose de lugar fila a fila.
+     Con flex + espacio fijo de columna, el control queda siempre anclado a
+     la derecha de la celda, simétrico en todas las filas. */
+  .chase-detalle-cell { min-width: 240px; }
+  .chase-detalle-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .chase-categorize { display: inline-block; flex-shrink: 0; }
+  .chase-categorize summary {
+    display: inline-block;
+    font-size: 11.5px;
+    color: var(--text-soft);
+    text-decoration: underline;
+    cursor: default;
+  }
+  .chase-categorize summary:hover { color: var(--accent); }
+  .chase-categorize form {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin-top: 6px;
+  }
+  .chase-categorize input[type=text] {
+    width: 170px;
+    padding: 5px 8px;
+    font-size: 12.5px;
+  }
+  .chase-categorize button {
+    margin-top: 0;
+    padding: 5px 10px;
+    font-size: 12px;
+  }
+</style>
+{% endblock %}

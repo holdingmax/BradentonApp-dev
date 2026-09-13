@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+{% block main_class %}main-full{% endblock %}
+{% block crumbs %}
+<nav class="crumbs"><span class="current">Caja</span></nav>
+{% endblock %}
+{% block content %}
+{% macro fmt(x) -%}
+{%- if x is none -%}—{%- else -%}{{ "{:,.2f}".format(x) }}{%- endif -%}
+{%- endmacro %}
+<div class="page-header">
+  <h1>Caja</h1>
+  <p class="page-subtitle">Store Info, Chase y Lottery se completan solos — Gastos se carga a mano acá, y DIF EFECT/Saldo se calculan con la misma lógica que la hoja CAJA real.</p>
+</div>
+
+<div class="card">
+  <div class="historial-nav">
+    <a href="{{ url_for('carga_datos_caja', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
+    <div class="historial-nav-title">
+      <h2>{{ month_name }} {{ year }}</h2>
+      <a href="{{ url_for('carga_datos_caja') }}" class="muted">Ir al mes actual</a>
+    </div>
+    <a href="{{ url_for('carga_datos_caja', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
+  </div>
+
+  <div class="caja-saldo-box">
+    <form method="post" action="{{ url_for('carga_datos_caja_saldo') }}" class="caja-saldo-form" data-warn-unsaved>
+      <input type="hidden" name="year" value="{{ year }}">
+      <input type="hidden" name="month" value="{{ month }}">
+      <div>
+        <label class="muted">Saldo Inicial</label>
+        <input type="number" step="0.01" name="opening_balance" value="{{ report.opening_balance }}">
+      </div>
+      <div>
+        <label class="muted">Saldo Final</label>
+        <input type="number" step="0.01" name="closing_balance_override" value="{{ report.closing_balance_override if report.closing_balance_override is not none else '' }}" placeholder="{{ fmt(report.computed_closing_balance) }}">
+      </div>
+      <button type="submit">Guardar</button>
+      <span class="muted caja-saldo-hint">
+        {% if report.opening_source == 'manual' %}Inicial cargado a mano.
+        {% elif report.opening_source in ('prev_month_override', 'prev_month_computed') %}Inicial encadenado del mes anterior.
+        {% elif report.opening_source == 'future' %}Mes futuro, todavía sin datos.
+        {% else %}Sin dato del mes anterior.{% endif %}
+        {% if report.closing_balance_override is not none %}Final ajustado a mano.{% endif %}
+      </span>
+    </form>
+  </div>
+
+  <div class="historial-table-wrap">
+    <table class="historial-table caja-table">
+      <thead>
+        <tr>
+          <th rowspan="2">Día</th>
+          <th colspan="4">Store Info</th>
+          <th colspan="2">Chase</th>
+          <th rowspan="2">Lottery<br>Cuenta Final</th>
+          <th rowspan="2">Gastos</th>
+          <th rowspan="2">DIF EFECT</th>
+          <th rowspan="2">Saldo</th>
+        </tr>
+        <tr>
+          <th>Total Sales</th><th>Cash</th><th>Other</th><th>Total Revenue</th>
+          <th>Depósitos</th><th>Food Truck/Ice</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in report.rows %}
+        <tr class="{{ 'historial-row-today' if row.date == today_iso else '' }}">
+          <td class="historial-col-day">{{ "%02d"|format(row.day) }}</td>
+          <td>{{ fmt(row.total_sales) }}</td>
+          <td>{{ fmt(row.cash) }}</td>
+          <td>{{ fmt(row.other_amount) }}</td>
+          <td><strong>{{ fmt(row.total_revenue) }}</strong></td>
+          <td>
+            {{ fmt(row.deposit) }}
+            {% if row.is_gettel %}<span class="historial-badge historial-badge-manual caja-gettel-tag">Gettel</span>{% endif %}
+          </td>
+          <td>{{ fmt(row.food_ice) }}{% if row.food_ice_label %} <span class="muted">({{ row.food_ice_label }})</span>{% endif %}</td>
+          <td>{{ fmt(row.cuenta_final) }}</td>
+          <td>{{ fmt(row.expenses_cash) }}</td>
+          <td class="{{ 'chase-amount-neg' if row.dif_efect < 0 else 'chase-amount-pos' }}">{{ fmt(row.dif_efect) }}</td>
+          <td><strong>{{ fmt(row.saldo) }}</strong></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr class="caja-totals-row">
+          <td>Total del mes</td>
+          <td>{{ fmt(report.totals.total_sales) }}</td>
+          <td>{{ fmt(report.totals.cash) }}</td>
+          <td>{{ fmt(report.totals.other_amount) }}</td>
+          <td>{{ fmt(report.totals.total_revenue) }}</td>
+          <td>{{ fmt(report.totals.deposit) }}</td>
+          <td>{{ fmt(report.totals.food_ice) }}</td>
+          <td>{% if report.total_lottery is not none %}{{ fmt(report.total_lottery) }}{% else %}<span class="muted">—</span>{% endif %}</td>
+          <td>{{ fmt(report.totals.expenses_cash) }}</td>
+          <td>{{ fmt(report.totals.dif_efect) }}</td>
+          <td>{{ fmt(report.effective_closing_balance) }}</td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+
+  <p class="muted" style="margin-top: 14px;">
+    <a href="{{ url_for('chase_historial', year=year, month=month) }}">Ver Chase de este mes</a> ·
+    <a href="{{ url_for('carga_datos_lottery_historial', year=year, month=month) }}">Ver Lottery de este mes</a> ·
+    <a href="{{ url_for('reporte_store_info_historial', year=year, month=month) }}">Ver Store Info de este mes</a>
+  </p>
+</div>
+
+<div class="card" style="margin-top: 18px;">
+  <h2>Gastos del mes — detalle</h2>
+  <p class="muted">Cada gasto en efectivo con a quién se le pagó — la suma de cada día es la que se ve arriba, en la columna Gastos.</p>
+  <form method="post" action="{{ url_for('carga_datos_caja_gastos_agregar') }}" class="caja-expense-form" data-warn-unsaved>
+    <input type="hidden" name="year" value="{{ year }}">
+    <input type="hidden" name="month" value="{{ month }}">
+    <div>
+      <label class="muted">Fecha</label>
+      <input type="date" name="date" min="{{ '%04d-%02d-01'|format(year, month) }}" required>
+    </div>
+    <div>
+      <label class="muted">Monto</label>
+      <input type="number" step="0.01" name="amount" required>
+    </div>
+    <div style="flex: 1 1 220px;">
+      <label class="muted">Detalle (a quién se le pagó)</label>
+      <input type="text" name="detail" placeholder="Ej. Gordon Food Service">
+    </div>
+    <button type="submit">Agregar</button>
+  </form>
+
+  {% set has_items = expense_items.values()|list %}
+  {% if has_items %}
+  <div class="historial-table-wrap" style="margin-top: 16px;">
+    <table class="historial-table">
+      <thead><tr><th>Fecha</th><th>Monto</th><th>Detalle</th><th></th></tr></thead>
+      <tbody>
+        {% for day, items in expense_items.items()|sort %}
+          {% for item in items %}
+          <tr>
+            <td>{{ day }}</td>
+            <td>${{ fmt(item.amount) }}</td>
+            <td>{{ item.detail or "—" }}</td>
+            <td class="historial-col-action">
+              <form method="post" action="{{ url_for('carga_datos_caja_gastos_eliminar', item_id=item.id) }}" style="display:inline;">
+                <input type="hidden" name="year" value="{{ year }}">
+                <input type="hidden" name="month" value="{{ month }}">
+                <button type="submit" class="btn-secondary">Eliminar</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted" style="margin-top: 14px;">Todavía no hay ningún gasto cargado este mes.</p>
+  {% endif %}
+</div>
+
+<div class="card" style="margin-top: 18px;">
+  <h2>Documentos del mes</h2>
+  <p class="muted">Subí los Excel de gastos u otros comprobantes de este mes para tenerlos a mano mientras cargás los gastos de arriba — no se leen ni se procesan, quedan solo de referencia.</p>
+  <form method="post" action="{{ url_for('carga_datos_caja_documentos_subir') }}" enctype="multipart/form-data">
+    <input type="hidden" name="year" value="{{ year }}">
+    <input type="hidden" name="month" value="{{ month }}">
+    <label class="muted">Archivo(s)</label>
+    <input type="file" name="documento_files" multiple required>
+    <div class="form-actions">
+      <button type="submit">Subir</button>
+    </div>
+  </form>
+
+  {% if attachments %}
+  <div class="historial-table-wrap" style="margin-top: 16px;">
+    <table class="historial-table">
+      <thead><tr><th>Archivo</th><th>Subido</th><th></th></tr></thead>
+      <tbody>
+        {% for a in attachments %}
+        <tr>
+          <td><a href="{{ url_for('carga_datos_caja_documento_descargar', attachment_id=a.id) }}">{{ a.filename }}</a></td>
+          <td>{{ a.uploaded_at }}</td>
+          <td class="historial-col-action">
+            <form method="post" action="{{ url_for('carga_datos_caja_documento_eliminar', attachment_id=a.id) }}" style="display:inline;">
+              <input type="hidden" name="year" value="{{ year }}">
+              <input type="hidden" name="month" value="{{ month }}">
+              <button type="submit" class="btn-secondary">Eliminar</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted" style="margin-top: 14px;">Todavía no hay ningún documento subido este mes.</p>
+  {% endif %}
+</div>
+
+<style>
+  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .historial-nav-btn { text-decoration: none; display: inline-block; }
+  .historial-nav-title { text-align: center; }
+  .historial-nav-title h2 { margin: 0; }
+  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
+  .historial-table-wrap { overflow-x: auto; margin-top: 18px; border: 1px solid var(--border); border-radius: 10px; }
+  .historial-table.caja-table { width: 100%; min-width: 1500px; border-collapse: separate; border-spacing: 0; font-size: 12px; white-space: nowrap; }
+  .caja-table th, .caja-table td { padding: 6px 8px; text-align: left; }
+  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr { border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
+  .historial-row-today { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .historial-col-day { font-weight: 700; width: 40px; }
+  .historial-badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+  .historial-badge-manual { background: var(--accent-soft); color: var(--accent); }
+  .caja-gettel-tag { margin-left: 4px; }
+  .caja-input-cell input { width: 80px; padding: 4px 6px; font-size: 11.5px; }
+  .caja-totals-row td { font-weight: 700; background: var(--surface-alt); border-top: 2px solid var(--border); }
+  .chase-amount-neg { color: var(--error); }
+  .chase-amount-pos { color: var(--success); }
+
+  .caja-saldo-box { margin-top: 16px; padding: 14px 16px; background: var(--accent-soft); border-radius: 10px; }
+  .caja-saldo-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; }
+  .caja-saldo-form > div { display: flex; flex-direction: column; gap: 4px; }
+  .caja-saldo-form input[type=number] { padding: 6px 8px; width: 160px; }
+  .caja-saldo-hint { font-size: 11px; }
+
+  .caja-expense-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; }
+  .caja-expense-form > div { display: flex; flex-direction: column; gap: 4px; }
+  .caja-expense-form input { padding: 6px 8px; }
+  .historial-col-action { text-align: right; white-space: nowrap; }
+  .historial-col-action form button { margin-top: 0; padding: 5px 10px; font-size: 12px; }
+</style>
+{% endblock %}

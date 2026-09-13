@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block crumbs %}
+<nav class="crumbs"><span class="current">CMV</span></nav>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>CMV</h1>
+  <p class="page-subtitle">Costo por producto y ventas mensuales por departamento — guardados solos, sin generar ningún Excel.</p>
+</div>
+
+<div class="card">
+  <h2>Costo por producto</h2>
+  <p class="muted">Uno o más archivos de departamento (mismo formato Elistars de siempre) — un departamento nuevo se agrega, uno ya cargado se reemplaza entero, los demás quedan intactos. <a href="{{ url_for('carga_datos_cmv_costo_historial') }}">Ver lo ya guardado</a>.</p>
+  <form method="post" action="{{ url_for('carga_datos_cmv_costo_subir') }}" enctype="multipart/form-data">
+    <label class="muted">Archivo(s) de costo por departamento</label>
+    <input type="file" name="costo_files" id="cmv-costo-input" multiple class="accumulate-files" required>
+    <div class="form-actions">
+      <button type="submit">Guardar</button>
+      <button type="button" class="btn-secondary clear-file-btn" data-target="cmv-costo-input">Limpiar</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Ventas mensuales por departamento</h2>
+  <p class="muted">Reemplaza entero el mes/departamento de cada archivo (no acumula, no hace merge por UPC) — mismo criterio que la hoja real. <a href="{{ url_for('carga_datos_cmv_ventas_historial') }}">Ver lo ya guardado</a>.</p>
+  <form method="post" action="{{ url_for('carga_datos_cmv_ventas_subir') }}" enctype="multipart/form-data">
+    <div class="dia-grid" style="margin-bottom: 12px;">
+      <div>
+        <label class="muted">Mes</label>
+        <select name="month">
+          {% for name in month_names %}
+          <option value="{{ loop.index }}" {{ "selected" if loop.index == current_month else "" }}>{{ name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div>
+        <label class="muted">Año</label>
+        <input type="number" name="year" value="{{ current_year }}" step="1">
+      </div>
+    </div>
+    <label class="muted">Archivo(s) de ventas (Top-Selling POS)</label>
+    <input type="file" name="ventas_files" id="cmv-ventas-input" multiple class="accumulate-files" required>
+    <div class="form-actions">
+      <button type="submit">Guardar</button>
+      <button type="button" class="btn-secondary clear-file-btn" data-target="cmv-ventas-input">Limpiar</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

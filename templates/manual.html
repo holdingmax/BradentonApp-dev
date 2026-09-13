@@ -8,7 +8,7 @@
 <div class="page-header">
   <span class="eyebrow">BradentonApp</span>
   <h1>Manual de Usuario</h1>
-  <p class="page-subtitle">Guía paso a paso de cada módulo: qué es, qué Excel/PDF hay que subir y qué pasa después — pensada para alguien que nunca usó la página. Por ahora cubre Herramientas y Controles — Mes Nuevo se va a ir sumando acá mismo.</p>
+  <p class="page-subtitle">Guía paso a paso de cada módulo: qué es, qué Excel/PDF hay que subir y qué pasa después — pensada para alguien que nunca usó la página. Por ahora cubre Herramientas y Controles.</p>
 </div>
 
 <div class="manual-shell">
@@ -21,18 +21,26 @@
     </div>
     <div>
       <button type="button" class="manual-toc-toggle" aria-expanded="true">
-        <span class="manual-toc-label">Herramientas</span>
+        <span class="manual-toc-label">Carga de Datos</span>
         <svg class="manual-toc-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
       </button>
       <ul class="manual-toc-list">
         <li><a href="#chase" data-target="chase" style="--dot: var(--c-chase)"><span class="manual-toc-dot"></span>Chase Bank</a></li>
+        <li><a href="#eft" data-target="eft" style="--dot: var(--c-eft)"><span class="manual-toc-dot"></span>EFT y Cupones</a></li>
+        <li><a href="#caja" data-target="caja" style="--dot: var(--c-caja)"><span class="manual-toc-dot"></span>Caja</a></li>
+      </ul>
+    </div>
+    <div>
+      <button type="button" class="manual-toc-toggle" aria-expanded="true">
+        <span class="manual-toc-label">Herramientas</span>
+        <svg class="manual-toc-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <ul class="manual-toc-list">
         <li><a href="#cmv" data-target="cmv" style="--dot: var(--c-cmv)"><span class="manual-toc-dot"></span>CMV</a></li>
         <li><a href="#gettel" data-target="gettel" style="--dot: var(--c-gettel)"><span class="manual-toc-dot"></span>Gettel / Toyota</a></li>
         <li><a href="#reporte" data-target="reporte" style="--dot: var(--c-reporte)"><span class="manual-toc-dot"></span>Reporte Diario</a></li>
         <li><a href="#lottery" data-target="lottery" style="--dot: var(--c-lottery)"><span class="manual-toc-dot"></span>Lottery</a></li>
-        <li><a href="#eft" data-target="eft" style="--dot: var(--c-eft)"><span class="manual-toc-dot"></span>Cupones y EFT</a></li>
         <li><a href="#proveedores" data-target="proveedores" style="--dot: var(--c-proveedores)"><span class="manual-toc-dot"></span>Proveedores</a></li>
-        <li><a href="#caja" data-target="caja" style="--dot: var(--c-caja)"><span class="manual-toc-dot"></span>Caja</a></li>
       </ul>
     </div>
     <div>
@@ -47,15 +55,6 @@
         <li><a href="#control-mercaderia" data-target="control-mercaderia" style="--dot: var(--c-proveedores)"><span class="manual-toc-dot"></span>Mercadería</a></li>
         <li><a href="#control-valuacion" data-target="control-valuacion" style="--dot: var(--c-valuacion)"><span class="manual-toc-dot"></span>Valuación de Existencia Final</a></li>
         <li><a href="#control-caja" data-target="control-caja" style="--dot: var(--c-caja)"><span class="manual-toc-dot"></span>Caja</a></li>
-      </ul>
-    </div>
-    <div>
-      <button type="button" class="manual-toc-toggle" aria-expanded="true">
-        <span class="manual-toc-label">Próximamente</span>
-        <svg class="manual-toc-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-      </button>
-      <ul class="manual-toc-list">
-        <li class="manual-toc-soon"><span class="manual-toc-dot"></span>Mes Nuevo<span class="manual-toc-soon-tag">Pronto</span></li>
       </ul>
     </div>
   </nav>
@@ -83,36 +82,57 @@
 
       <p style="margin: 14px 0 18px;">Al lado de cada casilla de archivo hay un botón <b>Limpiar</b> para vaciarla y elegir de nuevo. Cuando dos cuadros de una misma página comparten el mismo Excel, ese archivo se sube <b>una sola vez</b> arriba de todo — no hace falta elegirlo de nuevo para el segundo cuadro.</p>
 
-      <div class="manual-tip manual-tip-wide">
-        <div><b>Por dónde arrancar si es tu primera vez:</b> procesá primero el extracto de Chase en el módulo <b>Chase Bank</b>. El resultado categorizado de ese módulo es lo que después piden <b>Proveedores → Cargar Pagos</b> y <b>Caja</b> — conviene tenerlo listo antes de entrar a esos dos.</div>
-      </div>
-
       <h3 class="manual-intro-subhead">Cómo funciona Controles</h3>
       <p style="margin-bottom: 10px;">Acá no se transforma ningún archivo: subís los archivos ya cargados de un mes y la app los compara, mostrando el resultado en la misma pantalla — no se descarga ni se modifica nada, salvo <b>Valuación de Existencia Final</b>, la única excepción, que sí completa una copia y la ofrece para descargar.</p>
       <p style="margin: 0 0 18px;">En vez del semáforo verde/ámbar/rojo de Herramientas, cada chequeo muestra <b>"OK"</b> en verde (coincide) o <b>"Diferencia"</b> en rojo (revisar antes de dar el mes por cerrado). Cada control tiene su propio margen de tolerancia — desde $0 exacto hasta un rango más amplio — aclarado en su propia explicación.</p>
     </section>
 
     <div class="manual-section-heading">
-      <h2>Herramientas</h2>
-      <p>Guía módulo por módulo: qué Excel o PDF pedís, qué hace, y qué mirar después de procesar.</p>
+      <h2>Carga de Datos</h2>
+      <p>Acá no se genera ningún Excel — lo que subís queda categorizado y guardado dentro de la propia página, mes a mes. Se van sumando módulos de a uno.</p>
     </div>
 
     <section class="manual-module" id="chase" style="--c: var(--c-chase)">
       <div class="manual-module-head">
         <div class="manual-module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10 12 4l9 6"/><path d="M4 10v9M9 10v9M15 10v9M20 10v9"/><path d="M2 21h20"/></svg></div>
-        <div><span class="manual-kicker">Herramientas</span><h2>Chase Bank</h2></div>
+        <div><span class="manual-kicker">Carga de Datos</span><h2>Chase Bank</h2></div>
       </div>
-      <p class="manual-lede">Cuando bajás el extracto de movimientos de la cuenta de Chase, cada línea viene sin clasificar — no dice si es un depósito, un pago a un proveedor, un gasto de la tienda, etc. Antes eso se completaba a mano, línea por línea. Este módulo lee la descripción de cada movimiento y le agrega solo una columna <b>Detalle</b> con la categoría que le corresponde, comparándola contra una lista de reglas ya cargada (por ejemplo, si el texto del banco dice algo como "GETTEL", el Detalle queda "PROVEEDORES").</p>
+      <p class="manual-lede">Cuando bajás el extracto de movimientos de la cuenta de Chase, cada línea viene sin clasificar — no dice si es un depósito, un pago a un proveedor, un gasto de la tienda, etc. Este módulo lee la descripción de cada movimiento y le calcula un <b>Detalle</b> con la categoría que le corresponde, comparándola contra una lista de reglas ya cargada (por ejemplo, si el texto del banco dice algo como "GETTEL", el Detalle queda "PROVEEDORES") — y lo guarda directo en la página, sin generar ningún Excel.</p>
       <h3>Qué necesitás antes de empezar</h3>
       <ul class="manual-need"><li>El extracto de movimientos de Chase, tal cual lo bajás de la banca online — puede ser el CSV o el Excel, sin tocar nada.</li></ul>
       <h3>Cómo se usa</h3>
       <ol class="manual-steps">
-        <li><span class="n">1</span><p>Subís el extracto de Chase (CSV o Excel).</p></li>
-        <li><span class="n">2</span><p>Apretás Procesar.</p></li>
-        <li><span class="n">3</span><p>Se abre el mismo extracto, ahora con la columna Detalle ya completa. Ese archivo ya categorizado es el que después usás en <b>Proveedores → Cargar Pagos</b> y en <b>Caja</b>.</p></li>
+        <li><span class="n">1</span><p>Subís el extracto de Chase (CSV o Excel) — podés subir el extracto completo cada vez que quieras, o solo lo nuevo: nunca se duplica, cada movimiento se identifica por fecha + descripción + monto.</p></li>
+        <li><span class="n">2</span><p>Apretás Guardar.</p></li>
+        <li><span class="n">3</span><p>Los movimientos quedan categorizados y guardados — los podés ver ordenados por mes en "Ver lo ya guardado", sin abrir ningún Excel.</p></li>
       </ol>
-      <div class="manual-tip"><div><b>Tené en cuenta:</b> más abajo en la misma página hay una tabla con todas las reglas (palabra clave → Detalle a asignar). Si dos reglas podrían aplicar al mismo movimiento, gana la que tiene la palabra clave más larga. Solo un administrador puede crear, editar o borrar reglas — si un movimiento queda sin clasificar, pedile a un admin que agregue la regla que falta.</div></div>
+      <div class="manual-tip"><div><b>Tené en cuenta:</b> más abajo en la misma página hay una tabla con todas las reglas (palabra clave → Detalle a asignar). Si dos reglas podrían aplicar al mismo movimiento, gana la que tiene la palabra clave más larga. Solo un administrador puede crear, editar o borrar reglas — si un movimiento queda sin clasificar, pedile a un admin que agregue la regla que falta y volvé a subir el mismo extracto para recategorizarlo.</div></div>
     </section>
+
+    <section class="manual-module" id="eft" style="--c: var(--c-eft)">
+      <div class="manual-module-head">
+        <div class="manual-module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h13l-3-3M20 17H7l3 3"/></svg></div>
+        <div><span class="manual-kicker">Carga de Datos</span><h2>EFT y Cupones</h2></div>
+      </div>
+      <p class="manual-lede">J.H. Williams es quien procesa las ventas con cupón de la tienda y te paga ese dinero con un tiempo de demora. El PDF del EFT bancario (la transferencia que llega de J.H. Williams) trae el detalle de qué cupones pagó, cada uno con su número DDC. El reporte mensual de ese mismo proveedor lista todos los cupones del mes — cada uno queda cruzado solo contra el EFT que lo pagó, comparando el número DDC, sin generar ningún Excel.</p>
+      <h3>Qué necesitás antes de empezar</h3>
+      <ul class="manual-need">
+        <li>El PDF del EFT bancario que llega de J.H. Williams (opcional en cada carga, pero al menos uno hace falta para que haya algo contra qué cruzar).</li>
+        <li>El reporte mensual que manda J.H. Williams (CSV o Excel), cuando lo tengas — es opcional, se puede seguir cargando EFT sin él.</li>
+      </ul>
+      <h3>Cómo se usa</h3>
+      <ol class="manual-steps">
+        <li><span class="n">1</span><p><b>EFT (PDF del banco)</b>: subís el PDF y Guardás — cada cupón que trae adentro queda guardado con su número DDC. Si algún cupón no trae DDC en el PDF, se puede agregar a mano después.</p></li>
+        <li><span class="n">2</span><p><b>Cupones (reporte mensual)</b>: subís el reporte y Guardás — cada DDC queda pendiente hasta que algún EFT (ya cargado, o uno que llegue después) lo confirme.</p></li>
+        <li><span class="n">3</span><p>En "Ver lo ya guardado" ves los EFT del mes (con sus cupones) y la lista completa de Cupones con su estado — Pendiente, o el EFT que lo pagó.</p></li>
+      </ol>
+      <div class="manual-tip"><div><b>Tené en cuenta:</b> si un cupón dentro de un EFT no tiene número DDC (el PDF a veces no lo trae), hay un link "agregar DDC" al lado para completarlo a mano — una vez puesto, se cruza solo contra Cupones sin tener que hacer nada más.</div></div>
+    </section>
+
+    <div class="manual-section-heading">
+      <h2>Herramientas</h2>
+      <p>Guía módulo por módulo: qué Excel o PDF pedís, qué hace, y qué mirar después de procesar.</p>
+    </div>
 
     <section class="manual-module" id="cmv" style="--c: var(--c-cmv)">
       <div class="manual-module-head">
@@ -195,27 +215,6 @@
       <div class="manual-tip"><div><b>Tené en cuenta:</b> no hace falta cargar los dos tipos de reporte juntos — cada cuadro funciona por su cuenta, con el que tengas disponible ese día.</div></div>
     </section>
 
-    <section class="manual-module" id="eft" style="--c: var(--c-eft)">
-      <div class="manual-module-head">
-        <div class="manual-module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h13l-3-3M20 17H7l3 3"/></svg></div>
-        <div><span class="manual-kicker">Herramientas</span><h2>Cupones y EFT</h2></div>
-      </div>
-      <p class="manual-lede">J.H. Williams es quien procesa las ventas con cupón de la tienda y te paga ese dinero con un tiempo de demora — por eso hay que llevar una cuenta corriente de cuánto todavía no se cobró. El PDF del EFT bancario (la transferencia que llega de J.H. Williams) actualiza esa cuenta corriente. El reporte mensual de ese mismo proveedor sirve, aparte, para agregar y cruzar los cupones del mes.</p>
-      <h3>Qué necesitás antes de empezar</h3>
-      <ul class="manual-need">
-        <li>El Excel de Aplicacion TC y EFT — es un archivo único y acumulativo, no cambia de mes a mes.</li>
-        <li>Para el Paso 1: el PDF del EFT bancario que llega de J.H. Williams.</li>
-        <li>Para el Paso 2 (si lo tenés): el reporte mensual que manda J.H. Williams.</li>
-      </ul>
-      <h3>Cómo se usa</h3>
-      <ol class="manual-steps">
-        <li><span class="n">1</span><p>Subís el Excel de Aplicacion TC y EFT una sola vez, arriba de todo. <span class="manual-shared-tag">Compartido</span></p></li>
-        <li><span class="n">2</span><p><b>Paso 1</b>: subís el PDF del EFT bancario y Procesás — actualiza la Cuenta Corriente.</p></li>
-        <li><span class="n">3</span><p><b>Paso 2</b>: subís el reporte mensual de J.H. Williams y Procesás — agrega y cruza los cupones del mes.</p></li>
-      </ol>
-      <div class="manual-tip"><div><b>Tené en cuenta:</b> el reporte mensual del Paso 2 es opcional. Si todavía no lo tenés, podés Procesar igual el Paso 2 sin ese archivo — solo se actualizan los cupones pendientes.</div></div>
-    </section>
-
     <section class="manual-module" id="proveedores" style="--c: var(--c-proveedores)">
       <div class="manual-module-head">
         <div class="manual-module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="7" width="13" height="10" rx="1"/><path d="M14 10h4l3 3v4h-7z"/><circle cx="6" cy="18.5" r="1.6"/><circle cx="17.5" cy="18.5" r="1.6"/></svg></div>
@@ -226,14 +225,16 @@
       <ul class="manual-need">
         <li>El Excel de Proveedores — archivo único, se va actualizando con cada carga.</li>
         <li>Para Cargar Facturas: los PDF de las facturas, de cualquier proveedor, se pueden mezclar todos en la misma carga.</li>
-        <li>Para Cargar Pagos: el extracto de Chase ya categorizado — es decir, primero tenés que haberlo procesado en el módulo Chase Bank.</li>
+        <li>Para Cargar Pagos: el extracto de Chase ya categorizado — <b>este paso está temporalmente sin funcionar</b> (el módulo Chase Bank pasó a guardar los movimientos directo en la página en vez de generar ese Excel), hasta que le toque su turno de convertirse igual que Proveedores.</li>
       </ul>
       <h3>Cómo se usa</h3>
       <ol class="manual-steps">
         <li><span class="n">1</span><p>Subís el Excel de Proveedores una sola vez, arriba de todo. <span class="manual-shared-tag">Compartido</span></p></li>
         <li><span class="n">2</span><p><b>Cargar Facturas</b>: subís uno o más PDF de factura, de cualquier proveedor, todos juntos, y Procesás. Una factura que ya estaba cargada se salta sola, sin duplicarse. Si no se puede leer un dato con confianza, esa factura no se carga y te avisa cuál revisar a mano.</p></li>
-        <li><span class="n">3</span><p><b>Cargar Pagos (Chase)</b>: subís el extracto de Chase ya categorizado y Procesás — cada pago se ubica solo en la hoja del proveedor que corresponda.</p></li>
+        <li><span class="n">3</span><p><b>Cargar Pagos (Chase)</b>: subís el extracto de Chase ya categorizado y Procesás — cada pago se ubica solo en la hoja del proveedor que corresponda. <i>Temporalmente sin funcionar, ver arriba.</i></p></li>
       </ol>
+      <h3>¿Apareció un proveedor nuevo?</h3>
+      <p class="manual-lede" style="margin-bottom: 0;">Si un administrador quiere sumar un proveedor que todavía no está en la lista, no hace falta pedirle a un programador que escriba código nuevo — con "+ Agregar un proveedor nuevo (sin código)" (arriba de esta página, solo visible para administradores) alcanza con crear a mano la hoja del proveedor en el Excel (copiando una pestaña existente) y subir una factura de muestra: el asistente pregunta el N° de Factura, la Fecha y el Monto Total tal cual aparecen en esa factura, y aprende solo a leerlos de ahí en más. Sirve para facturas de texto limpio (digital o escaneo prolijo) — una factura manuscrita sigue necesitando cargarse a mano.</p>
       <h3>Qué tan confiable es cada proveedor</h3>
       <p style="margin: 0 0 12px; color: var(--text-soft); font-size: 13.5px;">Arriba de la página hay una lista desplegable con el mismo detalle — es una guía, no una regla fija.</p>
       <div class="manual-supplier-grid">
@@ -260,21 +261,19 @@
     <section class="manual-module" id="caja" style="--c: var(--c-caja)">
       <div class="manual-module-head">
         <div class="manual-module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="10" width="18" height="10" rx="1"/><path d="M6 10V7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v3"/><path d="M9 15h6"/></svg></div>
-        <div><span class="manual-kicker">Herramientas</span><h2>Caja</h2></div>
+        <div><span class="manual-kicker">Carga de Datos</span><h2>Caja</h2></div>
       </div>
-      <p class="manual-lede">La hoja CAJA del Excel Cierre lleva el control de los depósitos que se hacen en la cuenta de Chase (por ejemplo, lo que ingresa la máquina de hielo y el food truck) y cuánto quedó de saldo final de Lottery cada día. Este módulo completa esas columnas de una sola vez, cruzando el extracto de Chase ya categorizado y el Excel de Lottery del mes, en vez de tener que ir copiando cada depósito a mano día por día.</p>
-      <h3>Qué necesitás antes de empezar</h3>
+      <p class="manual-lede">Acá no se sube nada — Caja cruza en el momento lo que ya guardaron Chase Bank, Lottery y Store Info para el mes que estés mirando (Depósitos, Food Truck/Hielo, Cuenta Final, Total Sales/Cash/TC/Other/Total Revenue), y calcula solo el DIF EFECT y el Saldo día por día. Se accede desde el ícono de la barra lateral, no aparece como una tarjeta para subir un archivo.</p>
+      <h3>Qué podés cargar a mano</h3>
       <ul class="manual-need">
-        <li>El Excel Cierre del mes.</li>
-        <li>El extracto de Chase ya categorizado — primero tenés que haberlo procesado en el módulo Chase Bank.</li>
-        <li>El Excel de Lottery del mes.</li>
+        <li>Los Gastos en efectivo de cada día.</li>
+        <li>El Saldo Inicial del mes (por default es el Saldo Final calculado del mes anterior) y, si hace falta, un ajuste manual del Saldo Final.</li>
       </ul>
       <h3>Cómo se usa</h3>
       <ol class="manual-steps">
-        <li><span class="n">1</span><p>Subís el Excel Cierre.</p></li>
-        <li><span class="n">2</span><p>Subís el extracto de Chase ya categorizado.</p></li>
-        <li><span class="n">3</span><p>Subís el Excel de Lottery.</p></li>
-        <li><span class="n">4</span><p>Apretás Procesar <b>una sola vez</b> — las tres partes (Depósitos, Food Truck / Máquina de Hielo, y Cuenta Final) se completan juntas.</p></li>
+        <li><span class="n">1</span><p>Entrás desde la barra lateral (grupo Book Keeping) al mes que querés ver.</p></li>
+        <li><span class="n">2</span><p>Todo lo que ya cargaste por Chase Bank, Lottery y Reporte Diario aparece solo, sin tener que subir nada de nuevo.</p></li>
+        <li><span class="n">3</span><p>Completás los Gastos de cada día y, si hace falta, el Saldo Inicial/Final — Guardás y el DIF EFECT/Saldo se recalculan solos.</p></li>
       </ol>
     </section>
 
@@ -408,7 +407,7 @@
   </div>
 </div>
 
-<p class="manual-footnote">Manual en construcción — esta versión cubre los módulos de Herramientas y Controles. La sección de Mes Nuevo se agrega más adelante.</p>
+<p class="manual-footnote">Manual en construcción — esta versión cubre los módulos de Herramientas y Controles.</p>
 
 <style>
   .manual-page { max-width: none; }
@@ -489,9 +488,6 @@
   .manual-toc-list a:hover { background: var(--surface-alt); }
   .manual-toc-list a.active { background: var(--surface); box-shadow: 0 0 0 1px var(--border); }
   .manual-toc-dot { width: 8px; height: 8px; border-radius: 999px; flex-shrink: 0; background: var(--dot, var(--accent)); }
-  .manual-toc-soon { display: flex; align-items: center; gap: 9px; padding: 7px 10px; color: var(--text-soft); font-size: 13.5px; font-weight: 600; }
-  .manual-toc-soon .manual-toc-dot { background: var(--border); }
-  .manual-toc-soon-tag { margin-left: auto; font-size: 10px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; color: var(--text-soft); }
 
   .manual-main {
     min-width: 0;

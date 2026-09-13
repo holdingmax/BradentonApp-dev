@@ -58,6 +58,7 @@ except ImportError:  # pragma: no cover - environment guard
     pd = None  # type: ignore[assignment]
 
 from proveedores_pago_rules import match_supplier_sheet
+import proveedores_dynamic_extractors as _dynamic_extractors
 from ocr_utils import (
     ensure_pdfplumber as _ensure_pdfplumber,
     ensure_pytesseract as _ensure_pytesseract,
@@ -2030,6 +2031,38 @@ SUPPLIER_REGISTRY = {
 }
 
 
+def _dynamic_supplier_entries():
+    """
+    Envuelve cada proveedor agregado desde /proveedores/nuevo (ver
+    proveedores_dynamic_extractors.py) con la misma forma que una entrada
+    de SUPPLIER_REGISTRY (label/sheet_name/resumen_label/detect/extract),
+    para que el resto del código no tenga que distinguir "hardcodeado" de
+    "agregado sin código".
+    """
+    entries = {}
+    for clave, rule in _dynamic_extractors.load_dynamic_suppliers().items():
+        entries[clave] = {
+            "label": rule["label"],
+            "sheet_name": rule["sheet_name"],
+            "resumen_label": rule["resumen_label"],
+            "detect": (lambda text, _rule=rule: _dynamic_extractors.detect_with_dynamic_rule(text, _rule)),
+            "extract": (lambda pdf_path, _rule=rule: _dynamic_extractors.extract_with_dynamic_rule(pdf_path, _rule)),
+        }
+    return entries
+
+
+def _effective_supplier_registry():
+    """
+    SUPPLIER_REGISTRY (proveedores hardcodeados) + los agregados desde la
+    web -- los hardcodeados se revisan primero (están más probados), los
+    dinámicos son el fallback. Se recalcula en cada llamada, sin caching,
+    para que un proveedor recién agregado/borrado por un admin tenga
+    efecto inmediato -- mismo criterio que ya usa el motor de reglas de
+    Chase con sus propias reglas.
+    """
+    return {**SUPPLIER_REGISTRY, **_dynamic_supplier_entries()}
+
+
 def _detect_supplier(pdf_path):
     """
     Detecta el proveedor por el contenido del PDF: primero intenta con el
@@ -2039,6 +2072,7 @@ def _detect_supplier(pdf_path):
     ANTES que la factura (la primera página sola no alcanza).
     """
     _ensure_pdfplumber()
+    registry = _effective_supplier_registry()
     with pdfplumber.open(pdf_path) as pdf:
         for page in pdf.pages:
             text = page.extract_text() or ""
@@ -2047,7 +2081,7 @@ def _detect_supplier(pdf_path):
                 if image is not None:
                     _ensure_pytesseract()
                     text = pytesseract.image_to_string(image)
-            for key, config in SUPPLIER_REGISTRY.items():
+            for key, config in registry.items():
                 if config["detect"](text):
                     return key
 
@@ -2697,13 +2731,14 @@ def append_supplier_invoices(ledger_path, pdf_paths):
     if not os.path.isfile(ledger_path):
         raise FileNotFoundError(f"Excel no encontrado: {ledger_path}")
 
+    registry = _effective_supplier_registry()
     by_supplier = {}
     failed = []
     for pdf_path in pdf_paths:
         supplier_key = None
         try:
             supplier_key = _detect_supplier(pdf_path)
-            result = SUPPLIER_REGISTRY[supplier_key]["extract"](pdf_path)
+            result = registry[supplier_key]["extract"](pdf_path)
         except _PDF_EXTRACTION_EXCEPTIONS as exc:
             # Antes solo se atrapaba ValueError -- varios extractores hacen
             # trabajo de imagen (pytesseract, Pillow, pdfplumber sobre un
@@ -2713,7 +2748,7 @@ def append_supplier_invoices(ledger_path, pdf_paths):
             # extraídas bien) y mostrando el texto crudo de la excepción
             # -- que puede traer el nombre de archivo incrustado -- en vez
             # del aviso corto agrupado por proveedor de más abajo.
-            supplier_label = SUPPLIER_REGISTRY[supplier_key]["label"] if supplier_key else None
+            supplier_label = registry[supplier_key]["label"] if supplier_key else None
             failed.append({"filename": os.path.basename(pdf_path), "error": str(exc), "supplier": supplier_label})
             continue
         # La mayoría de los proveedores extraen 1 factura por PDF (un solo
@@ -2740,7 +2775,7 @@ def append_supplier_invoices(ledger_path, pdf_paths):
     batch_results = []
     total_appended = 0
     for supplier_key, invoices in by_supplier.items():
-        config = SUPPLIER_REGISTRY[supplier_key]
+        config = registry[supplier_key]
         try:
             sheet = _get_supplier_sheet(workbook, config["sheet_name"])
         except ValueError:
@@ -2883,7 +2918,23 @@ def _read_bank_payment_candidates(bank_path):
     description_col = _find_bank_column(df, "Description", 2)
     posting_col = _find_bank_column(df, "Posting Date", 1)
     amount_col = _find_bank_column(df, "Amount", 3)
-    detalle_col = _find_bank_column(df, "Detalle", 7)
+    # Solo por nombre de encabezado (nunca por posición fija) -- esa columna
+    # solo existe si el archivo ya venía categorizado por el viejo Chase
+    # Bank. Ese módulo (2026-09-11) ya no genera ningún Excel de salida, así
+    # que este paso queda temporalmente sin funcionar hasta que Proveedores
+    # se convierta también a Carga de Datos -- mejor un error claro acá que
+    # adivinar una columna sin relación por posición.
+    detalle_col = None
+    for col in df.columns:
+        if str(col).strip().lower() == "detalle":
+            detalle_col = col
+            break
+    if detalle_col is None:
+        raise ValueError(
+            "El archivo no tiene una columna Detalle ya categorizada -- el módulo Chase Bank ya no "
+            "genera ese Excel (ahora guarda los movimientos directo en Carga de Datos). Este paso "
+            "queda temporalmente sin funcionar hasta que Proveedores se convierta también."
+        )
 
     candidates = []
     for _, row in df.iterrows():

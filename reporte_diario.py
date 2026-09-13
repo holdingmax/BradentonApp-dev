@@ -1316,6 +1316,147 @@ def parse_elistar_daily_pdf_page(pdf_path, page_index=DEFAULT_PDF_PAGE_INDEX):
     )
 
 
+def extract_department_sales_for_day(pdf_path):
+    """
+    Extracción "pura" (sin tocar ningún Excel) de los departamentos de un
+    PDF de cierre diario + la fecha real de negocio a la que pertenecen --
+    para guardarlos en reportes_db.py. Reusa parse_elistar_daily_pdf_page
+    (el mismo motor ya usado por Reporte Diario y por el control
+    Controles→Cierre Mensual→Ventas por Departamento) en vez de duplicar
+    lógica de parseo.
+
+    El PDF imprime la fecha un día antes del día de negocio real (mismo bug
+    ya conocido y corregido en Reporte Diario/Cierre Mensual) -- por eso
+    esta función devuelve la fecha YA con el +1 día aplicado, para que
+    quien la use nunca tenga que acordarse de hacerlo por su cuenta.
+
+    La fecha sale gratis de los diagnósticos cuando el PDF se leyó vía OCR
+    (parse_elistar_daily_pdf_ocr ya la calcula al pasar); si el PDF tiene
+    texto digital (no hizo falta OCR), se llama una vez más a
+    extract_store_info_from_pdf solo para sacar la fecha de esa misma
+    página "PERIOD FROM: ...".
+    """
+    records, diagnostics = parse_elistar_daily_pdf_page(pdf_path)
+    period = diagnostics.get("period")
+    if period is None:
+        period = extract_store_info_from_pdf(pdf_path)
+    business_date = period["from_date"] + timedelta(days=1)
+
+    # El departamento real del reporte es "LOCAL ACCT" -- lo normaliza a
+    # "GETTEL/TOYOTA" DEPARTMENT_NAME_NORMALIZATION/_fallback_department_
+    # alias porque así se llama la columna real del Excel Cierre donde ese
+    # monto se escribe (ver _write_amount_cell) -- pero acá, del lado Carga
+    # de Datos, eso pierde el nombre real y lo confunde con la venta de los
+    # vendedores Gettel/Toyota (que es otro negocio aparte, ver gettel_db).
+    # Se restaura el nombre real solo en lo que se guarda/muestra acá --
+    # nunca se toca la normalización compartida que usa la escritura del
+    # Excel real. Pedido explícito del usuario (2026-09-14): "el nombre del
+    # departamento sale como LOCAL ACCT... hay que ponerlo tambien como si
+    # fuera la venta de un departamento".
+    records = [
+        {**r, "department": "LOCAL ACCT"} if r.get("department") == "GETTEL/TOYOTA" else r
+        for r in records
+    ]
+    return {"date": business_date, "records": records}
+
+
+# Agrupamiento de departamentos en las 6 categorías de "Resumen Venta"/
+# "Reply to Report c-Store" (hojas 2 y 3 de "... Ventas ... ANALISIS.xlsx")
+# -- confirmado 2026-09-13 leyendo las fórmulas reales de las DOS hojas con
+# openpyxl (se cruzaron entre sí, coinciden exactas) en vez de asumirlo:
+# antes el usuario copiaba estos 6 totales a mano, día por día, desde
+# "Reply to Report c-Store" hacia Store Info -- pedido explícito: "ahora se
+# va a poder hacer de forma automatica con solo cargar un reporte diario".
+# "Gettel" en la hoja real es la ÚNICA fuente de la categoría (llamada
+# "CAR WASH/ICE" en Resumen Venta, columna "VS" en Store Info) -- pero
+# "GETTEL" nunca aparece como departamento en el Department Sales Report
+# del PDF de cierre diario (es un negocio aparte, sin relación con el POS
+# de la gasolinera) -- queda siempre en 0 acá hasta que se cargue desde
+# algún otro lado. Los grupos siguen el orden real de las hojas.
+DEPARTMENT_GROUPS = (
+    # "MAJ PAK" (con espacio) -- así queda guardado por extract_department_
+    # sales_for_day/parse_elistar_daily_pdf_page, aunque el PDF y el Excel
+    # real lo impriman/nombren "MAJPAK" sin espacio -- confirmado leyendo el
+    # dato ya extraído, no asumido.
+    ("TABACCO", ("CIGARS", "GEN-CTN", "GEN-PAK", "MAJ CR", "MAJ PAK", "SNUFF")),
+    ("SODA", ("SODA",)),
+    ("BEER/WINE", ("BEER/WINE",)),
+    ("LOTERY/LOTTO", ("ONLINE", "SKOFF")),
+    ("Gettel", ("GETTEL",)),
+    (
+        "RESTO",
+        ("COFFE", "TAXABLE", "NONTAX", "SNACK", "JUICE", "WATER", "E-GIGARETTE", "CANDY", "VARIOS/BOLSA", "FOUTAIN"),
+    ),
+)
+
+
+def group_department_sales(records, gettel_amount=None):
+    """
+    Agrupa una lista de departamentos (cada uno {"department", "count",
+    "amount"} -- una fila de daily_report_departments, de un día o ya
+    sumados por mes) en las 6 categorías de arriba.
+
+    `gettel_amount`, si viene (no None), reemplaza el monto de la
+    categoría "Gettel" -- esa venta NUNCA sale del PDF de cierre diario
+    (es un negocio aparte), así que `records` nunca trae nada para ese
+    grupo por sí solo; el caller (webapp.py) le pasa acá la suma real del
+    día/mes desde gettel_db, sacada de los reportes de cupones de Gettel
+    (pedido explícito del usuario 2026-09-12, cuarta tanda). Sin este
+    parámetro, la categoría sigue en $0 como antes.
+
+    Devuelve (groups, unmatched): `groups` en el mismo orden que las hojas
+    reales, cada uno {"label", "count", "amount"}. Un departamento real que
+    no matchea NINGÚN grupo conocido (ej. AUTO/BOILED PEANUTS/FLOWER(S)/
+    HBA/ICECREAM) se suma dentro de RESTO -- pedido explícito del usuario
+    (2026-09-14): "estas categorias se suman a RESTO" -- a diferencia del
+    Excel real (que tampoco los suma a ninguna de las 6 categorías), acá sí
+    se incluyen para no dejar ventas reales fuera de las categorías. `
+    unmatched` queda siempre vacío -- se conserva en la firma para no tener
+    que tocar los callers/templates que todavía lo reciben.
+    """
+    totals_by_department = {}
+    for record in records:
+        key = (record.get("department") or "").strip().upper()
+        if not key:
+            continue
+        bucket = totals_by_department.setdefault(key, {"count": 0, "amount": 0.0})
+        bucket["count"] += record.get("count") or 0
+        bucket["amount"] += record.get("amount") or 0.0
+
+    matched_departments = set()
+    groups = []
+    for label, members in DEPARTMENT_GROUPS:
+        if label == "Gettel" and gettel_amount is not None:
+            matched_departments.update(member for member in members if member in totals_by_department)
+            groups.append({"label": label, "count": 0, "amount": round(gettel_amount, 2)})
+            continue
+        count = sum(totals_by_department.get(member, {}).get("count", 0) for member in members)
+        amount = sum(totals_by_department.get(member, {}).get("amount", 0.0) for member in members)
+        matched_departments.update(member for member in members if member in totals_by_department)
+        groups.append({"label": label, "count": count, "amount": round(amount, 2)})
+
+    resto_group = next(g for g in groups if g["label"] == "RESTO")
+    for department, values in totals_by_department.items():
+        if department in matched_departments:
+            continue
+        resto_group["count"] += values["count"]
+        resto_group["amount"] = round(resto_group["amount"] + values["amount"], 2)
+
+    return groups, []
+
+
+def extract_store_info_for_day(pdf_path):
+    """
+    Wrapper delgado sobre extract_store_info_from_pdf que además aplica el
+    mismo +1 día que ya aplica write_store_info_row al escribir la columna
+    A/C del Excel -- centralizado acá para que ningún llamador nuevo se
+    olvide del ajuste (ya pasó más de una vez en este proyecto).
+    """
+    fields = extract_store_info_from_pdf(pdf_path)
+    business_date = fields["from_date"] + timedelta(days=1)
+    return {"date": business_date, "fields": fields}
+
+
 def build_department_column_map(sheet):
     """
     Scan row 3 from column C outward and map department labels to (count_col, amount_col).
@@ -1590,7 +1731,7 @@ def _normalize_pdf_paths(pdf_paths):
 _MAX_CONCURRENT_PDF_WORKERS = 4
 
 
-def _parse_pdfs_concurrently(paths, parse_fn, **kwargs):
+def _parse_pdfs_concurrently(paths, parse_fn, progress_callback=None, **kwargs):
     """
     Run parse_fn(path, **kwargs) for every path, in parallel when there's
     more than one.
@@ -1600,6 +1741,12 @@ def _parse_pdfs_concurrently(paths, parse_fn, **kwargs):
     read at the same time on a multi-core machine instead of strictly one
     after another, with no change to how any single PDF is read. Capped at
     a handful of workers so a big batch doesn't overwhelm the machine.
+
+    `progress_callback(done, total)`, si viene, se llama cada vez que un PDF
+    más termina de leerse (éxito o error) -- el paso lento de un lote (ver
+    docstring de arriba), así que es la señal más representativa de avance
+    real para un job en segundo plano (ver jobs.py/CLAUDE.md, "progreso
+    real"). Opcional, sin efecto si no se pasa.
 
     Returns (results, errors) -- two dicts keyed by path -- instead of
     raising on the first bad PDF. A single unreadable/unrecognizable PDF
@@ -1616,8 +1763,13 @@ def _parse_pdfs_concurrently(paths, parse_fn, **kwargs):
         except Exception as exc:
             return ("error", exc)
 
-    if len(paths) <= 1:
-        outcomes = {path: _run(path) for path in paths}
+    total = len(paths)
+    if total <= 1:
+        outcomes = {}
+        for path in paths:
+            outcomes[path] = _run(path)
+            if progress_callback:
+                progress_callback(len(outcomes), total)
     else:
         max_workers = min(len(paths), os.cpu_count() or _MAX_CONCURRENT_PDF_WORKERS, _MAX_CONCURRENT_PDF_WORKERS)
         outcomes = {}
@@ -1625,6 +1777,8 @@ def _parse_pdfs_concurrently(paths, parse_fn, **kwargs):
             futures = {executor.submit(_run, path): path for path in paths}
             for future in as_completed(futures):
                 outcomes[futures[future]] = future.result()
+                if progress_callback:
+                    progress_callback(len(outcomes), total)
 
     results = {}
     errors = {}
@@ -1659,7 +1813,7 @@ def _partition_paths_by_extractable_day(paths):
 
 
 def process_reporte_diario(
-    master_path, pdf_paths, page_index=DEFAULT_PDF_PAGE_INDEX
+    master_path, pdf_paths, page_index=DEFAULT_PDF_PAGE_INDEX, progress_callback=None
 ):
     """
     Parse one or more daily PDFs and inject each into its calendar day row.
@@ -1704,7 +1858,7 @@ def process_reporte_diario(
     # archivo en un aviso"). Ahora cada PDF que falla se cuenta aparte y el
     # resto sigue procesándose normal.
     parsed_by_path, parse_errors = _parse_pdfs_concurrently(
-        sorted_paths, parse_elistar_daily_pdf_page, page_index=page_index
+        sorted_paths, parse_elistar_daily_pdf_page, progress_callback=progress_callback, page_index=page_index
     )
     files_failed_to_parse = len(parse_errors)
     ok_paths = [path for path in sorted_paths if path in parsed_by_path]
@@ -1828,8 +1982,10 @@ PERIOD_FROM_ANCHOR = "period from"
 NETWORK_REVENUE_ANCHOR = "network revenue"
 
 # 1-based column numbers for the fields this extraction is allowed to touch.
-# Everything else (H, I..N, R, U, W) is either a formula or filled in some
-# other way and must never be written here.
+# Everything else (H, I..N, R, W) is either a formula or filled in some
+# other way and must never be written here. U (Other) USED to be in that
+# "never touch" group too -- ver STORE_INFO_COL_OTHER más abajo, agregado
+# 2026-09-12 a pedido explícito del usuario.
 STORE_INFO_COL_FROM_DATE = 1  # A — Fecha (FROM date + 1 day)
 STORE_INFO_COL_FROM_TIME = 2  # B — hs (FROM time, unchanged)
 STORE_INFO_COL_TO_DATE = 3  # C — Fecha (FROM date + 2 days)
@@ -1842,6 +1998,7 @@ STORE_INFO_COL_DESC_OTROS = 16  # P — desc otros
 STORE_INFO_COL_TAX_COLLECT = 17  # Q — Tax collet
 STORE_INFO_COL_CASH = 19  # S — Cash
 STORE_INFO_COL_CREDIT = 20  # T — TC (written as a "=a+b+c" formula, like the sheet's own history)
+STORE_INFO_COL_OTHER = 21  # U — Other (fila "Other" del Method of Payment Totals, después de LOCAL ACCOUNTS)
 STORE_INFO_COL_LOCAL_ACCOUNTS = 22  # V — Local Account
 STORE_INFO_COL_NETWORK_REVENUE = 24  # X — Network Revenue
 
@@ -2033,6 +2190,20 @@ def _extract_store_info_fields(lines):
         raise ValueError('No se encontró "Total Taxes Collected".')
     tax_collect = _force_positive(_sanitize_store_info_float(taxes[-1]))
 
+    # "Total Sales" -- la misma cifra que Store Info!R ("Total Ventas")
+    # recalcula con una fórmula (Total Fuel + Non Fuel + Desc Otros + Tax
+    # Collect - VS) -- se lee directo del PDF en vez de reconstruir esa
+    # fórmula acá, porque VS (columna M de Store Info) no es un campo que
+    # este parser capture (casi siempre 0 en la práctica, pero replicar la
+    # fórmula a ciegas arriesgaría un valor mal calculado un día en que no
+    # lo sea). Mismo criterio que Total Revenue/Network Revenue: se lee tal
+    # cual lo imprime el propio reporte, no se llega a esa columna con
+    # fórmula (R es de solo lectura acá, igual que H/I..N/W).
+    total_sales_values = _find_label_values(lines, "Total Sales")
+    if not total_sales_values:
+        raise ValueError('No se encontró "Total Sales".')
+    total_sales = _force_positive(_sanitize_store_info_float(total_sales_values[-1]))
+
     cash_values = _find_label_values(lines, "Cash")
     if not cash_values:
         raise ValueError('No se encontró la fila "Cash" bajo Method of Payment Totals.')
@@ -2064,6 +2235,22 @@ def _extract_store_info_fields(lines):
 
     if local_accounts is None:
         raise ValueError('No se encontró la fila "LOCAL ACCOUNTS".')
+
+    # Fila "Other" del Method of Payment Totals -- pedido explícito del
+    # usuario (2026-09-12): "en la parte de abajo... hay veces que hay pago
+    # de 1 o 2 dolares [bajo] 'Other'... nunca le enseñe al OCR a
+    # detectarlos". Vive en un bloque de filas (Loyalty/Other/Overruns/P97/
+    # Rounding/Test Fuel) DESPUÉS de "LOCAL ACCOUNTS" -- fuera del rango que
+    # ya recorre el loop de arriba (ese corta justo ahí), y _find_label_values
+    # matchea el label EXACTO ("Other"), nunca "Other Discounts" (ya
+    # capturado aparte, más arriba, con su propio significado). Ausente
+    # cuando el día no tuvo ningún pago de esa categoría -- 0.0, no error
+    # (no es un campo obligatorio del reporte como sí lo son Cash/Local
+    # Accounts).
+    other_values = _find_label_values(lines, "Other")
+    other_amount = (
+        _force_positive(_sanitize_store_info_float(other_values[-1])) if other_values else 0.0
+    )
 
     network_values = _find_label_values(lines, "Network Revenue")
     if not network_values:
@@ -2097,9 +2284,11 @@ def _extract_store_info_fields(lines):
         "non_fuel_total": non_fuel_total,
         "desc_otros": desc_otros,
         "tax_collect": tax_collect,
+        "total_sales": total_sales,
         "cash": cash,
         "credit_terms": credit_terms,
         "local_accounts": local_accounts,
+        "other_amount": other_amount,
         "network_revenue": network_revenue,
         "total_revenue": total_revenue,
     }
@@ -2218,6 +2407,7 @@ def write_store_info_row(sheet, fields):
         column=STORE_INFO_COL_CREDIT,
         value=_build_credit_terms_formula(fields["credit_terms"]),
     )
+    sheet.cell(row=row, column=STORE_INFO_COL_OTHER, value=fields.get("other_amount", 0.0))
     sheet.cell(row=row, column=STORE_INFO_COL_LOCAL_ACCOUNTS, value=fields["local_accounts"])
     sheet.cell(
         row=row, column=STORE_INFO_COL_NETWORK_REVENUE, value=fields["network_revenue"]
@@ -2225,7 +2415,7 @@ def write_store_info_row(sheet, fields):
     return row
 
 
-def process_store_info(master_path, pdf_paths):
+def process_store_info(master_path, pdf_paths, progress_callback=None):
     """
     Parse one or more daily PDFs and write one Store Info row per day to the
     "Store Info" sheet of a separate workbook — each on the row matching its
@@ -2259,7 +2449,9 @@ def process_store_info(master_path, pdf_paths):
             "un patrón como 'Close Store 01-05.pdf'."
         )
 
-    fields_by_path, parse_errors = _parse_pdfs_concurrently(sorted_paths, extract_store_info_from_pdf)
+    fields_by_path, parse_errors = _parse_pdfs_concurrently(
+        sorted_paths, extract_store_info_from_pdf, progress_callback=progress_callback
+    )
     files_failed_to_parse = len(parse_errors)
     ok_paths = [path for path in sorted_paths if path in fields_by_path]
 
