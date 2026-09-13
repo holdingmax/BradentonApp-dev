@@ -40,7 +40,6 @@
           <th colspan="6">Terminal (juegos online)</th>
           <th colspan="7">SKOFF (raspaditas)</th>
           <th rowspan="2">Cuenta Final</th>
-          <th rowspan="2">Debito semanal</th>
           <th rowspan="2">Chase Bank</th>
         </tr>
         <tr>
@@ -58,7 +57,7 @@
           <td>{{ fmt(day.sales) }}</td><td>{{ fmt(day.pagos) }}</td><td>{{ fmt(day.cash_balance) }}</td><td>{{ fmt(day.comis) }}</td><td>{{ fmt(day.prize_free_plays) }}</td><td>{{ fmt(day.total_comm) }}</td>
           <td>{{ fmti(day.skoff_count) }}</td><td>{{ fmt(day.skoff_net_sales) }}</td><td>{{ fmti(day.pays_units) }}</td><td>{{ fmt(day.pays_amount) }}</td><td>{{ fmt(day.skoff_sales_amount) }}</td><td>{{ fmt(day.sales_comm) }}</td><td>{{ fmt(day.net_total) }}</td>
           <td>{{ fmt(day.cuenta_final) }}</td>
-          <td class="muted">—</td><td class="muted">—</td>
+          <td class="muted">—</td>
         </tr>
         {% endfor %}
         <tr class="lottery-row-subtotal {{ 'lottery-block-alt' if block.iso_week is even else '' }}">
@@ -67,7 +66,7 @@
           <td>{{ fmt(block.subtotal.sales) }}</td><td>{{ fmt(block.subtotal.pagos) }}</td><td class="muted">—</td><td>{{ fmt(block.subtotal.comis) }}</td><td>{{ fmt(block.subtotal.prize_free_plays) }}</td><td>{{ fmt(block.subtotal.total_comm) }}</td>
           <td class="muted">—</td><td class="muted">—</td><td>{{ fmti(block.subtotal.pays_units) }}</td><td>{{ fmt(block.subtotal.pays_amount) }}</td><td>{{ fmt(block.subtotal.skoff_sales_amount) }}</td><td>{{ fmt(block.subtotal.sales_comm) }}</td><td class="muted">—</td>
           <td class="muted">—</td>
-          <td class="muted">—</td><td class="muted">—</td>
+          <td class="muted">—</td>
         </tr>
         <tr class="lottery-row-debito {{ 'lottery-block-alt' if block.iso_week is even else '' }}">
           <td class="historial-col-day"><strong>Debito</strong></td>
@@ -75,8 +74,8 @@
           <td>{{ fmt(block.debito.sales) }}</td><td class="muted">—</td><td class="muted">—</td><td class="muted">—</td><td class="muted">—</td><td class="muted">—</td>
           <td class="muted">—</td><td class="muted">—</td><td class="muted">—</td><td>{{ fmt(block.debito.pays_amount) }}</td><td class="muted">—</td><td class="muted">—</td><td class="muted">—</td>
           <td class="muted">—</td>
-          <td><strong>${{ fmt(block.debito.net_debit) }}</strong></td>
           <td>
+            <div class="lottery-chase-amount"><strong>${{ fmt(block.debito.net_debit) }}</strong></div>
             <form method="post" action="{{ url_for('carga_datos_lottery_bloque_chase', iso_year=block.iso_year, iso_week=block.iso_week) }}" class="lottery-chase-form">
               <input type="hidden" name="year" value="{{ year }}">
               <input type="hidden" name="month" value="{{ month }}">
@@ -128,6 +127,7 @@
   .lottery-block-alt { background: var(--surface-alt); }
   .lottery-row-subtotal { font-weight: 600; border-top: 2px solid var(--border); }
   .lottery-row-debito { background: var(--accent-soft); border-bottom: 2px solid var(--border); }
+  .lottery-chase-amount { margin-bottom: 4px; }
   .lottery-chase-form { display: flex; gap: 6px; align-items: center; }
   .lottery-chase-form input[type=date] { padding: 4px 6px; font-size: 11.5px; }
   .lottery-chase-form button { padding: 4px 10px; font-size: 11.5px; }
