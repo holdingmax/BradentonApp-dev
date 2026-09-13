@@ -490,7 +490,11 @@
       display: none;
       z-index: 45;
     }
-    .app-rail-item:hover .app-rail-panel { display: block; }
+    /* Solo colapsada (:hover = flyout) -- pedido explícito del usuario
+       (2026-09-14): fijada expandida, pasar el mouse por encima NO debe
+       abrir nada -- ahí el panel se abre únicamente con un click
+       (.expanded, ver más abajo y el JS toggleAppRailItem). */
+    body:not(.rail-pinned) .app-rail-item:hover .app-rail-panel { display: block; }
     /* Título del módulo dentro del panel -- solo hace falta colapsada (el
        flyout de hover, sin ningún otro texto alrededor que diga sobre qué
        módulo estás parado, ver pedido del usuario); fijada expandida ya
@@ -821,28 +825,14 @@
           <span class="app-rail-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20V13M2 20h20"/></svg>
           </span>
-          <span class="app-rail-label">Ventas por Departamento</span>
+          <span class="app-rail-label">Reporte Diario</span>
           <svg class="app-rail-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
         </div>
         <div class="app-rail-panel">
-          <div class="app-rail-panel-title">Ventas por Departamento</div>
+          <div class="app-rail-panel-title">Reporte Diario</div>
           <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('carga_datos_reporte_diario') }}">Cargar PDF</a>
-          <a class="app-rail-panel-link" href="{{ url_for('reporte_historial') }}">Ver guardado</a>
-          <a class="app-rail-panel-link" href="{{ url_for('reporte_documentos') }}">Documentos</a>
-        </div>
-      </div>
-      <div class="app-rail-item">
-        <div class="app-rail-item-row" onclick="toggleAppRailItem(this)">
-          <span class="app-rail-icon">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="3" width="14" height="18" rx="2"/><line x1="8" y1="8" x2="16" y2="8"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="16" x2="13" y2="16"/></svg>
-          </span>
-          <span class="app-rail-label">Store Info</span>
-          <svg class="app-rail-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
-        </div>
-        <div class="app-rail-panel">
-          <div class="app-rail-panel-title">Store Info</div>
-          <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('carga_datos_reporte_diario') }}">Cargar PDF</a>
-          <a class="app-rail-panel-link" href="{{ url_for('reporte_store_info_historial') }}">Ver guardado</a>
+          <a class="app-rail-panel-link" href="{{ url_for('reporte_historial') }}">Ventas por Departamento</a>
+          <a class="app-rail-panel-link" href="{{ url_for('reporte_store_info_historial') }}">Store Info</a>
           <a class="app-rail-panel-link" href="{{ url_for('reporte_documentos') }}">Documentos</a>
         </div>
       </div>
@@ -946,7 +936,9 @@
         </div>
         <div class="app-rail-panel">
           <div class="app-rail-panel-title">Proveedores</div>
-          <span class="app-rail-soon">Todavía no se suma <span class="app-rail-soon-tag">Pronto</span></span>
+          <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('carga_datos_proveedores') }}">Cargar factura</a>
+          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_proveedores_historial') }}">Ver guardado</a>
+          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_documentos', module_key='proveedores') }}">Documentos</a>
         </div>
       </div>
     </div>

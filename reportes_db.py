@@ -389,11 +389,16 @@ def upsert_printed_totals(report_date, total_sales, total_units):
 
 def get_month_store_info(year, month):
     """
-    Fila completa de Store Info de cada día del mes que ya tiene datos
-    cargados, en orden -- para el reporte mensual tipo Excel de
-    /reporte/historial (ver CLAUDE.md, "mostrar bien el Store Info hasta el
-    punto del mes que va").
+    Un renglón por CADA día del mes, haya datos o no -- para el reporte
+    mensual tipo Excel de /reporte/historial. Pedido explícito del usuario
+    (2026-09-14): antes solo se devolvían los días ya cargados, quedando
+    todos pegados unos con otros sin ningún espacio -- mareaba no poder ver
+    de un vistazo qué días faltan completar. Un día sin nada cargado
+    todavía se devuelve con todos los campos en None (la plantilla ya
+    muestra "—" para eso) pero con su fecha real, para poder marearlo
+    visualmente como un salto Y para poder linkear igual a "Editar".
     """
+    days_in_month = calendar.monthrange(year, month)[1]
     prefix = f"{year:04d}-{month:02d}-"
     conn = _connect()
     try:
@@ -404,11 +409,27 @@ def get_month_store_info(year, month):
     finally:
         conn.close()
 
-    result = []
+    by_date = {}
     for row in rows:
         item = dict(row)
         item["credit_terms"] = json.loads(item.get("credit_terms_json") or "[]")
-        result.append(item)
+        by_date[item["date"]] = item
+
+    blank_fields = (
+        "from_time", "to_time", "volume", "sales_fuel", "desc_comb", "non_fuel_total",
+        "desc_otros", "tax_collect", "total_sales", "cash", "local_accounts",
+        "other_amount", "network_revenue", "total_revenue",
+    )
+    result = []
+    for day in range(1, days_in_month + 1):
+        day_key = f"{year:04d}-{month:02d}-{day:02d}"
+        if day_key in by_date:
+            result.append(by_date[day_key])
+        else:
+            blank = {field: None for field in blank_fields}
+            blank["date"] = day_key
+            blank["credit_terms"] = []
+            result.append(blank)
     return result
 
 

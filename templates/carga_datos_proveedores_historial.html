@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block main_class %}main-full{% endblock %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ url_for('carga_datos_proveedores') }}">Proveedores</a><span class="current">Guardado</span></nav>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <span class="eyebrow">Proveedores</span>
+  <h1>Guardado</h1>
+  <p class="page-subtitle">Facturas del mes, agrupadas por proveedor — sin abrir ningún Excel. <a href="{{ url_for('carga_datos_documentos', module_key='proveedores') }}">Ver los PDF originales guardados</a>.</p>
+</div>
+
+<div class="card">
+  <div class="historial-nav">
+    <a href="{{ url_for('carga_datos_proveedores_historial', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
+    <div class="historial-nav-title">
+      <h2>{{ month_name }} {{ year }}</h2>
+      <a href="{{ url_for('carga_datos_proveedores_historial') }}" class="muted">Ir al mes actual</a>
+    </div>
+    <a href="{{ url_for('carga_datos_proveedores_historial', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
+  </div>
+
+  {% if groups %}
+  <p class="muted" style="margin-top: 14px;">Total del mes: <strong>${{ "{:,.2f}".format(month_total) }}</strong> en {{ invoice_count }} factura(s), {{ groups|length }} proveedor(es).</p>
+  {% for group in groups %}
+  <div class="proveedores-supplier-block">
+    <div class="proveedores-supplier-head">
+      <span class="proveedores-supplier-title">{{ group.label }}</span>
+      <span class="muted">{{ group.invoices|length }} factura(s) — total ${{ "{:,.2f}".format(group.total) }}</span>
+    </div>
+    <div class="historial-table-wrap">
+      <table class="historial-table">
+        <thead><tr><th>Fecha</th><th>N° Factura</th><th>Monto</th><th></th></tr></thead>
+        <tbody>
+          {% for inv in group.invoices %}
+          <tr>
+            <td class="historial-col-day">{{ inv.invoice_date }}</td>
+            <td>{{ inv.invoice_no }}</td>
+            <td>${{ "{:,.2f}".format(inv.amount) }}</td>
+            <td class="historial-col-action">
+              <form method="post" action="{{ url_for('carga_datos_proveedores_eliminar', invoice_id=inv.id) }}" style="display:inline;" onsubmit="return confirm('¿Eliminar esta factura?');">
+                <input type="hidden" name="year" value="{{ year }}">
+                <input type="hidden" name="month" value="{{ month }}">
+                <button type="submit" class="btn-secondary">Eliminar</button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endfor %}
+  {% else %}
+  <p class="muted" style="margin-top: 18px;">Todavía no hay ninguna factura guardada este mes.</p>
+  {% endif %}
+</div>
+
+<style>
+  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .historial-nav-btn { text-decoration: none; display: inline-block; }
+  .historial-nav-title { text-align: center; }
+  .historial-nav-title h2 { margin: 0; }
+  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
+  .historial-table-wrap { overflow-x: auto; margin-top: 10px; border: 1px solid var(--border); border-radius: 10px; }
+  .historial-table { width: 100%; min-width: 420px; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .historial-table th, .historial-table td { padding: 8px 14px; text-align: left; }
+  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr { border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
+  .historial-col-day { font-weight: 700; white-space: nowrap; }
+  .historial-col-action { text-align: right; white-space: nowrap; }
+  .historial-col-action form button { margin-top: 0; padding: 5px 10px; font-size: 12px; }
+
+  .proveedores-supplier-block { padding: 16px 0; border-top: 1px solid var(--border); }
+  .proveedores-supplier-block:first-of-type { border-top: none; padding-top: 0; }
+  .proveedores-supplier-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 6px; }
+  .proveedores-supplier-title { font-weight: 700; font-size: 14.5px; }
+</style>
+{% endblock %}

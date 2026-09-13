@@ -2088,6 +2088,29 @@ def _detect_supplier(pdf_path):
     raise ValueError(f"{os.path.basename(pdf_path)}: proveedor no reconocido.")
 
 
+def extract_invoices_from_pdf(pdf_path):
+    """
+    Detecta el proveedor y extrae la(s) factura(s) de un PDF -- SIN tocar
+    ningún Excel Ledger. Es la mitad de lectura de `append_supplier_invoices`
+    (detect + extract), separada para que Carga de Datos → Proveedores
+    (guardado en base, sin Excel) pueda reusar exactamente el mismo motor de
+    32 proveedores + el dinámico, sin duplicar ni un carácter de esa lógica.
+
+    Devuelve (supplier_key, supplier_label, invoices) -- `invoices` siempre
+    una lista (la mayoría de los proveedores devuelven 1 factura por PDF,
+    Coca-Cola/Pepsi a veces 2 -- ver `append_supplier_invoices`), cada una
+    con "date"/"invoice_no"/"amount". Deja pasar las mismas excepciones que
+    ya usa `append_supplier_invoices` para aislar por PDF (ValueError/
+    TypeError/AttributeError/RuntimeError/OSError/cv2.error) -- el caller
+    decide cómo aislar el lote.
+    """
+    registry = _effective_supplier_registry()
+    supplier_key = _detect_supplier(pdf_path)
+    result = registry[supplier_key]["extract"](pdf_path)
+    invoices = result if isinstance(result, list) else [result]
+    return supplier_key, registry[supplier_key]["label"], invoices
+
+
 def _get_supplier_sheet(workbook, sheet_name):
     target = sheet_name.strip().lower()
     for name in workbook.sheetnames:

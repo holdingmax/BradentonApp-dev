@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block crumbs %}
+<nav class="crumbs"><span class="current">Proveedores</span></nav>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Proveedores</h1>
+  <p class="page-subtitle">Subí una o más facturas de compra — se detecta el proveedor solo (mismo motor de siempre, 32 proveedores + los agregados sin código) y se guardan por proveedor, sin generar ningún Excel. <a href="{{ url_for('carga_datos_proveedores_historial') }}">Ver lo ya guardado</a>.</p>
+</div>
+
+<div class="card">
+  <h2>Facturas de compra</h2>
+  <p class="muted">Un mismo N° de factura ya cargado para ese proveedor se detecta solo y se omite. Se pueden elegir varios PDF de una sola vez, de proveedores distintos mezclados.</p>
+  <form method="post" action="{{ url_for('carga_datos_proveedores_subir') }}" enctype="multipart/form-data">
+    <label class="muted">Factura(s) en PDF</label>
+    <input type="file" name="pdf_files" id="proveedores-pdf-input" multiple accept="application/pdf" class="accumulate-files" required>
+    <div class="form-actions">
+      <button type="submit">Guardar</button>
+      <button type="button" class="btn-secondary clear-file-btn" data-target="proveedores-pdf-input">Limpiar</button>
+    </div>
+  </form>
+</div>
+{% endblock %}

@@ -64,7 +64,8 @@ from controles_lottery_mensual import check_lottery_monthly
 from controles_mercaderia import check_mercaderia_invoices
 from controles_valuacion import check_and_complete_valuation
 from monthly_sales import _resolve_sheet_name, parse_monthly_sales_file, process_monthly_sales
-from proveedores import append_supplier_invoices, append_supplier_payments
+from proveedores import append_supplier_invoices, append_supplier_payments, extract_invoices_from_pdf
+from proveedores import _PDF_EXTRACTION_EXCEPTIONS
 from proveedores_dynamic_extractors import (
     FIELD_LABELS as DYNAMIC_FIELD_LABELS,
     FIELDS as DYNAMIC_FIELDS,
@@ -91,6 +92,7 @@ import lottery_db
 import gettel_db
 import cmv_db
 import documents_db
+import proveedores_db
 import jobs
 from balance_mensual import replace_mayor_sheets
 
@@ -346,17 +348,15 @@ TOOLS = [
         "accent": "#DB2777",
         "accent_soft": "#FBD9EA",
     },
-    {
-        "key": "balance_mensual",
-        "code": "BM",
-        "icon": _ICON_SCALE,
-        "label": "Balance Mensual",
-        "url": "/balance-mensual",
-        "description": "Reemplaza el Mayor de las cuentas simples del Excel de Balance del mes (Adm Fees, Seguros, etc.).",
-        "accent": "#78350F",
-        "accent_soft": "#F5E4CE",
-    },
 ]
+
+# Balance Mensual (`/balance-mensual`, balance_mensual.py) -- construido en
+# una sesión anterior pero TODAVÍA NO CONFIRMADO por el usuario ("no es algo
+# que este listo", pedido explícito 2026-09-14) -- sacado de TOOLS para que
+# no aparezca ni en la grilla de Herramientas ni en la búsqueda del header
+# como si fuera un módulo terminado. La ruta y el código siguen intactos,
+# solo dejaron de anunciarse -- si el usuario confirma que está listo,
+# devolver esta entrada a TOOLS de nuevo (no reescribir nada).
 
 # Segunda sección de la app, hermana de Herramientas (TOOLS): cada entrada acá
 # es un módulo que recibe un Excel ya cerrado de fin de mes y verifica que
@@ -502,6 +502,16 @@ CARGA_DATOS_TOOLS = [
         "description": "Costo por UPC y ventas mensuales por departamento — guardados solos, sin generar ningún Excel.",
         "accent": "#7C3AED",
         "accent_soft": "#E9E0FC",
+    },
+    {
+        "key": "carga_proveedores",
+        "code": "PR",
+        "icon": _ICON_TRUCK,
+        "label": "Proveedores",
+        "url": "/carga-datos/proveedores",
+        "description": "Subí las facturas de compra — se guardan solas por proveedor, sin generar ningún Excel.",
+        "accent": "#DB2777",
+        "accent_soft": "#FBD9EA",
     },
 ]
 
@@ -2904,6 +2914,7 @@ _DOCUMENTS_MODULES = {
     "cmv_costo": {"title": "CMV — Costo", "theme": "carga_cmv", "back_endpoint": "carga_datos_cmv_costo_historial"},
     "cmv_ventas": {"title": "CMV — Ventas", "theme": "carga_cmv", "back_endpoint": "carga_datos_cmv_ventas_historial"},
     "lottery_resumen_mensual": {"title": "Lottery — Resumen mensual", "theme": "lottery", "back_endpoint": "carga_datos_lottery_historial"},
+    "proveedores": {"title": "Proveedores", "theme": "carga_proveedores", "back_endpoint": "carga_datos_proveedores_historial"},
 }
 
 
@@ -3005,6 +3016,124 @@ def carga_datos_documento_eliminar(document_id):
     documents_db.delete_document(document_id)
     flash("Documento eliminado.", "success")
     return redirect(url_for("carga_datos_documentos", module_key=doc["module"], year=doc["year"], month=doc["month"]))
+
+
+# ---------------------------------------------------------------------------
+# Proveedores -- Carga de Datos (2026-09-14, primer paso, pedido explícito
+# del usuario: "quiero que empieces con el modulo de proveedores y donde
+# pueda guardar sus facturas"). Reusa el motor de detección/extracción de
+# los 32 proveedores + el dinámico tal cual (`extract_invoices_from_pdf`,
+# proveedores.py) -- acá solo se guarda el resultado (proveedores_db.py),
+# sin escribir ningún Excel Ledger. El PDF original queda en Documentos
+# (documents_db, módulo "proveedores") como el resto de los módulos.
+# ---------------------------------------------------------------------------
+
+@app.route("/carga-datos/proveedores")
+def carga_datos_proveedores():
+    return render_template("carga_datos_proveedores.html", **THEME_BY_KEY["carga_proveedores"])
+
+
+@app.route("/carga-datos/proveedores/subir", methods=["POST"])
+def carga_datos_proveedores_subir():
+    """
+    Cada PDF se detecta/extrae con el mismo motor de siempre (sin tocarlo) y
+    se guarda en proveedores_db -- aislado por archivo, mismo criterio de
+    todo el proyecto (una factura con un problema no tira abajo el resto
+    del lote). Duplicado = mismo N° de factura ya guardado para ESE
+    proveedor (igual criterio que el Ledger real).
+    """
+    uploads = [f for f in request.files.getlist("pdf_files") if f and f.filename]
+    if not uploads:
+        flash("Seleccioná uno o más PDF de factura.", "error")
+        return redirect(url_for("carga_datos_proveedores"))
+
+    paths = _save_uploads_to_workspace(uploads)
+    saved = []
+    duplicates = []
+    failed = []
+
+    for path in paths:
+        filename = os.path.basename(path)
+        try:
+            supplier_key, supplier_label, invoices = extract_invoices_from_pdf(path)
+        except _PDF_EXTRACTION_EXCEPTIONS as exc:
+            failed.append({"filename": filename, "error": str(exc), "supplier": None})
+            continue
+
+        for invoice in invoices:
+            ok = proveedores_db.save_invoice(
+                supplier_key, supplier_label, invoice["date"], invoice["invoice_no"],
+                invoice["amount"], source_filename=filename,
+            )
+            if ok:
+                saved.append({"filename": filename, "supplier": supplier_label, "date": invoice["date"]})
+            else:
+                duplicates.append({"filename": filename, "supplier": supplier_label})
+
+        if invoices:
+            try:
+                doc_when = invoices[0]["date"]
+                documents_db.store_document(
+                    "proveedores", path, filename, doc_when.year, doc_when.month, label=supplier_label
+                )
+            except Exception as exc:
+                print(f"[documents_db] no se pudo guardar el documento de Proveedores {filename}: {exc}")
+
+    parts = []
+    if saved:
+        parts.append(f"{len(saved)} factura(s) guardada(s).")
+    if duplicates:
+        parts.append(f"{len(duplicates)} factura(s) ya estaban cargadas y se omitieron.")
+    if failed:
+        parts.append(_group_by_supplier_message("No se pudieron cargar", failed, "factura(s)"))
+    if not parts:
+        parts.append("No se guardó ninguna factura de este lote.")
+    flash(
+        " ".join(parts),
+        "success" if (saved and not duplicates and not failed) else ("error" if not saved else "warning"),
+    )
+
+    if saved:
+        d = saved[0]["date"]
+        return redirect(url_for("carga_datos_proveedores_historial", year=d.year, month=d.month))
+    return redirect(url_for("carga_datos_proveedores_historial"))
+
+
+@app.route("/carga-datos/proveedores/historial")
+def carga_datos_proveedores_historial():
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    groups = proveedores_db.get_month_invoices(year, month)
+    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+
+    return render_template(
+        "carga_datos_proveedores_historial.html",
+        groups=groups,
+        month_total=round(sum(g["total"] for g in groups), 2),
+        invoice_count=sum(len(g["invoices"]) for g in groups),
+        year=year,
+        month=month,
+        month_name=_MONTH_NAMES_ES[month - 1],
+        prev_year=prev_year,
+        prev_month=prev_month,
+        next_year=next_year,
+        next_month=next_month,
+        **THEME_BY_KEY["carga_proveedores"],
+    )
+
+
+@app.route("/carga-datos/proveedores/factura/<int:invoice_id>/eliminar", methods=["POST"])
+def carga_datos_proveedores_eliminar(invoice_id):
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    ok = proveedores_db.delete_invoice(invoice_id)
+    flash("Factura eliminada." if ok else "Esa factura ya no existe.", "success" if ok else "error")
+    return redirect(url_for("carga_datos_proveedores_historial", year=year, month=month))
 
 
 @app.route("/proveedores")
@@ -3295,7 +3424,11 @@ def proveedores_nuevo_eliminar():
 
 @app.route("/balance-mensual")
 def balance_mensual():
-    return render_template("balance_mensual.html", **THEME_BY_KEY["balance_mensual"])
+    # Ya no está en TOOLS (ver esa lista, comentario "no confirmado por el
+    # usuario") -- el tema del módulo se pasa directo acá en vez de por
+    # THEME_BY_KEY (que ya no tiene esta clave) para que la ruta siga
+    # andando si alguien entra por URL directa.
+    return render_template("balance_mensual.html", accent="#78350F", accent_soft="#F5E4CE")
 
 
 @app.route("/balance-mensual/procesar", methods=["POST"])

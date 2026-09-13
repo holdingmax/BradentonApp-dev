@@ -6,6 +6,8 @@ report, maps headers dynamically on sheet \"CARGA AQUI\" (row 3, column C onward
 and injects count/amount pairs on the first eligible operational row.
 """
 
+import copy
+import functools
 import io
 import os
 import re
@@ -1266,7 +1268,7 @@ def parse_elistar_daily_pdf_ocr(pdf_path, start_page_index=DEFAULT_PDF_PAGE_INDE
     return records, diagnostics
 
 
-def parse_elistar_daily_pdf_page(pdf_path, page_index=DEFAULT_PDF_PAGE_INDEX):
+def _parse_elistar_daily_pdf_page_uncached(pdf_path, page_index=DEFAULT_PDF_PAGE_INDEX):
     """
     Extract department records from the selected PDF page (0-based index).
 
@@ -1314,6 +1316,34 @@ def parse_elistar_daily_pdf_page(pdf_path, page_index=DEFAULT_PDF_PAGE_INDEX):
         f'"{DEPARTMENT_SALES_REPORT_ANCHOR}". '
         "Se esperaba Dept.Name (col 1), Net Count (col 5), Net Sales $ (col 8)."
     )
+
+
+@functools.lru_cache(maxsize=64)
+def _parse_elistar_daily_pdf_page_cached(pdf_path, page_index):
+    return _parse_elistar_daily_pdf_page_uncached(pdf_path, page_index)
+
+
+def parse_elistar_daily_pdf_page(pdf_path, page_index=DEFAULT_PDF_PAGE_INDEX):
+    """
+    Wrapper con caché sobre _parse_elistar_daily_pdf_page_uncached -- pedido
+    explícito del usuario (2026-09-14): "los pdf siguen cargando... se
+    deberia ignorar las paginas que no sean relevantes de leer". La página
+    de Department Sales Report YA se leía de forma perezosa (solo hasta
+    encontrar el ancla, nunca las 50+ páginas del PDF -- ver
+    _LazyPdfPageImages) -- el problema real, encontrado investigando, era
+    otro: para el MISMO PDF, esta función se llamaba 3 veces independientes
+    dentro de un mismo job (una desde `process_reporte_diario`, otra desde
+    `extract_department_sales_for_day`, otra desde
+    `extract_lottery_department_fields_from_pdf`), cada una re-decodificando
+    y re-OCR'ando la página del ancla desde cero. `lru_cache` (acotado a 64
+    PDFs distintos, cada request usa una ruta de archivo temporal única, así
+    que nunca queda un resultado viejo pisando uno nuevo del mismo path)
+    evita repetir ese trabajo -- se devuelve una copia nueva en cada llamada
+    (`copy.deepcopy`) para que ningún caller pueda mutar el resultado
+    cacheado de otro por accidente.
+    """
+    records, diagnostics = _parse_elistar_daily_pdf_page_cached(os.path.abspath(pdf_path), page_index)
+    return copy.deepcopy(records), copy.deepcopy(diagnostics)
 
 
 def extract_department_sales_for_day(pdf_path):
@@ -1426,13 +1456,18 @@ def group_department_sales(records, gettel_amount=None):
     matched_departments = set()
     groups = []
     for label, members in DEPARTMENT_GROUPS:
-        if label == "Gettel" and gettel_amount is not None:
-            matched_departments.update(member for member in members if member in totals_by_department)
-            groups.append({"label": label, "count": 0, "amount": round(gettel_amount, 2)})
-            continue
         count = sum(totals_by_department.get(member, {}).get("count", 0) for member in members)
         amount = sum(totals_by_department.get(member, {}).get("amount", 0.0) for member in members)
         matched_departments.update(member for member in members if member in totals_by_department)
+        if label == "Gettel" and gettel_amount is not None:
+            # "GETTEL" a veces SÍ aparece como departamento real en el
+            # Department Sales Report del PDF (pedido explícito del
+            # usuario 2026-09-14: "las ventas de gettel te van a aparecer
+            # al lado de los demas departamentos") -- se suma al monto de
+            # los reportes de cupones del vendedor (gettel_db), nunca lo
+            # reemplaza, para no perder en silencio una venta real ya
+            # impresa en el PDF de cierre.
+            amount += gettel_amount
         groups.append({"label": label, "count": count, "amount": round(amount, 2)})
 
     resto_group = next(g for g in groups if g["label"] == "RESTO")
@@ -2294,7 +2329,7 @@ def _extract_store_info_fields(lines):
     }
 
 
-def extract_store_info_from_pdf(pdf_path, start_page_index=DEFAULT_STORE_INFO_PAGE_INDEX):
+def _extract_store_info_from_pdf_uncached(pdf_path, start_page_index=DEFAULT_STORE_INFO_PAGE_INDEX):
     """
     OCR the "PERIOD FROM:" page (generally page 3) plus as many following
     pages as needed to reach "Network Revenue" (generally the start of page
@@ -2349,6 +2384,26 @@ def extract_store_info_from_pdf(pdf_path, start_page_index=DEFAULT_STORE_INFO_PA
     fields = _extract_store_info_fields(lines)
     fields["pages_used"] = pages_used
     return fields
+
+
+@functools.lru_cache(maxsize=64)
+def _extract_store_info_from_pdf_cached(pdf_path, start_page_index):
+    return _extract_store_info_from_pdf_uncached(pdf_path, start_page_index)
+
+
+def extract_store_info_from_pdf(pdf_path, start_page_index=DEFAULT_STORE_INFO_PAGE_INDEX):
+    """
+    Wrapper con caché sobre _extract_store_info_from_pdf_uncached -- mismo
+    motivo/criterio que parse_elistar_daily_pdf_page de arriba (ver ese
+    docstring): esta función se llama más de una vez para el MISMO PDF
+    dentro de un mismo job (ej. desde extract_department_sales_for_day Y
+    desde extract_lottery_department_fields_from_pdf), cada una repitiendo
+    el mismo OCR de las páginas de Store Info -- el paso más lento de todo
+    el pipeline. `lru_cache` acotado + devolver una copia nueva en cada
+    llamada, mismo criterio de seguridad que el otro wrapper.
+    """
+    fields = _extract_store_info_from_pdf_cached(os.path.abspath(pdf_path), start_page_index)
+    return copy.deepcopy(fields)
 
 
 def _find_store_info_sheet(workbook):
