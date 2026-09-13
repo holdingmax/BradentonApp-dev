@@ -30,7 +30,36 @@
     </div>
   </form>
 
-  {% if docs %}
+  {% if supplier_groups is not none %}
+    {% if supplier_groups %}
+    <div class="doc-folders" style="margin-top: 18px;">
+      {% for group in supplier_groups %}
+      <details class="doc-folder">
+        <summary class="doc-folder-summary">
+          <span class="doc-folder-icon">📁</span>
+          <span class="doc-folder-name">{{ group.label }}</span>
+          <span class="muted doc-folder-count">{{ group.docs|length }} archivo(s)</span>
+        </summary>
+        <ul class="doc-list">
+          {% for doc in group.docs %}
+          <li class="doc-list-item">
+            <div class="doc-list-info">
+              <a href="{{ url_for('carga_datos_documento_descargar', document_id=doc.id) }}">{{ doc.filename }}</a>
+              <span class="muted doc-list-date">{{ doc.uploaded_at }}</span>
+            </div>
+            <form method="post" action="{{ url_for('carga_datos_documento_eliminar', document_id=doc.id) }}" onsubmit="return confirm('¿Eliminar este documento?');">
+              <button type="submit" class="btn-danger-soft">Eliminar</button>
+            </form>
+          </li>
+          {% endfor %}
+        </ul>
+      </details>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted" style="margin-top: 18px;">Todavía no hay ningún documento guardado este mes.</p>
+    {% endif %}
+  {% elif docs %}
   <ul class="doc-list" style="margin-top: 18px;">
     {% for doc in docs %}
     <li class="doc-list-item">
@@ -68,5 +97,21 @@
     background: var(--accent-soft); color: var(--accent);
   }
   .doc-list-date { font-size: 12px; }
+
+  .doc-folders { display: flex; flex-direction: column; gap: 8px; }
+  .doc-folder {
+    border: 1px solid var(--border); border-radius: 10px; background: var(--surface-alt);
+    overflow: hidden;
+  }
+  .doc-folder .doc-list { padding: 4px 14px 12px; }
+  .doc-folder-summary {
+    cursor: default; list-style: none; display: flex; align-items: center; gap: 10px;
+    padding: 12px 14px; font-weight: 700; font-size: 13.5px;
+  }
+  .doc-folder-summary::-webkit-details-marker { display: none; }
+  .doc-folder-icon { font-size: 15px; }
+  .doc-folder-name { flex: 1 1 auto; }
+  .doc-folder-count { font-weight: 500; font-size: 12px; }
+  .doc-folder .doc-list-item { background: var(--surface); }
 </style>
 {% endblock %}

@@ -35,7 +35,13 @@
           {% for inv in group.invoices %}
           <tr>
             <td class="historial-col-day">{{ inv.invoice_date }}</td>
-            <td>{{ inv.invoice_no }}</td>
+            <td>
+              {% if inv.document %}
+              <a href="{{ url_for('carga_datos_documento_descargar', document_id=inv.document.id) }}" title="Ver el PDF original">{{ inv.invoice_no }}</a>
+              {% else %}
+              {{ inv.invoice_no }}
+              {% endif %}
+            </td>
             <td>${{ "{:,.2f}".format(inv.amount) }}</td>
             <td class="historial-col-action">
               <form method="post" action="{{ url_for('carga_datos_proveedores_eliminar', invoice_id=inv.id) }}" style="display:inline;" onsubmit="return confirm('¿Eliminar esta factura?');">
