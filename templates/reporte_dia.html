@@ -93,7 +93,7 @@
 {% if departments %}
 <div class="card">
   <h2>Resumen por categoría</h2>
-  <p class="muted">Las 6 categorías de "Reply to Report c-Store" — lo que antes se pegaba a mano en Store Info. "Gettel" no sale del reporte diario — se completa solo con lo ya cargado en <a href="{{ url_for('carga_datos_gettel_historial') }}">Gettel / Toyota</a> para este día.</p>
+  <p class="muted">Las 6 categorías de "Reply to Report c-Store" — lo que antes se pegaba a mano en Store Info. "Gettel" sale de "LOCAL ACCT" cuando el propio reporte diario lo trae ese día (esporádico) — no depende de <a href="{{ url_for('carga_datos_gettel_historial') }}">Gettel / Toyota</a>, que es un negocio aparte.</p>
   <div class="category-tiles">
     {% for g in department_groups %}
     <div class="category-tile cat-{{ cat_colors.get(g.label, 5) }}">
@@ -118,7 +118,8 @@
   <div class="storeinfo-summary">
     <div class="storeinfo-summary-tile">
       <div class="storeinfo-summary-label">Total Sales</div>
-      <div class="storeinfo-summary-amount">{{ "${:,.2f}".format(store_info.total_sales) if store_info.total_sales is not none else "—" }}</div>
+      {% set shown_total_sales = computed_total_sales if computed_total_sales is not none else store_info.total_sales %}
+      <div class="storeinfo-summary-amount">{{ "${:,.2f}".format(shown_total_sales) if shown_total_sales is not none else "—" }}</div>
     </div>
     <div class="storeinfo-summary-tile">
       <div class="storeinfo-summary-label">Cash</div>
@@ -183,8 +184,9 @@
     <h3 class="storeinfo-section-title">Totales y método de pago</h3>
     <div class="dia-grid">
       <div>
-        <label class="muted">Total Sales</label>
+        <label class="muted">Total Sales (impreso en el PDF)</label>
         <input type="number" step="0.01" name="total_sales" value="{{ store_info.total_sales if store_info and store_info.total_sales is not none else '' }}">
+        <p class="muted" style="margin: 4px 0 0; font-size: 11px;">La tarjeta de arriba ya muestra el Total Sales real (con Gettel/VS restado) — este campo es el valor tal cual lo imprime el reporte, por si el OCR lo leyó mal.</p>
       </div>
       <div>
         <label class="muted">Cash</label>

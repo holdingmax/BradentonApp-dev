@@ -527,8 +527,17 @@ def _parse_row_by_reverse_index(line):
     department = normalize_parsed_department_name(_fallback_department_alias(dept_text))
     if not department or _is_summary_row(department):
         return None
-    if _is_protected_department(department):
-        return None
+    # _is_protected_department (GIFT CARD/VARIOS/BOLSA) ya NO se filtra acá
+    # -- bug real encontrado 2026-09-17: ese chequeo existía para que
+    # inject_daily_sales no pise columnas del Excel real con fórmula propia
+    # (ver esa función, más abajo, que sigue teniendo su propio chequeo
+    # independiente), pero al vivir también en el parser de filas se perdía
+    # la fila ENTERA antes de llegar a Carga de Datos -- "GIFT CARD" nunca
+    # aparecía en Ventas por Departamento ni se sumaba a RESTO, pese a ser
+    # una venta real. Pedido explícito del usuario: "CHEVRON GIFT CARD...
+    # tambien es un departamento que se suma a VARIOS, asi como milk o
+    # icecream" -- ahora fluye igual que cualquier otro departamento sin
+    # categoría conocida (group_department_sales ya lo suma a RESTO solo).
 
     return {
         "department": department,
@@ -1093,7 +1102,9 @@ def _parse_ocr_department_row(line):
     dept_raw = _normalize_department_spacing(" ".join(dept_tokens)).upper()
     dept_text, _fused_count = _split_dept_name_from_fused_tail(dept_raw)
     department = normalize_parsed_department_name(_fallback_department_alias(dept_text))
-    if not department or _is_summary_row(department) or _is_protected_department(department):
+    # _is_protected_department ya no se filtra acá -- ver el mismo comentario
+    # en _parse_row_by_reverse_index, más arriba en este archivo.
+    if not department or _is_summary_row(department):
         return None
 
     return {"department": department, "count": int(count), "amount": float(amount), "is_total": False}
@@ -1372,6 +1383,19 @@ def extract_department_sales_for_day(pdf_path):
         period = extract_store_info_from_pdf(pdf_path)
     business_date = period["from_date"] + timedelta(days=1)
 
+    # Cross-chequeo contra el total impreso al pie del Department Sales
+    # Report -- pedido explícito del usuario (2026-09-17), tras confirmar
+    # con un PDF real que Tesseract puede saltearse una fila entera sin
+    # dejar ningún rastro de texto (ni garabateado) -- "GIFT CARD" ese día
+    # tenía 5 unidades y $0.00, y ninguna de las 4 pasadas de OCR la leyó.
+    # `subtotal_mismatch` (solo se calcula del lado OCR, ver
+    # parse_elistar_daily_pdf_ocr) ya detectaba justo este caso (diferencia
+    # de conteo/monto contra el total impreso) pero se descartaba acá sin
+    # usarlo -- ahora se devuelve, para que el caller (webapp.py) pueda
+    # avisarle al usuario "revisá este día a mano" en vez de guardar un
+    # total silenciosamente incompleto.
+    subtotal_mismatch = diagnostics.get("subtotal_mismatch")
+
     # El departamento real del reporte es "LOCAL ACCT" -- la normalización
     # compartida (DEPARTMENT_NAME_NORMALIZATION/_fallback_department_alias)
     # lo renombra a "GETTEL/TOYOTA" porque así se llama la columna real del
@@ -1394,7 +1418,12 @@ def extract_department_sales_for_day(pdf_path):
         sum(r.get("amount") or 0.0 for r in local_acct_records) if local_acct_records else None
     )
     records = [r for r in records if r.get("department") != "GETTEL/TOYOTA"]
-    return {"date": business_date, "records": records, "local_acct_amount": local_acct_amount}
+    return {
+        "date": business_date,
+        "records": records,
+        "local_acct_amount": local_acct_amount,
+        "subtotal_mismatch": subtotal_mismatch,
+    }
 
 
 # Agrupamiento de departamentos en las 6 categorías de "Resumen Venta"/

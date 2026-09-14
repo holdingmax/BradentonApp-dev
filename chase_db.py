@@ -204,6 +204,26 @@ def get_month_transactions(year, month):
         conn.close()
 
 
+def has_detalle_on_date(fecha, detalle):
+    """
+    True si existe algún movimiento ya guardado para ese día puntual con ese
+    Detalle exacto -- usado por Lottery (ver lottery_db/webapp.py) para
+    avisar si la fecha de Chase Bank confirmada de un bloque no tiene, en
+    los movimientos ya cargados, ningún pago real de Lottery ese día
+    (Detalle "LOTTERY", ver chase_rules.py -- keyword "fla lottery").
+    """
+    key = fecha.isoformat() if hasattr(fecha, "isoformat") else str(fecha)
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM chase_transactions WHERE posting_date = ? AND detalle = ? LIMIT 1",
+            (key, detalle),
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
 def get_uncategorized_count(year, month):
     """Cuántos movimientos del mes quedaron sin ninguna regla que matcheara -- útil para avisar."""
     rows = get_month_transactions(year, month)

@@ -4,6 +4,7 @@
 <nav class="crumbs"><a href="{{ url_for('carga_datos_gettel') }}">Gettel / Toyota</a><span class="current">Guardado</span></nav>
 {% endblock %}
 {% block content %}
+{% from "_month_jump.html" import month_jump %}
 {% macro fmt(x) -%}
 {%- if x is none -%}—{%- else -%}{{ "{:,.2f}".format(x) }}{%- endif -%}
 {%- endmacro %}
@@ -12,12 +13,17 @@
   <p class="page-subtitle">Monto y Galones por día, ya guardados desde los reportes de cupones subidos. Esta misma suma es la que ahora completa la categoría "Gettel" de Ventas por Departamento. La columna "Local Account" sale del departamento así llamado en el Department Sales Report (aparece pocas veces en el mes) y se compara sola contra Gettel + Toyota, igual que en el Excel real.</p>
 </div>
 
+<div class="month-jump-row">{{ month_jump('carga_datos_gettel_historial', year, month) }}</div>
 <div class="card">
   <div class="historial-nav">
     <a href="{{ url_for('carga_datos_gettel_historial', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
     <div class="historial-nav-title">
       <h2>{{ month_name }} {{ year }}</h2>
+      {% if year == today.year and month == today.month %}
+      <span class="muted">Mes actual</span>
+      {% else %}
       <a href="{{ url_for('carga_datos_gettel_historial') }}" class="muted">Ir al mes actual</a>
+      {% endif %}
     </div>
     <a href="{{ url_for('carga_datos_gettel_historial', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
   </div>

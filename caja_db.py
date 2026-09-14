@@ -16,14 +16,17 @@ reportes_data/caja.db (mismo directorio gitignored que las demás bases):
   Excel que ya lleva cada celda de la columna M real. Reemplaza el modelo
   viejo (un solo monto por día, sin detalle) -- no había ningún dato real
   cargado todavía, así que no hizo falta migrar nada.
-- caja_attachments: archivos de referencia (Excel de gastos, etc.) subidos
-  para un mes -- "sistema de almacenamiento", pedido explícito del usuario:
-  "pasarle todos los excels de gastos con caja y que esten ahi a mano para
-  ver cuando estes parado en tal mes en particular". Nunca se leen/parsean,
-  quedan solo para consulta mientras se tipean los gastos a mano de arriba.
 - caja_months: Saldo Inicial (editable) y un override opcional de Saldo
   Final por mes -- si no hay override, el Saldo Final "real" es el último
   Saldo corrido que calcula caja.py, nunca algo que se guarde acá aparte.
+
+Los documentos de referencia del mes (Excel de gastos, comprobantes de
+depósito, etc.) vivían acá como `caja_attachments` -- pedido del usuario
+(2026-09-14) fue que Caja tuviera su propio apartado de Documentos "como
+los demás módulos" (página propia, separada del cuadro principal, ver
+webapp.py: _DOCUMENTS_MODULES) -- se migraron a documents_db.py (módulo
+"caja", mismo mecanismo genérico que ya usan EFT/Gettel/CMV) y esta tabla
+se dejó de usar.
 """
 
 import os
@@ -32,7 +35,6 @@ from datetime import date, datetime
 
 _BASE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reportes_data")
 _DB_PATH = os.path.join(_BASE_DIR, "caja.db")
-_ATTACHMENTS_DIR = os.path.join(_BASE_DIR, "caja_attachments")
 
 
 def _connect():
@@ -60,18 +62,6 @@ def _ensure_schema(conn):
     )
     conn.execute(
         """
-        CREATE TABLE IF NOT EXISTS caja_attachments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            year INTEGER NOT NULL,
-            month INTEGER NOT NULL,
-            filename TEXT NOT NULL,
-            stored_path TEXT NOT NULL,
-            uploaded_at TEXT
-        )
-        """
-    )
-    conn.execute(
-        """
         CREATE TABLE IF NOT EXISTS caja_months (
             year INTEGER NOT NULL,
             month INTEGER NOT NULL,
@@ -86,7 +76,6 @@ def _ensure_schema(conn):
     # sin que "los del mes tal" se vuelva un recorrido completo de la tabla
     # (ver CLAUDE.md, "pensar en una base de datos grande y confiable").
     conn.execute("CREATE INDEX IF NOT EXISTS idx_caja_expense_items_date ON caja_expense_items (date)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_caja_attachments_period ON caja_attachments (year, month)")
     conn.commit()
 
 
@@ -151,67 +140,6 @@ def get_month_expenses(year, month):
     }
 
 
-def store_attachment(year, month, upload):
-    """
-    Guarda un archivo de referencia (Excel de gastos, etc.) subido para un
-    mes -- nunca se lee/parsea, solo queda a mano para consultar. Mismo
-    criterio de nombre-tal-cual que reportes_db.store_pdf_copy (una
-    subcarpeta por archivo evita colisiones sin tocar el nombre original).
-    """
-    filename = os.path.basename(upload.filename)
-    month_dir = os.path.join(_ATTACHMENTS_DIR, f"{year:04d}", f"{month:02d}")
-    os.makedirs(month_dir, exist_ok=True)
-    file_dir = os.path.join(month_dir, datetime.now().strftime("%Y%m%d%H%M%S%f"))
-    os.makedirs(file_dir, exist_ok=True)
-    stored_path = os.path.join(file_dir, filename)
-    upload.save(stored_path)
-
-    now = _now()
-    conn = _connect()
-    try:
-        conn.execute(
-            "INSERT INTO caja_attachments (year, month, filename, stored_path, uploaded_at) VALUES (?, ?, ?, ?, ?)",
-            (year, month, filename, stored_path, now),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def get_month_attachments(year, month):
-    conn = _connect()
-    try:
-        rows = conn.execute(
-            "SELECT * FROM caja_attachments WHERE year = ? AND month = ? ORDER BY uploaded_at",
-            (year, month),
-        ).fetchall()
-    finally:
-        conn.close()
-    return [dict(row) for row in rows]
-
-
-def get_attachment(attachment_id):
-    conn = _connect()
-    try:
-        row = conn.execute("SELECT * FROM caja_attachments WHERE id = ?", (attachment_id,)).fetchone()
-    finally:
-        conn.close()
-    return dict(row) if row else None
-
-
-def delete_attachment(attachment_id):
-    attachment = get_attachment(attachment_id)
-    conn = _connect()
-    try:
-        conn.execute("DELETE FROM caja_attachments WHERE id = ?", (attachment_id,))
-        conn.commit()
-    finally:
-        conn.close()
-    if attachment:
-        try:
-            os.remove(attachment["stored_path"])
-        except OSError:
-            pass
 
 
 def get_month_settings(year, month):

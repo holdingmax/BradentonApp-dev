@@ -284,15 +284,44 @@ def get_month_pdf_list(year, month):
     return items
 
 
+def search_pdfs(query, limit=20):
+    """
+    PDFs de Lottery (Department o Sales Report) cuyo nombre de archivo
+    contiene `query` -- pedido explícito del usuario (2026-09-16), buscador
+    del header por nombre de PDF.
+    """
+    like = f"%{query}%"
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT date, department_pdf_filename, sales_report_pdf_filename FROM lottery_days "
+            "WHERE department_pdf_filename LIKE ? OR sales_report_pdf_filename LIKE ? "
+            "ORDER BY date DESC LIMIT ?",
+            (like, like, limit),
+        ).fetchall()
+    finally:
+        conn.close()
+    items = []
+    for row in rows:
+        if row["department_pdf_filename"] and query.lower() in row["department_pdf_filename"].lower():
+            items.append({"date": row["date"], "kind": "department", "pdf_filename": row["department_pdf_filename"]})
+        if row["sales_report_pdf_filename"] and query.lower() in row["sales_report_pdf_filename"].lower():
+            items.append({"date": row["date"], "kind": "sales_report", "pdf_filename": row["sales_report_pdf_filename"]})
+    return items[:limit]
+
+
 def set_block_chase_date(iso_year, iso_week, chase_bank_date):
     """
     chase_bank_date en None borra lo cargado para ese bloque (vuelve a la
     sugerencia automática, encadenada -- ver _nearest_confirmed_chase_date).
     Si se carga una fecha real, se usa como ancla para auto-corregir
-    cualquier OTRO bloque ya confirmado que no siga la cadencia de 7 días
-    entre bloques consecutivos -- pedido explícito del usuario (2026-09-12):
-    "de forma automatica si se detecto que esta mal que se corrijan el
-    resto de fechas". Devuelve la lista de bloques que se corrigieron solos
+    cualquier OTRO bloque POSTERIOR ya confirmado que no siga la cadencia
+    de 7 días entre bloques consecutivos -- pedido explícito del usuario
+    (2026-09-12): "de forma automatica si se detecto que esta mal que se
+    corrijan el resto de fechas". Los bloques ANTERIORES al que se acaba de
+    confirmar nunca se tocan (ver _realign_chase_dates, corregido
+    2026-09-14: cambiar una fecha de septiembre no puede alterar años
+    anteriores). Devuelve la lista de bloques que se corrigieron solos
     (puede estar vacía) para que la ruta pueda avisarlo.
     """
     now = _now()
@@ -318,7 +347,19 @@ def set_block_chase_date(iso_year, iso_week, chase_bank_date):
 
 
 def _realign_chase_dates(conn, anchor_iso_year, anchor_iso_week, anchor_date, now):
-    """Recorre los demás bloques ya confirmados y los realinea a +/-7 días por semana de diferencia contra el ancla recién guardada."""
+    """
+    Recorre los demás bloques ya confirmados y los realinea a +/-7 días por
+    semana de diferencia contra el ancla recién guardada -- SOLO los
+    bloques posteriores al ancla. Pedido explícito del usuario (2026-09-14):
+    "si alguien cambia una fecha en un cuadro de septiembre, terminaria
+    cambiando todas las fechas de todos los anos anteriores, eso no podria
+    ser" -- antes de este fix, un bloque confirmado hace mucho (ej. de
+    2024) que por el motivo que fuera no seguía la cadencia de 7 días
+    contra el bloque recién tocado terminaba reescribiéndose igual, sin
+    importar si estaba antes o después en el tiempo. Ahora un bloque
+    anterior al ancla nunca se toca -- solo bloques con lunes posterior al
+    del ancla.
+    """
     anchor_monday, _ = _iso_week_bounds(anchor_iso_year, anchor_iso_week)
     rows = conn.execute(
         "SELECT iso_year, iso_week, chase_bank_date FROM lottery_blocks WHERE chase_bank_date IS NOT NULL"
@@ -328,6 +369,8 @@ def _realign_chase_dates(conn, anchor_iso_year, anchor_iso_week, anchor_date, no
         if row["iso_year"] == anchor_iso_year and row["iso_week"] == anchor_iso_week:
             continue
         row_monday, _ = _iso_week_bounds(row["iso_year"], row["iso_week"])
+        if row_monday <= anchor_monday:
+            continue
         expected_key = _date_key(anchor_date + (row_monday - anchor_monday))
         if row["chase_bank_date"] != expected_key:
             conn.execute(

@@ -11,7 +11,7 @@
 <div class="card">
   <h2>EFT (PDF del banco)</h2>
   <p class="muted">Cada cupón de tarjeta de crédito que trae el PDF queda guardado con su número DDC — si el PDF no trae el DDC de alguno, se puede agregar a mano después, en "Ver lo ya guardado". Se pueden elegir varios PDF de una sola vez.</p>
-  <form method="post" action="{{ url_for('carga_datos_eft_subir') }}" enctype="multipart/form-data">
+  <form method="post" action="{{ url_for('carga_datos_eft_subir') }}" enctype="multipart/form-data" class="background-job-form">
     <label class="muted">PDF de EFT (uno o más)</label>
     <input type="file" name="pdf_file" id="eft-pdf-input" accept="application/pdf" multiple required>
     <div class="form-actions">

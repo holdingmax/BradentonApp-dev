@@ -3,17 +3,23 @@
 <nav class="crumbs"><a href="{{ back_url }}">{{ module_title }}</a><span class="current">Documentos</span></nav>
 {% endblock %}
 {% block content %}
+{% from "_month_jump.html" import month_jump %}
 <div class="page-header">
   <h1>{{ module_title }} — Documentos</h1>
   <p class="page-subtitle">Los archivos originales que ya subiste para este módulo, guardados tal cual para tenerlos a mano después — nunca se vuelven a leer, es solo para consultarlos.</p>
 </div>
 
+<div class="month-jump-row">{{ month_jump('carga_datos_documentos', year, month, module_key=module_key) }}</div>
 <div class="card">
   <div class="historial-nav">
     <a href="{{ url_for('carga_datos_documentos', module_key=module_key, year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
     <div class="historial-nav-title">
       <h2>{{ month_name }} {{ year }}</h2>
+      {% if year == today.year and month == today.month %}
+      <span class="muted">Mes actual</span>
+      {% else %}
       <a href="{{ url_for('carga_datos_documentos', module_key=module_key) }}" class="muted">Ir al mes actual</a>
+      {% endif %}
     </div>
     <a href="{{ url_for('carga_datos_documentos', module_key=module_key, year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
   </div>

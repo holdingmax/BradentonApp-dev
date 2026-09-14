@@ -4,6 +4,7 @@
 <nav class="crumbs"><span class="current">Caja</span></nav>
 {% endblock %}
 {% block content %}
+{% from "_month_jump.html" import month_jump %}
 {% macro fmt(x) -%}
 {%- if x is none -%}—{%- else -%}{{ "{:,.2f}".format(x) }}{%- endif -%}
 {%- endmacro %}
@@ -12,12 +13,17 @@
   <p class="page-subtitle">Store Info, Chase y Lottery se completan solos — Gastos se carga a mano acá, y DIF EFECT/Saldo se calculan con la misma lógica que la hoja CAJA real.</p>
 </div>
 
+<div class="month-jump-row">{{ month_jump('carga_datos_caja', year, month) }}</div>
 <div class="card">
   <div class="historial-nav">
     <a href="{{ url_for('carga_datos_caja', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
     <div class="historial-nav-title">
       <h2>{{ month_name }} {{ year }}</h2>
+      {% if year == today.year and month == today.month %}
+      <span class="muted">Mes actual</span>
+      {% else %}
       <a href="{{ url_for('carga_datos_caja') }}" class="muted">Ir al mes actual</a>
+      {% endif %}
     </div>
     <a href="{{ url_for('carga_datos_caja', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
   </div>
@@ -103,7 +109,8 @@
   <p class="muted" style="margin-top: 14px;">
     <a href="{{ url_for('chase_historial', year=year, month=month) }}">Ver Chase de este mes</a> ·
     <a href="{{ url_for('carga_datos_lottery_historial', year=year, month=month) }}">Ver Lottery de este mes</a> ·
-    <a href="{{ url_for('reporte_store_info_historial', year=year, month=month) }}">Ver Store Info de este mes</a>
+    <a href="{{ url_for('reporte_store_info_historial', year=year, month=month) }}">Ver Store Info de este mes</a> ·
+    <a href="{{ url_for('carga_datos_documentos', module_key='caja', year=year, month=month) }}">Documentos del mes</a>
   </p>
 </div>
 
@@ -155,45 +162,6 @@
   </div>
   {% else %}
   <p class="muted" style="margin-top: 14px;">Todavía no hay ningún gasto cargado este mes.</p>
-  {% endif %}
-</div>
-
-<div class="card" style="margin-top: 18px;">
-  <h2>Documentos del mes</h2>
-  <p class="muted">Subí los Excel de gastos u otros comprobantes de este mes para tenerlos a mano mientras cargás los gastos de arriba — no se leen ni se procesan, quedan solo de referencia.</p>
-  <form method="post" action="{{ url_for('carga_datos_caja_documentos_subir') }}" enctype="multipart/form-data">
-    <input type="hidden" name="year" value="{{ year }}">
-    <input type="hidden" name="month" value="{{ month }}">
-    <label class="muted">Archivo(s)</label>
-    <input type="file" name="documento_files" multiple required>
-    <div class="form-actions">
-      <button type="submit">Subir</button>
-    </div>
-  </form>
-
-  {% if attachments %}
-  <div class="historial-table-wrap" style="margin-top: 16px;">
-    <table class="historial-table">
-      <thead><tr><th>Archivo</th><th>Subido</th><th></th></tr></thead>
-      <tbody>
-        {% for a in attachments %}
-        <tr>
-          <td><a href="{{ url_for('carga_datos_caja_documento_descargar', attachment_id=a.id) }}">{{ a.filename }}</a></td>
-          <td>{{ a.uploaded_at }}</td>
-          <td class="historial-col-action">
-            <form method="post" action="{{ url_for('carga_datos_caja_documento_eliminar', attachment_id=a.id) }}" style="display:inline;">
-              <input type="hidden" name="year" value="{{ year }}">
-              <input type="hidden" name="month" value="{{ month }}">
-              <button type="submit" class="btn-secondary">Eliminar</button>
-            </form>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% else %}
-  <p class="muted" style="margin-top: 14px;">Todavía no hay ningún documento subido este mes.</p>
   {% endif %}
 </div>
 

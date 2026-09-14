@@ -4,18 +4,24 @@
 <nav class="crumbs"><a href="{{ url_for('carga_datos_proveedores') }}">Proveedores</a><span class="current">Guardado</span></nav>
 {% endblock %}
 {% block content %}
+{% from "_month_jump.html" import month_jump %}
 <div class="page-header">
   <span class="eyebrow">Proveedores</span>
   <h1>Guardado</h1>
   <p class="page-subtitle">Facturas del mes, agrupadas por proveedor — sin abrir ningún Excel. <a href="{{ url_for('carga_datos_documentos', module_key='proveedores') }}">Ver los PDF originales guardados</a>.</p>
 </div>
 
+<div class="month-jump-row">{{ month_jump('carga_datos_proveedores_historial', year, month) }}</div>
 <div class="card">
   <div class="historial-nav">
     <a href="{{ url_for('carga_datos_proveedores_historial', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
     <div class="historial-nav-title">
       <h2>{{ month_name }} {{ year }}</h2>
+      {% if year == today.year and month == today.month %}
+      <span class="muted">Mes actual</span>
+      {% else %}
       <a href="{{ url_for('carga_datos_proveedores_historial') }}" class="muted">Ir al mes actual</a>
+      {% endif %}
     </div>
     <a href="{{ url_for('carga_datos_proveedores_historial', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
   </div>

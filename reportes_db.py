@@ -611,3 +611,23 @@ def get_month_pdf_list(year, month):
     finally:
         conn.close()
     return [{"date": row["date"], "pdf_filename": row["pdf_filename"]} for row in rows]
+
+
+def search_pdfs(query, limit=20):
+    """
+    PDFs de cierre diario cuyo nombre de archivo contiene `query` -- pedido
+    explícito del usuario (2026-09-16), buscador del header por nombre de
+    PDF. `pdf_filename` es la ruta relativa completa (incluye año/mes), así
+    que el LIKE matchea igual contra el nombre real del archivo.
+    """
+    like = f"%{query}%"
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT date, pdf_filename FROM daily_reports WHERE pdf_filename LIKE ? "
+            "ORDER BY date DESC LIMIT ?",
+            (like, limit),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [{"date": row["date"], "pdf_filename": row["pdf_filename"]} for row in rows]

@@ -4,29 +4,50 @@
 <nav class="crumbs"><a href="{{ url_for('carga_datos_index') }}">Reporte Diario</a><span class="current">Store Info</span></nav>
 {% endblock %}
 {% block content %}
+{% from "_month_jump.html" import month_jump %}
 <div class="page-header">
   <span class="eyebrow">Reporte Diario</span>
   <h1>Store Info</h1>
   <p class="page-subtitle">Un renglón por cada día ya cargado — el mismo panorama que daría hoy la hoja Store Info del Excel Cierre, hasta donde vaya el mes. Ventas por Departamento vive aparte, en <a href="{{ url_for('reporte_historial') }}">su propia página</a>.</p>
 </div>
 
+<div class="month-jump-row">{{ month_jump('reporte_store_info_historial', year, month) }}</div>
 <div class="card">
   <div class="historial-nav">
     <a href="{{ url_for('reporte_store_info_historial', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
     <div class="historial-nav-title">
       <h2>{{ month_name }} {{ year }}</h2>
+      {% if year == today.year and month == today.month %}
+      <span class="muted">Mes actual</span>
+      {% else %}
       <a href="{{ url_for('reporte_store_info_historial') }}" class="muted">Ir al mes actual</a>
+      {% endif %}
     </div>
     <a href="{{ url_for('reporte_store_info_historial', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
   </div>
 
+  {% macro totals_popover(id, label, value, breakdown, total_label=None, total_value=None) %}
+  <button type="button" class="popover-trigger" data-popover-target="{{ id }}">{{ "{:,.2f}".format(value) if value is not none else '—' }}</button>
+  <div class="popover-panel totals-breakdown-popover" id="{{ id }}">
+    <div class="totals-breakdown-title">{{ label }}</div>
+    {% for term_label, term_value in breakdown %}
+    <div class="totals-breakdown-row"><span>{{ term_label }}</span><span>{{ "{:,.2f}".format(term_value) if term_value is not none else '—' }}</span></div>
+    {% endfor %}
+    {% if total_label %}
+    <div class="totals-breakdown-row totals-breakdown-total"><span>{{ total_label }}</span><span>{{ "{:,.2f}".format(total_value) if total_value is not none else '—' }}</span></div>
+    {% endif %}
+  </div>
+  {% endmacro %}
   {% if store_info_rows %}
   <div class="historial-table-wrap">
     <table class="historial-table storeinfo-table">
       <thead>
         <tr>
-          <th>Día</th><th>Hora</th><th>Volume</th><th>Sales Fuel</th><th>Desc. Comb</th>
-          <th>Non Fuel</th><th>Desc. Otros</th><th>Tax Collect</th><th>Total Sales</th><th>Cash</th>
+          <th>Día</th><th>Hora</th>
+          <th>Volume</th><th>Sales Fuel</th><th>Desc. Comb</th>
+          <th>Total Fuel</th>
+          <th>Non Fuel</th><th>Desc. Otros</th><th>Tax Collect</th>
+          <th>Total Sales</th><th>Cash</th>
           <th>Tarjeta/Crédito</th><th>Local Acc.</th><th>Other</th><th>Network Rev.</th><th>Total Rev.</th>
           <th></th>
         </tr>
@@ -35,20 +56,30 @@
         {% for row in store_info_rows %}
         <tr class="{{ 'historial-row-today' if row.date == today_iso else '' }}">
           <td class="historial-col-day">{{ row.date[-2:] }}</td>
-          <td class="muted">{{ row.from_time or '—' }}–{{ row.to_time or '—' }}</td>
+          <td class="muted"><span class="{{ 'time-warn' if row.time_warn_from }}" title="{{ 'No coincide con el \"hasta\" del día anterior' if row.time_warn_from else '' }}">{{ row.from_time or '—' }}</span>–<span class="{{ 'time-warn' if row.time_warn_to }}" title="{{ 'No coincide con el \"desde\" del día siguiente' if row.time_warn_to else '' }}">{{ row.to_time or '—' }}</span></td>
           <td>{{ "{:,.2f}".format(row.volume) if row.volume is not none else '—' }}</td>
           <td>{{ "{:,.2f}".format(row.sales_fuel) if row.sales_fuel is not none else '—' }}</td>
           <td>{{ "{:,.2f}".format(row.desc_comb) if row.desc_comb is not none else '—' }}</td>
-          <td>{{ "{:,.2f}".format(row.non_fuel_total) if row.non_fuel_total is not none else '—' }}</td>
+          <td>{{ totals_popover('fuel-pop-' + row.date, 'Total Fuel', row.total_fuel, row.total_fuel_breakdown) }}</td>
+          <td>{{ totals_popover('nonfuel-pop-' + row.date, 'Departamentos vendidos ese día (respalda el Non Fuel)', row.non_fuel_total, row.non_fuel_breakdown, 'Total departamentos', row.non_fuel_categories_total) }}</td>
           <td>{{ "{:,.2f}".format(row.desc_otros) if row.desc_otros is not none else '—' }}</td>
           <td>{{ "{:,.2f}".format(row.tax_collect) if row.tax_collect is not none else '—' }}</td>
-          <td><strong>{{ "{:,.2f}".format(row.total_sales) if row.total_sales is not none else '—' }}</strong></td>
+          <td><strong>{{ totals_popover('sales-pop-' + row.date, 'Total Sales (Total Fuel + Non Fuel + Desc. Otros + Tax Collect - VS/Gettel)', row.total_sales, row.total_sales_breakdown) }}</strong></td>
           <td>{{ "{:,.2f}".format(row.cash) if row.cash is not none else '—' }}</td>
-          <td class="muted">{{ row.credit_terms|join(', ') if row.credit_terms else '—' }}</td>
+          <td>
+            {% if row.credit_terms %}
+            <button type="button" class="popover-trigger" data-popover-target="credit-pop-{{ row.date }}">${{ "{:,.2f}".format(row.credit_terms|sum) }}</button>
+            <div class="popover-panel credit-terms-popover" id="credit-pop-{{ row.date }}">
+              {% for amount in row.credit_terms %}<div>${{ "{:,.2f}".format(amount) }}</div>{% endfor %}
+            </div>
+            {% else %}
+            <span class="muted">—</span>
+            {% endif %}
+          </td>
           <td>{{ "{:,.2f}".format(row.local_accounts) if row.local_accounts is not none else '—' }}</td>
           <td>{{ "{:,.2f}".format(row.other_amount) if row.other_amount is not none else '—' }}</td>
           <td>{{ "{:,.2f}".format(row.network_revenue) if row.network_revenue is not none else '—' }}</td>
-          <td><strong>{{ "{:,.2f}".format(row.total_revenue) if row.total_revenue is not none else '—' }}</strong></td>
+          <td><strong>{{ totals_popover('rev-pop-' + row.date, 'Total Revenue (Cash + Tarjeta/Crédito + Other + Local Acc.)', row.total_revenue, row.total_revenue_breakdown) }}</strong></td>
           <td class="historial-col-action"><a href="{{ url_for('reporte_dia', report_date=row.date) }}">Editar</a></td>
         </tr>
         {% endfor %}
@@ -83,7 +114,7 @@
   /* Muchas más columnas que la tabla de Ventas -- letra más chica y menos
      padding para que entren cómodas sin perder legibilidad, el scroll
      horizontal del wrapper se encarga del resto en pantallas angostas. */
-  .storeinfo-table { min-width: 1280px; font-size: 12.5px; white-space: nowrap; }
+  .storeinfo-table { min-width: 1080px; font-size: 12.5px; white-space: nowrap; }
   .storeinfo-table th, .storeinfo-table td { padding: 7px 10px; }
   .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
   .historial-table tbody tr { border-bottom: 1px solid var(--border); }
@@ -101,5 +132,31 @@
   }
   .historial-badge-ocr { background: var(--success-soft); color: var(--success); }
   .historial-badge-manual { background: var(--warning-soft); color: var(--warning); }
+
+  /* Horario que no encadena con el día vecino -- pedido explícito del
+     usuario (2026-09-14): si un día no arranca justo donde terminó el
+     anterior, es señal de que algo quedó mal cargado. */
+  .time-warn {
+    background: var(--warning-soft); color: var(--warning);
+    padding: 1px 4px; border-radius: 4px; font-weight: 700;
+  }
+
+  /* Tarjeta/Crédito -- se ve el total, un clic muestra el desglose uno por
+     uno en un cuadro flotante (.popover-trigger/.popover-panel, mecanismo
+     genérico de base.html) -- pedido explícito del usuario (2026-09-16):
+     antes un <details> "movía todo" al abrirse dentro de la celda; el
+     cuadro flotante no empuja nada, solo se superpone. */
+  .credit-terms-popover div { padding: 2px 0; }
+
+  /* Cuadros flotantes de verificación -- pedido explícito del usuario
+     (2026-09-16): "todas esas celdas de los totales puedas hacerles click
+     y ver... que valores usaron para llegar a ese resultado" (Total Fuel,
+     Total Sales, Total Rev). */
+  .totals-breakdown-popover { min-width: 220px; }
+  .totals-breakdown-title { font-weight: 700; font-size: 11.5px; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  .totals-breakdown-row { display: flex; justify-content: space-between; gap: 16px; padding: 2px 0; }
+  .totals-breakdown-row span:first-child { color: var(--text-soft); }
+  .totals-breakdown-total { margin-top: 4px; padding-top: 6px !important; border-top: 1px solid var(--border); font-weight: 700; }
+  .totals-breakdown-total span:first-child { color: inherit; }
 </style>
 {% endblock %}

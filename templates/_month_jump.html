@@ -1,0 +1,38 @@
+{# Selector rápido de mes/año, estilo calendario -- pedido explícito del
+   usuario (2026-09-16, segunda tanda), con capturas de referencia: un
+   botón abre un cuadro flotante mostrando los 12 meses del año (nunca
+   días); tocar el año del encabezado pasa a un selector de década (12
+   años, el anterior/siguiente a la década activa atenuados); tocar un año
+   ahí vuelve al selector de meses para ese año. Reusa el mecanismo
+   genérico .popover-trigger/.popover-panel de base.html -- position:fixed
+   calculado por JS, no se corta contra ningún overflow de tabla. La lógica
+   de qué vista mostrar (meses/años) vive en base.html, en el mismo bloque
+   <script> que abre/cierra el popover. `endpoint` es el nombre de la ruta
+   Flask; cualquier kwarg extra (ej. module_key en Documentos) se le pasa
+   tal cual a url_for vía el `kwargs` implícito de Jinja. #}
+{% macro month_jump(endpoint, year, month) %}
+{% set widget_id = 'mj-' + endpoint|replace('_', '-') %}
+{% set month_names = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"] %}
+{% set month_abbr = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"] %}
+<div class="month-jump-row">
+  <button type="button" class="popover-trigger month-jump-trigger" data-popover-target="{{ widget_id }}-panel">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+    {{ month_names[month - 1] }} {{ year }}
+  </button>
+  <div class="popover-panel month-jump-panel" id="{{ widget_id }}-panel"
+       data-endpoint="{{ url_for(endpoint, **kwargs) }}"
+       data-year="{{ year }}" data-month="{{ month }}" data-shown-year="{{ year }}" data-view="months">
+    <div class="month-jump-head">
+      <button type="button" class="month-jump-arrow" data-role="prev">&laquo;</button>
+      <button type="button" class="month-jump-title" data-role="year-label">{{ year }}</button>
+      <button type="button" class="month-jump-arrow" data-role="next">&raquo;</button>
+    </div>
+    <div class="month-jump-grid month-jump-months">
+      {% for i in range(1, 13) %}
+      <button type="button" class="month-jump-cell {{ 'selected' if i == month }}" data-mj-month="{{ i }}">{{ month_abbr[i - 1] }}</button>
+      {% endfor %}
+    </div>
+    <div class="month-jump-grid month-jump-years" hidden></div>
+  </div>
+</div>
+{% endmacro %}

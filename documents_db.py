@@ -135,6 +135,28 @@ def list_all_documents(module):
     return [dict(row) for row in rows]
 
 
+def search_documents(query, limit=20):
+    """
+    Busca por nombre de archivo o etiqueta en TODOS los módulos -- pedido
+    explícito del usuario (2026-09-16): "quiero que la barra de busqueda
+    sirva para encontrar tanto como los modulos, como PDF por su nombre, y
+    excels tambien por el nombre". Sin filtrar por módulo/mes -- el punto es
+    encontrar un archivo sin tener que saber de antemano dónde quedó
+    guardado.
+    """
+    like = f"%{query}%"
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM documents WHERE filename LIKE ? OR label LIKE ? "
+            "ORDER BY uploaded_at DESC LIMIT ?",
+            (like, like, limit),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(row) for row in rows]
+
+
 def get_document(document_id):
     conn = _connect()
     try:

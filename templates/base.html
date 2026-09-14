@@ -282,6 +282,12 @@
     .search-result-label { font-weight: 600; font-size: 13px; }
     .search-result-desc { font-size: 11.5px; color: var(--text-soft); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .search-empty { padding: 16px 10px; text-align: center; color: var(--text-soft); font-size: 13px; }
+    .search-doc-section { border-top: 1px solid var(--border); margin-top: 4px; padding-top: 4px; }
+    .search-section-label {
+      padding: 6px 14px 2px;
+      font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em;
+      color: var(--text-soft);
+    }
 
     /* El bloque de cuenta ocupa toda la esquina -- alto completo del
        header y hasta el borde derecho de verdad (el padding del header
@@ -721,6 +727,23 @@
       font-weight: 600;
     }
     button.btn-danger-soft:hover { background: #FEE2E2; filter: none; }
+    /* Botón real para links de acción (ej. "Exportar Excel del mes") --
+       antes eran texto plano subrayado, pedido explícito del usuario
+       (2026-09-14): que se note más y combine con el color del módulo. */
+    a.btn-accent {
+      display: inline-block;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      padding: 9px 18px;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 13.5px;
+      text-decoration: none;
+      transition: filter 0.12s ease, transform 0.08s ease;
+    }
+    a.btn-accent:hover { filter: brightness(0.92); }
+    a.btn-accent:active { transform: scale(0.96); }
 
     /* ---------- Flash ---------- */
     .flash-error {
@@ -811,6 +834,75 @@
       color: var(--text-soft);
       margin-top: 6px;
     }
+
+    /* Selector rápido de mes/año, estilo calendario -- pedido explícito del
+       usuario (2026-09-16, segunda tanda), con capturas de referencia de un
+       date-picker real: el botón abre un cuadro con los 12 meses del año
+       (nunca días); tocar el año del encabezado pasa a un selector de
+       década. SIEMPRE por fuera de la tarjeta principal (".card") de cada
+       página -- ver _month_jump.html. */
+    .month-jump-row { display: flex; justify-content: flex-end; margin-bottom: 10px; }
+    .month-jump-trigger {
+      display: inline-flex; align-items: center; gap: 7px;
+      padding: 8px 14px;
+      background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+      font-size: 13px; font-weight: 600; color: var(--text);
+    }
+    .month-jump-trigger:hover { color: var(--accent); border-color: var(--accent); }
+    .month-jump-panel { padding: 12px; min-width: 224px; }
+    .month-jump-head {
+      display: flex; align-items: center; justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .month-jump-arrow {
+      background: none; border: none; cursor: default;
+      font-size: 16px; font-weight: 700; color: var(--text-soft);
+      padding: 4px 10px; border-radius: 6px;
+    }
+    .month-jump-arrow:hover { background: var(--surface-alt); color: var(--accent); }
+    .month-jump-title {
+      background: none; border: none; font: inherit; font-weight: 700; font-size: 14px;
+      color: var(--text); padding: 4px 10px; border-radius: 6px; cursor: default;
+    }
+    .month-jump-title:hover { background: var(--surface-alt); color: var(--accent); }
+    .month-jump-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+    .month-jump-cell {
+      background: none; border: none; border-radius: 8px; cursor: default;
+      padding: 9px 4px; font-size: 12.5px; font-weight: 600; color: var(--text);
+      text-align: center;
+    }
+    .month-jump-cell:hover { background: var(--accent-soft); color: var(--accent); }
+    .month-jump-cell.selected { background: var(--accent); color: #fff; }
+    .month-jump-cell.muted-cell { color: var(--text-soft); opacity: 0.55; }
+
+    /* Cuadro flotante genérico (popover) -- pedido explícito del usuario
+       (2026-09-16): un clic muestra el contenido en un cuadro que flota
+       encima de la página, sin mover ni empujar nada a su alrededor (a
+       diferencia de un <details>, que empuja el resto de la fila/tabla).
+       Se posiciona con JS (position: fixed calculado desde el trigger, ver
+       el script más abajo) -- mismo criterio ya usado para el dropdown del
+       botón de cambio de lado, escapa cualquier overflow:hidden/auto de un
+       ancestro (ej. el wrapper de una tabla con scroll horizontal). */
+    .popover-trigger {
+      background: none; border: none; padding: 0; margin: 0;
+      font: inherit; font-weight: 700; color: inherit;
+      cursor: default; text-align: left;
+    }
+    .popover-trigger:hover { color: var(--accent); }
+    .popover-panel {
+      display: none;
+      position: fixed;
+      z-index: 500;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 10px 28px rgba(0,0,0,0.16);
+      padding: 8px 12px;
+      font-size: 12.5px;
+      white-space: normal;
+      min-width: 130px;
+    }
+    .popover-panel.open { display: block; }
   </style>
 </head>
 <body>
@@ -848,6 +940,7 @@
           <div class="app-rail-panel-title">Chase Bank</div>
           <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('chase') }}">Cargar extracto</a>
           <a class="app-rail-panel-link" href="{{ url_for('chase_historial') }}">Movimientos guardados</a>
+          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_documentos', module_key='chase') }}">Documentos</a>
         </div>
       </div>
       <div class="app-rail-item">
@@ -875,7 +968,8 @@
         </div>
         <div class="app-rail-panel">
           <div class="app-rail-panel-title">Caja</div>
-          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_caja') }}">Ver guardado / Documentos</a>
+          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_caja') }}">Ver guardado</a>
+          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_documentos', module_key='caja') }}">Documentos</a>
         </div>
       </div>
       <div class="app-rail-item">
@@ -1142,7 +1236,68 @@
         resultsBox.classList.add('open');
       }
 
-      input.addEventListener('input', function () { renderResults(input.value); });
+      // Búsqueda de archivos (PDF/Excel ya guardados) -- pedido explícito
+      // del usuario (2026-09-16): la búsqueda de arriba (SEARCH_INDEX) es
+      // sincrónica y solo conoce módulos; esto pega contra el servidor
+      // (debounced, nunca en cada tecla) para encontrar además un archivo
+      // por su nombre, sin mandar la lista completa de archivos en cada
+      // página (podrían ser años de PDFs/Excels guardados).
+      let docFetchToken = 0;
+      function fetchDocumentResults(q) {
+        const token = ++docFetchToken;
+        if (q.length < 2) { renderDocumentSection([]); return; }
+        fetch('/buscar/documentos?q=' + encodeURIComponent(q))
+          .then(function (r) { return r.ok ? r.json() : []; })
+          .then(function (docs) { if (token === docFetchToken) renderDocumentSection(docs); })
+          .catch(function () {});
+      }
+      function renderDocumentSection(docs) {
+        const existing = resultsBox.querySelector('.search-doc-section');
+        if (existing) existing.remove();
+        if (!docs.length) return;
+        const emptyMsg = resultsBox.querySelector('.search-empty');
+        if (emptyMsg) emptyMsg.remove();
+        const section = document.createElement('div');
+        section.className = 'search-doc-section';
+        const label = document.createElement('div');
+        label.className = 'search-section-label';
+        label.textContent = 'Documentos';
+        section.appendChild(label);
+        docs.forEach(function (d) {
+          const a = document.createElement('a');
+          a.className = 'search-result-item';
+          a.href = d.url;
+          a.target = '_blank';
+          a.rel = 'noopener';
+          const badge = document.createElement('span');
+          badge.className = 'search-result-badge';
+          badge.style.background = 'var(--text-soft)';
+          badge.innerHTML = d.icon || '';
+          const body = document.createElement('span');
+          body.className = 'search-result-body';
+          const lbl = document.createElement('span');
+          lbl.className = 'search-result-label';
+          lbl.textContent = d.label;
+          const desc = document.createElement('span');
+          desc.className = 'search-result-desc';
+          desc.textContent = d.description || '';
+          body.appendChild(lbl);
+          body.appendChild(desc);
+          a.appendChild(badge);
+          a.appendChild(body);
+          section.appendChild(a);
+        });
+        resultsBox.appendChild(section);
+        resultsBox.classList.add('open');
+      }
+
+      let docSearchDebounce = null;
+      input.addEventListener('input', function () {
+        renderResults(input.value);
+        clearTimeout(docSearchDebounce);
+        const q = input.value.trim();
+        docSearchDebounce = setTimeout(function () { fetchDocumentResults(q); }, 220);
+      });
       input.addEventListener('focus', function () {
         if (input.value.trim()) renderResults(input.value);
       });
@@ -1538,6 +1693,23 @@
                 pollTimer = setTimeout(function () { poll(jobId); }, 1200);
               } else if (data.status === 'done') {
                 progress.set(100, 'Listo -- ' + data.done + ' de ' + data.total + ' PDF procesados.');
+                if (data.redirect_url) {
+                  // Carga de Datos -- pedido explícito del usuario
+                  // (2026-09-16, segunda tanda): a diferencia de Herramientas
+                  // (se queda en la misma página), acá el destino real es la
+                  // página de "ya guardado" -- el aviso viaja en
+                  // sessionStorage (un hilo en segundo plano no tiene sesión
+                  // de Flask real para usar flash()) y se muestra apenas
+                  // carga la página de destino, ver el chequeo al pie de
+                  // este mismo <script>.
+                  if (data.notice) {
+                    try {
+                      sessionStorage.setItem('pendingNotice', JSON.stringify({ text: data.notice, level: data.notice_level || 'warning' }));
+                    } catch (storageErr) {}
+                  }
+                  window.location.href = data.redirect_url;
+                  return;
+                }
                 if (data.notice) {
                   var box = document.getElementById('global-notice');
                   if (box) {
@@ -1604,6 +1776,24 @@
           startXhr.send(new FormData(form));
         });
       });
+    })();
+
+    // Aviso pendiente tras un redirect de carga en segundo plano (ver
+    // "data.redirect_url" más arriba) -- se muestra apenas carga la página
+    // de destino y se borra al toque, para no repetirlo en una recarga.
+    (function () {
+      var raw;
+      try { raw = sessionStorage.getItem('pendingNotice'); sessionStorage.removeItem('pendingNotice'); } catch (storageErr) { return; }
+      if (!raw) return;
+      try {
+        var pending = JSON.parse(raw);
+        var box = document.getElementById('global-notice');
+        if (box && pending.text) {
+          box.className = pending.level === 'error' ? 'flash-error' : (pending.level === 'warning' ? 'flash-warning' : 'flash-success');
+          box.style.display = 'block';
+          box.textContent = pending.text;
+        }
+      } catch (parseErr) {}
     })();
 
     // Misma barra de progreso que arriba, pero para el resto de los forms
@@ -1751,6 +1941,138 @@
           dirtyForms.clear();
         }
       }, true);
+    })();
+
+    // Selector rápido de mes/año, estilo calendario (_month_jump.html) --
+    // pedido explícito del usuario (2026-09-16, segunda tanda): el botón
+    // abre un cuadro con los 12 meses del año; tocar el año del encabezado
+    // pasa a un selector de década; tocar un año ahí vuelve a meses. El
+    // cuadro flotante en sí (abrir/cerrar/posicionar) lo maneja el
+    // mecanismo genérico .popover-trigger/.popover-panel más abajo -- acá
+    // solo se maneja qué vista mostrar adentro y a dónde navegar.
+    (function () {
+      function decadeStartOf(year) { return year - (((year % 10) + 10) % 10); }
+
+      function renderMonthsView(panel) {
+        var shownYear = parseInt(panel.dataset.shownYear, 10);
+        var selMonth = parseInt(panel.dataset.month, 10);
+        var selYear = parseInt(panel.dataset.year, 10);
+        panel.querySelector('[data-role="year-label"]').textContent = shownYear;
+        panel.querySelectorAll('[data-mj-month]').forEach(function (btn) {
+          var m = parseInt(btn.dataset.mjMonth, 10);
+          btn.classList.toggle('selected', shownYear === selYear && m === selMonth);
+        });
+      }
+
+      function renderYearsView(panel) {
+        var shownYear = parseInt(panel.dataset.shownYear, 10);
+        var decadeStart = decadeStartOf(shownYear);
+        var selYear = parseInt(panel.dataset.year, 10);
+        var grid = panel.querySelector('.month-jump-years');
+        grid.innerHTML = '';
+        for (var y = decadeStart - 1; y <= decadeStart + 10; y++) {
+          var btn = document.createElement('button');
+          btn.type = 'button';
+          btn.className = 'month-jump-cell' + ((y < decadeStart || y > decadeStart + 9) ? ' muted-cell' : '') + (y === selYear ? ' selected' : '');
+          btn.textContent = y;
+          btn.dataset.mjYear = y;
+          grid.appendChild(btn);
+        }
+        panel.querySelector('[data-role="year-label"]').textContent = decadeStart + '-' + (decadeStart + 9);
+      }
+
+      function setView(panel, view) {
+        panel.dataset.view = view;
+        panel.querySelector('.month-jump-months').hidden = view !== 'months';
+        panel.querySelector('.month-jump-years').hidden = view !== 'years';
+        if (view === 'years') renderYearsView(panel); else renderMonthsView(panel);
+      }
+
+      document.addEventListener('click', function (event) {
+        var trigger = event.target.closest('.month-jump-trigger');
+        if (trigger) {
+          var openedPanel = document.getElementById(trigger.getAttribute('data-popover-target'));
+          if (openedPanel) {
+            openedPanel.dataset.shownYear = openedPanel.dataset.year;
+            setView(openedPanel, 'months');
+          }
+          return;
+        }
+
+        var panel = event.target.closest('.month-jump-panel');
+        if (!panel) return;
+
+        var prevBtn = event.target.closest('[data-role="prev"]');
+        var nextBtn = event.target.closest('[data-role="next"]');
+        if (prevBtn || nextBtn) {
+          var step = panel.dataset.view === 'years' ? 10 : 1;
+          panel.dataset.shownYear = parseInt(panel.dataset.shownYear, 10) + (prevBtn ? -step : step);
+          if (panel.dataset.view === 'years') renderYearsView(panel); else renderMonthsView(panel);
+          event.stopPropagation();
+          return;
+        }
+        if (event.target.closest('[data-role="year-label"]')) {
+          setView(panel, panel.dataset.view === 'months' ? 'years' : 'months');
+          event.stopPropagation();
+          return;
+        }
+        var monthCell = event.target.closest('[data-mj-month]');
+        if (monthCell) {
+          var url = new URL(panel.dataset.endpoint, window.location.origin);
+          url.searchParams.set('year', panel.dataset.shownYear);
+          url.searchParams.set('month', monthCell.dataset.mjMonth);
+          window.location.href = url.toString();
+          return;
+        }
+        var yearCell = event.target.closest('[data-mj-year]');
+        if (yearCell) {
+          panel.dataset.shownYear = yearCell.dataset.mjYear;
+          setView(panel, 'months');
+          event.stopPropagation();
+          return;
+        }
+      });
+    })();
+
+    // Cuadro flotante genérico (.popover-trigger/.popover-panel) -- pedido
+    // explícito del usuario (2026-09-16): reemplaza cualquier <details> que
+    // "mueva todo" al abrirse (ej. Tarjeta/Crédito de Store Info) por un
+    // panel que flota encima sin empujar nada. position:fixed calculado acá
+    // (no en CSS) para escapar el overflow-x:auto de los wrappers de tabla
+    // -- mismo criterio ya documentado para el dropdown de cambio de lado.
+    (function () {
+      function closeAllPopovers() {
+        document.querySelectorAll('.popover-panel.open').forEach(function (panel) {
+          panel.classList.remove('open');
+        });
+      }
+      document.addEventListener('click', function (event) {
+        var trigger = event.target.closest('.popover-trigger');
+        if (trigger) {
+          var panel = document.getElementById(trigger.getAttribute('data-popover-target'));
+          if (!panel) return;
+          var wasOpen = panel.classList.contains('open');
+          closeAllPopovers();
+          if (!wasOpen) {
+            var rect = trigger.getBoundingClientRect();
+            panel.style.left = Math.max(8, rect.left) + 'px';
+            panel.style.top = (rect.bottom + 6) + 'px';
+            panel.classList.add('open');
+            requestAnimationFrame(function () {
+              var maxLeft = window.innerWidth - panel.offsetWidth - 8;
+              if (rect.left > maxLeft) panel.style.left = Math.max(8, maxLeft) + 'px';
+              var maxTop = window.innerHeight - panel.offsetHeight - 8;
+              if (parseFloat(panel.style.top) > maxTop) panel.style.top = (rect.top - panel.offsetHeight - 6) + 'px';
+            });
+          }
+          event.stopPropagation();
+          return;
+        }
+        if (!event.target.closest('.popover-panel')) closeAllPopovers();
+      });
+      document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape') closeAllPopovers();
+      });
     })();
   </script>
 </body>

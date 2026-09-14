@@ -4,19 +4,24 @@
 <nav class="crumbs"><a href="{{ url_for('carga_datos_index') }}">Reporte Diario</a><span class="current">Reportes guardados</span></nav>
 {% endblock %}
 {% block content %}
-{% set cat_colors = {'TABACCO': 0, 'SODA': 1, 'BEER/WINE': 2, 'LOTERY/LOTTO': 3, 'Gettel': 4, 'RESTO': 5} %}
+{% from "_month_jump.html" import month_jump %}
 <div class="page-header">
   <span class="eyebrow">Reporte Diario</span>
   <h1>Ventas por Departamento</h1>
   <p class="page-subtitle">Lo que ya quedó guardado (automático o a mano) para cada día del mes — sin tener que abrir ningún Excel. Un día sin nada todavía se puede cargar a mano desde acá. Store Info vive aparte, en <a href="{{ url_for('reporte_store_info_historial') }}">su propia página</a>.</p>
 </div>
 
+<div class="month-jump-row">{{ month_jump('reporte_historial', year, month) }}</div>
 <div class="card">
   <div class="historial-nav">
     <a href="{{ url_for('reporte_historial', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
     <div class="historial-nav-title">
       <h2>{{ month_name }} {{ year }}</h2>
+      {% if year == today.year and month == today.month %}
+      <span class="muted">Mes actual</span>
+      {% else %}
       <a href="{{ url_for('reporte_historial') }}" class="muted">Ir al mes actual</a>
+      {% endif %}
     </div>
     <a href="{{ url_for('reporte_historial', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
   </div>
@@ -32,12 +37,18 @@
       <button type="submit" class="btn-danger-soft">Eliminar seleccionados</button>
     </div>
     <div class="historial-table-wrap">
-      <table class="historial-table">
+      <table class="historial-table dept-cat-table">
         <thead>
           <tr>
             <th></th>
             <th>Día</th>
             <th>Departamentos</th>
+            <th class="cat-col">Tabacco</th>
+            <th class="cat-col">SODA</th>
+            <th class="cat-col">BEER/WINE</th>
+            <th class="cat-col">LOTTO</th>
+            <th class="cat-col">KIA/TOY</th>
+            <th class="cat-col">Resto</th>
             <th>Total ventas</th>
             <th></th>
           </tr>
@@ -53,13 +64,13 @@
                     title="{% for d in day.department_detail %}{{ d.department }}: ${{ '%.2f'|format(d.amount) }}&#10;{% endfor %}">
                 {{ day.department_count }} depto.{% if day.department_sources|length > 1 %} (mixto){% elif day.department_sources[0] == 'manual' %} (manual){% endif %}
               </span>
-              <div class="dept-preview">
-                {% for g in day.category_groups %}<span class="dept-preview-item cat-{{ cat_colors.get(g.label, 5) }}">{{ g.label }} <strong>${{ "{:,.0f}".format(g.amount) }}</strong></span>{% endfor %}
-              </div>
               {% else %}
               <span class="muted">—</span>
               {% endif %}
             </td>
+            {% for g in day.category_groups %}
+            <td class="cat-col">${{ "{:,.0f}".format(g.amount) }}</td>
+            {% endfor %}
             <td>
               {% if day.department_total is not none %}${{ "{:,.2f}".format(day.department_total) }}{% else %}<span class="muted">—</span>{% endif %}
             </td>
@@ -76,7 +87,7 @@
 
 <div class="card" style="margin-top: 18px;">
   <h2>Resumen del mes</h2>
-  <p class="muted">Las mismas 6 categorías que antes se copiaban a mano de "Reply to Report c-Store" a Store Info — calculadas solas con lo ya cargado. "Gettel" no viene del reporte diario (es un negocio aparte, no aparece en el Department Sales Report del POS) — se completa solo con lo ya cargado en <a href="{{ url_for('carga_datos_gettel_historial') }}">Gettel / Toyota</a> para este mes.</p>
+  <p class="muted">Las mismas 6 categorías que antes se copiaban a mano de "Reply to Report c-Store" a Store Info — calculadas solas con lo ya cargado. "Gettel" sale de "LOCAL ACCT" cuando el propio reporte diario lo trae (esporádico) — no depende de <a href="{{ url_for('carga_datos_gettel_historial') }}">Gettel / Toyota</a>, que es un negocio aparte.</p>
   <div class="historial-table-wrap">
     <table class="historial-table">
       <thead>
@@ -182,31 +193,14 @@
   .historial-badge-manual { background: var(--warning-soft); color: var(--warning); }
   .historial-badge-mixed { background: var(--accent-soft); color: var(--accent); }
 
-  /* Vista previa por día directo en la fila -- pedido explícito del usuario
-     2026-09-12 (cuarta tanda): antes mostraba los primeros 4 departamentos
-     crudos ("datos inecesarios"), ahora muestra las 6 categorías
-     (TABACCO/SODA/...) de ESE día, mismo criterio que el resumen del mes
-     de más abajo -- se puede comparar categoría por día sin entrar a
-     "Ver/editar". Aprovecha el ancho real de main-full en vez de un panel
-     al pasar el mouse, que un wrapper con overflow-x:auto recortaría. El
-     desglose de departamentos crudos sigue como tooltip nativo (title)
-     sobre el badge para quien sí pase el mouse por encima. */
-  .dept-preview { margin-top: 5px; display: flex; flex-wrap: wrap; gap: 5px; font-size: 11px; }
-  .dept-preview-item {
-    display: inline-flex; align-items: center; gap: 4px;
-    padding: 2px 8px; border-radius: 999px;
-    background: var(--tile-color-soft, var(--surface-alt));
-    color: var(--tile-color, var(--text-soft));
-    border: 1px solid var(--tile-color, var(--border));
-  }
-  .dept-preview-item strong { color: inherit; font-weight: 700; }
-  .dept-preview-more { font-style: italic; }
-  .cat-0 { --tile-color: #78350F; --tile-color-soft: #F5E4CE; }
-  .cat-1 { --tile-color: #0284C7; --tile-color-soft: #D7EFFB; }
-  .cat-2 { --tile-color: #7C3AED; --tile-color-soft: #EDE3FC; }
-  .cat-3 { --tile-color: #059669; --tile-color-soft: #D1FAE5; }
-  .cat-4 { --tile-color: #EA580C; --tile-color-soft: #FCE3D2; }
-  .cat-5 { --tile-color: #64748B; --tile-color-soft: #E2E8F0; }
+  /* Categorías como columnas fijas en la tabla del mes -- pedido explícito
+     del usuario (2026-09-16, segunda tanda): antes eran pastillas de color
+     adentro de la celda "Departamentos" ("datos inecesarios" también en
+     esa forma), ahora son 6 columnas de la propia tabla (Tabacco/SODA/
+     BEER-WINE/LOTTO/KIA-TOY/Resto) -- un día sin nada en una categoría
+     muestra "$0" en vez de desaparecer. El desglose de departamentos
+     crudos sigue como tooltip nativo (title) sobre el badge de conteo. */
+  .dept-cat-table .cat-col { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 
   .reporte-totals-row td { font-weight: 700; background: var(--surface-alt); border-top: 2px solid var(--border); }
 </style>

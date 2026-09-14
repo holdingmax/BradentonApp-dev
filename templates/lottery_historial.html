@@ -4,24 +4,57 @@
 <nav class="crumbs"><a href="{{ url_for('carga_datos_index') }}">Lottery</a><span class="current">Reportes guardados</span></nav>
 {% endblock %}
 {% block content %}
+{% from "_month_jump.html" import month_jump %}
 {% macro fmt(x) -%}
 {%- if x is none -%}—{%- else -%}{{ "{:,.2f}".format(x) }}{%- endif -%}
 {%- endmacro %}
 {% macro fmti(x) -%}
 {%- if x is none -%}—{%- else -%}{{ "{:,.0f}".format(x) }}{%- endif -%}
 {%- endmacro %}
+
+{# Cuadros flotantes de verificación -- pedido explícito del usuario
+   (2026-09-16, segunda tanda): "los totales al final del bloque y el
+   numero que esta en cuenta final, al hacerles click te muestren la
+   sumatoria de valores que hacen para llegar a ese numero, asi puedes
+   verificar que esten bien". Mismo patrón .popover-trigger/.popover-panel
+   ya usado en Store Info -- acá con 3 sabores: la fila Subtotal (suma
+   simple de los 7 días del bloque), la fila Debito (fórmula sobre el
+   propio Subtotal, ver lottery_db._build_block) y el "Cuenta Final" de
+   cada día (X =-Pagos-Pays $). #}
+{% macro breakdown_pop(uid, label, value, rows, is_int=False) %}
+<button type="button" class="popover-trigger" data-popover-target="{{ uid }}">{{ fmti(value) if is_int else fmt(value) }}</button>
+<div class="popover-panel totals-breakdown-popover" id="{{ uid }}">
+  <div class="totals-breakdown-title">{{ label }}</div>
+  {% for row_label, row_value in rows %}
+  <div class="totals-breakdown-row"><span>{{ row_label }}</span><span>{{ (fmti(row_value) if is_int else fmt(row_value)) if row_value is not none else '—' }}</span></div>
+  {% endfor %}
+</div>
+{% endmacro %}
+
+{% macro subtotal_pop(block, field, label, is_int=False) %}
+{{ breakdown_pop('sub-' ~ block.iso_year ~ '-' ~ block.iso_week ~ '-' ~ field, label ~ ' -- suma de los 7 días del bloque', block.subtotal[field], block.day_breakdown_rows[field], is_int) }}
+{% endmacro %}
+
+{% macro day_cuenta_pop(day) %}
+{{ breakdown_pop('dcf-' ~ day.date, 'Cuenta Final (X = −Pagos − Pays $)', day.cuenta_final, day.cuenta_final_breakdown) }}
+{% endmacro %}
 <div class="page-header">
   <span class="eyebrow">Lottery</span>
   <h1>Reportes guardados</h1>
   <p class="page-subtitle">Bloques de 7 días (lunes a domingo) con Subtotal y Debito calculados solos — la misma estructura que usa el Excel de Lottery, sin tener que abrirlo.</p>
 </div>
 
+<div class="month-jump-row">{{ month_jump('carga_datos_lottery_historial', year, month) }}</div>
 <div class="card">
   <div class="historial-nav">
     <a href="{{ url_for('carga_datos_lottery_historial', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
     <div class="historial-nav-title">
       <h2>{{ month_name }} {{ year }}</h2>
+      {% if year == today.year and month == today.month %}
+      <span class="muted">Mes actual</span>
+      {% else %}
       <a href="{{ url_for('carga_datos_lottery_historial') }}" class="muted">Ir al mes actual</a>
+      {% endif %}
     </div>
     <a href="{{ url_for('carga_datos_lottery_historial', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
   </div>
@@ -36,16 +69,16 @@
       <thead>
         <tr>
           <th rowspan="2">Día</th>
-          <th colspan="2">ONLINE</th>
-          <th colspan="6">Terminal (juegos online)</th>
-          <th colspan="7">SKOFF (raspaditas)</th>
+          <th colspan="2" class="lottery-group-online">ONLINE</th>
+          <th colspan="6" class="lottery-group-terminal">Terminal (juegos online)</th>
+          <th colspan="7" class="lottery-group-skoff">SKOFF (raspaditas)</th>
           <th rowspan="2">Cuenta Final</th>
-          <th rowspan="2">Chase Bank</th>
+          <th rowspan="2" class="lottery-col-chase">Chase Bank</th>
         </tr>
         <tr>
-          <th>Count</th><th>Sales $</th>
-          <th>Sales</th><th>Pagos</th><th>Cash Bal.</th><th>Comis</th><th>Prize FP</th><th>Total Comm</th>
-          <th>Count</th><th>Sales $</th><th>Pays U</th><th>Pays $</th><th>Sales Amt</th><th>Sales Comm</th><th>Net Total</th>
+          <th class="lottery-group-online">Count</th><th class="lottery-group-online">Sales $</th>
+          <th class="lottery-group-terminal">Sales</th><th class="lottery-group-terminal">Pagos</th><th class="lottery-group-terminal">Cash Bal.</th><th class="lottery-group-terminal">Comis</th><th class="lottery-group-terminal">Prize FP</th><th class="lottery-group-terminal">Total Comm</th>
+          <th class="lottery-group-skoff lottery-divider">Count</th><th class="lottery-group-skoff">Sales $</th><th class="lottery-group-skoff">Pays U</th><th class="lottery-group-skoff">Pays $</th><th class="lottery-group-skoff">Sales Amt</th><th class="lottery-group-skoff">Sales Comm</th><th class="lottery-group-skoff">Net Total</th>
         </tr>
       </thead>
       <tbody>
@@ -53,36 +86,39 @@
         {% for day in block.days %}
         <tr class="{{ 'historial-row-today' if day.date == today_iso else '' }} {{ 'lottery-block-alt' if block.iso_week is even else '' }}">
           <td class="historial-col-day"><a href="{{ url_for('carga_datos_lottery_dia', report_date=day.date) }}">{{ day.date[8:10] }}/{{ day.date[5:7] }}</a></td>
-          <td>{{ fmti(day.online_count) }}</td><td>{{ fmt(day.online_net_sales) }}</td>
-          <td>{{ fmt(day.sales) }}</td><td>{{ fmt(day.pagos) }}</td><td>{{ fmt(day.cash_balance) }}</td><td>{{ fmt(day.comis) }}</td><td>{{ fmt(day.prize_free_plays) }}</td><td>{{ fmt(day.total_comm) }}</td>
-          <td>{{ fmti(day.skoff_count) }}</td><td>{{ fmt(day.skoff_net_sales) }}</td><td>{{ fmti(day.pays_units) }}</td><td>{{ fmt(day.pays_amount) }}</td><td>{{ fmt(day.skoff_sales_amount) }}</td><td>{{ fmt(day.sales_comm) }}</td><td>{{ fmt(day.net_total) }}</td>
-          <td>{{ fmt(day.cuenta_final) }}</td>
-          <td class="muted">—</td>
+          <td class="lottery-group-online">{{ fmti(day.online_count) }}</td><td class="lottery-group-online">{{ fmt(day.online_net_sales) }}</td>
+          <td class="lottery-group-terminal">{{ fmt(day.sales) }}</td><td class="lottery-group-terminal">{{ fmt(day.pagos) }}</td><td class="lottery-group-terminal">{{ fmt(day.cash_balance) }}</td><td class="lottery-group-terminal">{{ fmt(day.comis) }}</td><td class="lottery-group-terminal">{{ fmt(day.prize_free_plays) }}</td><td class="lottery-group-terminal">{{ fmt(day.total_comm) }}</td>
+          <td class="lottery-group-skoff lottery-divider">{{ fmti(day.skoff_count) }}</td><td class="lottery-group-skoff">{{ fmt(day.skoff_net_sales) }}</td><td class="lottery-group-skoff">{{ fmti(day.pays_units) }}</td><td class="lottery-group-skoff">{{ fmt(day.pays_amount) }}</td><td class="lottery-group-skoff">{{ fmt(day.skoff_sales_amount) }}</td><td class="lottery-group-skoff">{{ fmt(day.sales_comm) }}</td><td class="lottery-group-skoff">{{ fmt(day.net_total) }}</td>
+          <td>{{ day_cuenta_pop(day) }}</td>
+          <td class="muted lottery-col-chase">—</td>
         </tr>
         {% endfor %}
         <tr class="lottery-row-subtotal {{ 'lottery-block-alt' if block.iso_week is even else '' }}">
           <td class="historial-col-day">Subtotal</td>
-          <td>{{ fmti(block.subtotal.online_count) }}</td><td>{{ fmt(block.subtotal.online_net_sales) }}</td>
-          <td>{{ fmt(block.subtotal.sales) }}</td><td>{{ fmt(block.subtotal.pagos) }}</td><td class="muted">—</td><td>{{ fmt(block.subtotal.comis) }}</td><td>{{ fmt(block.subtotal.prize_free_plays) }}</td><td>{{ fmt(block.subtotal.total_comm) }}</td>
-          <td class="muted">—</td><td class="muted">—</td><td>{{ fmti(block.subtotal.pays_units) }}</td><td>{{ fmt(block.subtotal.pays_amount) }}</td><td>{{ fmt(block.subtotal.skoff_sales_amount) }}</td><td>{{ fmt(block.subtotal.sales_comm) }}</td><td class="muted">—</td>
+          <td class="lottery-group-online">{{ subtotal_pop(block, 'online_count', 'Count (ONLINE)', True) }}</td><td class="lottery-group-online">{{ subtotal_pop(block, 'online_net_sales', 'Sales $ (ONLINE)') }}</td>
+          <td class="lottery-group-terminal">{{ subtotal_pop(block, 'sales', 'Sales (Terminal)') }}</td><td class="lottery-group-terminal">{{ subtotal_pop(block, 'pagos', 'Pagos (Terminal)') }}</td><td class="lottery-group-terminal muted">—</td><td class="lottery-group-terminal">{{ subtotal_pop(block, 'comis', 'Comis (Terminal)') }}</td><td class="lottery-group-terminal">{{ subtotal_pop(block, 'prize_free_plays', 'Prize FP (Terminal)') }}</td><td class="lottery-group-terminal">{{ subtotal_pop(block, 'total_comm', 'Total Comm (Terminal)') }}</td>
+          <td class="lottery-group-skoff lottery-divider muted">—</td><td class="lottery-group-skoff muted">—</td><td class="lottery-group-skoff">{{ subtotal_pop(block, 'pays_units', 'Pays U (SKOFF)', True) }}</td><td class="lottery-group-skoff">{{ subtotal_pop(block, 'pays_amount', 'Pays $ (SKOFF)') }}</td><td class="lottery-group-skoff">{{ subtotal_pop(block, 'skoff_sales_amount', 'Sales Amt (SKOFF)') }}</td><td class="lottery-group-skoff">{{ subtotal_pop(block, 'sales_comm', 'Sales Comm (SKOFF)') }}</td><td class="lottery-group-skoff muted">—</td>
           <td class="muted">—</td>
-          <td class="muted">—</td>
+          <td class="muted lottery-col-chase">—</td>
         </tr>
         <tr class="lottery-row-debito {{ 'lottery-block-alt' if block.iso_week is even else '' }}">
-          <td class="historial-col-day"><strong>Debito</strong></td>
-          <td class="muted">—</td><td>{{ fmt(block.debito.online_net_sales) }}</td>
-          <td>{{ fmt(block.debito.sales) }}</td><td class="muted">—</td><td class="muted">—</td><td class="muted">—</td><td class="muted">—</td><td class="muted">—</td>
-          <td class="muted">—</td><td class="muted">—</td><td class="muted">—</td><td>{{ fmt(block.debito.pays_amount) }}</td><td class="muted">—</td><td class="muted">—</td><td class="muted">—</td>
-          <td class="muted">—</td>
-          <td>
-            <div class="lottery-chase-amount"><strong>${{ fmt(block.debito.net_debit) }}</strong></div>
-            <form method="post" action="{{ url_for('carga_datos_lottery_bloque_chase', iso_year=block.iso_year, iso_week=block.iso_week) }}" class="lottery-chase-form">
-              <input type="hidden" name="year" value="{{ year }}">
-              <input type="hidden" name="month" value="{{ month }}">
-              <input type="date" name="chase_bank_date" value="{{ block.chase_bank_date or block.suggested_chase_date }}">
-              <button type="submit" class="btn-secondary">Guardar</button>
-            </form>
-            {% if not block.chase_bank_date %}<span class="muted" style="font-size: 11px;">Autocompletado — corregí si está mal</span>{% endif %}
+          <td class="historial-col-day"></td>
+          <td class="lottery-group-online muted">—</td><td class="lottery-group-online">{{ breakdown_pop('deb-' ~ block.iso_year ~ '-' ~ block.iso_week ~ '-E', 'Online Sales $ (E = Subtotal Sales $ − Subtotal Sales)', block.debito.online_net_sales, block.debito_breakdowns.online_net_sales) }}</td>
+          <td class="lottery-group-terminal">{{ breakdown_pop('deb-' ~ block.iso_year ~ '-' ~ block.iso_week ~ '-F', 'Sales (F = Subtotal Sales + Pagos + Comis + Prize FP + 10)', block.debito.sales, block.debito_breakdowns.sales) }}</td><td class="lottery-group-terminal muted">—</td><td class="lottery-group-terminal muted">—</td><td class="lottery-group-terminal muted">—</td><td class="lottery-group-terminal muted">—</td><td class="lottery-group-terminal muted">—</td>
+          <td class="lottery-group-skoff lottery-divider muted">—</td><td class="lottery-group-skoff muted">—</td><td class="lottery-group-skoff muted">—</td><td class="lottery-group-skoff">{{ breakdown_pop('deb-' ~ block.iso_year ~ '-' ~ block.iso_week ~ '-Q', 'Pays $ (Q = Subtotal Pays $ + Sales Amt + Sales Comm)', block.debito.pays_amount, block.debito_breakdowns.pays_amount) }}</td><td class="lottery-group-skoff muted">—</td><td class="lottery-group-skoff muted">—</td><td class="lottery-group-skoff muted">—</td>
+          <td class="lottery-debito-total"><strong>${{ breakdown_pop('deb-' ~ block.iso_year ~ '-' ~ block.iso_week ~ '-V', 'Cuenta Final del bloque (V = F + Q, Debito) — lo que se paga a Chase Bank', block.debito.net_debit, block.debito_breakdowns.net_debit) }}</strong></td>
+          <td class="lottery-col-chase">
+            <div class="lottery-chase-box">
+              <form method="post" action="{{ url_for('carga_datos_lottery_bloque_chase', iso_year=block.iso_year, iso_week=block.iso_week) }}" class="lottery-chase-form">
+                <input type="hidden" name="year" value="{{ year }}">
+                <input type="hidden" name="month" value="{{ month }}">
+                <input type="date" name="chase_bank_date" value="{{ block.chase_bank_date or block.suggested_chase_date }}">
+                <button type="submit" class="btn-secondary">Guardar</button>
+              </form>
+              {% if block.chase_payment_missing %}
+              <span class="lottery-chase-warning" title="No se encontró en Chase ningún movimiento con Detalle &quot;LOTTERY&quot; en esta fecha.">Falta el pago de Lottery este día en Chase</span>
+              {% endif %}
+            </div>
           </td>
         </tr>
         {% endfor %}
@@ -92,12 +128,6 @@
 </div>
 
 <style>
-  /* Mismo bloque que reporte_historial.html/carga_datos_caja_historial.html
-     -- pedido explícito del usuario (2026-09-14): esta página nunca había
-     tenido este CSS (se armó el markup con las clases compartidas pero se
-     olvidó de copiar el estilo), así que "Mes anterior"/"Mes siguiente" y
-     toda la tabla se veían sin ningún estilo -- feo, a diferencia del resto
-     de los cuadros. */
   .historial-nav {
     display: flex;
     align-items: center;
@@ -122,14 +152,114 @@
   .historial-col-day { font-weight: 700; }
   .historial-row-today { outline: 2px solid var(--accent); outline-offset: -2px; }
 
-  .lottery-table { min-width: 1650px; font-size: 12px; white-space: nowrap; }
-  .lottery-table th, .lottery-table td { padding: 6px 8px; }
+  /* Tabla más compacta -- pedido explícito del usuario (2026-09-16): antes
+     había que usar la barra de scroll horizontal para llegar a ver Chase
+     Bank aunque sobrara espacio -- min-width más chico + menos padding +
+     letra más chica, sumado a que la fila Debito ya no necesita tanto
+     ancho (ver más abajo), hace que entre todo sin scroll en la mayoría de
+     las pantallas. "un tamaño parecido al que tenía en la hoja de Lottery,
+     pero tampoco tanto" -- filas compactas de una sola línea, como Excel,
+     sin quedar apretado. */
+  .lottery-table { min-width: 1180px; font-size: 11px; }
+  .lottery-table th, .lottery-table td { padding: 5px 6px; }
+  /* Los encabezados pueden partirse en 2 líneas (ej. "Total Comm") en vez
+     de forzar la columna entera a ser tan ancha como el título -- los
+     datos numéricos son casi siempre más angostos que el título de su
+     columna, así que esto angosta la tabla sin perder ninguna columna. Los
+     datos (tbody) siguen en una sola línea. */
+  .lottery-table thead th { white-space: normal; line-height: 1.15; vertical-align: bottom; }
+  .lottery-table tbody td { white-space: nowrap; }
   .lottery-block-alt { background: var(--surface-alt); }
+
+  /* Fila Subtotal apenas más alta que las de carga diaria -- pedido
+     explícito del usuario (2026-09-16, segunda tanda): "que sea
+     ligerísimamente más ancha así se distinga un poco... pero solo un
+     poco" -- 2px de padding de más arriba/abajo, nada más. */
   .lottery-row-subtotal { font-weight: 600; border-top: 2px solid var(--border); }
+  .lottery-row-subtotal td { padding-top: 7px; padding-bottom: 7px; }
+
   .lottery-row-debito { background: var(--accent-soft); border-bottom: 2px solid var(--border); }
-  .lottery-chase-amount { margin-bottom: 4px; }
-  .lottery-chase-form { display: flex; gap: 6px; align-items: center; }
-  .lottery-chase-form input[type=date] { padding: 4px 6px; font-size: 11.5px; }
-  .lottery-chase-form button { padding: 4px 10px; font-size: 11.5px; }
+  /* La celda de fecha de la fila Debito se deja vacía a propósito (ver más
+     abajo) -- pedido explícito del usuario (2026-09-16, segunda tanda):
+     que quede blanca en vez de heredar el tinte de la fila. */
+  .lottery-row-debito td.historial-col-day { background: #fff; }
+
+  /* Fila de títulos ONLINE/Terminal/SKOFF más alta y centrada -- pedido
+     explícito del usuario (2026-09-16, segunda tanda): antes quedaban
+     pegados abajo del todo (vertical-align:bottom heredado de la regla
+     general de thead) y alineados a la izquierda dentro de su colspan. */
+  .lottery-table thead tr:first-child th { padding: 13px 6px; vertical-align: middle; }
+  .lottery-table thead tr:first-child th.lottery-group-online,
+  .lottery-table thead tr:first-child th.lottery-group-terminal,
+  .lottery-table thead tr:first-child th.lottery-group-skoff { text-align: center; }
+
+  /* Números alineados a la derecha -- pedido explícito del usuario
+     (2026-09-14): "Sales Amt, Sales Comm, Net Total no se muestran de
+     forma simetrica dependiendo del monto que tengan" -- la causa real es
+     que estas 3 columnas mezclan negativos/positivos y guiones ("—") con
+     montos grandes, y como TODA la tabla estaba alineada a la izquierda,
+     eso se veía "irregular". Alinear a la derecha (como corresponde a
+     cualquier columna numérica) lo resuelve para estas 3 Y para el resto
+     de las columnas de la tabla -- Día y Chase Bank (con su form) quedan
+     como estaban, a la izquierda.
+  */
+  .lottery-table tbody td { text-align: right; }
+  .lottery-table tbody td.historial-col-day,
+  .lottery-table tbody td.lottery-col-chase { text-align: left; }
+
+  /* ONLINE + Terminal comparten el mismo color (son el mismo negocio --
+     juegos online, Terminal es solo el detalle de esas mismas ventas) --
+     SKOFF (raspaditas) es un negocio aparte, color distinto -- pedido
+     explícito del usuario (2026-09-14/16): "que se sepa bien cual es uno y
+     cual es el otro", aplicado ahora a TODAS las filas (antes solo el
+     encabezado tenía color), no solo el header. */
+  .lottery-table th.lottery-group-online, .lottery-table th.lottery-group-terminal,
+  .lottery-table td.lottery-group-online, .lottery-table td.lottery-group-terminal {
+    background: #DBEAFE;
+  }
+  .lottery-table th.lottery-group-online, .lottery-table th.lottery-group-terminal { color: #1D4ED8; }
+  .lottery-table tbody tr.lottery-block-alt td.lottery-group-online,
+  .lottery-table tbody tr.lottery-block-alt td.lottery-group-terminal { background: #CFE1FB; }
+
+  .lottery-table th.lottery-group-skoff, .lottery-table td.lottery-group-skoff { background: #DCFCE7; }
+  .lottery-table th.lottery-group-skoff { color: #15803D; }
+  .lottery-table tbody tr.lottery-block-alt td.lottery-group-skoff { background: #C9F5D9; }
+
+  /* Línea divisoria sutil pero visible entre el grupo ONLINE/Terminal y el
+     grupo SKOFF -- pedido explícito del usuario (2026-09-16). */
+  .lottery-divider { border-left: 2px solid #94A3B8; }
+
+  /* Fila Debito -- corregida contra el Excel real (2026-09-16): la fila
+     muestra las mismas 2 fórmulas del lado ONLINE (E bajo "Sales $", F
+     bajo "Sales" de Terminal) y la única suma del lado SKOFF (Q bajo
+     "Pays $"), igual que el resto de las filas -- nada de texto "Debito"
+     en la columna de fechas (se deja en blanco, la fila ya se distingue
+     por su fondo) ni de "Pago Chase Bank" en el medio. El pago real a
+     Chase Bank (V=F+Q) va SOLO en la columna Cuenta Final, al final del
+     bloque -- la fecha de Chase Bank se queda donde ya estaba. */
+  .lottery-debito-total { text-align: right; font-size: 12.5px; }
+
+  /* Columna Chase Bank angosta -- ya no repite el monto (ahora vive en la
+     celda unificada de arriba), solo la fecha + Guardar. */
+  .lottery-col-chase { width: 108px; }
+  .lottery-chase-box {
+    display: flex; flex-direction: column; gap: 4px;
+    white-space: normal;
+  }
+  .lottery-chase-form { display: flex; flex-direction: column; gap: 3px; align-items: stretch; }
+  .lottery-chase-form input[type=date] { padding: 3px 4px; font-size: 10px; width: 100%; box-sizing: border-box; }
+  .lottery-chase-form button { padding: 3px 6px; font-size: 10.5px; margin-top: 0; width: 100%; }
+  .lottery-chase-warning {
+    display: inline-block; font-size: 10.5px; font-weight: 600;
+    color: var(--warning); background: var(--warning-soft);
+    padding: 2px 6px; border-radius: 6px;
+  }
+
+  /* Cuadros flotantes de verificación (Subtotal/Debito/Cuenta Final) --
+     mismo estilo que el de Store Info. */
+  .totals-breakdown-popover { min-width: 220px; font-size: 12.5px; }
+  .totals-breakdown-title { font-weight: 700; font-size: 11.5px; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--border); white-space: normal; }
+  .totals-breakdown-row { display: flex; justify-content: space-between; gap: 16px; padding: 2px 0; white-space: nowrap; }
+  .totals-breakdown-row span:first-child { color: var(--text-soft); }
 </style>
 {% endblock %}

@@ -11,7 +11,7 @@
 <div class="card">
   <h2>Cupones diarios</h2>
   <p class="muted">Un Excel con las dos hojas (Gettel/Toyota) trae los dos de una — o subí un PDF por vendedor, las veces que haga falta.</p>
-  <form method="post" action="{{ url_for('carga_datos_gettel_subir') }}" enctype="multipart/form-data">
+  <form method="post" action="{{ url_for('carga_datos_gettel_subir') }}" enctype="multipart/form-data" class="background-job-form">
     <label class="muted">Excel o PDF de cupones</label>
     <input type="file" name="source_files" id="gettel-source-input" multiple accept=".xlsx,.xlsm,application/pdf" class="accumulate-files" required>
     <div class="form-actions">

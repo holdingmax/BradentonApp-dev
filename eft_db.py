@@ -11,7 +11,7 @@ reportes_data/eft.db (gitignored, mismo directorio que las demás bases):
 - eft_deposits: un EFT (RCV-#####) por fila.
 - eft_coupons: los cupones/facturas que ESE EFT trae adentro (columna
   "coupon" puede quedar NULL si el PDF no traía el DDC -- ver
-  set_manual_coupon_id, la corrección manual que pidió el usuario).
+  update_coupon_row, la corrección manual completa que pidió el usuario).
 - eft_paid_invoices: facturas pagadas por el EFT sin desglose de cupón
   propio (la lista de encabezado del PDF).
 - cupones: los DDC del reporte mensual de J.H. Williams -- "pendientes"
@@ -173,21 +173,30 @@ def save_eft(header_data, paid_invoices, credit_coupons, source_filename=None):
         conn.close()
 
 
-def set_manual_coupon_id(eft_coupon_id, coupon_id):
+def update_coupon_row(eft_coupon_id, *, date=None, invoice=None, coupon=None, gross_amount=None, fees_amount=None, paid_amount=None):
     """
-    Agrega (o corrige) a mano el DDC de una línea de EFT que el PDF no traía
-    -- pedido explícito del usuario (2026-09-12): "en caso de que haya un
-    cupon en un EFT que no tiene un DDC yo le pueda agregar ese numero que
-    falta". Una vez puesto, esa línea ya se puede cruzar contra Cupones
-    (get_cupones_with_status hace el join en el momento, no hace falta
-    "resincronizar" nada aparte).
+    Corrige a mano cualquier campo de una línea de EFT ya guardada -- pedido
+    explícito del usuario (2026-09-16): "corregir" solo dejaba editar el
+    DDC, ahora deja editar la fila completa (fecha/factura/DDC/gross/fees/
+    net) -- el PDF puede haber traído algo mal leído, no solo el DDC
+    faltante. Reemplaza a la vieja set_manual_coupon_id (solo DDC). El
+    caller (webapp.py) siempre manda las 6 columnas juntas -- no se admiten
+    actualizaciones parciales, para no arriesgar pisar con NULL un campo
+    que el formulario no mandó. `coupon_manual` se sigue marcando en 1
+    (mismo criterio de antes) -- ya no decide ningún color en la UI (ver
+    carga_datos_eft_historial.html), pero queda como registro de que esta
+    línea fue corregida a mano al menos una vez.
     """
-    coupon_id = (coupon_id or "").strip().upper() or None
+    coupon_value = (coupon or "").strip().upper() or None
     conn = _connect()
     try:
         cur = conn.execute(
-            "UPDATE eft_coupons SET coupon = ?, coupon_manual = 1 WHERE id = ?",
-            (coupon_id, eft_coupon_id),
+            """
+            UPDATE eft_coupons
+            SET date = ?, invoice = ?, coupon = ?, gross_amount = ?, fees_amount = ?, paid_amount = ?, coupon_manual = 1
+            WHERE id = ?
+            """,
+            (date, invoice, coupon_value, gross_amount, fees_amount, paid_amount, eft_coupon_id),
         )
         conn.commit()
         return cur.rowcount > 0

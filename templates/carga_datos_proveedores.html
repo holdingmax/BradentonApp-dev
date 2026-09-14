@@ -11,7 +11,7 @@
 <div class="card">
   <h2>Facturas de compra</h2>
   <p class="muted">Un mismo N° de factura ya cargado para ese proveedor se detecta solo y se omite. Se pueden elegir varios PDF de una sola vez, de proveedores distintos mezclados.</p>
-  <form method="post" action="{{ url_for('carga_datos_proveedores_subir') }}" enctype="multipart/form-data">
+  <form method="post" action="{{ url_for('carga_datos_proveedores_subir') }}" enctype="multipart/form-data" class="background-job-form">
     <label class="muted">Factura(s) en PDF</label>
     <input type="file" name="pdf_files" id="proveedores-pdf-input" multiple accept="application/pdf" class="accumulate-files" required>
     <div class="form-actions">

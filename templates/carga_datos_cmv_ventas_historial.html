@@ -4,6 +4,7 @@
 <nav class="crumbs"><a href="{{ url_for('carga_datos_cmv') }}">CMV</a><span class="current">Ventas</span></nav>
 {% endblock %}
 {% block content %}
+{% from "_month_jump.html" import month_jump %}
 {% macro fmt(x) -%}
 {%- if x is none -%}—{%- else -%}{{ "{:,.2f}".format(x) }}{%- endif -%}
 {%- endmacro %}
@@ -12,12 +13,17 @@
   <p class="page-subtitle">Costo y Margen se calculan solos contra lo ya cargado en Costo — un departamento sin costo cargado todavía muestra Costo/Margen en blanco, no en $0.</p>
 </div>
 
+<div class="month-jump-row">{{ month_jump('carga_datos_cmv_ventas_historial', year, month) }}</div>
 <div class="card">
   <div class="historial-nav">
     <a href="{{ url_for('carga_datos_cmv_ventas_historial', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
     <div class="historial-nav-title">
       <h2>{{ month_name }} {{ year }}</h2>
+      {% if year == today.year and month == today.month %}
+      <span class="muted">Mes actual</span>
+      {% else %}
       <a href="{{ url_for('carga_datos_cmv_ventas_historial') }}" class="muted">Ir al mes actual</a>
+      {% endif %}
     </div>
     <a href="{{ url_for('carga_datos_cmv_ventas_historial', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
   </div>
