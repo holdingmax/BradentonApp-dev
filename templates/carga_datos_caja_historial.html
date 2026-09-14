@@ -10,15 +10,13 @@
 {%- endmacro %}
 <div class="page-header">
   <h1>Caja</h1>
-  <p class="page-subtitle">Store Info, Chase y Lottery se completan solos — Gastos se carga a mano acá, y DIF EFECT/Saldo se calculan con la misma lógica que la hoja CAJA real.</p>
 </div>
 
-<div class="month-jump-row">{{ month_jump('carga_datos_caja', year, month) }}</div>
 <div class="card">
   <div class="historial-nav">
     <a href="{{ url_for('carga_datos_caja', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
     <div class="historial-nav-title">
-      <h2>{{ month_name }} {{ year }}</h2>
+      {{ month_jump('carga_datos_caja', year, month) }}
       {% if year == today.year and month == today.month %}
       <span class="muted">Mes actual</span>
       {% else %}
@@ -43,9 +41,8 @@
       <button type="submit">Guardar</button>
       <span class="muted caja-saldo-hint">
         {% if report.opening_source == 'manual' %}Inicial cargado a mano.
-        {% elif report.opening_source in ('prev_month_override', 'prev_month_computed') %}Inicial encadenado del mes anterior.
         {% elif report.opening_source == 'future' %}Mes futuro, todavía sin datos.
-        {% else %}Sin dato del mes anterior.{% endif %}
+        {% elif report.opening_source not in ('prev_month_override', 'prev_month_computed') %}Sin dato del mes anterior.{% endif %}
         {% if report.closing_balance_override is not none %}Final ajustado a mano.{% endif %}
       </span>
     </form>
@@ -60,7 +57,7 @@
           <th colspan="2">Chase</th>
           <th rowspan="2">Lottery<br>Cuenta Final</th>
           <th rowspan="2">Gastos</th>
-          <th rowspan="2">DIF EFECT</th>
+          <th rowspan="2">Dif Efect</th>
           <th rowspan="2">Saldo</th>
         </tr>
         <tr>
@@ -168,13 +165,28 @@
 <style>
   .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
   .historial-nav-btn { text-decoration: none; display: inline-block; }
-  .historial-nav-title { text-align: center; }
-  .historial-nav-title h2 { margin: 0; }
+  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
   .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
   .historial-table-wrap { overflow-x: auto; margin-top: 18px; border: 1px solid var(--border); border-radius: 10px; }
-  .historial-table.caja-table { width: 100%; min-width: 1500px; border-collapse: separate; border-spacing: 0; font-size: 12px; white-space: nowrap; }
-  .caja-table th, .caja-table td { padding: 6px 8px; text-align: left; }
-  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
+  /* Ancho ajustado al contenido real -- pedido explícito del usuario
+     (2026-09-18): "hay mucho espacio malgastado en las columnas... eso hace
+     que tenga que desplazar la página hacia la derecha". El min-width de
+     1500px de antes obligaba al navegador a estirar cada columna bastante
+     más de lo que su propio contenido necesita (día/montos cortos) -- acá
+     con un piso mucho más chico (solo para no colapsar en pantallas muy
+     angostas), la tabla se ajusta sola a lo que realmente ocupa el
+     contenido, sin sobrar espacio ni obligar a scrollear en un ancho
+     normal de escritorio. */
+  .historial-table.caja-table { width: auto; min-width: 900px; border-collapse: separate; border-spacing: 0; font-size: 12px; white-space: nowrap; }
+  .caja-table th, .caja-table td { padding: 5px 9px; text-align: left; }
+  /* Encabezados alineados de forma simétrica -- pedido explícito del
+     usuario (2026-09-18): centrados (tanto horizontal como verticalmente,
+     para que las celdas con rowspan=2 -- Día/Lottery/Gastos/Dif Efect/
+     Saldo -- queden a la misma altura que el par de filas de las celdas
+     agrupadas -- Store Info/Chase). */
+  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); text-align: center; vertical-align: middle; }
+  .caja-table td { text-align: right; }
+  .caja-table td.historial-col-day { text-align: center; }
   .historial-table tbody tr { border-bottom: 1px solid var(--border); }
   .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
   .historial-row-today { outline: 2px solid var(--accent); outline-offset: -2px; }
@@ -182,8 +194,11 @@
   .historial-badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
   .historial-badge-manual { background: var(--accent-soft); color: var(--accent); }
   .caja-gettel-tag { margin-left: 4px; }
-  .caja-input-cell input { width: 80px; padding: 4px 6px; font-size: 11.5px; }
-  .caja-totals-row td { font-weight: 700; background: var(--surface-alt); border-top: 2px solid var(--border); }
+  /* Fila "Total del mes" -- pedido explícito del usuario (2026-09-18): más
+     ancha/espaciosa ("que no sea algo apretado") y con el mismo color
+     temático que el resto de Caja (var(--accent)/var(--accent-soft), el
+     naranja del módulo) en vez del gris genérico de siempre. */
+  .caja-totals-row td { font-weight: 700; background: var(--accent-soft); color: var(--accent); border-top: 2px solid var(--accent); padding-top: 11px; padding-bottom: 11px; }
   .chase-amount-neg { color: var(--error); }
   .chase-amount-pos { color: var(--success); }
 

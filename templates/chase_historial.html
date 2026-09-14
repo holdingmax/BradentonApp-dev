@@ -23,8 +23,7 @@
     gap: 12px;
   }
   .historial-nav-btn { text-decoration: none; display: inline-block; }
-  .historial-nav-title { text-align: center; }
-  .historial-nav-title h2 { margin: 0; }
+  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
   .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
   .historial-table-wrap {
     overflow-x: auto;
@@ -81,12 +80,11 @@
   {% for value in known_details %}<option value="{{ value }}">{% endfor %}
 </datalist>
 
-<div class="month-jump-row">{{ month_jump('chase_historial', year, month) }}</div>
 <div class="card">
   <div class="historial-nav">
     <a href="{{ url_for('chase_historial', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
     <div class="historial-nav-title">
-      <h2>{{ month_name }} {{ year }}</h2>
+      {{ month_jump('chase_historial', year, month) }}
       {% if year == today.year and month == today.month %}
       <span class="muted">Mes actual</span>
       {% else %}

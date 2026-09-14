@@ -13,12 +13,11 @@
   <p class="page-subtitle">Monto y Galones por día, ya guardados desde los reportes de cupones subidos. Esta misma suma es la que ahora completa la categoría "Gettel" de Ventas por Departamento. La columna "Local Account" sale del departamento así llamado en el Department Sales Report (aparece pocas veces en el mes) y se compara sola contra Gettel + Toyota, igual que en el Excel real.</p>
 </div>
 
-<div class="month-jump-row">{{ month_jump('carga_datos_gettel_historial', year, month) }}</div>
 <div class="card">
   <div class="historial-nav">
     <a href="{{ url_for('carga_datos_gettel_historial', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
     <div class="historial-nav-title">
-      <h2>{{ month_name }} {{ year }}</h2>
+      {{ month_jump('carga_datos_gettel_historial', year, month) }}
       {% if year == today.year and month == today.month %}
       <span class="muted">Mes actual</span>
       {% else %}
@@ -46,7 +45,7 @@
       <tbody>
         {% for d in days %}
         <tr>
-          <td class="historial-col-day">{{ d.date }}</td>
+          <td class="historial-col-day">{{ d.date[8:10] }}-{{ d.date[5:7] }}-{{ d.date[0:4] }}</td>
           <td>${{ fmt(d.gettel_amount) }}</td>
           <td>{{ fmt(d.gettel_gallons) }}</td>
           <td>${{ fmt(d.toyota_amount) }}</td>
@@ -81,8 +80,7 @@
 <style>
   .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
   .historial-nav-btn { text-decoration: none; display: inline-block; }
-  .historial-nav-title { text-align: center; }
-  .historial-nav-title h2 { margin: 0; }
+  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
   .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
   .historial-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
   .historial-table { width: 100%; min-width: 420px; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }

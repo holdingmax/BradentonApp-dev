@@ -1,22 +1,20 @@
 {% extends "base.html" %}
 {% block main_class %}main-full{% endblock %}
 {% block crumbs %}
-<nav class="crumbs"><a href="{{ url_for('carga_datos_eft') }}">EFT y Cupones</a><span class="current">Guardado</span></nav>
+<nav class="crumbs"><a href="{{ url_for('carga_datos_eft') }}">EFT y Cupones</a><span class="current">Aplicacion TC y EFT</span></nav>
 {% endblock %}
 {% block content %}
 {% from "_month_jump.html" import month_jump %}
 <div class="page-header">
   <span class="eyebrow">EFT y Cupones</span>
-  <h1>Guardado</h1>
-  <p class="page-subtitle">Los EFT quedan agrupados por mes (fecha del EFT); los Cupones son un listado único y acumulativo, igual que la hoja del Excel — sin abrir ningún Excel.</p>
+  <h1>Aplicacion TC y EFT</h1>
 </div>
 
-<div class="month-jump-row">{{ month_jump('carga_datos_eft_historial', year, month) }}</div>
 <div class="card">
   <div class="historial-nav">
     <a href="{{ url_for('carga_datos_eft_historial', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
     <div class="historial-nav-title">
-      <h2>EFT — {{ month_name }} {{ year }}</h2>
+      {{ month_jump('carga_datos_eft_historial', year, month) }}
       {% if year == today.year and month == today.month %}
       <span class="muted">Mes actual</span>
       {% else %}
@@ -115,54 +113,10 @@
   {% endif %}
 </div>
 
-<div class="card" style="margin-top: 18px;">
-  <h2>Cupones</h2>
-  <p class="muted">Historial completo de todos los DDC guardados — pendientes hasta que algún EFT los confirme. Agrupados por mes para poder distinguir de un vistazo cuáles son de qué mes.</p>
-  {% if cupon_groups %}
-  <div class="historial-table-wrap">
-    <table class="historial-table">
-      <thead>
-        <tr><th>DDC</th><th>Fecha</th><th>Reportado</th><th>Estado</th></tr>
-      </thead>
-      <tbody>
-        {% for group in cupon_groups %}
-        <tr class="eft-month-divider">
-          <td colspan="4">{{ group.label }}</td>
-        </tr>
-        {% for cp in group.cupones %}
-        <tr>
-          <td>{{ cp.coupon_id }}</td>
-          <td class="historial-col-day">{{ cp.date or '—' }}</td>
-          <td>
-            {% if cp.reported_group_text %}
-            <span class="muted">Grupo: {{ cp.reported_group_text }} — ${{ "{:,.2f}".format(cp.reported_group_total or 0) }}</span>
-            {% else %}
-            ${{ "{:,.2f}".format(cp.net or 0) }}
-            {% endif %}
-          </td>
-          <td>
-            {% if cp.match %}
-            <span class="historial-badge historial-badge-ocr">EFT {{ cp.match.rcv_number }} ({{ cp.match.eft_date }})</span>
-            {% else %}
-            <span class="historial-badge historial-badge-manual">Pendiente</span>
-            {% endif %}
-          </td>
-        </tr>
-        {% endfor %}
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% else %}
-  <p class="muted" style="margin-top: 18px;">Todavía no hay ningún cupón guardado.</p>
-  {% endif %}
-</div>
-
 <style>
   .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
   .historial-nav-btn { text-decoration: none; display: inline-block; }
-  .historial-nav-title { text-align: center; }
-  .historial-nav-title h2 { margin: 0; }
+  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
   .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
   .historial-table-wrap { overflow-x: auto; margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; }
   .historial-table { width: 100%; min-width: 480px; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
@@ -209,13 +163,6 @@
 
   /* Autosuma por columna, en negrita, al pie de cada tabla de EFT. */
   .eft-totals-row td { font-weight: 700; background: var(--surface-alt); border-top: 2px solid var(--border); }
-
-  /* Diferenciador de mes en el listado histórico de Cupones. */
-  .eft-month-divider td {
-    background: var(--accent-soft); color: var(--accent);
-    font-weight: 700; font-size: 12.5px; text-transform: uppercase;
-    letter-spacing: 0.03em; padding: 7px 14px;
-  }
 
   /* Columna dedicada para "corregir"/"agregar DDC" -- pedido explícito del
      usuario (2026-09-14): antes vivía pegado a la celda DDC, ahora tiene su

@@ -1402,26 +1402,25 @@ def extract_department_sales_for_day(pdf_path):
     # Excel Cierre donde ese monto se escribe (ver _write_amount_cell) --
     # eso no se toca, sigue igual para la escritura del Excel real.
     #
-    # Acá, del lado Carga de Datos, este departamento sigue sin guardarse
-    # como una fila más de daily_report_departments -- no aparece en el
-    # detalle crudo del día, ni en "Total del mes por departamento", ni
-    # sumado a RESTO (pedido explícito del usuario 2026-09-15: "LOCAL ACCT"
-    # es un monto de cuenta/pago, no una venta real de mercadería). Pero su
-    # monto SÍ se devuelve aparte (local_acct_amount) -- pedido explícito
-    # del usuario (mismo día, aclaración posterior): cuando el PDF de cierre
-    # trae este monto, tiene que ser lo único que alimente la categoría
-    # "Gettel" de Ventas por Departamento (ver group_department_sales) --
-    # los reportes de cupones del vendedor (gettel_db, "hoja de Rick") NUNCA
-    # tienen que aparecer ahí, solo dentro del módulo Gettel/Toyota.
-    local_acct_records = [r for r in records if r.get("department") == "GETTEL/TOYOTA"]
-    local_acct_amount = (
-        sum(r.get("amount") or 0.0 for r in local_acct_records) if local_acct_records else None
-    )
-    records = [r for r in records if r.get("department") != "GETTEL/TOYOTA"]
+    # Acá, del lado Carga de Datos, se renombra de vuelta a su nombre real
+    # ("LOCAL ACCT") y se deja como una fila más de `records` -- pedido
+    # explícito del usuario (2026-09-18): hasta acá se descartaba por
+    # completo (no aparecía en el detalle crudo del día ni en "Total del mes
+    # por departamento", y sus unidades se perdían) porque no es una venta
+    # de mercadería como cualquier otra -- pero eso hacía que "no apareciera
+    # al lado de AUTO/BEER/CANDY al editar el día" y que la categoría
+    # "Gettel" quedara con el monto bien pero sin ninguna unidad. Ahora se
+    # comporta como cualquier departamento real (visible, con sus propias
+    # unidades) -- lo único especial que conserva es NO caer en RESTO si no
+    # matcheara ninguna categoría (ver DEPARTMENT_GROUPS/group_department_
+    # sales más abajo, "LOCAL ACCT" quedó agregado a la categoría "Gettel").
+    for record in records:
+        if record.get("department") == "GETTEL/TOYOTA":
+            record["department"] = "LOCAL ACCT"
+
     return {
         "date": business_date,
         "records": records,
-        "local_acct_amount": local_acct_amount,
         "subtotal_mismatch": subtotal_mismatch,
     }
 
@@ -1433,12 +1432,12 @@ def extract_department_sales_for_day(pdf_path):
 # antes el usuario copiaba estos 6 totales a mano, día por día, desde
 # "Reply to Report c-Store" hacia Store Info -- pedido explícito: "ahora se
 # va a poder hacer de forma automatica con solo cargar un reporte diario".
-# "Gettel" en la hoja real es la ÚNICA fuente de la categoría (llamada
-# "CAR WASH/ICE" en Resumen Venta, columna "VS" en Store Info) -- "GETTEL"
-# rara vez aparece como departamento propio en el Department Sales Report
-# (a veces sí, ver el parámetro local_acct_amount de group_department_sales
-# más abajo), así que queda en 0 hasta que el PDF de cierre traiga algo de
-# "LOCAL ACCT" ese día. Los grupos siguen el orden real de las hojas.
+# "Gettel" en la hoja real (llamada "CAR WASH/ICE" en Resumen Venta, columna
+# "VS" en Store Info) sale de dos departamentos reales del Department Sales
+# Report: "GETTEL" (rara vez aparece) y "LOCAL ACCT" (esporádico, ver
+# extract_department_sales_for_day) -- los dos suman a la misma categoría,
+# nunca se reemplazan entre sí. Los grupos siguen el orden real de las
+# hojas.
 DEPARTMENT_GROUPS = (
     # "MAJ PAK" (con espacio) -- así queda guardado por extract_department_
     # sales_for_day/parse_elistar_daily_pdf_page, aunque el PDF y el Excel
@@ -1448,7 +1447,7 @@ DEPARTMENT_GROUPS = (
     ("SODA", ("SODA",)),
     ("BEER/WINE", ("BEER/WINE",)),
     ("LOTERY/LOTTO", ("ONLINE", "SKOFF")),
-    ("Gettel", ("GETTEL",)),
+    ("Gettel", ("GETTEL", "LOCAL ACCT")),
     (
         "RESTO",
         ("COFFE", "TAXABLE", "NONTAX", "SNACK", "JUICE", "WATER", "E-GIGARETTE", "CANDY", "VARIOS/BOLSA", "FOUTAIN"),
@@ -1456,30 +1455,11 @@ DEPARTMENT_GROUPS = (
 )
 
 
-def group_department_sales(records, local_acct_amount=None):
+def group_department_sales(records):
     """
     Agrupa una lista de departamentos (cada uno {"department", "count",
     "amount"} -- una fila de daily_report_departments, de un día o ya
     sumados por mes) en las 6 categorías de arriba.
-
-    `local_acct_amount`, si viene (no None), se SUMA al monto de la
-    categoría "Gettel" -- viene del departamento "LOCAL ACCT" que el PDF
-    de cierre trae de forma esporádica (ver extract_department_sales_for_
-    day, que lo saca de `records` para no mostrarlo como una venta más de
-    mercadería, pero devuelve su monto aparte para este único uso). El
-    caller (webapp.py) le pasa la suma real del día/mes desde
-    reportes_db.get_day_local_acct_amount/get_month_local_acct_amount.
-
-    Hasta el 2026-09-15 esta categoría se alimentaba en cambio de
-    gettel_db (los reportes de cupones de combustible del vendedor, "hoja
-    de Rick") -- pedido explícito del usuario, revertido ese mismo día:
-    "eso que yo cargo de hoja de rick... esta mal que se vaya a las ventas
-    de reporte diario, solo debe ir [al módulo Gettel/Toyota]... cuando en
-    el reporte diario llegue algo de local account, ahí sí debería salir
-    gettel, pero no de la otra forma" -- gettel_db sigue existiendo y
-    alimentando el módulo Gettel/Toyota (Monto/Galones/Local Account/DIF),
-    pero ya no tiene ninguna conexión con Ventas por Departamento. Sin
-    este parámetro, la categoría sigue en $0 como antes.
 
     Devuelve (groups, unmatched): `groups` en el mismo orden que las hojas
     reales, cada uno {"label", "count", "amount"}. Un departamento real que
@@ -1491,19 +1471,18 @@ def group_department_sales(records, local_acct_amount=None):
     unmatched` queda siempre vacío -- se conserva en la firma para no tener
     que tocar los callers/templates que todavía lo reciben.
 
-    "LOCAL ACCT" es la ÚNICA excepción a la regla de arriba -- pedido
-    explícito del usuario (2026-09-15, tras ver un día real con RESTO
-    disparado a $8.457 por esto): no es una venta de mercadería como
-    BOILED PEANUTS/FLOWER/HBA/ICECREAM, es un monto de cuenta/pago (mismo
-    concepto que el campo "Local Accounts" de Store Info, ver
-    reportes_db.get_month_local_accounts, que alimenta el DIF de
-    Gettel/Toyota) -- sumarlo a RESTO lo distorsiona con un cargo puntual
-    grande que no tiene nada que ver con ventas reales de otros
-    departamentos. Nunca llega a `records` (extract_department_sales_for_
-    day ya lo saca antes de guardar), así que no aparece en el detalle
-    crudo del día ni en "Total del mes por departamento" -- pero sí termina
-    sumado a la categoría "Gettel" (nunca a RESTO), a través del parámetro
-    `local_acct_amount` de arriba.
+    "LOCAL ACCT" -- pedido explícito del usuario (2026-09-15, tras ver un
+    día real con RESTO disparado a $8.457 por esto, y de nuevo el
+    2026-09-18 al notar que perdía sus unidades y no aparecía al editar el
+    día): no es una venta de mercadería como BOILED PEANUTS/FLOWER/HBA/
+    ICECREAM, es un monto de cuenta/pago (mismo concepto que el campo
+    "Local Accounts" de Store Info, ver reportes_db.get_month_local_
+    accounts, que alimenta el DIF de Gettel/Toyota) -- sumarlo a RESTO lo
+    distorsiona con un cargo puntual grande que no tiene nada que ver con
+    ventas reales de otros departamentos. Por eso está listado como
+    miembro de la categoría "Gettel" en DEPARTMENT_GROUPS de arriba, en vez
+    de dejarlo caer en RESTO como el resto de los departamentos sin
+    categoría propia.
     """
     totals_by_department = {}
     for record in records:
@@ -1514,21 +1493,12 @@ def group_department_sales(records, local_acct_amount=None):
         bucket["count"] += record.get("count") or 0
         bucket["amount"] += record.get("amount") or 0.0
 
-    matched_departments = {"LOCAL ACCT"}
+    matched_departments = set()
     groups = []
     for label, members in DEPARTMENT_GROUPS:
         count = sum(totals_by_department.get(member, {}).get("count", 0) for member in members)
         amount = sum(totals_by_department.get(member, {}).get("amount", 0.0) for member in members)
         matched_departments.update(member for member in members if member in totals_by_department)
-        if label == "Gettel" and local_acct_amount is not None:
-            # "GETTEL" a veces SÍ aparece como departamento real en el
-            # Department Sales Report del PDF (pedido explícito del
-            # usuario 2026-09-14: "las ventas de gettel te van a aparecer
-            # al lado de los demas departamentos") -- se suma al monto de
-            # "LOCAL ACCT" de ese mismo PDF (ver docstring de arriba),
-            # nunca lo reemplaza, para no perder en silencio una venta real
-            # ya impresa en el PDF de cierre.
-            amount += local_acct_amount
         groups.append({"label": label, "count": count, "amount": round(amount, 2)})
 
     resto_group = next(g for g in groups if g["label"] == "RESTO")
@@ -1551,6 +1521,82 @@ def extract_store_info_for_day(pdf_path):
     fields = extract_store_info_from_pdf(pdf_path)
     business_date = fields["from_date"] + timedelta(days=1)
     return {"date": business_date, "fields": fields}
+
+
+def build_store_info_export_workbook(rows, year, month, dest_path):
+    """
+    Excel NUEVO (no toca ningún archivo real ni ninguna plantilla) con
+    Store Info de un mes ya guardado en reportes_db, para que el usuario
+    pueda bajarlo -- pedido explícito del usuario (2026-09-18). `rows` es
+    la lista tal cual la arma reporte_store_info_historial (mismos campos
+    ya calculados que se muestran en pantalla: total_fuel/total_sales/
+    total_revenue/gettel_amount).
+
+    Wherever un valor de la pantalla es en realidad una fórmula (Total
+    Fuel = Sales Fuel + Desc. Comb; Total Sales = Total Fuel + Non Fuel +
+    Desc. Otros + Tax Collect − VS/Gettel; Total Revenue = Cash + Tarjeta/
+    Crédito + Other + Local Acc.) queda como una fórmula real de Excel
+    (recalcula sola si se edita cualquier celda de la que depende) -- pedido
+    explícito: "a lo que se pueda dejar formula... se lo deje". El resto
+    (Volume/Sales Fuel/Desc. Comb/Non Fuel/Desc. Otros/Tax Collect/Cash/
+    Tarjeta/Crédito/Local Accounts/Other/Network Revenue/VS) son valores
+    crudos leídos del PDF (o tipeados a mano) -- no hay ninguna fórmula que
+    los produzca, así que quedan como valor simple.
+    """
+    import openpyxl
+    from openpyxl.styles import Font
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Store Info"
+
+    headers = [
+        "Día", "Hora Desde", "Hora Hasta",
+        "Volume", "Sales Fuel", "Desc. Comb", "Total Fuel",
+        "Non Fuel", "Desc. Otros", "Tax Collect", "VS (Gettel)", "Total Sales",
+        "Cash", "Tarjeta/Crédito", "Local Accounts", "Other", "Network Revenue", "Total Revenue",
+    ]
+    sheet.append(headers)
+    for cell in sheet[1]:
+        cell.font = Font(bold=True)
+
+    for row in rows:
+        r = sheet.max_row + 1
+        day_text = _format_date_ddmmyyyy(row.get("date"))
+        credit_total = round(sum(row["credit_terms"]), 2) if row.get("credit_terms") else 0.0
+        sheet.append(
+            [
+                day_text, row.get("from_time") or "", row.get("to_time") or "",
+                row.get("volume"), row.get("sales_fuel"), row.get("desc_comb"), None,
+                row.get("non_fuel_total"), row.get("desc_otros"), row.get("tax_collect"),
+                row.get("gettel_amount") or 0.0, None,
+                row.get("cash"), credit_total, row.get("local_accounts"), row.get("other_amount"),
+                row.get("network_revenue"), None,
+            ]
+        )
+        sheet.cell(row=r, column=7, value=f"=E{r}+F{r}")
+        sheet.cell(row=r, column=12, value=f"=G{r}+H{r}+I{r}+J{r}-K{r}")
+        sheet.cell(row=r, column=18, value=f"=M{r}+N{r}+P{r}+O{r}")
+
+    for col_letter, width in zip(
+        "ABCDEFGHIJKLMNOPQR",
+        (11, 10, 10, 11, 11, 11, 11, 11, 11, 11, 11, 12, 11, 13, 12, 11, 13, 13),
+    ):
+        sheet.column_dimensions[col_letter].width = width
+
+    workbook.save(dest_path)
+    return dest_path
+
+
+def _format_date_ddmmyyyy(value):
+    if value is None:
+        return ""
+    if hasattr(value, "strftime"):
+        return value.strftime("%d-%m-%Y")
+    text = str(value)
+    if len(text) == 10 and text[4] == "-" and text[7] == "-":
+        return f"{text[8:10]}-{text[5:7]}-{text[0:4]}"
+    return text
 
 
 def build_department_column_map(sheet):

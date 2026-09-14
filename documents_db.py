@@ -94,7 +94,7 @@ def store_document(module, source_path, original_filename, year, month, label=No
     now = _now()
     conn = _connect()
     try:
-        conn.execute(
+        cur = conn.execute(
             """
             INSERT INTO documents (module, year, month, label, filename, stored_path, uploaded_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -102,6 +102,7 @@ def store_document(module, source_path, original_filename, year, month, label=No
             (module, year, month, label, os.path.basename(original_filename), dest_path, now),
         )
         conn.commit()
+        return cur.lastrowid
     finally:
         conn.close()
 

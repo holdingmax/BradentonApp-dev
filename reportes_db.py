@@ -87,14 +87,6 @@ def _ensure_schema(conn):
     # "Total Sales" (impreso tal cual por el reporte, columna R) --
     # agregadas 2026-09-12, ver CLAUDE.md.
     _ensure_columns(conn, "daily_reports", {"other_amount": "REAL", "total_sales": "REAL"})
-    # Monto del departamento "LOCAL ACCT" del Department Sales Report (2026-
-    # 09-15, aclaración del usuario) -- se guarda acá, aparte de
-    # daily_report_departments, porque ese departamento NUNCA debe
-    # aparecer como una fila más (ver reporte_diario.extract_department_
-    # sales_for_day) -- este campo alimenta SOLO la categoría "Gettel" de
-    # Ventas por Departamento (ver group_department_sales/get_day_local_
-    # acct_amount/get_month_local_acct_amount).
-    _ensure_columns(conn, "daily_reports", {"local_acct_amount": "REAL"})
     conn.commit()
 
 
@@ -130,20 +122,15 @@ def _now():
     return datetime.now().isoformat(timespec="seconds")
 
 
-def replace_department_sales(report_date, records, pdf_filename=None, local_acct_amount=None):
+def replace_department_sales(report_date, records, pdf_filename=None):
     """
     Reemplaza TODO el día de golpe con lo recién leído del PDF (source=
     "ocr") -- mismo criterio que ya usa hoy la escritura del Excel
     (reprocesar un día reescribe sus celdas sin importar qué hubiera antes,
     sea una carga vieja o una corrección manual). `records` es la lista tal
     cual la devuelve reporte_diario.extract_department_sales_for_day:
-    [{"department", "count", "amount"}, ...].
-
-    `local_acct_amount` (mismo `extract_department_sales_for_day`, aparte
-    de `records`) reemplaza también el campo del mismo nombre en
-    daily_reports -- `None` si el PDF no trajo "LOCAL ACCT" ese día, para
-    que reprocesar un día que ya no lo tiene lo borre en vez de dejar un
-    valor viejo pegado.
+    [{"department", "count", "amount"}, ...] -- incluye "LOCAL ACCT" cuando
+    el PDF lo trae, como cualquier otro departamento real.
     """
     key = _date_key(report_date)
     now = _now()
@@ -160,13 +147,12 @@ def replace_department_sales(report_date, records, pdf_filename=None, local_acct
             )
         conn.execute(
             """
-            INSERT INTO daily_reports (date, pdf_filename, local_acct_amount, updated_at) VALUES (?, ?, ?, ?)
+            INSERT INTO daily_reports (date, pdf_filename, updated_at) VALUES (?, ?, ?)
             ON CONFLICT(date) DO UPDATE SET
                 pdf_filename = COALESCE(excluded.pdf_filename, daily_reports.pdf_filename),
-                local_acct_amount = excluded.local_acct_amount,
                 updated_at = excluded.updated_at
             """,
-            (key, pdf_filename, _to_float(local_acct_amount), now),
+            (key, pdf_filename, now),
         )
         conn.commit()
     finally:
@@ -484,63 +470,6 @@ def get_month_department_amounts(year, month, department):
     return {row["date"]: row["amount"] for row in rows}
 
 
-def get_day_local_acct_amount(report_date):
-    """
-    Monto de "LOCAL ACCT" (departamento del Department Sales Report,
-    guardado aparte -- ver replace_department_sales) para un solo día --
-    alimenta ÚNICAMENTE la categoría "Gettel" del resumen por categoría de
-    ese día (reporte_diario.group_department_sales). 0.0 si el día no tiene
-    nada guardado (nunca None, mismo criterio que get_day_gettel_amount de
-    gettel_db, que este campo reemplaza para este propósito puntual).
-    """
-    key = _date_key(report_date)
-    conn = _connect()
-    try:
-        row = conn.execute("SELECT local_acct_amount FROM daily_reports WHERE date = ?", (key,)).fetchone()
-    finally:
-        conn.close()
-    return (row["local_acct_amount"] if row else None) or 0.0
-
-
-def get_month_local_acct_amount(year, month):
-    """Suma de "LOCAL ACCT" del mes -- alimenta la categoría "Gettel" del resumen mensual de Ventas por Departamento."""
-    prefix = f"{year:04d}-{month:02d}-"
-    conn = _connect()
-    try:
-        row = conn.execute(
-            "SELECT SUM(local_acct_amount) AS total FROM daily_reports WHERE date LIKE ?",
-            (f"{prefix}%",),
-        ).fetchone()
-    finally:
-        conn.close()
-    return row["total"] or 0.0
-
-
-def set_local_acct_amount(report_date, amount):
-    """
-    Corrige/backfillea SOLO este campo de un día, sin tocar nada más --
-    usado para reprocesar días ya guardados antes de que este campo
-    existiera (ver replace_department_sales para el camino normal, que lo
-    reemplaza junto con el resto del día).
-    """
-    key = _date_key(report_date)
-    now = _now()
-    conn = _connect()
-    try:
-        conn.execute(
-            """
-            INSERT INTO daily_reports (date, local_acct_amount, updated_at) VALUES (?, ?, ?)
-            ON CONFLICT(date) DO UPDATE SET
-                local_acct_amount = excluded.local_acct_amount,
-                updated_at = excluded.updated_at
-            """,
-            (key, _to_float(amount), now),
-        )
-        conn.commit()
-    finally:
-        conn.close()
-
-
 def get_month_local_accounts(year, month):
     """
     {"YYYY-MM-DD": local_accounts} de Store Info para todo el mes -- usado
@@ -600,7 +529,15 @@ def absolute_pdf_path(relative_path):
 
 
 def get_month_pdf_list(year, month):
-    """Un renglón por cada PDF de cierre diario guardado este mes -- para la lista "Documentos" de la barra lateral."""
+    """
+    Un renglón por CADA día del mes (pedido explícito del usuario,
+    2026-09-18: "debería haber la cantidad de filas correspondientes...
+    según la cantidad de días que traiga el mes") -- `pdf_filename` en
+    `None` para los días sin nada guardado todavía, en vez de saltar
+    directo de un día cargado al siguiente. Mismo criterio que ya usa
+    get_month_overview para Ventas por Departamento -- un hueco en el
+    medio (ej. un día sin subir) queda visible como tal.
+    """
     prefix = f"{year:04d}-{month:02d}-"
     conn = _connect()
     try:
@@ -610,7 +547,13 @@ def get_month_pdf_list(year, month):
         ).fetchall()
     finally:
         conn.close()
-    return [{"date": row["date"], "pdf_filename": row["pdf_filename"]} for row in rows]
+    by_date = {row["date"]: row["pdf_filename"] for row in rows}
+    _, days_in_month = calendar.monthrange(year, month)
+    result = []
+    for day in range(1, days_in_month + 1):
+        key = f"{year:04d}-{month:02d}-{day:02d}"
+        result.append({"date": key, "day": day, "pdf_filename": by_date.get(key)})
+    return result
 
 
 def search_pdfs(query, limit=20):

@@ -9,12 +9,11 @@
   <p class="page-subtitle">Los PDF de cierre diario ya subidos este mes (alimentan Ventas por Departamento, Store Info y Gettel-Toyota) — se guardan tal cual, para volver a abrirlos cuando haga falta.</p>
 </div>
 
-<div class="month-jump-row">{{ month_jump('reporte_documentos', year, month) }}</div>
 <div class="card">
   <div class="historial-nav">
     <a href="{{ url_for('reporte_documentos', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
     <div class="historial-nav-title">
-      <h2>{{ month_name }} {{ year }}</h2>
+      {{ month_jump('reporte_documentos', year, month) }}
       {% if year == today.year and month == today.month %}
       <span class="muted">Mes actual</span>
       {% else %}
@@ -24,34 +23,43 @@
     <a href="{{ url_for('reporte_documentos', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
   </div>
 
-  {% if pdfs %}
-  <ul class="doc-list" style="margin-top: 18px;">
-    {% for pdf in pdfs %}
-    <li class="doc-list-item">
-      <div class="doc-list-info">
-        <a href="{{ url_for('reporte_dia_pdf', report_date=pdf.date) }}">{{ pdf.date }}</a>
-        <a href="{{ url_for('reporte_dia', report_date=pdf.date) }}" class="muted">Ver el día</a>
-      </div>
-    </li>
-    {% endfor %}
-  </ul>
-  {% else %}
-  <p class="muted" style="margin-top: 18px;">Todavía no hay ningún PDF guardado este mes.</p>
-  {% endif %}
+  <div class="historial-table-wrap" style="margin-top: 18px;">
+    <table class="historial-table">
+      <thead><tr><th>Día</th><th>PDF</th><th></th></tr></thead>
+      <tbody>
+        {% for pdf in pdfs %}
+        <tr class="{{ 'historial-row-today' if pdf.date == today_iso else '' }}">
+          <td class="historial-col-day">{{ "%02d"|format(pdf.day) }}</td>
+          <td>
+            {% if pdf.filename %}
+            <a href="{{ url_for('reporte_dia_pdf', report_date=pdf.date) }}">{{ pdf.filename }}</a>
+            {% else %}
+            <span class="muted">—</span>
+            {% endif %}
+          </td>
+          <td class="historial-col-action">
+            {% if pdf.filename %}<a href="{{ url_for('reporte_dia', report_date=pdf.date) }}">Ver el día</a>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
 </div>
 
 <style>
   .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
   .historial-nav-btn { text-decoration: none; display: inline-block; }
-  .historial-nav-title { text-align: center; }
-  .historial-nav-title h2 { margin: 0; }
+  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
   .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
-  .doc-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-  .doc-list-item {
-    display: flex; align-items: center; justify-content: space-between; gap: 12px;
-    padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-alt);
-    flex-wrap: wrap;
-  }
-  .doc-list-info { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .historial-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
+  .historial-table { width: 100%; min-width: 420px; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .historial-table th, .historial-table td { padding: 9px 14px; text-align: left; }
+  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr { border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
+  .historial-row-today { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .historial-col-day { font-weight: 700; width: 40px; }
+  .historial-col-action { text-align: right; white-space: nowrap; }
 </style>
 {% endblock %}

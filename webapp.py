@@ -78,6 +78,7 @@ from proveedores_dynamic_extractors import (
     list_dynamic_suppliers_display,
 )
 from reporte_diario import (
+    build_store_info_export_workbook,
     extract_department_sales_for_day,
     extract_lottery_department_fields_from_pdf,
     extract_lottery_receipt_fields_from_sales_report,
@@ -93,6 +94,8 @@ import gettel_db
 import cmv_db
 import documents_db
 import proveedores_db
+import horas_trabajo_db
+from horas_trabajo import extract_hours_report
 import jobs
 from balance_mensual import replace_mayor_sheets
 
@@ -300,6 +303,7 @@ _ICON_SCALE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke
 # guardados) -- pedido explícito del usuario (2026-09-16), distinto del
 # ícono de cada módulo para que se note de un vistazo que es un archivo.
 _ICON_FILE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>'
+_ICON_CLOCK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>'
 
 TOOLS = [
     {
@@ -517,6 +521,16 @@ CARGA_DATOS_TOOLS = [
         "accent": "#DB2777",
         "accent_soft": "#FBD9EA",
     },
+    {
+        "key": "carga_horas",
+        "code": "HT",
+        "icon": _ICON_CLOCK,
+        "label": "Horas de Trabajo",
+        "url": "/carga-datos/horas-trabajo",
+        "description": "Subí el reporte semanal de Clock In/Out — horas por empleado, sueldo y descuentos calculados solos, sin generar ningún Excel.",
+        "accent": "#0891B2",
+        "accent_soft": "#D3F0F4",
+    },
 ]
 
 THEME_BY_KEY = {
@@ -653,6 +667,24 @@ def _save_uploads_to_workspace(uploads, workdir=None):
 _REPORTE_DIARIO_FILENAME_DATE_RE = re.compile(r"(\d{1,2})[.\-](\d{1,2})\s*$")
 _FULL_DATE_DMY_RE = re.compile(r"(?<!\d)(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2,4})(?!\d)")
 _FULL_DATE_YMD_RE = re.compile(r"(?<!\d)(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})(?!\d)")
+
+
+def _reporte_pdf_canonical_filename(business_date):
+    """
+    Nombre CLARO y fijo con el que se guarda la copia de cada PDF de
+    Reporte Diario -- pedido explícito del usuario (2026-09-18): "que se
+    guarden de forma clara... que cada día coincida con el día que se le
+    manda". Antes se guardaba con el nombre tal cual lo subió el usuario
+    (mismo criterio de "nunca sanitizar" que el resto del proyecto, pero
+    acá terminaba guardando cualquier cosa -- un nombre de escaneo
+    genérico, una copia "(1)", etc.) -- ahora, sin importar cómo se llamaba
+    el archivo real, la copia guardada siempre usa este formato ("Close
+    Store DD-MM.pdf", el mismo patrón que ya reconoce _reporte_filename_
+    day_month) con la fecha real de negocio ya calculada (con el +1 día ya
+    aplicado) -- así el nombre del archivo guardado siempre es fiel al día
+    que representa, se pueda o no confiar en el nombre original.
+    """
+    return f"Close Store {business_date:%d-%m}.pdf"
 
 
 def _reporte_filename_day_month(filename):
@@ -904,10 +936,11 @@ def _run_carga_datos_reporte_diario_job(job_id, pdf_paths):
                 result = extract_department_sales_for_day(pdf_path)
                 candidate_date = result["date"]
                 _check_filename_date(candidate_date)
-                pdf_relpath = reportes_db.store_pdf_copy(candidate_date, pdf_path, filename)
+                pdf_relpath = reportes_db.store_pdf_copy(
+                    candidate_date, pdf_path, _reporte_pdf_canonical_filename(candidate_date)
+                )
                 reportes_db.replace_department_sales(
                     candidate_date, result["records"], pdf_filename=pdf_relpath,
-                    local_acct_amount=result.get("local_acct_amount"),
                 )
                 day_date = candidate_date
                 got_departments = True
@@ -923,7 +956,9 @@ def _run_carga_datos_reporte_diario_job(job_id, pdf_paths):
                     result = extract_store_info_for_day(pdf_path)
                     candidate_date = result["date"]
                     _check_filename_date(candidate_date)
-                    pdf_relpath = reportes_db.store_pdf_copy(candidate_date, pdf_path, filename)
+                    pdf_relpath = reportes_db.store_pdf_copy(
+                        candidate_date, pdf_path, _reporte_pdf_canonical_filename(candidate_date)
+                    )
                     reportes_db.upsert_store_info(candidate_date, result["fields"], source="ocr", pdf_filename=pdf_relpath)
                     day_date = candidate_date
                     got_store_info = True
@@ -2013,11 +2048,11 @@ def _persist_reporte_diario_departments(pdf_paths, progress_callback=None):
             print(f"[reportes_db] no se pudo guardar departamentos de {pdf_path}: {error}")
             continue
         try:
-            filename = os.path.basename(pdf_path)
-            pdf_relpath = reportes_db.store_pdf_copy(result["date"], pdf_path, filename)
+            pdf_relpath = reportes_db.store_pdf_copy(
+                result["date"], pdf_path, _reporte_pdf_canonical_filename(result["date"])
+            )
             reportes_db.replace_department_sales(
                 result["date"], result["records"], pdf_filename=pdf_relpath,
-                local_acct_amount=result.get("local_acct_amount"),
             )
         except Exception as exc:
             print(f"[reportes_db] no se pudo guardar departamentos de {pdf_path}: {exc}")
@@ -2083,8 +2118,9 @@ def _persist_reporte_diario_store_info(pdf_paths, progress_callback=None):
             print(f"[reportes_db] no se pudo guardar Store Info de {pdf_path}: {error}")
             continue
         try:
-            filename = os.path.basename(pdf_path)
-            pdf_relpath = reportes_db.store_pdf_copy(result["date"], pdf_path, filename)
+            pdf_relpath = reportes_db.store_pdf_copy(
+                result["date"], pdf_path, _reporte_pdf_canonical_filename(result["date"])
+            )
             reportes_db.upsert_store_info(result["date"], result["fields"], source="ocr", pdf_filename=pdf_relpath)
         except Exception as exc:
             print(f"[reportes_db] no se pudo guardar Store Info de {pdf_path}: {exc}")
@@ -2323,14 +2359,10 @@ def reporte_historial():
     # las 6 SIEMPRE se devuelven, aunque den $0, para que la columna
     # correspondiente muestre "0" en vez de desaparecer.
     for day in overview:
-        day_groups, _unmatched = group_department_sales(
-            day["department_detail"], local_acct_amount=reportes_db.get_day_local_acct_amount(day["date"])
-        )
+        day_groups, _unmatched = group_department_sales(day["department_detail"])
         day["category_groups"] = day_groups
     department_totals = reportes_db.get_month_department_totals(year, month)
-    department_groups, department_unmatched = group_department_sales(
-        department_totals, local_acct_amount=reportes_db.get_month_local_acct_amount(year, month)
-    )
+    department_groups, department_unmatched = group_department_sales(department_totals)
     prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
     next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
 
@@ -2377,15 +2409,14 @@ def reporte_historial_eliminar():
     return redirect(url_for("reporte_historial", year=year, month=month))
 
 
-@app.route("/reporte/store-info/historial")
-def reporte_store_info_historial():
-    """Store Info de un mes completo -- página propia, ver reporte_historial de arriba."""
-    today = date.today()
-    year = request.args.get("year", type=int) or today.year
-    month = request.args.get("month", type=int) or today.month
-    if not (1 <= month <= 12):
-        month = today.month
-
+def _build_store_info_rows(year, month):
+    """
+    Store Info de un mes, con los campos calculados (Total Fuel/Total
+    Sales/Total Revenue/gettel_amount y sus desgloses) ya resueltos --
+    extraído de reporte_store_info_historial para poder reusarlo también
+    en la exportación a Excel (ver reporte_store_info_exportar), sin
+    duplicar esta lógica.
+    """
     store_info_rows = reportes_db.get_month_store_info(year, month)
     # Aviso de horario -- pedido explícito del usuario (2026-09-14): si un
     # día termina a una hora y el siguiente no arranca exactamente ahí, es
@@ -2409,10 +2440,9 @@ def reporte_store_info_historial():
     department_detail_by_date = {d["date"]: d["department_detail"] for d in reportes_db.get_month_overview(year, month)}
     for row in store_info_rows:
         detail = department_detail_by_date.get(row["date"], [])
-        groups, _unmatched = group_department_sales(
-            detail, local_acct_amount=reportes_db.get_day_local_acct_amount(row["date"])
-        )
+        groups, _unmatched = group_department_sales(detail)
         gettel_amount = next((g["amount"] for g in groups if g["label"] == "Gettel"), 0.0)
+        row["gettel_amount"] = gettel_amount
 
         # "Total Fuel" -- pedido explícito del usuario (2026-09-16): la
         # columna real de Store Info (H) nunca se había mostrado -- es
@@ -2478,6 +2508,19 @@ def reporte_store_info_historial():
             (_CATEGORY_DISPLAY_LABELS.get(g["label"], g["label"]), g["amount"]) for g in groups
         ]
         row["non_fuel_categories_total"] = round(sum(g["amount"] for g in groups), 2)
+    return store_info_rows
+
+
+@app.route("/reporte/store-info/historial")
+def reporte_store_info_historial():
+    """Store Info de un mes completo -- página propia, ver reporte_historial de arriba."""
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    store_info_rows = _build_store_info_rows(year, month)
     prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
     next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
 
@@ -2496,6 +2539,30 @@ def reporte_store_info_historial():
     )
 
 
+@app.route("/reporte/store-info/exportar")
+def reporte_store_info_exportar():
+    """
+    Descarga un Excel NUEVO (nunca toca ningún archivo real) con Store Info
+    de un mes ya guardado -- pedido explícito del usuario (2026-09-18), ver
+    reporte_diario.build_store_info_export_workbook.
+    """
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    store_info_rows = _build_store_info_rows(year, month)
+    if not store_info_rows:
+        flash("No hay ningún Store Info guardado ese mes para exportar.", "error")
+        return redirect(url_for("reporte_store_info_historial", year=year, month=month))
+
+    workspace_dir = tempfile.mkdtemp(prefix="storeinfo_export_")
+    dest_path = os.path.join(workspace_dir, f"Store Info {month:02d}-{year}.xlsx")
+    build_store_info_export_workbook(store_info_rows, year, month, dest_path)
+    return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
+
+
 def _parse_report_date(report_date):
     if isinstance(report_date, date):
         return report_date
@@ -2512,6 +2579,8 @@ def reporte_documentos():
         month = today.month
 
     pdfs = reportes_db.get_month_pdf_list(year, month)
+    for pdf in pdfs:
+        pdf["filename"] = os.path.basename(pdf["pdf_filename"]) if pdf["pdf_filename"] else None
     prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
     next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
 
@@ -2525,6 +2594,7 @@ def reporte_documentos():
         prev_month=prev_month,
         next_year=next_year,
         next_month=next_month,
+        today_iso=today.isoformat(),
         **THEME_BY_KEY["reporte"],
     )
 
@@ -2538,9 +2608,7 @@ def reporte_dia(report_date):
         return redirect(url_for("reporte_historial"))
 
     day = reportes_db.get_day(parsed_date)
-    department_groups, department_unmatched = group_department_sales(
-        day["departments"], local_acct_amount=reportes_db.get_day_local_acct_amount(parsed_date)
-    )
+    department_groups, department_unmatched = group_department_sales(day["departments"])
 
     # "Total Sales" real de la tarjeta resumen -- mismo fix que reporte_
     # store_info_historial (ver ahí el porqué): se recalcula con Total Fuel
@@ -2911,10 +2979,12 @@ def _match_invoice_document(invoice_text, docs):
 @app.route("/carga-datos/eft/historial")
 def carga_datos_eft_historial():
     """
-    EFT del mes (con sus cupones/facturas, ordenados por la fecha del EFT) +
-    todos los Cupones guardados de forma histórica, agrupados por mes para
-    poder distinguir de un vistazo cuáles son de qué mes (pedido explícito
-    del usuario 2026-09-12) -- con su estado de cruce.
+    EFT del mes (con sus cupones/facturas, ordenados por la fecha del EFT)
+    -- solo EFT, ver carga_datos_eft_cupones_historial para el historial
+    completo de Cupones. Pedido explícito del usuario (2026-09-18): antes
+    el historial ENTERO de Cupones (histórico, desde inicios de 2026) salía
+    pegado debajo de los EFT de un solo mes en la misma página -- separados
+    en dos apartados propios, cada uno con su propia navegación.
     """
     today = date.today()
     year = request.args.get("year", type=int) or today.year
@@ -2935,16 +3005,12 @@ def carga_datos_eft_historial():
         }
         for inv in entry.get("paid_invoices") or []:
             inv["document"] = _match_invoice_document(inv.get("invoice"), eft_docs)
-    cupon_groups = eft_db.get_cupones_grouped_by_month()
-    for group in cupon_groups:
-        group["label"] = f"{_MONTH_NAMES_ES[group['month'] - 1]} {group['year']}" if group["month"] else "Sin fecha"
     prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
     next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
 
     return render_template(
         "carga_datos_eft_historial.html",
         deposits=deposits,
-        cupon_groups=cupon_groups,
         year=year,
         month=month,
         month_name=_MONTH_NAMES_ES[month - 1],
@@ -2952,6 +3018,26 @@ def carga_datos_eft_historial():
         prev_month=prev_month,
         next_year=next_year,
         next_month=next_month,
+        **THEME_BY_KEY["carga_eft"],
+    )
+
+
+@app.route("/carga-datos/eft/cupones/historial")
+def carga_datos_eft_cupones_historial():
+    """
+    Historial COMPLETO de Cupones -- histórico desde inicios de 2026, nunca
+    filtrado por mes (agrupado por mes solo como separador visual, ver
+    eft_db.get_cupones_grouped_by_month), en su propio apartado separado de
+    los EFT -- pedido explícito del usuario (2026-09-18), ver el comentario
+    de carga_datos_eft_historial más arriba.
+    """
+    cupon_groups = eft_db.get_cupones_grouped_by_month()
+    for group in cupon_groups:
+        group["label"] = f"{_MONTH_NAMES_ES[group['month'] - 1]} {group['year']}" if group["month"] else "Sin fecha"
+
+    return render_template(
+        "carga_datos_eft_cupones_historial.html",
+        cupon_groups=cupon_groups,
         **THEME_BY_KEY["carga_eft"],
     )
 
@@ -3269,6 +3355,196 @@ def carga_datos_gettel_historial():
     )
 
 
+# ---------------------------------------------------------------------------
+# Horas de Trabajo -- Carga de Datos (2026-09-18, pedido explícito del
+# usuario): el reporte semanal "Clock In/Out Detail Report" (Chevron POS,
+# uno por lunes) que antes se transcribía a mano al Excel "BDT. HOURS..."
+# ahora se lee solo -- una semana = un bloque, igual que EFT. Horas/tarifa
+# ($15/hora por default)/descuento quedan editables por empleado; el monto a
+# pagar se calcula siempre en el momento (horas*tarifa−descuento), nunca se
+# guarda ya calculado -- mismo criterio que DIF EFECT/Saldo en Caja.
+# ---------------------------------------------------------------------------
+
+@app.route("/carga-datos/horas-trabajo")
+def carga_datos_horas_trabajo():
+    return render_template("carga_datos_horas_trabajo.html", **THEME_BY_KEY["carga_horas"])
+
+
+@app.route("/carga-datos/horas-trabajo/subir", methods=["POST"])
+def carga_datos_horas_trabajo_subir():
+    uploads = request.files.getlist("report_files")
+    if not uploads or not any(u.filename for u in uploads):
+        return _error_response("Seleccioná uno o más PDF de Clock In/Out.")
+
+    paths = _save_uploads_to_workspace(uploads)
+    job_id = jobs.create_job(len(paths))
+    threading.Thread(target=_run_carga_datos_horas_trabajo_job, args=(job_id, paths), daemon=True).start()
+    return jsonify({"job_id": job_id, "total": len(paths)})
+
+
+def _run_carga_datos_horas_trabajo_job(job_id, paths):
+    """Corre en su propio hilo -- mismo patrón que _run_carga_datos_gettel_job."""
+    try:
+        weeks_saved = 0
+        files_failed = 0
+        unresolved_total = []
+        first_date = None
+
+        for index, path in enumerate(paths, start=1):
+            try:
+                data = extract_hours_report(path)
+                if data["report_date"] is None:
+                    raise ValueError('No se pudo leer la fecha de "REPORT PRINTED".')
+                if not data["employees"] and not data["unresolved_employees"]:
+                    raise ValueError("No se pudo leer ningún empleado de este reporte.")
+
+                document_id = None
+                try:
+                    document_id = documents_db.store_document(
+                        "horas_trabajo", path, os.path.basename(path),
+                        data["report_date"].year, data["report_date"].month,
+                        label="Reporte semanal",
+                    )
+                except Exception as exc:
+                    print(f"[documents_db] no se pudo guardar el reporte de Horas de Trabajo {path}: {exc}")
+
+                horas_trabajo_db.upsert_week(
+                    data["report_date"], data["period_from"], data["period_to"],
+                    data["employees"], source="ocr", document_id=document_id,
+                )
+                weeks_saved += 1
+                unresolved_total.extend(data["unresolved_employees"])
+                if first_date is None or data["report_date"] < first_date:
+                    first_date = data["report_date"]
+            except Exception as exc:
+                print(f"[carga-datos/horas-trabajo] {path}: {exc}")
+                files_failed += 1
+            jobs.update_job(job_id, done=index, total=len(paths))
+
+        parts = []
+        if weeks_saved:
+            parts.append(f"{weeks_saved} semana(s) guardada(s).")
+        if unresolved_total:
+            parts.append(
+                f"{len(unresolved_total)} empleado(s) sin su Total legible -- agregalos a mano desde el cuadro de esa semana."
+            )
+        if files_failed:
+            parts.append(f"{files_failed} archivo(s) no se pudieron leer.")
+
+        if not parts:
+            notice, level = "No se pudo guardar nada de este lote.", "error"
+        else:
+            notice, level = " ".join(parts), ("warning" if (files_failed or unresolved_total) else "success")
+
+        if first_date:
+            redirect_url = f"/carga-datos/horas-trabajo/historial?year={first_date.year}&month={first_date.month}"
+        else:
+            redirect_url = "/carga-datos/horas-trabajo"
+
+        jobs.update_job(
+            job_id, status="done", done=len(paths), total=len(paths),
+            notice=notice, notice_level=level, redirect_url=redirect_url,
+        )
+    except Exception as exc:
+        jobs.update_job(job_id, status="error", error=f"Error: {exc}")
+
+
+@app.route("/carga-datos/horas-trabajo/historial")
+def carga_datos_horas_trabajo_historial():
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    entries = []
+    for item in horas_trabajo_db.get_month_weeks(year, month):
+        week = item["week"]
+        employees = []
+        week_total = 0.0
+        for emp in item["employees"]:
+            total_pay = round((emp["hours"] or 0.0) * (emp["rate"] or 0.0) - (emp["deduct"] or 0.0), 2)
+            employees.append({**emp, "total_pay": total_pay})
+            week_total += total_pay
+        document = documents_db.get_document(week["document_id"]) if week.get("document_id") else None
+        entries.append({"week": week, "employees": employees, "week_total": round(week_total, 2), "document": document})
+
+    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+
+    return render_template(
+        "carga_datos_horas_trabajo_historial.html",
+        entries=entries,
+        year=year,
+        month=month,
+        month_name=_MONTH_NAMES_ES[month - 1],
+        prev_year=prev_year,
+        prev_month=prev_month,
+        next_year=next_year,
+        next_month=next_month,
+        **THEME_BY_KEY["carga_horas"],
+    )
+
+
+@app.route("/carga-datos/horas-trabajo/empleado/<int:employee_id>/editar", methods=["POST"])
+def carga_datos_horas_trabajo_empleado_editar(employee_id):
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    name = (request.form.get("employee_name") or "").strip()
+    try:
+        hours = float((request.form.get("hours") or "0").strip())
+        rate = float((request.form.get("rate") or "0").strip())
+        deduct = float((request.form.get("deduct") or "0").strip())
+    except ValueError:
+        flash("No se pudo guardar: revisá que horas/tarifa/descuento sean números válidos.", "error")
+        return redirect(url_for("carga_datos_horas_trabajo_historial", year=year, month=month))
+
+    horas_trabajo_db.update_employee(employee_id, employee_name=name or None, hours=hours, rate=rate, deduct=deduct)
+    flash("Empleado actualizado.", "success")
+    return redirect(url_for("carga_datos_horas_trabajo_historial", year=year, month=month))
+
+
+@app.route("/carga-datos/horas-trabajo/semana/<int:week_id>/empleado", methods=["POST"])
+def carga_datos_horas_trabajo_empleado_agregar(week_id):
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    name = (request.form.get("employee_name") or "").strip()
+    if not name:
+        flash("Ingresá el nombre del empleado.", "error")
+        return redirect(url_for("carga_datos_horas_trabajo_historial", year=year, month=month))
+
+    try:
+        hours = float((request.form.get("hours") or "0").strip())
+        rate_raw = (request.form.get("rate") or "").strip()
+        rate = float(rate_raw) if rate_raw else horas_trabajo_db.DEFAULT_HOURLY_RATE
+        deduct = float((request.form.get("deduct") or "0").strip())
+    except ValueError:
+        flash("No se pudo agregar: revisá que horas/tarifa/descuento sean números válidos.", "error")
+        return redirect(url_for("carga_datos_horas_trabajo_historial", year=year, month=month))
+
+    horas_trabajo_db.add_employee(week_id, name, hours=hours, rate=rate, deduct=deduct)
+    flash("Empleado agregado.", "success")
+    return redirect(url_for("carga_datos_horas_trabajo_historial", year=year, month=month))
+
+
+@app.route("/carga-datos/horas-trabajo/empleado/<int:employee_id>/eliminar", methods=["POST"])
+def carga_datos_horas_trabajo_empleado_eliminar(employee_id):
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    horas_trabajo_db.delete_employee(employee_id)
+    flash("Empleado eliminado.", "success")
+    return redirect(url_for("carga_datos_horas_trabajo_historial", year=year, month=month))
+
+
+@app.route("/carga-datos/horas-trabajo/semana/<int:week_id>/eliminar", methods=["POST"])
+def carga_datos_horas_trabajo_eliminar(week_id):
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    horas_trabajo_db.delete_week(week_id)
+    flash("Semana eliminada. Los documentos guardados no se borran.", "success")
+    return redirect(url_for("carga_datos_horas_trabajo_historial", year=year, month=month))
+
+
 @app.route("/carga-datos/cmv")
 def carga_datos_cmv():
     """
@@ -3439,6 +3715,7 @@ _DOCUMENTS_MODULES = {
     "cmv_ventas": {"title": "CMV — Ventas", "theme": "carga_cmv", "back_endpoint": "carga_datos_cmv_ventas_historial"},
     "lottery_resumen_mensual": {"title": "Lottery — Resumen mensual", "theme": "lottery", "back_endpoint": "carga_datos_lottery_historial"},
     "proveedores": {"title": "Proveedores", "theme": "carga_proveedores", "back_endpoint": "carga_datos_proveedores_historial"},
+    "horas_trabajo": {"title": "Horas de Trabajo", "theme": "carga_horas", "back_endpoint": "carga_datos_horas_trabajo_historial"},
 }
 
 

@@ -9,30 +9,36 @@
    de qué vista mostrar (meses/años) vive en base.html, en el mismo bloque
    <script> que abre/cierra el popover. `endpoint` es el nombre de la ruta
    Flask; cualquier kwarg extra (ej. module_key en Documentos) se le pasa
-   tal cual a url_for vía el `kwargs` implícito de Jinja. #}
+   tal cual a url_for vía el `kwargs` implícito de Jinja.
+
+   2026-09-18: el trigger pasó de un botón chip aparte (arriba de la
+   tarjeta) a REEMPLAZAR directo el título "{{ month_name }} {{ year }}"
+   que cada página ya mostraba en su `.historial-nav-title` -- pedido
+   explícito del usuario, con una captura de referencia: "que al tocarlo
+   ahí se habra el calendario". El caller llama este macro justo donde
+   antes tenía su propio `<h2>{{ month_name }} {{ year }}</h2>` -- ya no
+   hace falta ningún `.month-jump-row` aparte. #}
 {% macro month_jump(endpoint, year, month) %}
 {% set widget_id = 'mj-' + endpoint|replace('_', '-') %}
 {% set month_names = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"] %}
 {% set month_abbr = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"] %}
-<div class="month-jump-row">
-  <button type="button" class="popover-trigger month-jump-trigger" data-popover-target="{{ widget_id }}-panel">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
-    {{ month_names[month - 1] }} {{ year }}
-  </button>
-  <div class="popover-panel month-jump-panel" id="{{ widget_id }}-panel"
-       data-endpoint="{{ url_for(endpoint, **kwargs) }}"
-       data-year="{{ year }}" data-month="{{ month }}" data-shown-year="{{ year }}" data-view="months">
-    <div class="month-jump-head">
-      <button type="button" class="month-jump-arrow" data-role="prev">&laquo;</button>
-      <button type="button" class="month-jump-title" data-role="year-label">{{ year }}</button>
-      <button type="button" class="month-jump-arrow" data-role="next">&raquo;</button>
-    </div>
-    <div class="month-jump-grid month-jump-months">
-      {% for i in range(1, 13) %}
-      <button type="button" class="month-jump-cell {{ 'selected' if i == month }}" data-mj-month="{{ i }}">{{ month_abbr[i - 1] }}</button>
-      {% endfor %}
-    </div>
-    <div class="month-jump-grid month-jump-years" hidden></div>
+<button type="button" class="popover-trigger month-jump-trigger" data-popover-target="{{ widget_id }}-panel">
+  {{ month_names[month - 1] }} {{ year }}
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" width="15" height="15"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+</button>
+<div class="popover-panel month-jump-panel" id="{{ widget_id }}-panel"
+     data-endpoint="{{ url_for(endpoint, **kwargs) }}"
+     data-year="{{ year }}" data-month="{{ month }}" data-shown-year="{{ year }}" data-view="months">
+  <div class="month-jump-head">
+    <button type="button" class="month-jump-arrow" data-role="prev">&laquo;</button>
+    <button type="button" class="month-jump-title" data-role="year-label">{{ year }}</button>
+    <button type="button" class="month-jump-arrow" data-role="next">&raquo;</button>
   </div>
+  <div class="month-jump-grid month-jump-months">
+    {% for i in range(1, 13) %}
+    <button type="button" class="month-jump-cell {{ 'selected' if i == month }}" data-mj-month="{{ i }}">{{ month_abbr[i - 1] }}</button>
+    {% endfor %}
+  </div>
+  <div class="month-jump-grid month-jump-years" hidden></div>
 </div>
 {% endmacro %}

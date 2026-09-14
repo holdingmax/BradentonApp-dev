@@ -11,22 +11,23 @@
 
 <div class="card">
   <h2>Subir resumen</h2>
-  <form method="post" action="{{ url_for('carga_datos_lottery_resumen_mensual_subir') }}" enctype="multipart/form-data">
-    <div class="dia-grid" style="grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));">
-      <div>
+  <p class="muted">El resumen que llega ya con su propio mes/año impreso — elegí a cuál corresponde antes de subirlo.</p>
+  <form method="post" action="{{ url_for('carga_datos_lottery_resumen_mensual_subir') }}" enctype="multipart/form-data" class="resumen-upload-form">
+    <div class="resumen-upload-row">
+      <div class="resumen-field">
         <label class="muted">Mes</label>
         <select name="month">
           {% for i in range(1, 13) %}<option value="{{ i }}" {{ 'selected' if i == month }}>{{ ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"][i-1] }}</option>{% endfor %}
         </select>
       </div>
-      <div>
+      <div class="resumen-field resumen-field-year">
         <label class="muted">Año</label>
         <input type="number" name="year" value="{{ year }}">
       </div>
-      <div>
-        <label class="muted">PDF</label>
-        <input type="file" name="resumen_file" accept="application/pdf">
-      </div>
+    </div>
+    <div class="resumen-field resumen-field-file">
+      <label class="muted">PDF del resumen</label>
+      <input type="file" name="resumen_file" accept="application/pdf" required>
     </div>
     <div class="form-actions">
       <button type="submit">Guardar</button>
@@ -34,12 +35,12 @@
   </form>
 </div>
 
-<div class="month-jump-row" style="margin-top: 18px; margin-bottom: 0;">{{ month_jump('carga_datos_lottery_resumen_mensual', year, month) }}</div>
-<div class="card" style="margin-top: 10px;">
+<div class="card" style="margin-top: 18px;">
+  <h2>Resúmenes guardados</h2>
   <div class="historial-nav">
     <a href="{{ url_for('carga_datos_lottery_resumen_mensual', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
     <div class="historial-nav-title">
-      <h2>{{ month_name }} {{ year }}</h2>
+      {{ month_jump('carga_datos_lottery_resumen_mensual', year, month) }}
       {% if year == today.year and month == today.month %}
       <span class="muted">Mes actual</span>
       {% else %}
@@ -50,12 +51,15 @@
   </div>
 
   {% if docs %}
-  <ul class="doc-list" style="margin-top: 18px;">
+  <ul class="doc-list">
     {% for doc in docs %}
     <li class="doc-list-item">
+      <span class="doc-list-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
+      </span>
       <div class="doc-list-info">
         <a href="{{ url_for('carga_datos_documento_descargar', document_id=doc.id) }}">{{ doc.filename }}</a>
-        <span class="muted">{{ doc.uploaded_at }}</span>
+        <span class="muted">Subido el {{ doc.uploaded_at }}</span>
       </div>
       <form method="post" action="{{ url_for('carga_datos_documento_eliminar', document_id=doc.id) }}" onsubmit="return confirm('¿Eliminar este documento?');">
         <button type="submit" class="btn-danger-soft">Eliminar</button>
@@ -64,22 +68,43 @@
     {% endfor %}
   </ul>
   {% else %}
-  <p class="muted" style="margin-top: 18px;">Todavía no hay ningún resumen guardado este mes.</p>
+  <p class="muted resumen-empty">Todavía no hay ningún resumen guardado este mes.</p>
   {% endif %}
 </div>
 
 <style>
   .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
   .historial-nav-btn { text-decoration: none; display: inline-block; }
-  .historial-nav-title { text-align: center; }
-  .historial-nav-title h2 { margin: 0; }
+  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
   .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
-  .doc-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+
+  /* Formulario de subida más prolijo -- pedido explícito del usuario
+     (2026-09-18): la grilla genérica de 3 campos apretados uno al lado del
+     otro (con el nombre del PDF elegido cortándose) quedaba "horrible".
+     Mes/Año en su propia fila corta, el input de archivo en su propia fila
+     ancha (nunca se corta), y el botón separado al final. */
+  .resumen-upload-form { display: flex; flex-direction: column; gap: 16px; margin-top: 14px; max-width: 480px; }
+  .resumen-upload-row { display: flex; gap: 16px; }
+  .resumen-field { display: flex; flex-direction: column; gap: 5px; flex: 1 1 auto; }
+  .resumen-field-year { flex: 0 1 140px; }
+  .resumen-field select, .resumen-field input[type="number"] { padding: 8px 10px; }
+  .resumen-field-file input[type="file"] { width: 100%; box-sizing: border-box; }
+  .resumen-upload-form .form-actions { margin-top: 0; }
+
+  .doc-list { list-style: none; margin: 18px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
   .doc-list-item {
-    display: flex; align-items: center; justify-content: space-between; gap: 12px;
-    padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-alt);
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-alt);
     flex-wrap: wrap;
   }
-  .doc-list-info { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  .doc-list-icon { display: flex; align-items: center; color: var(--accent); flex-shrink: 0; }
+  .doc-list-icon svg { width: 20px; height: 20px; }
+  .doc-list-info { display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-width: 160px; }
+  .doc-list-info a { font-weight: 600; text-decoration: none; }
+  .doc-list-info a:hover { text-decoration: underline; }
+  .doc-list-info .muted { font-size: 11.5px; }
+  .doc-list-item form { margin: 0; }
+  .doc-list-item form button { margin-top: 0; padding: 6px 12px; font-size: 12px; }
+  .resumen-empty { margin-top: 18px; }
 </style>
 {% endblock %}
