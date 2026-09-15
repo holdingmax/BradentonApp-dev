@@ -42,7 +42,7 @@ from chase_rules import (
     list_display_rules as list_chase_display_rules,
 )
 import caja_db
-from caja import build_caja_export_workbook, build_month_report_from_db as build_caja_month_report
+from caja import build_caja_export_pdf, build_caja_export_workbook, build_month_report_from_db as build_caja_month_report
 from cmv_costo import _consolidate_department_files, update_master_costo_todos_bulk
 import eft_db
 from eft_cta_cte import EFT_DUPLICATE_ALERT, extract_eft_data
@@ -78,6 +78,7 @@ from proveedores_dynamic_extractors import (
     list_dynamic_suppliers_display,
 )
 from reporte_diario import (
+    build_store_info_export_pdf,
     build_store_info_export_workbook,
     extract_department_sales_for_day,
     extract_lottery_department_fields_from_pdf,
@@ -2520,6 +2521,37 @@ def _build_store_info_rows(year, month):
     return store_info_rows
 
 
+def _store_info_totals(rows):
+    """
+    Fila de totales del mes para /reporte/store-info/historial -- pedido
+    explícito del usuario (2026-09-19): "no tenemos una fila extra despues
+    del ultimo dia en el que muestra los totales sumados". Un campo con
+    NINGÚN día cargado queda en None ("—" en el template) en vez de 0, para
+    no dar a entender que se sabe que ese total es cero.
+    """
+    fields = (
+        "volume", "sales_fuel", "desc_comb", "total_fuel", "non_fuel_total",
+        "desc_otros", "tax_collect", "total_sales", "cash", "local_accounts",
+        "other_amount", "network_revenue", "total_revenue",
+    )
+    totals = {field: 0.0 for field in fields}
+    any_value = {field: False for field in fields}
+    tc_total, tc_any = 0.0, False
+    for row in rows:
+        for field in fields:
+            value = row.get(field)
+            if value is not None:
+                totals[field] += value
+                any_value[field] = True
+        credit_terms = row.get("credit_terms") or []
+        if credit_terms:
+            tc_total += sum(credit_terms)
+            tc_any = True
+    result = {field: (round(totals[field], 2) if any_value[field] else None) for field in fields}
+    result["tc"] = round(tc_total, 2) if tc_any else None
+    return result
+
+
 @app.route("/reporte/store-info/historial")
 def reporte_store_info_historial():
     """Store Info de un mes completo -- página propia, ver reporte_historial de arriba."""
@@ -2536,6 +2568,7 @@ def reporte_store_info_historial():
     return render_template(
         "reporte_store_info_historial.html",
         store_info_rows=store_info_rows,
+        store_info_totals=_store_info_totals(store_info_rows),
         year=year,
         month=month,
         month_name=_MONTH_NAMES_ES[month - 1],
@@ -2569,6 +2602,31 @@ def reporte_store_info_exportar():
     workspace_dir = tempfile.mkdtemp(prefix="storeinfo_export_")
     dest_path = os.path.join(workspace_dir, f"Store Info {month:02d}-{year}.xlsx")
     build_store_info_export_workbook(store_info_rows, year, month, dest_path)
+    return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
+
+
+@app.route("/reporte/store-info/exportar/pdf")
+def reporte_store_info_exportar_pdf():
+    """
+    Versión PDF (básica, sin colores, solo líneas y bordes) del export de
+    arriba -- pedido explícito del usuario (2026-09-19): "solo necesitaria
+    que salieran los datos limpios en un PDF basico". Ver
+    reporte_diario.build_store_info_export_pdf.
+    """
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    store_info_rows = _build_store_info_rows(year, month)
+    if not store_info_rows:
+        flash("No hay ningún Store Info guardado ese mes para exportar.", "error")
+        return redirect(url_for("reporte_store_info_historial", year=year, month=month))
+
+    workspace_dir = tempfile.mkdtemp(prefix="storeinfo_export_pdf_")
+    dest_path = os.path.join(workspace_dir, f"Store Info {month:02d}-{year}.pdf")
+    build_store_info_export_pdf(store_info_rows, year, month, dest_path)
     return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
 
 
@@ -3211,6 +3269,26 @@ def carga_datos_caja_exportar():
     workspace_dir = tempfile.mkdtemp(prefix="caja_export_")
     dest_path = os.path.join(workspace_dir, f"Caja {month:02d}-{year}.xlsx")
     build_caja_export_workbook(report, year, month, dest_path)
+    return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
+
+
+@app.route("/carga-datos/caja/exportar/pdf")
+def carga_datos_caja_exportar_pdf():
+    """
+    Versión PDF (básica, sin colores, solo líneas y bordes) del export de
+    arriba -- pedido explícito del usuario (2026-09-19). Ver
+    caja.build_caja_export_pdf.
+    """
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    report = build_caja_month_report(year, month)
+    workspace_dir = tempfile.mkdtemp(prefix="caja_export_pdf_")
+    dest_path = os.path.join(workspace_dir, f"Caja {month:02d}-{year}.pdf")
+    build_caja_export_pdf(report, year, month, dest_path)
     return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
 
 

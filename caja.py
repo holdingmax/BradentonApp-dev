@@ -255,6 +255,7 @@ def build_month_report_from_db(year, month, _recursion_guard=True):
         tc = round(sum(info.get("credit_terms") or []), 2) if info else None
         other_amount = info.get("other_amount")
         total_revenue = info.get("total_revenue")
+        local_accounts = info.get("local_accounts")
 
         expenses_cash = expenses_by_date.get(key)
 
@@ -269,7 +270,31 @@ def build_month_report_from_db(year, month, _recursion_guard=True):
             - (expenses_cash or 0.0) - (cuenta_final or 0.0),
             2,
         )
+        saldo_previous = running_saldo
         running_saldo = round(running_saldo + dif_efect, 2)
+
+        # Desgloses para el cuadro flotante "qué valores usaron para llegar
+        # a ese resultado" -- pedido explícito del usuario (2026-09-19):
+        # "cuando hagas click en una celda en la que haya una formula de
+        # suma que te muestre... que es lo que suma", mismo mecanismo ya
+        # usado en Store Info (ver reporte_store_info_historial.html).
+        total_revenue_breakdown = [
+            ("Cash", cash),
+            ("Tarjeta/Crédito", tc),
+            ("Other", other_amount),
+            ("Local Acc.", local_accounts),
+        ]
+        dif_efect_breakdown = [
+            ("Cash", cash or 0.0),
+            ("Depósitos (resta)", -(deposit or 0.0)),
+            ("Other", other_amount or 0.0),
+            ("Gastos (resta)", -(expenses_cash or 0.0)),
+            ("Lottery Cuenta Final (resta)", -(cuenta_final or 0.0)),
+        ]
+        saldo_breakdown = [
+            ("Saldo día anterior", saldo_previous),
+            ("Dif Efect", dif_efect),
+        ]
 
         totals["total_sales"] += total_sales or 0.0
         totals["cash"] += cash or 0.0
@@ -299,6 +324,9 @@ def build_month_report_from_db(year, month, _recursion_guard=True):
                 "cuenta_final": round(cuenta_final, 2) if cuenta_final is not None else None,
                 "dif_efect": dif_efect,
                 "saldo": running_saldo,
+                "total_revenue_breakdown": total_revenue_breakdown,
+                "dif_efect_breakdown": dif_efect_breakdown,
+                "saldo_breakdown": saldo_breakdown,
             }
         )
 
@@ -518,3 +546,76 @@ def build_caja_export_workbook(report, year, month, dest_path):
 
     workbook.save(dest_path)
     return dest_path
+
+
+def _fmt_money_pdf(value):
+    return "—" if value is None else "{:,.2f}".format(value)
+
+
+def build_caja_export_pdf(report, year, month, dest_path):
+    """
+    PDF (líneas/bordes + colores, sin fórmulas) con la Caja del mes --
+    pedido explícito del usuario (2026-09-19), alternativa liviana al
+    Excel (build_caja_export_workbook) -- mismas columnas que ya se ven
+    en /carga-datos/caja (sin las dos columnas de fecha ni las columnas
+    vacías de espacio, que solo tienen sentido dentro del Excel real).
+    El Saldo Inicial va como nota arriba de la tabla, no como fila propia.
+    Colores idénticos a los del export a Excel (mismos hex, ver
+    build_caja_export_workbook) -- pedido explícito del usuario tras ver
+    la primera versión sin color.
+    """
+    from pdf_export import build_simple_table_pdf
+
+    GRAY, ORANGE, YELLOW = "#D9D9D9", "#FFC000", "#FFFF00"
+    GREEN_LIGHT, GREEN, BLUEGRAY, GRAY_LIGHT = "#A9D18E", "#92D050", "#ADB9CA", "#F2F2F2"
+    header_fill_by_col = {0: GRAY, 1: GRAY, 2: GRAY, 3: GRAY, 4: GRAY, 5: ORANGE, 6: ORANGE, 7: ORANGE, 8: ORANGE, 9: ORANGE}
+    data_fill_by_col = {1: GREEN_LIGHT, 2: GREEN, 3: YELLOW, 4: BLUEGRAY, 5: YELLOW, 7: ORANGE, 8: YELLOW, 9: GRAY_LIGHT}
+
+    headers = [
+        "Día", "Total Sales", "Cash", "Other", "Total Revenue",
+        "Depósitos", "Gastos", "Lottery\nCta. Final", "Dif Efect", "Saldo", "Food Truck/Ice",
+    ]
+    table_rows = [
+        [
+            "{:02d}".format(row["day"]),
+            _fmt_money_pdf(row.get("total_sales")),
+            _fmt_money_pdf(row.get("cash")),
+            _fmt_money_pdf(row.get("other_amount")),
+            _fmt_money_pdf(row.get("total_revenue")),
+            _fmt_money_pdf(row.get("deposit")),
+            _fmt_money_pdf(row.get("expenses_cash")),
+            _fmt_money_pdf(row.get("cuenta_final")),
+            _fmt_money_pdf(row.get("dif_efect")),
+            _fmt_money_pdf(row.get("saldo")),
+            _fmt_money_pdf(row.get("food_ice")),
+        ]
+        for row in report["rows"]
+    ]
+    totals = report["totals"]
+    table_rows.append(
+        [
+            "Total",
+            _fmt_money_pdf(totals.get("total_sales")),
+            _fmt_money_pdf(totals.get("cash")),
+            _fmt_money_pdf(totals.get("other_amount")),
+            _fmt_money_pdf(totals.get("total_revenue")),
+            _fmt_money_pdf(totals.get("deposit")),
+            _fmt_money_pdf(totals.get("expenses_cash")),
+            _fmt_money_pdf(report.get("total_lottery")),
+            _fmt_money_pdf(totals.get("dif_efect")),
+            _fmt_money_pdf(report.get("effective_closing_balance")),
+            _fmt_money_pdf(totals.get("food_ice")),
+        ]
+    )
+    title = f"Caja — {month:02d}/{year} — Saldo Inicial: ${_fmt_money_pdf(report.get('opening_balance'))}"
+    col_widths_mm = [16, 29, 26, 23, 29, 26, 26, 29, 26, 29, 29]
+    return build_simple_table_pdf(
+        dest_path,
+        title,
+        headers,
+        table_rows,
+        col_widths_mm,
+        header_fill_by_col=header_fill_by_col,
+        data_fill_by_col=data_fill_by_col,
+        bold_last_row=True,
+    )

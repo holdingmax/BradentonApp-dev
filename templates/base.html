@@ -763,6 +763,30 @@
     }
     a.btn-accent:hover { filter: brightness(0.92); }
     a.btn-accent:active { transform: scale(0.96); }
+    button.btn-accent {
+      display: inline-block;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      padding: 9px 18px;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 13.5px;
+      transition: filter 0.12s ease, transform 0.08s ease;
+    }
+    button.btn-accent:hover { filter: brightness(0.92); }
+    button.btn-accent:active { transform: scale(0.96); }
+
+    /* Botón "Exportar" con 2 opciones (Excel / PDF) -- pedido explícito
+       del usuario (2026-09-19): "poner en el boton solo export y que te
+       de 2 opcion si preferis PDF o excel" -- reusa el mismo mecanismo
+       genérico .popover-trigger/.popover-panel de arriba. */
+    .export-menu { display: flex; flex-direction: column; gap: 2px; min-width: 140px; padding: 6px; }
+    .export-menu a {
+      display: block; padding: 7px 10px; border-radius: 6px;
+      text-decoration: none; font-weight: 600; font-size: 13px;
+    }
+    .export-menu a:hover { background: var(--accent-soft); color: var(--accent); }
 
     /* ---------- Flash ---------- */
     .flash-error {
@@ -929,6 +953,18 @@
       min-width: 130px;
     }
     .popover-panel.open { display: block; }
+
+    /* Botón "Exportar" (.btn-accent + .popover-trigger a la vez) -- las
+       reglas genéricas de .popover-trigger de arriba (background:none,
+       border:none, padding:0) pisarían el estilo de btn-accent por venir
+       después en la hoja de estilos con la misma especificidad (1 clase)
+       -- este selector combinado (2 clases) gana sin hacer falta
+       !important. */
+    button.btn-accent.popover-trigger {
+      background: var(--accent); color: #fff; border: none;
+      padding: 9px 18px; font-weight: 700; text-align: center;
+    }
+    button.btn-accent.popover-trigger:hover { color: #fff; filter: brightness(0.92); }
 
     /* Ver / Descargar -- pedido explícito del usuario (2026-09-19), ver
        _pdf_links.html. Genérico acá (en vez de duplicado en cada

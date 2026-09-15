@@ -47,7 +47,7 @@
           <th>Total Fuel</th>
           <th>Non Fuel</th><th>Desc. Otros</th><th>Tax Collect</th>
           <th>Total Sales</th><th>Cash</th>
-          <th>Tarjeta/Crédito</th><th>Local Acc.</th><th>Other</th><th>Network Rev.</th><th>Total Rev.</th>
+          <th>Tarjeta/Créd.</th><th>Local Acc.</th><th>Other</th><th>Network Rev.</th><th>Total Rev.</th>
           <th></th>
         </tr>
       </thead>
@@ -83,6 +83,26 @@
         </tr>
         {% endfor %}
       </tbody>
+      <tfoot>
+        <tr class="reporte-totals-row">
+          <td colspan="2">Total del mes</td>
+          <td>{{ "{:,.2f}".format(store_info_totals.volume) if store_info_totals.volume is not none else '—' }}</td>
+          <td>{{ "{:,.2f}".format(store_info_totals.sales_fuel) if store_info_totals.sales_fuel is not none else '—' }}</td>
+          <td>{{ "{:,.2f}".format(store_info_totals.desc_comb) if store_info_totals.desc_comb is not none else '—' }}</td>
+          <td>{{ "{:,.2f}".format(store_info_totals.total_fuel) if store_info_totals.total_fuel is not none else '—' }}</td>
+          <td>{{ "{:,.2f}".format(store_info_totals.non_fuel_total) if store_info_totals.non_fuel_total is not none else '—' }}</td>
+          <td>{{ "{:,.2f}".format(store_info_totals.desc_otros) if store_info_totals.desc_otros is not none else '—' }}</td>
+          <td>{{ "{:,.2f}".format(store_info_totals.tax_collect) if store_info_totals.tax_collect is not none else '—' }}</td>
+          <td>{{ "{:,.2f}".format(store_info_totals.total_sales) if store_info_totals.total_sales is not none else '—' }}</td>
+          <td>{{ "{:,.2f}".format(store_info_totals.cash) if store_info_totals.cash is not none else '—' }}</td>
+          <td>{{ "{:,.2f}".format(store_info_totals.tc) if store_info_totals.tc is not none else '—' }}</td>
+          <td>{{ "{:,.2f}".format(store_info_totals.local_accounts) if store_info_totals.local_accounts is not none else '—' }}</td>
+          <td>{{ "{:,.2f}".format(store_info_totals.other_amount) if store_info_totals.other_amount is not none else '—' }}</td>
+          <td>{{ "{:,.2f}".format(store_info_totals.network_revenue) if store_info_totals.network_revenue is not none else '—' }}</td>
+          <td>{{ "{:,.2f}".format(store_info_totals.total_revenue) if store_info_totals.total_revenue is not none else '—' }}</td>
+          <td></td>
+        </tr>
+      </tfoot>
     </table>
   </div>
   {% else %}
@@ -90,8 +110,12 @@
   {% endif %}
 
   {% if store_info_rows %}
-  <div style="margin-top: 14px; text-align: right;">
-    <a href="{{ url_for('reporte_store_info_exportar', year=year, month=month) }}" class="btn-accent">Exportar Excel del mes</a>
+  <div style="margin-top: 14px; text-align: right; position: relative;">
+    <button type="button" class="btn-accent popover-trigger" data-popover-target="export-storeinfo">Exportar</button>
+    <div class="popover-panel export-menu" id="export-storeinfo">
+      <a href="{{ url_for('reporte_store_info_exportar', year=year, month=month) }}">Excel</a>
+      <a href="{{ url_for('reporte_store_info_exportar_pdf', year=year, month=month) }}">PDF</a>
+    </div>
   </div>
   {% endif %}
 </div>
@@ -116,16 +140,25 @@
   .historial-table { width: 100%; min-width: 480px; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
   .historial-table th, .historial-table td { padding: 9px 14px; text-align: left; }
   /* Muchas más columnas que la tabla de Ventas -- letra más chica y menos
-     padding para que entren cómodas sin perder legibilidad, el scroll
-     horizontal del wrapper se encarga del resto en pantallas angostas. */
-  .storeinfo-table { min-width: 1080px; font-size: 12.5px; white-space: nowrap; }
-  .storeinfo-table th, .storeinfo-table td { padding: 7px 10px; }
+     padding para que entren sin scroll horizontal en una pantalla de
+     escritorio común -- pedido explícito del usuario (2026-09-19): "no me
+     gusta tener que desplazar a la derecha para ver el cuadro completo".
+     Sin min-width (obligaba a un ancho mínimo más grande de lo necesario,
+     el mismo bug ya corregido antes en Caja) y con los encabezados
+     pudiendo partirse en 2 líneas -- eran ellos, no los datos (números
+     cortos), los que empujaban cada columna mucho más ancha de lo que
+     hacía falta. */
+  .storeinfo-table { font-size: 11px; }
+  .storeinfo-table td { white-space: nowrap; }
+  .storeinfo-table th, .storeinfo-table td { padding: 5px 5px; }
+  .storeinfo-table thead th { white-space: normal; line-height: 1.2; }
   .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
   .historial-table tbody tr { border-bottom: 1px solid var(--border); }
   .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
   .historial-row-today { outline: 2px solid var(--accent); outline-offset: -2px; }
   .historial-col-day { font-weight: 700; width: 40px; }
   .historial-col-action { text-align: right; white-space: nowrap; }
+  .reporte-totals-row td { font-weight: 700; background: var(--surface-alt); border-top: 2px solid var(--border); }
   .historial-badge {
     display: inline-block;
     padding: 3px 9px;

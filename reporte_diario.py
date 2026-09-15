@@ -1691,6 +1691,100 @@ def build_store_info_export_workbook(rows, year, month, dest_path):
     return dest_path
 
 
+def _fmt_money_pdf(value):
+    return "—" if value is None else "{:,.2f}".format(value)
+
+
+def _fmt_day_month_pdf(value):
+    """'01-08' (DD-MM, sin año) -- pedido explícito del usuario (2026-09-19)."""
+    if value is None:
+        return "—"
+    if isinstance(value, str):
+        return f"{value[8:10]}-{value[5:7]}" if len(value) == 10 else value
+    return value.strftime("%d-%m")
+
+
+def build_store_info_export_pdf(rows, year, month, dest_path):
+    """
+    PDF (líneas/bordes + colores, sin fórmulas) con Store Info del mes --
+    pedido explícito del usuario (2026-09-19): alternativa liviana al
+    Excel (build_store_info_export_workbook), con las mismas columnas que
+    ya se ven en /reporte/store-info/historial (sin las 6 categorías de
+    respaldo del Non Fuel, que no se muestran ahí tampoco). `rows` es la
+    misma lista que arma _build_store_info_rows (webapp.py) -- ya trae
+    total_fuel/total_sales calculados. Colores idénticos a los del export
+    a Excel (mismos hex, ver build_store_info_export_workbook) -- pedido
+    explícito del usuario tras ver la primera versión sin color.
+    """
+    from pdf_export import build_simple_table_pdf
+
+    GRAY, ORANGE, YELLOW, PEACH = "#D9D9D9", "#FFC000", "#FFFF00", "#F8CBAD"
+    GREEN_LIGHT, BLUEGRAY = "#A9D18E", "#ADB9CA"
+    header_fill_by_col = {
+        0: GRAY, 1: GRAY, 2: GRAY, 3: GRAY, 4: GRAY, 5: GRAY,
+        6: ORANGE, 7: ORANGE, 8: ORANGE,
+        10: YELLOW,
+        11: PEACH, 12: PEACH, 13: PEACH, 14: PEACH, 15: PEACH,
+    }
+    data_fill_by_col = {5: GRAY, 9: GREEN_LIGHT, 12: YELLOW, 14: BLUEGRAY, 15: BLUEGRAY}
+
+    headers = [
+        "Día", "Hora", "Volume", "Sales Fuel", "Desc. Comb", "Total Fuel",
+        "Non Fuel", "Desc. Otros", "Tax Collect", "Total Sales", "Cash",
+        "Tarjeta/Créd.", "Local Acc.", "Other", "Network Rev.", "Total Rev.",
+    ]
+    # Campos numéricos por fila, en el mismo orden que las columnas 2-15
+    # (Volume en adelante) -- "tc" se calcula aparte (suma de credit_terms,
+    # no un campo guardado directo). Se reusa tanto para cada fila como
+    # para la fila de totales de abajo.
+    numeric_fields = (
+        "volume", "sales_fuel", "desc_comb", "total_fuel", "non_fuel_total",
+        "desc_otros", "tax_collect", "total_sales", "cash", "tc",
+        "local_accounts", "other_amount", "network_revenue", "total_revenue",
+    )
+    table_rows = []
+    totals = {field: 0.0 for field in numeric_fields}
+    any_value = {field: False for field in numeric_fields}
+    for row in rows:
+        credit_terms = row.get("credit_terms") or []
+        values = dict(row)
+        values["tc"] = round(sum(credit_terms), 2) if credit_terms else None
+        for field in numeric_fields:
+            if values.get(field) is not None:
+                totals[field] += values[field]
+                any_value[field] = True
+        table_rows.append(
+            [
+                _fmt_day_month_pdf(row.get("date")),
+                f"{row.get('from_time') or '—'}–{row.get('to_time') or '—'}",
+                *[_fmt_money_pdf(values.get(field)) for field in numeric_fields],
+            ]
+        )
+    # Fila de totales -- pedido explícito del usuario (2026-09-19): "no
+    # tenemos una fila extra despues del ultimo dia... deberia agregarse
+    # eso" (mismo criterio que ya tiene el PDF de Caja).
+    table_rows.append(
+        [
+            "Total", "",
+            *[
+                _fmt_money_pdf(round(totals[field], 2)) if any_value[field] else "—"
+                for field in numeric_fields
+            ],
+        ]
+    )
+    col_widths_mm = [19, 24, 19, 22, 19, 19, 19, 19, 19, 22, 19, 22, 19, 17, 22, 22]
+    return build_simple_table_pdf(
+        dest_path,
+        f"Store Info — {month:02d}/{year}",
+        headers,
+        table_rows,
+        col_widths_mm,
+        header_fill_by_col=header_fill_by_col,
+        data_fill_by_col=data_fill_by_col,
+        bold_last_row=True,
+    )
+
+
 def _parse_hhmm(value):
     """'22:43' (24h, tal cual reportes_db._time_str la guarda) -> datetime.time, o None."""
     if not value:

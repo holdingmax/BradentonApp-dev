@@ -8,6 +8,15 @@
 {% macro fmt(x) -%}
 {%- if x is none -%}—{%- else -%}{{ "{:,.2f}".format(x) }}{%- endif -%}
 {%- endmacro %}
+{% macro totals_popover(id, label, value, breakdown, extra_class='') %}
+<button type="button" class="popover-trigger {{ extra_class }}" data-popover-target="{{ id }}">{{ fmt(value) }}</button>
+<div class="popover-panel totals-breakdown-popover" id="{{ id }}">
+  <div class="totals-breakdown-title">{{ label }}</div>
+  {% for term_label, term_value in breakdown %}
+  <div class="totals-breakdown-row"><span>{{ term_label }}</span><span>{{ fmt(term_value) }}</span></div>
+  {% endfor %}
+</div>
+{% endmacro %}
 <div class="page-header">
   <h1>Caja</h1>
 </div>
@@ -40,9 +49,8 @@
       </div>
       <button type="submit">Guardar</button>
       <span class="muted caja-saldo-hint">
-        {% if report.opening_source == 'manual' %}Inicial cargado a mano.
-        {% elif report.opening_source == 'future' %}Mes futuro, todavía sin datos.
-        {% elif report.opening_source not in ('prev_month_override', 'prev_month_computed') %}Sin dato del mes anterior.{% endif %}
+        {% if report.opening_source == 'future' %}Mes futuro, todavía sin datos.
+        {% elif report.opening_source not in ('manual', 'prev_month_override', 'prev_month_computed') %}Sin dato del mes anterior.{% endif %}
         {% if report.closing_balance_override is not none %}Final ajustado a mano.{% endif %}
       </span>
     </form>
@@ -79,15 +87,15 @@
           <td>{{ fmt(row.total_sales) }}</td>
           <td>{{ fmt(row.cash) }}</td>
           <td>{{ fmt(row.other_amount) }}</td>
-          <td><strong>{{ fmt(row.total_revenue) }}</strong></td>
+          <td><strong>{{ totals_popover('caja-rev-pop-' + row.date, 'Total Revenue (Cash + Tarjeta/Crédito + Other + Local Acc.)', row.total_revenue, row.total_revenue_breakdown) }}</strong></td>
           <td>
             {{ fmt(row.deposit) }}
             {% if row.is_gettel %}<span class="historial-badge historial-badge-manual caja-gettel-tag">Gettel</span>{% endif %}
           </td>
           <td>{{ fmt(row.expenses_cash) }}</td>
           <td>{{ fmt(row.cuenta_final) }}</td>
-          <td class="{{ 'chase-amount-neg' if row.dif_efect < 0 else 'chase-amount-pos' }}">{{ fmt(row.dif_efect) }}</td>
-          <td><strong>{{ fmt(row.saldo) }}</strong></td>
+          <td>{{ totals_popover('caja-dif-pop-' + row.date, 'Dif Efect (Cash − Depósitos + Other − Gastos − Lottery Cuenta Final)', row.dif_efect, row.dif_efect_breakdown, 'chase-amount-neg' if row.dif_efect < 0 else 'chase-amount-pos') }}</td>
+          <td><strong>{{ totals_popover('caja-saldo-pop-' + row.date, 'Saldo (Saldo día anterior + Dif Efect)', row.saldo, row.saldo_breakdown) }}</strong></td>
           <td class="caja-col-gap"></td>
           <td>{{ fmt(row.food_ice) }}{% if row.food_ice_label %} <span class="muted">({{ row.food_ice_label }})</span>{% endif %}</td>
         </tr>
@@ -113,8 +121,12 @@
   </div>
 
   {% if report.rows %}
-  <div style="margin-top: 14px; text-align: right;">
-    <a href="{{ url_for('carga_datos_caja_exportar', year=year, month=month) }}" class="btn-accent">Exportar Excel del mes</a>
+  <div style="margin-top: 14px; text-align: right; position: relative;">
+    <button type="button" class="btn-accent popover-trigger" data-popover-target="export-caja">Exportar</button>
+    <div class="popover-panel export-menu" id="export-caja">
+      <a href="{{ url_for('carga_datos_caja_exportar', year=year, month=month) }}">Excel</a>
+      <a href="{{ url_for('carga_datos_caja_exportar_pdf', year=year, month=month) }}">PDF</a>
+    </div>
   </div>
   {% endif %}
 </div>
@@ -215,6 +227,15 @@
   .caja-totals-row td { font-weight: 700; background: var(--accent-soft); border-top: 2px solid var(--accent); padding-top: 11px; padding-bottom: 11px; }
   .chase-amount-neg { color: var(--error); }
   .chase-amount-pos { color: var(--success); }
+
+  /* Cuadros flotantes "qué valores usaron para llegar a ese resultado" --
+     pedido explícito del usuario (2026-09-19), mismo componente visual ya
+     usado en Store Info (reporte_store_info_historial.html), copiado acá
+     porque no vive en base.html (mismo criterio ya aplicado en Lottery). */
+  .totals-breakdown-popover { min-width: 220px; }
+  .totals-breakdown-title { font-weight: 700; font-size: 11.5px; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  .totals-breakdown-row { display: flex; justify-content: space-between; gap: 16px; padding: 2px 0; }
+  .totals-breakdown-row span:first-child { color: var(--text-soft); }
 
   .caja-saldo-box { margin-top: 16px; padding: 14px 16px; background: var(--accent-soft); border-radius: 10px; }
   .caja-saldo-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; }
