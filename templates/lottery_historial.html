@@ -67,17 +67,16 @@
     <table class="historial-table lottery-table">
       <thead>
         <tr>
-          <th rowspan="2">Día</th>
-          <th colspan="2" class="lottery-group-online">ONLINE</th>
-          <th colspan="6" class="lottery-group-terminal">Terminal (juegos online)</th>
+          <th rowspan="2" class="historial-col-day">Día</th>
+          <th colspan="8" class="lottery-group-online">ONLINE</th>
           <th colspan="7" class="lottery-group-skoff">SKOFF (raspaditas)</th>
-          <th rowspan="2">Cuenta Final</th>
           <th rowspan="2" class="lottery-col-chase">Chase Bank</th>
+          <th rowspan="2">Total Pagos</th>
         </tr>
         <tr>
-          <th class="lottery-group-online">Count</th><th class="lottery-group-online">Sales $</th>
+          <th class="lottery-group-online">Count</th><th class="lottery-group-online">SALES REPORT</th>
           <th class="lottery-group-terminal">Sales</th><th class="lottery-group-terminal">Pagos</th><th class="lottery-group-terminal">Cash Bal.</th><th class="lottery-group-terminal">Comis</th><th class="lottery-group-terminal">Prize FP</th><th class="lottery-group-terminal">Total Comm</th>
-          <th class="lottery-group-skoff lottery-divider">Count</th><th class="lottery-group-skoff">Sales $</th><th class="lottery-group-skoff">Pays U</th><th class="lottery-group-skoff">Pays $</th><th class="lottery-group-skoff">Sales Amt</th><th class="lottery-group-skoff">Sales Comm</th><th class="lottery-group-skoff">Net Total</th>
+          <th class="lottery-group-skoff lottery-divider">Count</th><th class="lottery-group-skoff">SALES REPORT</th><th class="lottery-group-skoff">Pays U</th><th class="lottery-group-skoff">Pays $</th><th class="lottery-group-skoff">Sales Amt</th><th class="lottery-group-skoff">Sales Comm</th><th class="lottery-group-skoff">Net Total</th>
         </tr>
       </thead>
       <tbody>
@@ -88,8 +87,8 @@
           <td class="lottery-group-online">{{ fmti(day.online_count) }}</td><td class="lottery-group-online">{{ fmt(day.online_net_sales) }}</td>
           <td class="lottery-group-terminal">{{ fmt(day.sales) }}</td><td class="lottery-group-terminal">{{ fmt(day.pagos) }}</td><td class="lottery-group-terminal">{{ fmt(day.cash_balance) }}</td><td class="lottery-group-terminal">{{ fmt(day.comis) }}</td><td class="lottery-group-terminal">{{ fmt(day.prize_free_plays) }}</td><td class="lottery-group-terminal">{{ fmt(day.total_comm) }}</td>
           <td class="lottery-group-skoff lottery-divider">{{ fmti(day.skoff_count) }}</td><td class="lottery-group-skoff">{{ fmt(day.skoff_net_sales) }}</td><td class="lottery-group-skoff">{{ fmti(day.pays_units) }}</td><td class="lottery-group-skoff">{{ fmt(day.pays_amount) }}</td><td class="lottery-group-skoff">{{ fmt(day.skoff_sales_amount) }}</td><td class="lottery-group-skoff">{{ fmt(day.sales_comm) }}</td><td class="lottery-group-skoff">{{ fmt(day.net_total) }}</td>
-          <td>{{ day_cuenta_pop(day) }}</td>
           <td class="muted lottery-col-chase">—</td>
+          <td>{{ day_cuenta_pop(day) }}</td>
         </tr>
         {% endfor %}
         <tr class="lottery-row-subtotal {{ 'lottery-block-alt' if block.iso_week is even else '' }}">
@@ -97,17 +96,17 @@
           <td class="lottery-group-online">{{ subtotal_pop(block, 'online_count', 'Count (ONLINE)', True) }}</td><td class="lottery-group-online">{{ subtotal_pop(block, 'online_net_sales', 'Sales $ (ONLINE)') }}</td>
           <td class="lottery-group-terminal">{{ subtotal_pop(block, 'sales', 'Sales (Terminal)') }}</td><td class="lottery-group-terminal">{{ subtotal_pop(block, 'pagos', 'Pagos (Terminal)') }}</td><td class="lottery-group-terminal muted">—</td><td class="lottery-group-terminal">{{ subtotal_pop(block, 'comis', 'Comis (Terminal)') }}</td><td class="lottery-group-terminal">{{ subtotal_pop(block, 'prize_free_plays', 'Prize FP (Terminal)') }}</td><td class="lottery-group-terminal">{{ subtotal_pop(block, 'total_comm', 'Total Comm (Terminal)') }}</td>
           <td class="lottery-group-skoff lottery-divider muted">—</td><td class="lottery-group-skoff muted">—</td><td class="lottery-group-skoff">{{ subtotal_pop(block, 'pays_units', 'Pays U (SKOFF)', True) }}</td><td class="lottery-group-skoff">{{ subtotal_pop(block, 'pays_amount', 'Pays $ (SKOFF)') }}</td><td class="lottery-group-skoff">{{ subtotal_pop(block, 'skoff_sales_amount', 'Sales Amt (SKOFF)') }}</td><td class="lottery-group-skoff">{{ subtotal_pop(block, 'sales_comm', 'Sales Comm (SKOFF)') }}</td><td class="lottery-group-skoff muted">—</td>
-          <td class="muted">—</td>
           <td class="muted lottery-col-chase">—</td>
+          <td class="muted">—</td>
         </tr>
         <tr class="lottery-row-debito {{ 'lottery-block-alt' if block.iso_week is even else '' }}">
           <td class="historial-col-day"></td>
           <td class="lottery-group-online muted">—</td><td class="lottery-group-online">{{ breakdown_pop('deb-' ~ block.iso_year ~ '-' ~ block.iso_week ~ '-E', 'Online Sales $ (E = Subtotal Sales $ − Subtotal Sales)', block.debito.online_net_sales, block.debito_breakdowns.online_net_sales) }}</td>
           <td class="lottery-group-terminal">{{ breakdown_pop('deb-' ~ block.iso_year ~ '-' ~ block.iso_week ~ '-F', 'Sales (F = Subtotal Sales + Pagos + Comis + Prize FP + 10)', block.debito.sales, block.debito_breakdowns.sales) }}</td><td class="lottery-group-terminal muted">—</td><td class="lottery-group-terminal muted">—</td><td class="lottery-group-terminal muted">—</td><td class="lottery-group-terminal muted">—</td><td class="lottery-group-terminal muted">—</td>
           <td class="lottery-group-skoff lottery-divider muted">—</td><td class="lottery-group-skoff muted">—</td><td class="lottery-group-skoff muted">—</td><td class="lottery-group-skoff">{{ breakdown_pop('deb-' ~ block.iso_year ~ '-' ~ block.iso_week ~ '-Q', 'Pays $ (Q = Subtotal Pays $ + Sales Amt + Sales Comm)', block.debito.pays_amount, block.debito_breakdowns.pays_amount) }}</td><td class="lottery-group-skoff muted">—</td><td class="lottery-group-skoff muted">—</td><td class="lottery-group-skoff muted">—</td>
-          <td class="lottery-debito-total"><strong>${{ breakdown_pop('deb-' ~ block.iso_year ~ '-' ~ block.iso_week ~ '-V', 'Cuenta Final del bloque (V = F + Q, Debito) — lo que se paga a Chase Bank', block.debito.net_debit, block.debito_breakdowns.net_debit) }}</strong></td>
           <td class="lottery-col-chase">
             <div class="lottery-chase-box">
+              <div class="lottery-debito-total"><strong>${{ breakdown_pop('deb-' ~ block.iso_year ~ '-' ~ block.iso_week ~ '-V', 'Cuenta Final del bloque (V = F + Q, Debito) — lo que se paga a Chase Bank', block.debito.net_debit, block.debito_breakdowns.net_debit) }}</strong></div>
               <form method="post" action="{{ url_for('carga_datos_lottery_bloque_chase', iso_year=block.iso_year, iso_week=block.iso_week) }}" class="lottery-chase-form">
                 <input type="hidden" name="year" value="{{ year }}">
                 <input type="hidden" name="month" value="{{ month }}">
@@ -119,6 +118,7 @@
               {% endif %}
             </div>
           </td>
+          <td class="muted">—</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -202,8 +202,10 @@
      como estaban, a la izquierda.
   */
   .lottery-table tbody td { text-align: right; }
-  .lottery-table tbody td.historial-col-day,
   .lottery-table tbody td.lottery-col-chase { text-align: left; }
+  /* Día centrado en su celda -- pedido explícito del usuario (2026-09-19). */
+  .lottery-table tbody td.historial-col-day { text-align: center; }
+  .lottery-table thead th.historial-col-day { text-align: center; }
 
   /* ONLINE + Terminal comparten el mismo color (son el mismo negocio --
      juegos online, Terminal es solo el detalle de esas mismas ventas) --
@@ -232,13 +234,21 @@
      bajo "Sales" de Terminal) y la única suma del lado SKOFF (Q bajo
      "Pays $"), igual que el resto de las filas -- nada de texto "Debito"
      en la columna de fechas (se deja en blanco, la fila ya se distingue
-     por su fondo) ni de "Pago Chase Bank" en el medio. El pago real a
-     Chase Bank (V=F+Q) va SOLO en la columna Cuenta Final, al final del
-     bloque -- la fecha de Chase Bank se queda donde ya estaba. */
-  .lottery-debito-total { text-align: right; font-size: 12.5px; }
+     por su fondo) ni de "Pago Chase Bank" en el medio.
 
-  /* Columna Chase Bank angosta -- ya no repite el monto (ahora vive en la
-     celda unificada de arriba), solo la fecha + Guardar. */
+     Columnas Chase Bank / Total Pagos intercambiadas -- pedido explícito
+     del usuario (2026-09-19): "Total Pagos" (antes "Cuenta Final", con el
+     número día por día) pasó a ser la última columna de la tabla, y Chase
+     Bank se corrió a su izquierda -- salvo el monto TOTAL del bloque (V=
+     F+Q, lo que se paga de una vez a Chase Bank), que a propósito NO se
+     movió con el resto de la columna ("no con el monto que viene en el
+     chase, dejalo ahi") -- sigue viviendo junto al formulario de fecha,
+     en la columna Chase Bank, no en Total Pagos (que en la fila Debito
+     queda vacía -- no hay un "por día" que mostrar ahí para esa fila). */
+  .lottery-debito-total { font-size: 12.5px; margin-bottom: 2px; }
+
+  /* Columna Chase Bank angosta -- el monto total del bloque + la fecha +
+     Guardar, todo junto en la misma celda (ver arriba). */
   .lottery-col-chase { width: 108px; }
   .lottery-chase-box {
     display: flex; flex-direction: column; gap: 4px;

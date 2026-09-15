@@ -4,13 +4,14 @@
 <nav class="crumbs"><a href="{{ url_for('carga_datos_index') }}">Lottery</a><a href="{{ url_for('carga_datos_lottery_historial') }}">Reportes guardados</a><span class="current">{{ report_date.strftime('%d/%m/%Y') }}</span></nav>
 {% endblock %}
 {% block content %}
+{% from "_pdf_links.html" import pdf_links %}
 <div class="page-header">
   <span class="eyebrow">Lottery</span>
   <h1>{{ report_date.strftime('%d/%m/%Y') }}</h1>
   <p class="page-subtitle">ONLINE/SKOFF (D/E/N/O) se completan solos al subir el PDF de cierre diario en Reporte Diario. El resto sale del Daily Sales Report, o se puede corregir/cargar acá a mano.</p>
   <p style="margin-top: 8px; display: flex; gap: 16px;">
-    {% if day.department_pdf_filename %}<a href="{{ url_for('carga_datos_lottery_dia_pdf', report_date=report_date.isoformat(), kind='department') }}">Ver PDF de cierre diario guardado</a>{% endif %}
-    {% if day.sales_report_pdf_filename %}<a href="{{ url_for('carga_datos_lottery_dia_pdf', report_date=report_date.isoformat(), kind='sales_report') }}">Ver Daily Sales Report guardado</a>{% endif %}
+    {% if day.department_pdf_filename %}{{ pdf_links(url_for('carga_datos_lottery_dia_pdf', report_date=report_date.isoformat(), kind='department'), 'Ver PDF de cierre diario guardado') }}{% endif %}
+    {% if day.sales_report_pdf_filename %}{{ pdf_links(url_for('carga_datos_lottery_dia_pdf', report_date=report_date.isoformat(), kind='sales_report'), 'Ver Daily Sales Report guardado') }}{% endif %}
   </p>
 </div>
 

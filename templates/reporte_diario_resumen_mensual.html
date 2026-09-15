@@ -1,19 +1,20 @@
 {% extends "base.html" %}
+{% block main_class %}main-full{% endblock %}
 {% block crumbs %}
-<nav class="crumbs"><a href="{{ url_for('carga_datos_lottery_historial') }}">Lottery</a><span class="current">Resumen mensual</span></nav>
+<nav class="crumbs"><a href="{{ url_for('reporte_historial') }}">Reporte Diario</a><span class="current">Resumen mensual</span></nav>
 {% endblock %}
 {% block content %}
 {% from "_month_jump.html" import month_jump %}
 {% from "_pdf_links.html" import pdf_links %}
 <div class="page-header">
-  <h1>Lottery — Resumen mensual</h1>
-  <p class="page-subtitle">El PDF de resumen mensual que manda Florida Lottery — se guarda tal cual para consultarlo, no se lee ni completa nada solo.</p>
+  <h1>Reporte Diario — Resumen mensual</h1>
+  <p class="page-subtitle">El PDF de resumen mensual se guarda tal cual para consultarlo — no se lee ni completa nada solo.</p>
 </div>
 
 <div class="card">
   <h2>Subir resumen</h2>
-  <p class="muted">El resumen que llega ya con su propio mes/año impreso — elegí a cuál corresponde antes de subirlo.</p>
-  <form method="post" action="{{ url_for('carga_datos_lottery_resumen_mensual_subir') }}" enctype="multipart/form-data" class="resumen-upload-form">
+  <p class="muted">El resumen que llega ya con su propio mes/año — elegí a cuál corresponde antes de subirlo.</p>
+  <form method="post" action="{{ url_for('carga_datos_reporte_diario_resumen_mensual_subir') }}" enctype="multipart/form-data" class="resumen-upload-form">
     <div class="resumen-upload-row">
       <div class="resumen-field">
         <label class="muted">Mes</label>
@@ -27,8 +28,8 @@
       </div>
     </div>
     <div class="resumen-field resumen-field-file">
-      <label class="muted">PDF del resumen</label>
-      <input type="file" name="resumen_file" accept="application/pdf" required>
+      <label class="muted">Archivo del resumen</label>
+      <input type="file" name="resumen_file" required>
     </div>
     <div class="form-actions">
       <button type="submit">Guardar</button>
@@ -39,16 +40,16 @@
 <div class="card" style="margin-top: 18px;">
   <h2>Resúmenes guardados</h2>
   <div class="historial-nav">
-    <a href="{{ url_for('carga_datos_lottery_resumen_mensual', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
+    <a href="{{ url_for('carga_datos_reporte_diario_resumen_mensual', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
     <div class="historial-nav-title">
-      {{ month_jump('carga_datos_lottery_resumen_mensual', year, month) }}
+      {{ month_jump('carga_datos_reporte_diario_resumen_mensual', year, month) }}
       {% if year == today.year and month == today.month %}
       <span class="muted">Mes actual</span>
       {% else %}
-      <a href="{{ url_for('carga_datos_lottery_resumen_mensual') }}" class="muted">Ir al mes actual</a>
+      <a href="{{ url_for('carga_datos_reporte_diario_resumen_mensual') }}" class="muted">Ir al mes actual</a>
       {% endif %}
     </div>
-    <a href="{{ url_for('carga_datos_lottery_resumen_mensual', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
+    <a href="{{ url_for('carga_datos_reporte_diario_resumen_mensual', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
   </div>
 
   {% if docs %}
@@ -79,11 +80,6 @@
   .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
   .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
 
-  /* Formulario de subida más prolijo -- pedido explícito del usuario
-     (2026-09-18): la grilla genérica de 3 campos apretados uno al lado del
-     otro (con el nombre del PDF elegido cortándose) quedaba "horrible".
-     Mes/Año en su propia fila corta, el input de archivo en su propia fila
-     ancha (nunca se corta), y el botón separado al final. */
   .resumen-upload-form { display: flex; flex-direction: column; gap: 16px; margin-top: 14px; max-width: 480px; }
   .resumen-upload-row { display: flex; gap: 16px; }
   .resumen-field { display: flex; flex-direction: column; gap: 5px; flex: 1 1 auto; }
@@ -107,5 +103,6 @@
   .doc-list-item form { margin: 0; }
   .doc-list-item form button { margin-top: 0; padding: 6px 12px; font-size: 12px; }
   .resumen-empty { margin-top: 18px; }
+
 </style>
 {% endblock %}

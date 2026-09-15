@@ -25,12 +25,6 @@
     <a href="{{ url_for('reporte_store_info_historial', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
   </div>
 
-  {% if store_info_rows %}
-  <div style="margin-top: 12px; text-align: right;">
-    <a href="{{ url_for('reporte_store_info_exportar', year=year, month=month) }}" class="btn-accent">Exportar Excel del mes</a>
-  </div>
-  {% endif %}
-
   {% macro totals_popover(id, label, value, breakdown, total_label=None, total_value=None) %}
   <button type="button" class="popover-trigger" data-popover-target="{{ id }}">{{ "{:,.2f}".format(value) if value is not none else '—' }}</button>
   <div class="popover-panel totals-breakdown-popover" id="{{ id }}">
@@ -93,6 +87,12 @@
   </div>
   {% else %}
   <p class="muted" style="margin-top: 18px;">Todavía no hay ningún Store Info cargado este mes.</p>
+  {% endif %}
+
+  {% if store_info_rows %}
+  <div style="margin-top: 14px; text-align: right;">
+    <a href="{{ url_for('reporte_store_info_exportar', year=year, month=month) }}" class="btn-accent">Exportar Excel del mes</a>
+  </div>
   {% endif %}
 </div>
 

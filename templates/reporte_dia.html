@@ -4,6 +4,7 @@
 <nav class="crumbs"><a href="{{ url_for('carga_datos_index') }}">Reporte Diario</a><a href="{{ url_for('reporte_historial') }}">Reportes guardados</a><span class="current">{{ report_date.strftime('%d/%m/%Y') }}</span></nav>
 {% endblock %}
 {% block content %}
+{% from "_pdf_links.html" import pdf_links %}
 {% set loaded_amount = departments|sum(attribute='amount') %}
 {% set loaded_units = departments|sum(attribute='count') %}
 <div class="page-header">
@@ -17,7 +18,7 @@
     {% endif %}
   </p>
   {% if pdf_filename %}
-  <p style="margin-top: 8px;"><a href="{{ url_for('reporte_dia_pdf', report_date=report_date.isoformat()) }}">Ver el PDF original guardado de este día</a></p>
+  <p style="margin-top: 8px;">{{ pdf_links(url_for('reporte_dia_pdf', report_date=report_date.isoformat()), 'Ver el PDF original guardado de este día') }}</p>
   {% endif %}
 </div>
 

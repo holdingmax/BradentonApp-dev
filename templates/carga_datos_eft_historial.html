@@ -44,7 +44,10 @@
       {% for inv in entry.paid_invoices %}
       {% set inv_number = inv.invoice[3:] if inv.invoice and inv.invoice.upper().startswith('SI-') else (inv.invoice or '—') %}
       {% if inv.document %}
-      <a class="eft-invoice-pill eft-invoice-pill-linked" href="{{ url_for('carga_datos_documento_descargar', document_id=inv.document.id) }}" title="Ver {{ inv.document.filename }}">{{ inv_number }} — ${{ "{:,.2f}".format(inv.paid_amount or 0) }}</a>
+      <a class="eft-invoice-pill eft-invoice-pill-linked" href="{{ url_for('carga_datos_documento_descargar', document_id=inv.document.id) }}" title="Ver {{ inv.document.filename }}" target="_blank" rel="noopener">{{ inv_number }} — ${{ "{:,.2f}".format(inv.paid_amount or 0) }}</a>
+      <a class="pdf-link-download" href="{{ url_for('carga_datos_documento_descargar', document_id=inv.document.id, mode='download') }}" title="Descargar {{ inv.document.filename }}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+      </a>
       {% else %}
       <span class="eft-invoice-pill">{{ inv_number }} — ${{ "{:,.2f}".format(inv.paid_amount or 0) }}</span>
       {% endif %}

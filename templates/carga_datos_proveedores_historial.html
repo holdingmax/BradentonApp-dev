@@ -5,6 +5,7 @@
 {% endblock %}
 {% block content %}
 {% from "_month_jump.html" import month_jump %}
+{% from "_pdf_links.html" import pdf_links %}
 <div class="page-header">
   <span class="eyebrow">Proveedores</span>
   <h1>Guardado</h1>
@@ -42,7 +43,7 @@
             <td class="historial-col-day">{{ inv.invoice_date }}</td>
             <td>
               {% if inv.document %}
-              <a href="{{ url_for('carga_datos_documento_descargar', document_id=inv.document.id) }}" title="Ver el PDF original">{{ inv.invoice_no }}</a>
+              {{ pdf_links(url_for('carga_datos_documento_descargar', document_id=inv.document.id), inv.invoice_no) }}
               {% else %}
               {{ inv.invoice_no }}
               {% endif %}

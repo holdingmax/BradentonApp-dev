@@ -5,6 +5,7 @@
 {% endblock %}
 {% block content %}
 {% from "_month_jump.html" import month_jump %}
+{% from "_pdf_links.html" import pdf_links %}
 {% macro fmt(x) -%}
 {%- if x is none -%}—{%- else -%}{{ "{:,.2f}".format(x) }}{%- endif -%}
 {%- endmacro %}
@@ -33,10 +34,10 @@
   {% set week = entry.week %}
   <div class="horas-week">
     <div class="horas-week-head">
-      <span class="horas-week-title">Semana del {{ week.period_from or '—' }} al {{ week.period_to or '—' }}</span>
-      <span class="muted">Reporte impreso {{ week.report_date }}</span>
+      <span class="horas-week-title">Semana del {{ (week.period_from[8:10] ~ '-' ~ week.period_from[5:7]) if week.period_from else '—' }} al {{ (week.period_to[8:10] ~ '-' ~ week.period_to[5:7]) if week.period_to else '—' }}</span>
+      <span class="muted">Reporte impreso {{ (week.report_date[8:10] ~ '-' ~ week.report_date[5:7] ~ '-' ~ week.report_date[0:4]) if week.report_date else '—' }}</span>
       {% if entry.document %}
-      <a class="horas-week-pdf" href="{{ url_for('carga_datos_documento_descargar', document_id=entry.document.id) }}">Ver PDF</a>
+      {{ pdf_links(url_for('carga_datos_documento_descargar', document_id=entry.document.id), 'Ver PDF', 'horas-week-pdf') }}
       {% endif %}
       <span class="horas-week-total">Total a pagar: <strong>${{ fmt(entry.week_total) }}</strong></span>
       <form method="post" action="{{ url_for('carga_datos_horas_trabajo_eliminar', week_id=week.id) }}" onsubmit="return confirm('¿Eliminar esta semana? Los documentos guardados no se borran.');">
@@ -54,7 +55,7 @@
         <tbody>
           {% for emp in entry.employees %}
           <tr id="horas-view-{{ emp.id }}">
-            <td>{{ emp.employee_name }}{% if emp.hours_label %} <span class="muted">({{ emp.hours_label }})</span>{% endif %}</td>
+            <td>{{ emp.employee_name }}</td>
             <td>{{ fmt(emp.hours) }}</td>
             <td>${{ fmt(emp.rate) }}</td>
             <td>${{ fmt(emp.deduct) }}</td>
@@ -141,7 +142,7 @@
   .horas-week:first-of-type { border-top: none; padding-top: 0; }
   .horas-week-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
   .horas-week-title { font-weight: 700; font-size: 14.5px; }
-  .horas-week-pdf { font-size: 12.5px; text-decoration: none; color: var(--accent); }
+  .horas-week-pdf > a:first-child { font-size: 12.5px; text-decoration: none; color: var(--accent); }
   .horas-week-total { margin-left: auto; font-size: 12.5px; }
   .horas-week-head form { margin: 0; }
   .horas-week-head form button { margin-top: 0; padding: 5px 10px; font-size: 12px; }

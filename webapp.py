@@ -42,7 +42,7 @@ from chase_rules import (
     list_display_rules as list_chase_display_rules,
 )
 import caja_db
-from caja import build_month_report_from_db as build_caja_month_report
+from caja import build_caja_export_workbook, build_month_report_from_db as build_caja_month_report
 from cmv_costo import _consolidate_department_files, update_master_costo_todos_bulk
 import eft_db
 from eft_cta_cte import EFT_DUPLICATE_ALERT, extract_eft_data
@@ -1306,7 +1306,11 @@ def carga_datos_lottery_dia_pdf(report_date, kind):
     if not path or not os.path.isfile(path):
         flash("No hay ningún PDF guardado para este día.", "error")
         return redirect(url_for("carga_datos_lottery_dia", report_date=report_date))
-    return send_file(path)
+    # Vista previa por default (inline), descarga forzada solo con
+    # ?mode=download -- pedido explícito del usuario (2026-09-19), ver
+    # templates/_pdf_links.html.
+    force_download = request.args.get("mode") == "download"
+    return send_file(path, as_attachment=force_download, download_name=os.path.basename(path))
 
 
 @app.route("/carga-datos/lottery/documentos")
@@ -2443,6 +2447,11 @@ def _build_store_info_rows(year, month):
         groups, _unmatched = group_department_sales(detail)
         gettel_amount = next((g["amount"] for g in groups if g["label"] == "Gettel"), 0.0)
         row["gettel_amount"] = gettel_amount
+        # Categorías crudas (TABACCO/SODA/BEER-WINE/LOTERY-LOTTO/Gettel/
+        # RESTO) -- hace falta puertas adentro para la exportación a Excel
+        # (columnas I-N de la hoja real, ver build_store_info_export_workbook),
+        # nunca se muestra como columna en esta página.
+        row["category_amounts"] = {g["label"]: g["amount"] for g in groups}
 
         # "Total Fuel" -- pedido explícito del usuario (2026-09-16): la
         # columna real de Store Info (H) nunca se había mostrado -- es
@@ -2599,6 +2608,63 @@ def reporte_documentos():
     )
 
 
+@app.route("/carga-datos/reporte-diario/resumen-mensual")
+def carga_datos_reporte_diario_resumen_mensual():
+    """
+    El reporte mensual de Reporte Diario -- el PDF en sí solo se guarda
+    para poder verlo después, nunca se lee ni se procesa (a diferencia del
+    PDF de cierre diario, uno por día). Pedido explícito del usuario
+    (2026-09-19): poder subirlo aparte, en un apartado extra -- mismo
+    patrón ya usado para el resumen mensual de Lottery (documents_db.py).
+
+    Por ahora es solo el cajón de archivos (subir/ver/eliminar) -- pedido
+    explícito del usuario (2026-09-19), revirtiendo el intento de esta
+    misma sesión de mostrar acá la tabla de Store Info del mes: "quiero
+    que lo dejes vacio de momento ya vamos a trabajar en eso mas tarde
+    cuando tenga una idea de como implementarlo".
+    """
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    docs = documents_db.list_documents("reporte_diario_resumen_mensual", year, month)
+    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+
+    return render_template(
+        "reporte_diario_resumen_mensual.html",
+        docs=docs,
+        year=year,
+        month=month,
+        month_name=_MONTH_NAMES_ES[month - 1],
+        prev_year=prev_year,
+        prev_month=prev_month,
+        next_year=next_year,
+        next_month=next_month,
+        **THEME_BY_KEY["reporte"],
+    )
+
+
+@app.route("/carga-datos/reporte-diario/resumen-mensual/subir", methods=["POST"])
+def carga_datos_reporte_diario_resumen_mensual_subir():
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    upload = request.files.get("resumen_file")
+    if not year or not month or not (1 <= month <= 12):
+        flash("Elegí a qué mes corresponde este resumen.", "error")
+        return redirect(url_for("carga_datos_reporte_diario_resumen_mensual"))
+    if upload is None or not upload.filename:
+        flash("Seleccioná el archivo del resumen mensual.", "error")
+        return redirect(url_for("carga_datos_reporte_diario_resumen_mensual", year=year, month=month))
+
+    path, filename = _save_upload_to_workspace(upload)
+    documents_db.store_document("reporte_diario_resumen_mensual", path, filename, year, month)
+    flash("Resumen mensual guardado.", "success")
+    return redirect(url_for("carga_datos_reporte_diario_resumen_mensual", year=year, month=month))
+
+
 @app.route("/reporte/dia/<report_date>")
 def reporte_dia(report_date):
     try:
@@ -2652,7 +2718,11 @@ def reporte_dia_pdf(report_date):
     if not path or not os.path.isfile(path):
         flash("No hay ningún PDF guardado para este día.", "error")
         return redirect(url_for("reporte_dia", report_date=report_date))
-    return send_file(path)
+    # Vista previa por default (inline), descarga forzada solo con
+    # ?mode=download -- pedido explícito del usuario (2026-09-19), ver
+    # templates/_pdf_links.html.
+    force_download = request.args.get("mode") == "download"
+    return send_file(path, as_attachment=force_download, download_name=os.path.basename(path))
 
 
 @app.route("/reporte/dia/<report_date>/departamentos", methods=["POST"])
@@ -3123,6 +3193,27 @@ def carga_datos_caja():
     )
 
 
+@app.route("/carga-datos/caja/exportar")
+def carga_datos_caja_exportar():
+    """
+    Descarga un Excel NUEVO (nunca toca ningún archivo real) con la Caja
+    del mes -- pedido explícito del usuario (2026-09-19), mismo criterio
+    que reporte_store_info_exportar: "hagamos algo igual del exportar la
+    caja y que quede con el formato que tenia en el cierre".
+    """
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    report = build_caja_month_report(year, month)
+    workspace_dir = tempfile.mkdtemp(prefix="caja_export_")
+    dest_path = os.path.join(workspace_dir, f"Caja {month:02d}-{year}.xlsx")
+    build_caja_export_workbook(report, year, month, dest_path)
+    return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
+
+
 @app.route("/carga-datos/caja/gastos/agregar", methods=["POST"])
 def carga_datos_caja_gastos_agregar():
     """
@@ -3336,6 +3427,10 @@ def carga_datos_gettel_historial():
         "toyota_amount": sum(d.get("toyota_amount") or 0.0 for d in days),
         "toyota_gallons": sum(d.get("toyota_gallons") or 0.0 for d in days),
         "local_account": sum(v or 0.0 for v in local_account_by_date.values()),
+        # Diferencia total que quedó en el mes -- pedido explícito del
+        # usuario (2026-09-19), suma de los DIF diarios (días sin Local
+        # Account, dif=None, no aportan nada -- no hay nada que sumar ahí).
+        "dif": round(sum(d["dif"] for d in days if d.get("dif") is not None), 2),
     }
     prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
     next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
@@ -3822,7 +3917,13 @@ def carga_datos_documento_descargar(document_id):
     if doc is None:
         flash("Ese documento ya no existe.", "error")
         return redirect(url_for("carga_datos_index"))
-    return send_file(doc["stored_path"], as_attachment=True, download_name=doc["filename"])
+    # Vista previa por default (inline), descarga forzada solo con
+    # ?mode=download -- pedido explícito del usuario (2026-09-19), ver
+    # templates/_pdf_links.html. Antes esta ruta siempre forzaba la
+    # descarga (as_attachment=True) -- ahora es la misma ruta para las dos
+    # cosas, el link "Ver" simplemente no manda el parámetro.
+    force_download = request.args.get("mode") == "download"
+    return send_file(doc["stored_path"], as_attachment=force_download, download_name=doc["filename"])
 
 
 @app.route("/carga-datos/documentos/<int:document_id>/eliminar", methods=["POST"])

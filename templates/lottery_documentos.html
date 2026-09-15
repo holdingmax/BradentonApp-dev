@@ -4,6 +4,7 @@
 {% endblock %}
 {% block content %}
 {% from "_month_jump.html" import month_jump %}
+{% from "_pdf_links.html" import pdf_links %}
 <div class="page-header">
   <h1>Lottery — PDFs cargados</h1>
   <p class="page-subtitle">Los PDF diarios que alimentan el cuadro semanal (Reporte Diario y Daily Sales Report) — un día puede tener los dos.</p>
@@ -28,7 +29,7 @@
     {% for pdf in pdfs %}
     <li class="doc-list-item">
       <div class="doc-list-info">
-        <a href="{{ url_for('carga_datos_lottery_dia_pdf', report_date=pdf.date, kind=pdf.kind) }}">{{ pdf.date }}</a>
+        {{ pdf_links(url_for('carga_datos_lottery_dia_pdf', report_date=pdf.date, kind=pdf.kind), pdf.date) }}
         <span class="doc-list-label">{{ pdf.label }}</span>
         <a href="{{ url_for('carga_datos_lottery_dia', report_date=pdf.date) }}" class="muted">Ver el día</a>
       </div>

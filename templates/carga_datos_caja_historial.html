@@ -48,21 +48,28 @@
     </form>
   </div>
 
+  <!-- Food Truck/Ice: una columna normal más de la MISMA tabla, no un
+       cuadro aparte -- pedido explícito del usuario (2026-09-19),
+       corrigiendo el intento anterior (una segunda tabla, que además
+       terminaba cayendo abajo del cuadro principal en vez de al lado):
+       "el cuadro principal sigue estando apretado... tiene que ser una
+       columna normal no un cuadro... a la derecha de este solo dejando
+       un espacio". Se logra con una columna espaciadora vacía (sin borde
+       ni contenido, `.caja-col-gap`) entre "Saldo" y "Food Truck/Ice" --
+       separa visualmente sin envolver la columna en su propia tabla. -->
   <div class="historial-table-wrap">
     <table class="historial-table caja-table">
       <thead>
         <tr>
-          <th rowspan="2">Día</th>
-          <th colspan="4">Store Info</th>
-          <th colspan="2">Chase</th>
-          <th rowspan="2">Lottery<br>Cuenta Final</th>
-          <th rowspan="2">Gastos</th>
-          <th rowspan="2">Dif Efect</th>
-          <th rowspan="2">Saldo</th>
-        </tr>
-        <tr>
+          <th>Día</th>
           <th>Total Sales</th><th>Cash</th><th>Other</th><th>Total Revenue</th>
-          <th>Depósitos</th><th>Food Truck/Ice</th>
+          <th>Depósitos</th>
+          <th>Gastos</th>
+          <th>Lottery<br>Cuenta Final</th>
+          <th>Dif Efect</th>
+          <th>Saldo</th>
+          <th class="caja-col-gap"></th>
+          <th>Food Truck/Ice</th>
         </tr>
       </thead>
       <tbody>
@@ -77,11 +84,12 @@
             {{ fmt(row.deposit) }}
             {% if row.is_gettel %}<span class="historial-badge historial-badge-manual caja-gettel-tag">Gettel</span>{% endif %}
           </td>
-          <td>{{ fmt(row.food_ice) }}{% if row.food_ice_label %} <span class="muted">({{ row.food_ice_label }})</span>{% endif %}</td>
-          <td>{{ fmt(row.cuenta_final) }}</td>
           <td>{{ fmt(row.expenses_cash) }}</td>
+          <td>{{ fmt(row.cuenta_final) }}</td>
           <td class="{{ 'chase-amount-neg' if row.dif_efect < 0 else 'chase-amount-pos' }}">{{ fmt(row.dif_efect) }}</td>
           <td><strong>{{ fmt(row.saldo) }}</strong></td>
+          <td class="caja-col-gap"></td>
+          <td>{{ fmt(row.food_ice) }}{% if row.food_ice_label %} <span class="muted">({{ row.food_ice_label }})</span>{% endif %}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -93,22 +101,22 @@
           <td>{{ fmt(report.totals.other_amount) }}</td>
           <td>{{ fmt(report.totals.total_revenue) }}</td>
           <td>{{ fmt(report.totals.deposit) }}</td>
-          <td>{{ fmt(report.totals.food_ice) }}</td>
-          <td>{% if report.total_lottery is not none %}{{ fmt(report.total_lottery) }}{% else %}<span class="muted">—</span>{% endif %}</td>
           <td>{{ fmt(report.totals.expenses_cash) }}</td>
+          <td>{% if report.total_lottery is not none %}{{ fmt(report.total_lottery) }}{% else %}<span class="muted">—</span>{% endif %}</td>
           <td>{{ fmt(report.totals.dif_efect) }}</td>
           <td>{{ fmt(report.effective_closing_balance) }}</td>
+          <td class="caja-col-gap"></td>
+          <td>{{ fmt(report.totals.food_ice) }}</td>
         </tr>
       </tfoot>
     </table>
   </div>
 
-  <p class="muted" style="margin-top: 14px;">
-    <a href="{{ url_for('chase_historial', year=year, month=month) }}">Ver Chase de este mes</a> ·
-    <a href="{{ url_for('carga_datos_lottery_historial', year=year, month=month) }}">Ver Lottery de este mes</a> ·
-    <a href="{{ url_for('reporte_store_info_historial', year=year, month=month) }}">Ver Store Info de este mes</a> ·
-    <a href="{{ url_for('carga_datos_documentos', module_key='caja', year=year, month=month) }}">Documentos del mes</a>
-  </p>
+  {% if report.rows %}
+  <div style="margin-top: 14px; text-align: right;">
+    <a href="{{ url_for('carga_datos_caja_exportar', year=year, month=month) }}" class="btn-accent">Exportar Excel del mes</a>
+  </div>
+  {% endif %}
 </div>
 
 <div class="card" style="margin-top: 18px;">
@@ -168,22 +176,25 @@
   .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
   .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
   .historial-table-wrap { overflow-x: auto; margin-top: 18px; border: 1px solid var(--border); border-radius: 10px; }
-  /* Ancho ajustado al contenido real -- pedido explícito del usuario
-     (2026-09-18): "hay mucho espacio malgastado en las columnas... eso hace
-     que tenga que desplazar la página hacia la derecha". El min-width de
-     1500px de antes obligaba al navegador a estirar cada columna bastante
-     más de lo que su propio contenido necesita (día/montos cortos) -- acá
-     con un piso mucho más chico (solo para no colapsar en pantallas muy
-     angostas), la tabla se ajusta sola a lo que realmente ocupa el
-     contenido, sin sobrar espacio ni obligar a scrollear en un ancho
-     normal de escritorio. */
-  .historial-table.caja-table { width: auto; min-width: 900px; border-collapse: separate; border-spacing: 0; font-size: 12px; white-space: nowrap; }
-  .caja-table th, .caja-table td { padding: 5px 9px; text-align: left; }
-  /* Encabezados alineados de forma simétrica -- pedido explícito del
-     usuario (2026-09-18): centrados (tanto horizontal como verticalmente,
-     para que las celdas con rowspan=2 -- Día/Lottery/Gastos/Dif Efect/
-     Saldo -- queden a la misma altura que el par de filas de las celdas
-     agrupadas -- Store Info/Chase). */
+  /* Ancho completo del contenedor -- pedido explícito del usuario
+     (2026-09-19): "aproveches el width completo para que el cuadro no
+     tenga ese espacio en blanco... manteniendose como esta ahora". Sin
+     min-width (eso seguía forzando columnas más anchas de lo necesario,
+     el bug real corregido antes), pero con width:100% en vez de auto --
+     el navegador reparte el espacio sobrante entre columnas sin volver a
+     "apretar" nada (el padding de celda no cambia). */
+  .historial-table.caja-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12.5px; white-space: nowrap; }
+  .caja-table th, .caja-table td { padding: 7px 12px; text-align: left; }
+  /* Food Truck/Ice -- columna normal de la misma tabla, separada del resto
+     solo por un espacio chico (esta columna vacía, sin borde ni fondo) --
+     pedido explícito del usuario (2026-09-19): "a la derecha de este solo
+     dejando un espacio... tiene que ser una columna normal no un cuadro". */
+  .caja-table th.caja-col-gap, .caja-table td.caja-col-gap { width: 26px; padding: 0; border: none; background: transparent; }
+  /* Encabezados centrados, en una sola fila sin agrupar -- pedido
+     explícito del usuario (2026-09-19): "saca los titulos de arriba del
+     cuadro de store info y chase" -- las cabeceras "Store Info"/"Chase"
+     (antes un colspan por encima de sus columnas) se sacaron del todo,
+     ahora es un solo renglón de títulos simétrico. */
   .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); text-align: center; vertical-align: middle; }
   .caja-table td { text-align: right; }
   .caja-table td.historial-col-day { text-align: center; }
@@ -196,9 +207,12 @@
   .caja-gettel-tag { margin-left: 4px; }
   /* Fila "Total del mes" -- pedido explícito del usuario (2026-09-18): más
      ancha/espaciosa ("que no sea algo apretado") y con el mismo color
-     temático que el resto de Caja (var(--accent)/var(--accent-soft), el
-     naranja del módulo) en vez del gris genérico de siempre. */
-  .caja-totals-row td { font-weight: 700; background: var(--accent-soft); color: var(--accent); border-top: 2px solid var(--accent); padding-top: 11px; padding-bottom: 11px; }
+     temático que el resto de Caja (var(--accent-soft), el naranja del
+     módulo) de fondo. El texto NO lleva el color de acento -- pedido
+     explícito del usuario (2026-09-19): "el color del texto tambien se
+     pinto, no deberia ser asi, deberia estar en negrita" -- queda con el
+     color de texto normal de la tabla, solo en negrita. */
+  .caja-totals-row td { font-weight: 700; background: var(--accent-soft); border-top: 2px solid var(--accent); padding-top: 11px; padding-bottom: 11px; }
   .chase-amount-neg { color: var(--error); }
   .chase-amount-pos { color: var(--success); }
 

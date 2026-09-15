@@ -929,6 +929,18 @@
       min-width: 130px;
     }
     .popover-panel.open { display: block; }
+
+    /* Ver / Descargar -- pedido explícito del usuario (2026-09-19), ver
+       _pdf_links.html. Genérico acá (en vez de duplicado en cada
+       template) porque lo usan ~10 páginas distintas. */
+    .pdf-link-group { display: inline-flex; align-items: center; gap: 6px; }
+    .pdf-link-download {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 20px; height: 20px; flex-shrink: 0;
+      color: var(--text-soft); border-radius: 4px;
+    }
+    .pdf-link-download:hover { color: var(--accent); background: var(--accent-soft); }
+    .pdf-link-download svg { width: 14px; height: 14px; }
   </style>
 </head>
 <body>
@@ -952,6 +964,7 @@
           <a class="app-rail-panel-link" href="{{ url_for('reporte_historial') }}">Ventas por Departamento</a>
           <a class="app-rail-panel-link" href="{{ url_for('reporte_store_info_historial') }}">Store Info</a>
           <a class="app-rail-panel-link" href="{{ url_for('reporte_documentos') }}">Documentos</a>
+          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_reporte_diario_resumen_mensual') }}">Resumen mensual</a>
         </div>
       </div>
       <div class="app-rail-item" draggable="true" data-rail-key="chase">

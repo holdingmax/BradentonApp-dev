@@ -16,7 +16,7 @@ un Excel Cierre recién subido y validarla contra los Mayores de Chase/Caja
 """
 
 import calendar
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import caja_db
 import chase_db
@@ -318,3 +318,203 @@ def build_month_report_from_db(year, month, _recursion_guard=True):
             closing_override if closing_override is not None else computed_closing, 2
         ),
     }
+
+
+def build_caja_export_workbook(report, year, month, dest_path):
+    """
+    Excel NUEVO (no toca ningún archivo real) con la Caja del mes -- mismo
+    criterio y mismo método que reporte_diario.build_store_info_export_
+    workbook. Pedido explícito del usuario (2026-09-19): "hagamos algo
+    igual del exportar la caja y que quede con el formato que tenia en el
+    cierre" -- y, tras la primera versión, mandó su propia copia real
+    limpiada (`CAJA 08-2026 WEB.xlsx`) con dos rondas de correcciones:
+
+    (a) Las columnas "hs"/TC/Local Account de la hoja real están OCULTAS
+    (`column_dimensions[letra].hidden = True`) -- Alfonso nunca las ve, no
+    hace falta replicarlas (no se muestran en pantalla tampoco). Las DOS
+    columnas de Fecha (desde/hasta) sí están siempre visibles -- van las
+    dos, sin ninguna columna "hs" al lado.
+    (b) El "espacio entre columnas" real no es un padding cualquiera --
+    son DOS columnas en blanco genuinas (Q ancho ~11.9, R ancho ~6.6, más
+    angosta) entre el cuadro principal (hasta Saldo/P) y la nota suelta de
+    Food Truck/Ice (S/T, "FONDO FIJO").
+    (c) La primera fila de datos real (P3) trae el saldo de arranque del
+    mes pintado de azul (FF0070C0), con la etiqueta "Caja al INICIO" al
+    lado -- se agrega acá como su propia fila antes del día 1.
+    (d) El orden real es Depósitos(K)/Gastos(M)/Lottery(N) -- Gastos antes
+    que Lottery, no al revés (así se corrigió también en la pantalla).
+    (e) Dif Efect/Total Revenue/Saldo se exportan siempre como VALOR, NUNCA
+    como fórmula de Excel (a diferencia del archivo real, que sí las tiene
+    como fórmulas) -- pedido explícito del usuario, para que el número que
+    ve acá sea siempre el mismo que ya calculó la página, sin depender de
+    que Excel recalcule nada.
+    """
+    import openpyxl
+    from openpyxl.styles import Alignment as XlAlignment, Border as XlBorder, Font as XlFont, PatternFill, Side as XlSide
+
+    HEADER_GRAY = PatternFill("solid", fgColor="FFD9D9D9")
+    HEADER_ORANGE = PatternFill("solid", fgColor="FFFFC000")
+    DATA_GREEN_LIGHT = PatternFill("solid", fgColor="FFA9D18E")
+    DATA_GREEN = PatternFill("solid", fgColor="FF92D050")
+    DATA_YELLOW = PatternFill("solid", fgColor="FFFFFF00")
+    DATA_BLUEGRAY = PatternFill("solid", fgColor="FFADB9CA")
+    DATA_GRAY_LIGHT = PatternFill("solid", fgColor="FFF2F2F2")
+    OPENING_BLUE = PatternFill("solid", fgColor="FF0070C0")
+    MONEY_FMT = '"$" #,##0.00'
+    PLAIN_FMT = '#,##0.00_ ;[Red]\\-#,##0.00\\ '
+    THIN_SIDE = XlSide(style="thin", color="FF000000")
+    MEDIUM_SIDE = XlSide(style="medium", color="FF000000")
+    THIN_BORDER = XlBorder(left=THIN_SIDE, right=THIN_SIDE, top=THIN_SIDE, bottom=THIN_SIDE)
+    HEADER_BORDER = XlBorder(left=THIN_SIDE, right=THIN_SIDE, top=THIN_SIDE, bottom=MEDIUM_SIDE)
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "CAJA"
+
+    sheet.cell(row=1, column=1, value=f"BGS - {month:02d}/{year} - Caja")
+    sheet["A1"].font = XlFont(name="Segoe UI", bold=True, size=14, underline="single")
+    sheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=11)
+    sheet.row_dimensions[1].height = 21
+
+    # (texto, fill, fmt) -- columna por columna, en el mismo orden que ya
+    # muestra carga_datos_caja_historial.html (Gastos antes que Lottery).
+    # Las columnas 12/13 quedan vacías a propósito (el mismo par de
+    # columnas Q/R en blanco del archivo real).
+    header_spec = [
+        ("Fecha", HEADER_GRAY, None),
+        ("Fecha", HEADER_GRAY, None),
+        ("Total Sales", HEADER_GRAY, MONEY_FMT),
+        ("Cash", HEADER_GRAY, MONEY_FMT),
+        ("Other", HEADER_GRAY, MONEY_FMT),
+        ("Total Revenue", HEADER_GRAY, MONEY_FMT),
+        ("Depósitos", HEADER_ORANGE, PLAIN_FMT),
+        ("Gastos", HEADER_ORANGE, PLAIN_FMT),
+        ("Lottery\nCuenta Final", HEADER_ORANGE, PLAIN_FMT),
+        ("Dif Efect", HEADER_ORANGE, PLAIN_FMT),
+        ("Saldo", HEADER_ORANGE, PLAIN_FMT),
+        (None, None, None),
+        (None, None, None),
+        ("Food Truck/Ice", None, MONEY_FMT),
+    ]
+    data_fill_by_col = {
+        3: DATA_GREEN_LIGHT,
+        4: DATA_GREEN,
+        5: DATA_YELLOW,
+        6: DATA_BLUEGRAY,
+        7: DATA_YELLOW,
+        9: HEADER_ORANGE,
+        10: DATA_YELLOW,
+        11: DATA_GRAY_LIGHT,
+    }
+    SALDO_COL = 11
+
+    for col, (text, fill, _fmt) in enumerate(header_spec, start=1):
+        cell = sheet.cell(row=2, column=col, value=text)
+        if text is None:
+            continue
+        cell.font = XlFont(bold=True)
+        if fill is not None:
+            cell.fill = fill
+        cell.alignment = XlAlignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = HEADER_BORDER
+    sheet.row_dimensions[2].height = 45.75
+    sheet.freeze_panes = "A4"
+
+    # Fila de arranque -- el saldo inicial del mes, con su etiqueta al lado
+    # (mismo lugar que P3/Q3 en el archivo real) -- pedido explícito del
+    # usuario (2026-09-19): el azul cubre TODA la fila, de A a K (no solo
+    # la celda de Saldo), aunque el resto quede vacío.
+    r = 3
+    for col in range(1, SALDO_COL + 1):
+        cell = sheet.cell(row=r, column=col)
+        cell.fill = OPENING_BLUE
+        cell.border = THIN_BORDER
+    opening_cell = sheet.cell(row=r, column=SALDO_COL, value=report.get("opening_balance"))
+    opening_cell.font = XlFont(bold=True, color="FFFFFFFF")
+    opening_cell.number_format = PLAIN_FMT
+    label_cell = sheet.cell(row=r, column=SALDO_COL + 1, value="Caja al INICIO")
+    label_cell.font = XlFont(bold=True, italic=True)
+
+    # Columnas con el número resaltado en negrita -- pedido explícito del
+    # usuario (2026-09-19), confirmado contra el archivo real: Total
+    # Sales/Total Revenue/Depósitos/Lottery/Dif Efect/Saldo van en
+    # negrita; Other y Gastos quedan sin resaltar. Cash además va en
+    # cursiva (igual que la etiqueta "Caja al INICIO" de al lado).
+    BOLD_COLS = {3, 6, 7, 9, 10, 11}  # Total Sales, Total Revenue, Depósitos, Lottery, Dif Efect, Saldo
+    BOLD_ITALIC_COLS = {4}  # Cash
+
+    for row in report["rows"]:
+        r = sheet.max_row + 1
+        business_date = datetime.strptime(row["date"], "%Y-%m-%d") if row.get("date") else None
+        values = {
+            1: business_date,
+            2: business_date + timedelta(days=1) if business_date else None,
+            3: row.get("total_sales"),
+            4: row.get("cash"),
+            5: row.get("other_amount"),
+            6: row.get("total_revenue"),
+            7: row.get("deposit"),
+            8: row.get("expenses_cash"),
+            9: row.get("cuenta_final"),
+            10: row.get("dif_efect"),
+            11: row.get("saldo"),
+            14: row.get("food_ice"),
+        }
+        for col, value in values.items():
+            cell = sheet.cell(row=r, column=col, value=value)
+            cell.border = THIN_BORDER
+            if col in (1, 2):
+                cell.number_format = "mm-dd-yy"
+                cell.alignment = XlAlignment(horizontal="center")
+            else:
+                cell.number_format = header_spec[col - 1][2] or MONEY_FMT
+            if col in BOLD_ITALIC_COLS:
+                cell.font = XlFont(bold=True, italic=True)
+            elif col in BOLD_COLS:
+                cell.font = XlFont(bold=True)
+            fill = data_fill_by_col.get(col)
+            if fill is not None:
+                cell.fill = fill
+
+    # Fila "Total del mes" -- mismo criterio que la fila 35 real (SUM por
+    # columna, con el mismo color de bloque que sus datos, en negrita) --
+    # Saldo no se suma (es un acumulado corrido, se muestra el saldo final
+    # efectivo del mes, igual que ya hace la pantalla).
+    r = sheet.max_row + 1
+    totals = report["totals"]
+    total_values = {
+        1: "Total del mes",
+        3: totals.get("total_sales"),
+        4: totals.get("cash"),
+        5: totals.get("other_amount"),
+        6: totals.get("total_revenue"),
+        7: totals.get("deposit"),
+        8: totals.get("expenses_cash"),
+        9: report.get("total_lottery"),
+        10: totals.get("dif_efect"),
+        11: report.get("effective_closing_balance"),
+    }
+    for col, value in total_values.items():
+        cell = sheet.cell(row=r, column=col, value=value)
+        cell.border = THIN_BORDER
+        cell.font = XlFont(bold=True)
+        if col > 1:
+            cell.number_format = header_spec[col - 1][2] or MONEY_FMT
+        fill = data_fill_by_col.get(col, HEADER_GRAY if col == 1 else None)
+        if fill is not None:
+            cell.fill = fill
+
+    # Anchos confirmados 1:1 contra la copia real (CAJA 08-2026 WEB.xlsx,
+    # columnas visibles A/C/E/F/H/J/K/M/N/O/P mapeadas a las nuestras en
+    # el mismo orden) -- las dos últimas antes de Food Truck/Ice son el
+    # mismo par de columnas vacías Q/R (11.9 y 6.6, la segunda más
+    # angosta) que separan el cuadro principal de esa nota en el archivo
+    # real.
+    for col_letter, width in zip(
+        "ABCDEFGHIJKLMN",
+        (10.3, 11.4, 12.9, 12.7, 8.6, 12.9, 11.9, 9.7, 10.4, 12.7, 11.6, 11.9, 6.6, 12.3),
+    ):
+        sheet.column_dimensions[col_letter].width = width
+
+    workbook.save(dest_path)
+    return dest_path

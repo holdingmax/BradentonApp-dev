@@ -1526,66 +1526,179 @@ def extract_store_info_for_day(pdf_path):
 def build_store_info_export_workbook(rows, year, month, dest_path):
     """
     Excel NUEVO (no toca ningún archivo real ni ninguna plantilla) con
-    Store Info de un mes ya guardado en reportes_db, para que el usuario
-    pueda bajarlo -- pedido explícito del usuario (2026-09-18). `rows` es
-    la lista tal cual la arma reporte_store_info_historial (mismos campos
-    ya calculados que se muestran en pantalla: total_fuel/total_sales/
-    total_revenue/gettel_amount).
+    Store Info de un mes ya guardado en reportes_db -- pedido explícito del
+    usuario (2026-09-19): replicar el mismo diseño/colores/columnas/orden
+    que la hoja "Store Info" real del Excel Cierre (títulos, agrupación de
+    colores por bloque, anchos de columna), no un formato genérico propio.
+    `rows` es la lista tal cual la arma _build_store_info_rows (webapp.py)
+    -- mismos campos ya calculados que se muestran en pantalla, más
+    `category_amounts` (Tabacco/SODA/BEER-WINE/LOTTO/VS/Resto, columnas I-N
+    del Excel real -- sale de Ventas por Departamento, no de Store Info).
 
-    Wherever un valor de la pantalla es en realidad una fórmula (Total
-    Fuel = Sales Fuel + Desc. Comb; Total Sales = Total Fuel + Non Fuel +
-    Desc. Otros + Tax Collect − VS/Gettel; Total Revenue = Cash + Tarjeta/
-    Crédito + Other + Local Acc.) queda como una fórmula real de Excel
-    (recalcula sola si se edita cualquier celda de la que depende) -- pedido
-    explícito: "a lo que se pueda dejar formula... se lo deje". El resto
-    (Volume/Sales Fuel/Desc. Comb/Non Fuel/Desc. Otros/Tax Collect/Cash/
-    Tarjeta/Crédito/Local Accounts/Other/Network Revenue/VS) son valores
-    crudos leídos del PDF (o tipeados a mano) -- no hay ninguna fórmula que
-    los produzca, así que quedan como valor simple.
+    Columnas I-Q en adelante (A-H el bloque de horario/combustible) llevan
+    el mismo texto y color que el Excel real (incluido "Tax collet", así
+    tal cual está tipeado en el archivo real -- no se corrige el typo para
+    que sea el mismo texto que el usuario ya conoce). Wherever un valor de
+    la pantalla es en realidad una fórmula (Total = Sales Fuel + Desc.
+    Comb; Total Ventas = Total + Non Fuel + desc otros + Tax collet − VS;
+    Total Revenue = Cash + TC + Other + Local Account) queda como fórmula
+    real de Excel -- el resto son valores crudos leídos del PDF (o tipeados
+    a mano), sin ninguna fórmula que los produzca.
     """
     import openpyxl
-    from openpyxl.styles import Font
+    from openpyxl.styles import Alignment as XlAlignment, Border as XlBorder, Font as XlFont, PatternFill, Side as XlSide
+
+    HEADER_GRAY = PatternFill("solid", fgColor="FFD9D9D9")
+    HEADER_ORANGE = PatternFill("solid", fgColor="FFFFC000")
+    HEADER_YELLOW = PatternFill("solid", fgColor="FFFFFF00")
+    HEADER_PEACH = PatternFill("solid", fgColor="FFF8CBAD")
+    # Colores de las CELDAS DE DATOS (no del header) -- pedido explícito del
+    # usuario (2026-09-19), confirmados columna por columna abriendo el
+    # Excel real (Cierre 07-25, hoja Store Info) y resolviendo sus colores
+    # de tema (theme+tint) a RGB real: H=gris (mismo que el header),
+    # I-N=amarillo (no naranja -- el naranja es solo el header), R=verde
+    # claro (Accent6 con tint +0.4), V=amarillo (igual que I-N), W/X=azul
+    # grisáceo claro (Text2/dk2 con tint +0.6). La primera versión de este
+    # export no coloreaba ninguna celda de datos, solo el header.
+    DATA_GREEN = PatternFill("solid", fgColor="FFA9D18E")
+    DATA_BLUEGRAY = PatternFill("solid", fgColor="FFADB9CA")
+    DATA_FILL_BY_COL = {
+        8: HEADER_GRAY,
+        9: HEADER_YELLOW,
+        10: HEADER_YELLOW,
+        11: HEADER_YELLOW,
+        12: HEADER_YELLOW,
+        13: HEADER_YELLOW,
+        14: HEADER_YELLOW,
+        18: DATA_GREEN,
+        22: HEADER_YELLOW,
+        23: DATA_BLUEGRAY,
+        24: DATA_BLUEGRAY,
+    }
+    MONEY_FMT = '"$" #,##0.00'
+    VOLUME_FMT = '#,##0.00_ ;[Red]\\-#,##0.00\\ '
+    # Bordes finos en TODAS las celdas (header + datos) -- pedido explícito
+    # del usuario (2026-09-19), confirmado contra el Excel real (Cierre
+    # 07-25, hoja Store Info): tiene bordes en toda la grilla, la primera
+    # versión de este export no ponía ninguno.
+    THIN_SIDE = XlSide(style="thin", color="FF000000")
+    THIN_BORDER = XlBorder(left=THIN_SIDE, right=THIN_SIDE, top=THIN_SIDE, bottom=THIN_SIDE)
 
     workbook = openpyxl.Workbook()
     sheet = workbook.active
     sheet.title = "Store Info"
 
-    headers = [
-        "Día", "Hora Desde", "Hora Hasta",
-        "Volume", "Sales Fuel", "Desc. Comb", "Total Fuel",
-        "Non Fuel", "Desc. Otros", "Tax Collect", "VS (Gettel)", "Total Sales",
-        "Cash", "Tarjeta/Crédito", "Local Accounts", "Other", "Network Revenue", "Total Revenue",
+    # (texto, fill, bold, font_color) -- tal cual el encabezado real, columna por columna.
+    header_spec = [
+        ("Fecha", HEADER_GRAY, True, None),
+        ("hs", HEADER_GRAY, True, None),
+        ("Fecha", HEADER_GRAY, True, None),
+        ("hs", HEADER_GRAY, True, None),
+        ("Volume", HEADER_GRAY, True, None),
+        ("SALES FUEL", HEADER_GRAY, True, None),
+        ("Desc. Comb", HEADER_GRAY, False, None),
+        ("Total", HEADER_GRAY, False, None),
+        ("Tabacco", HEADER_ORANGE, True, None),
+        ("SODA", HEADER_ORANGE, True, None),
+        ("BEER / WINE", HEADER_ORANGE, True, None),
+        ("LOTTO", HEADER_ORANGE, True, None),
+        ("VS", HEADER_ORANGE, True, None),
+        ("Resto", HEADER_ORANGE, True, None),
+        ("C-Store=Total Non Fuel", HEADER_ORANGE, True, None),
+        ("desc otros", HEADER_ORANGE, False, None),
+        ("Tax collet", HEADER_ORANGE, True, "FFFF0000"),
+        ("Total Ventas", None, True, None),
+        ("Cash", HEADER_YELLOW, True, None),
+        ("TC", HEADER_PEACH, True, None),
+        ("Other", HEADER_PEACH, True, None),
+        ("Local Account", HEADER_PEACH, True, None),
+        ("Total Revenue", HEADER_PEACH, True, None),
+        ("Network Revenue", HEADER_PEACH, True, None),
     ]
-    sheet.append(headers)
-    for cell in sheet[1]:
-        cell.font = Font(bold=True)
+    for col, (text, fill, bold, font_color) in enumerate(header_spec, start=1):
+        cell = sheet.cell(row=1, column=col, value=text)
+        cell.font = XlFont(bold=bold, color=font_color)
+        if fill is not None:
+            cell.fill = fill
+        cell.alignment = XlAlignment(horizontal="center", vertical="center", wrap_text=True)
+        cell.border = THIN_BORDER
+    sheet.row_dimensions[1].height = 44.1
+    sheet.freeze_panes = "A2"
+
+    CATEGORY_LABELS = ("TABACCO", "SODA", "BEER/WINE", "LOTERY/LOTTO", "Gettel", "RESTO")
 
     for row in rows:
         r = sheet.max_row + 1
-        day_text = _format_date_ddmmyyyy(row.get("date"))
-        credit_total = round(sum(row["credit_terms"]), 2) if row.get("credit_terms") else 0.0
-        sheet.append(
-            [
-                day_text, row.get("from_time") or "", row.get("to_time") or "",
-                row.get("volume"), row.get("sales_fuel"), row.get("desc_comb"), None,
-                row.get("non_fuel_total"), row.get("desc_otros"), row.get("tax_collect"),
-                row.get("gettel_amount") or 0.0, None,
-                row.get("cash"), credit_total, row.get("local_accounts"), row.get("other_amount"),
-                row.get("network_revenue"), None,
-            ]
-        )
-        sheet.cell(row=r, column=7, value=f"=E{r}+F{r}")
-        sheet.cell(row=r, column=12, value=f"=G{r}+H{r}+I{r}+J{r}-K{r}")
-        sheet.cell(row=r, column=18, value=f"=M{r}+N{r}+P{r}+O{r}")
+        business_date = row.get("date")
+        if isinstance(business_date, str):
+            business_date = datetime.strptime(business_date, "%Y-%m-%d").date()
+        col_a_date = datetime(business_date.year, business_date.month, business_date.day) if business_date else None
+        col_c_date = col_a_date + timedelta(days=1) if col_a_date else None
+        cat = row.get("category_amounts") or {}
+        credit_amounts = row.get("credit_terms") or []
+
+        values = {
+            1: col_a_date,
+            2: _parse_hhmm(row.get("from_time")),
+            3: col_c_date,
+            4: _parse_hhmm(row.get("to_time")),
+            5: row.get("volume"),
+            6: row.get("sales_fuel"),
+            7: row.get("desc_comb"),
+            8: f"=SUM(F{r}:G{r})",
+            9: cat.get(CATEGORY_LABELS[0], 0.0),
+            10: cat.get(CATEGORY_LABELS[1], 0.0),
+            11: cat.get(CATEGORY_LABELS[2], 0.0),
+            12: cat.get(CATEGORY_LABELS[3], 0.0),
+            13: cat.get(CATEGORY_LABELS[4], 0.0),
+            14: cat.get(CATEGORY_LABELS[5], 0.0),
+            15: row.get("non_fuel_total"),
+            16: row.get("desc_otros"),
+            17: row.get("tax_collect"),
+            18: f"=+H{r}+O{r}+P{r}+Q{r}-M{r}",
+            19: row.get("cash"),
+            20: _build_credit_terms_formula(credit_amounts),
+            21: row.get("other_amount"),
+            22: row.get("local_accounts"),
+            23: f"=SUM(S{r}:V{r})",
+            24: row.get("network_revenue"),
+        }
+        for col, value in values.items():
+            cell = sheet.cell(row=r, column=col, value=value)
+            cell.border = THIN_BORDER
+            fill = DATA_FILL_BY_COL.get(col)
+            if fill is not None:
+                cell.fill = fill
+            if col in (1, 3):
+                cell.number_format = "mm-dd-yy"
+            elif col in (2, 4):
+                cell.number_format = "h:mm"
+            elif col == 5:
+                cell.number_format = VOLUME_FMT
+            elif col not in (1, 2, 3, 4):
+                cell.number_format = MONEY_FMT
+            if col in (8, 18, 23):
+                cell.font = XlFont(bold=True)
 
     for col_letter, width in zip(
-        "ABCDEFGHIJKLMNOPQR",
-        (11, 10, 10, 11, 11, 11, 11, 11, 11, 11, 11, 12, 11, 13, 12, 11, 13, 13),
+        "ABCDEFGHIJKLMNOPQRSTUVWX",
+        (10.5, 6, 10.3, 5.5, 10.4, 12.1, 9.3, 12.4, 10.9, 10.3, 11.7, 10.9, 11.3,
+         10.9, 12.4, 10.1, 10.7, 13.3, 12.6, 13.3, 8.3, 11.4, 14.3, 13.7),
     ):
         sheet.column_dimensions[col_letter].width = width
 
     workbook.save(dest_path)
     return dest_path
+
+
+def _parse_hhmm(value):
+    """'22:43' (24h, tal cual reportes_db._time_str la guarda) -> datetime.time, o None."""
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%H:%M").time()
+    except ValueError:
+        return None
 
 
 def _format_date_ddmmyyyy(value):

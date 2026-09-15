@@ -4,6 +4,7 @@
 {% endblock %}
 {% block content %}
 {% from "_month_jump.html" import month_jump %}
+{% from "_pdf_links.html" import pdf_links %}
 <div class="page-header">
   <h1>Reporte Diario — Documentos</h1>
   <p class="page-subtitle">Los PDF de cierre diario ya subidos este mes (alimentan Ventas por Departamento, Store Info y Gettel-Toyota) — se guardan tal cual, para volver a abrirlos cuando haga falta.</p>
@@ -32,7 +33,7 @@
           <td class="historial-col-day">{{ "%02d"|format(pdf.day) }}</td>
           <td>
             {% if pdf.filename %}
-            <a href="{{ url_for('reporte_dia_pdf', report_date=pdf.date) }}">{{ pdf.filename }}</a>
+            {{ pdf_links(url_for('reporte_dia_pdf', report_date=pdf.date), pdf.filename) }}
             {% else %}
             <span class="muted">—</span>
             {% endif %}

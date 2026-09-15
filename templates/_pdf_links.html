@@ -1,0 +1,17 @@
+{# Ver / Descargar -- pedido explícito del usuario (2026-09-19): "a todos
+   los pdf que le hagas click encima te de la opcion de si quieres tener
+   vista previa o si quieres descargarlos... mejor dar esas dos opciones".
+   `base_url` es la URL del PDF/documento SIN el parámetro `mode` -- las 3
+   rutas que sirven estos archivos (reporte_dia_pdf, carga_datos_lottery_
+   dia_pdf, carga_datos_documento_descargar) sirven inline (vista previa)
+   por default y solo fuerzan la descarga con `?mode=download`. `label` es
+   el texto del link de vista previa (default "Ver"); el de descarga
+   siempre dice "Descargar", como ícono aparte chico al lado. #}
+{% macro pdf_links(base_url, label='Ver', extra_class='') %}
+<span class="pdf-link-group {{ extra_class }}">
+  <a href="{{ base_url }}" target="_blank" rel="noopener">{{ label }}</a>
+  <a href="{{ base_url }}{{ '&' if '?' in base_url else '?' }}mode=download" class="pdf-link-download" title="Descargar">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+  </a>
+</span>
+{% endmacro %}

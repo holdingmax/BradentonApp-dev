@@ -40,14 +40,14 @@
           <tr>
             <th></th>
             <th>Día</th>
-            <th>Departamentos</th>
+            <th class="dept-detail-col">Departamentos</th>
             <th class="cat-col">Tabacco</th>
             <th class="cat-col">SODA</th>
             <th class="cat-col">BEER/WINE</th>
             <th class="cat-col">LOTTO</th>
             <th class="cat-col">KIA/TOY</th>
             <th class="cat-col">Resto</th>
-            <th>Total ventas</th>
+            <th class="dept-total-col">Total ventas</th>
             <th class="historial-col-action"></th>
           </tr>
         </thead>
@@ -56,7 +56,7 @@
           <tr class="{{ 'historial-row-today' if day.date == today_iso else '' }}">
             <td class="historial-col-check"><input type="checkbox" class="dept-delete-check" name="dates" value="{{ day.date }}"></td>
             <td class="historial-col-day">{{ "%02d"|format(day.day) }}</td>
-            <td>
+            <td class="dept-detail-col">
               {% if day.department_count %}
               <span class="historial-badge historial-badge-{{ 'mixed' if day.department_sources|length > 1 else day.department_sources[0] }}"
                     title="{% for d in day.department_detail %}{{ d.department }}: ${{ '%.2f'|format(d.amount) }}&#10;{% endfor %}">
@@ -170,16 +170,13 @@
   .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
   .historial-row-today { outline: 2px solid var(--accent); outline-offset: -2px; }
   .historial-col-day { font-weight: 700; width: 40px; }
-  /* Fijo a la derecha del cuadro -- pedido explícito del usuario
-     (2026-09-18): con 6 columnas de categoría + Total ventas, la tabla es
-     ancha y obliga a scrollear horizontal -- "Ver / editar" se queda
-     siempre visible en el borde derecho, en vez de perderse scrolleando. */
-  .historial-col-action {
-    text-align: right; white-space: nowrap;
-    position: sticky; right: 0; z-index: 1;
-    box-shadow: -6px 0 6px -6px rgba(0, 0, 0, 0.18);
-  }
-  thead .historial-col-action { z-index: 2; }
+  /* Centrada dentro de su propia columna -- pedido explícito del usuario
+     (2026-09-19), revirtiendo el fijado al borde derecho de la tanda
+     anterior ("no queria que se vea asi... no queria una linea
+     divisoria, que esten normal solo que mas centrados"): sin sticky, sin
+     el box-shadow divisorio, solo el link centrado en vez de pegado a la
+     izquierda (contra "Total ventas") o forzado al borde derecho. */
+  .historial-col-action { text-align: center; white-space: nowrap; }
   .historial-col-check { width: 28px; text-align: center; }
   .dept-delete-toolbar {
     display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -206,8 +203,23 @@
      BEER-WINE/LOTTO/KIA-TOY/Resto) -- un día sin nada en una categoría
      muestra "$0" en vez de desaparecer. El desglose de departamentos
      crudos sigue como tooltip nativo (title) sobre el badge de conteo. */
-  .dept-cat-table .cat-col { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .historial-table td.dept-total-col { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 700; }
+  /* Título Y valor centrados en su celda -- pedido explícito del usuario
+     (2026-09-19): antes el valor (td) quedaba a la derecha -- y por
+     especificidad CSS (".cat-col" con 2 clases le ganaba a "thead th" con
+     1 clase + 2 elementos, sin importar el orden en la hoja de estilos),
+     el título (th) TAMBIÉN terminaba heredando ese mismo right-align en
+     vez del center ya pensado para él más abajo. Una sola regla acá,
+     aplicada a título y valor por igual, sin esa pelea de especificidad. */
+  .dept-cat-table .cat-col { text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  /* Departamentos y Total ventas alineados al centro -- pedido explícito
+     del usuario (2026-09-19), completando el mismo criterio ya aplicado a
+     las columnas de categoría: "te falto aplicarlo a la columna de
+     Departamentos y total ventas que queden alineadas". */
+  .dept-cat-table thead th.dept-detail-col,
+  .dept-cat-table thead th.dept-total-col,
+  .historial-table td.dept-detail-col,
+  .historial-table td.dept-total-col { text-align: center; }
+  .historial-table td.dept-total-col { white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 700; }
 
   /* Distribución de columnas más simétrica -- pedido explícito del usuario
      (2026-09-18): encabezados centrados (mismo criterio ya aplicado en

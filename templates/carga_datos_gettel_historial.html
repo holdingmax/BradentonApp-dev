@@ -67,7 +67,7 @@
           <td>${{ fmt(totals.toyota_amount) }}</td>
           <td>{{ fmt(totals.toyota_gallons) }}</td>
           <td>${{ fmt(totals.local_account) }}</td>
-          <td></td>
+          <td><span class="dif-badge {{ 'dif-ok' if totals.dif|abs < 0.01 else 'dif-mismatch' }}">${{ fmt(totals.dif) }}</span></td>
         </tr>
       </tfoot>
     </table>
