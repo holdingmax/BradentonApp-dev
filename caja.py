@@ -521,6 +521,7 @@ def build_caja_export_workbook(report, year, month, dest_path):
         9: report.get("total_lottery"),
         10: totals.get("dif_efect"),
         11: report.get("effective_closing_balance"),
+        14: totals.get("food_ice"),
     }
     for col, value in total_values.items():
         cell = sheet.cell(row=r, column=col, value=value)
