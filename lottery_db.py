@@ -588,3 +588,260 @@ def monthly_debit_total(year, month):
             total += block["debito"]["net_debit"]
             any_value = True
     return round(total, 2) if any_value else None
+
+
+# ---------------------------------------------------------------------------
+# Export a Excel/PDF -- pedido explícito del usuario (2026-09-19, misma
+# tanda que Store Info/Caja): "empezemos a trabajar en lo mismo de exportar
+# excel y pdf de lottery". Investigado contra el Excel real (LOTTERY.
+# Analisis 08.2026, columna por columna con openpyxl antes de escribir
+# nada, nunca asumido) -- misma estructura de siempre (bloques de 7 días
+# sin espacio entre ellos, Subtotal/Debito con SUS MISMAS fórmulas reales
+# confirmadas, ver _DAY_FORMULAS/_build_block más arriba) y los mismos
+# colores reales (gris D9D9D9 para el grupo ONLINE/Terminal, amarillo
+# FFFF00 para SKOFF, naranja FFC000 para la columna "TOTAL", verde 92D050
+# para "CUENTA FINAL"/Debito).
+# ---------------------------------------------------------------------------
+
+_LOTTERY_EXPORT_HEADERS = (
+    # (texto fila 3, ancho de columna en el Excel real)
+    ("Fecha", 11.9), ("Fecha", 11.4), ("TOTAL", 13.0),
+    ("COUNT", 6.7), ("NET SALES REPORT", 9.6), ("SALES", 10.1), ("Pagos", 9.9),
+    ("Cash Balance", 11.1), ("Comis", 11.6), ("En %", 8.6), ("Prize Free Plays", 10.7),
+    ("En %", 8.3), ("TOTAL SALES COM", 9.7),
+    ("COUNT", 6.7), ("NET SALES", 10.6), ("Pays", 6.3), ("Pagos", 11.1),
+    ("Books Settled", 10.4), ("Sales Com", 11.1), ("En %", 9.1), ("NET TOTAL", 10.7),
+    (None, 12.1), (None, 11.1), (None, 9.0),
+)
+
+
+def _lottery_write_day_row(sheet, row, day, styles):
+    """Una fila de día (D..I, K, N..S crudos + J/L/M/T/U/X calculados con
+    la misma fórmula real -- ver _DAY_FORMULAS)."""
+    XlFont, THIN_BORDER = styles["font"], styles["border"]
+    business_date = _parse_date(day["date"])
+    values = {
+        1: business_date - timedelta(days=1), 2: business_date,
+        4: day.get("online_count"), 5: day.get("online_net_sales"),
+        6: day.get("sales"), 7: day.get("pagos"), 8: day.get("cash_balance"),
+        9: day.get("comis"), 11: day.get("prize_free_plays"),
+        14: day.get("skoff_count"), 15: day.get("skoff_net_sales"),
+        16: day.get("pays_units"), 17: day.get("pays_amount"),
+        18: day.get("skoff_sales_amount"), 19: day.get("sales_comm"),
+    }
+    formulas = {
+        10: f"=+I{row}/F{row}", 12: f"=+K{row}/F{row}", 13: f"=+I{row}+K{row}",
+        20: f"=+S{row}/R{row}", 21: f"=+Q{row}+R{row}+S{row}", 24: f"=-G{row}-Q{row}",
+    }
+    for col, value in values.items():
+        cell = sheet.cell(row=row, column=col, value=value)
+        cell.border = THIN_BORDER
+        if col in (1, 2):
+            cell.number_format = "mm-dd-yy"
+            cell.alignment = styles["center"]
+    for col, formula in formulas.items():
+        cell = sheet.cell(row=row, column=col, value=formula)
+        cell.border = THIN_BORDER
+        cell.number_format = styles["plain_fmt"]
+    for col, fill in styles["day_fill_by_col"].items():
+        sheet.cell(row=row, column=col).fill = fill
+    sheet.cell(row=row, column=21).font = XlFont(bold=True)
+
+
+def _lottery_write_block(sheet, start_row, block, styles):
+    """Escribe los 7 días + Subtotal + Debito de un bloque, arrancando en
+    `start_row` -- devuelve la fila siguiente (sin ningún espacio entre
+    bloques, igual que el archivo real)."""
+    XlFont, THIN_BORDER = styles["font"], styles["border"]
+    for offset, day in enumerate(block["days"]):
+        _lottery_write_day_row(sheet, start_row + offset, day, styles)
+
+    sub_row = start_row + 7
+    d1, d2 = start_row, start_row + 6
+    for col, letter in ((4, "D"), (5, "E"), (6, "F"), (7, "G"), (9, "I"), (11, "K"), (13, "M"), (16, "P"), (17, "Q"), (18, "R"), (19, "S")):
+        cell = sheet.cell(row=sub_row, column=col, value=f"=SUM({letter}{d1}:{letter}{d2})")
+        cell.border = THIN_BORDER
+        cell.number_format = styles["plain_fmt"]
+        cell.font = XlFont(bold=True)
+    lratio = sheet.cell(row=sub_row, column=12, value=f"=+K{sub_row}/F{sub_row}")
+    lratio.border = THIN_BORDER
+    for col, fill in styles["subtotal_fill_by_col"].items():
+        sheet.cell(row=sub_row, column=col).fill = fill
+
+    deb_row = sub_row + 1
+    deb_values = {
+        5: f"=+E{sub_row}-F{sub_row}",
+        6: f"=+F{sub_row}+G{sub_row}+I{sub_row}+K{sub_row}+10",
+        17: f"=+Q{sub_row}+R{sub_row}+S{sub_row}",
+        21: "Debito",
+        22: f"=+F{deb_row}+Q{deb_row}",
+    }
+    for col, value in deb_values.items():
+        cell = sheet.cell(row=deb_row, column=col, value=value)
+        cell.border = THIN_BORDER
+        if col in (5, 6, 17, 22):
+            cell.number_format = styles["plain_fmt"]
+        cell.font = XlFont(bold=True)
+    if block.get("chase_bank_date"):
+        d = _parse_date(block["chase_bank_date"])
+        sheet.cell(row=deb_row, column=23, value=f"Chase Bank {d.strftime('%d/%m/%Y')}").font = XlFont(bold=True)
+    for col, fill in styles["debito_fill_by_col"].items():
+        sheet.cell(row=deb_row, column=col).fill = fill
+
+    return deb_row + 1
+
+
+def build_lottery_export_workbook(year, month, dest_path):
+    """
+    Excel NUEVO (nunca toca el archivo real) con los bloques de Lottery del
+    mes, mismo formato/colores/fórmulas que el Excel real -- confirmado
+    columna por columna contra `LOTTERY. Analisis 08.2026.xlsx` antes de
+    escribir esto (ver el comentario de arriba de esta sección).
+    """
+    import openpyxl
+    from openpyxl.styles import Alignment as XlAlignment, Border as XlBorder, Font as XlFont, PatternFill, Side as XlSide
+
+    GRAY = PatternFill("solid", fgColor="FFD9D9D9")
+    YELLOW = PatternFill("solid", fgColor="FFFFFF00")
+    ORANGE = PatternFill("solid", fgColor="FFFFC000")
+    GREEN = PatternFill("solid", fgColor="FF92D050")
+    PLAIN_FMT = '#,##0.00_ ;[Red]\\-#,##0.00\\ '
+    THIN_SIDE = XlSide(style="thin", color="FF000000")
+    THIN_BORDER = XlBorder(left=THIN_SIDE, right=THIN_SIDE, top=THIN_SIDE, bottom=THIN_SIDE)
+    CENTER = XlAlignment(horizontal="center")
+
+    styles = {
+        "font": XlFont, "border": THIN_BORDER, "center": CENTER, "plain_fmt": PLAIN_FMT,
+        "day_fill_by_col": {21: YELLOW, 22: GREEN, 24: ORANGE},
+        "subtotal_fill_by_col": {6: GREEN, 7: GREEN, 13: GREEN, 16: YELLOW, 17: GREEN, 18: YELLOW, 19: YELLOW, 22: GREEN},
+        "debito_fill_by_col": {5: YELLOW, 6: GRAY, 17: YELLOW, 22: GREEN},
+    }
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = f"{month:02d}.{year}"
+
+    sheet.cell(row=1, column=1, value=f"BGS - {month:02d}/{year} - Lottery")
+    sheet["A1"].font = XlFont(name="Segoe UI", bold=True, size=14, underline="single")
+    sheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=24)
+    sheet.row_dimensions[1].height = 21
+
+    sheet.cell(row=2, column=4, value="ONLINE").fill = GRAY
+    sheet.cell(row=2, column=4).font = XlFont(bold=True)
+    sheet.cell(row=2, column=4).alignment = CENTER
+    sheet.merge_cells(start_row=2, start_column=4, end_row=2, end_column=12)
+    sheet.cell(row=2, column=14, value="SKOFF = SCRATCH-OFF").fill = YELLOW
+    sheet.cell(row=2, column=14).font = XlFont(bold=True)
+    sheet.cell(row=2, column=14).alignment = CENTER
+    sheet.merge_cells(start_row=2, start_column=14, end_row=2, end_column=21)
+    sheet.cell(row=2, column=22, value="CUENTA FINAL").fill = GREEN
+    sheet.cell(row=2, column=22).font = XlFont(bold=True)
+    sheet.cell(row=2, column=22).alignment = CENTER
+    sheet.merge_cells(start_row=2, start_column=22, end_row=3, end_column=22)
+    sheet.row_dimensions[2].height = 20
+
+    no_fill_cols = {9, 11}  # Comis/Prize Free Plays -- sin relleno en el real
+    for col, (text, width) in enumerate(_LOTTERY_EXPORT_HEADERS, start=1):
+        if text is not None:
+            cell = sheet.cell(row=3, column=col, value=text)
+            cell.font = XlFont(bold=True, size=10)
+            cell.alignment = XlAlignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.border = THIN_BORDER
+            if col == 3:
+                cell.fill = ORANGE
+            elif 14 <= col <= 21:
+                cell.fill = YELLOW
+            elif col not in no_fill_cols:
+                cell.fill = GRAY
+        sheet.column_dimensions[openpyxl.utils.get_column_letter(col)].width = width
+    sheet.row_dimensions[3].height = 32
+    sheet.freeze_panes = "A4"
+
+    row = 4
+    for block in build_month_blocks(year, month):
+        row = _lottery_write_block(sheet, row, block, styles)
+
+    workbook.save(dest_path)
+    return dest_path
+
+
+def _fmt_money_pdf(value):
+    return "—" if value is None else "{:,.2f}".format(value)
+
+
+def _fmt_int_pdf(value):
+    return "—" if value is None else "{:,.0f}".format(value)
+
+
+def build_lottery_export_pdf(year, month, dest_path):
+    """
+    Versión PDF (con los mismos colores del export a Excel, sin fórmulas)
+    -- mismas columnas que ya muestra /carga-datos/lottery/historial, con
+    los bloques de 7 días + Subtotal + Debito uno abajo del otro.
+    """
+    from pdf_export import build_simple_table_pdf
+
+    GRAY, YELLOW, ORANGE, GREEN = "#D9D9D9", "#FFFF00", "#FFC000", "#92D050"
+    headers = [
+        "Día", "Count\n(Online)", "Sales $\n(Online)", "Sales\n(Terminal)", "Pagos\n(Terminal)",
+        "Cash Bal.", "Comis", "Prize FP", "Total Comm",
+        "Count\n(Skoff)", "Sales\n(Skoff)", "Pays U", "Pays $", "Sales Amt", "Sales Comm", "Net Total",
+        "Chase Bank", "Total Pagos",
+    ]
+    header_fill_by_col = {
+        1: GRAY, 2: GRAY, 3: GRAY, 4: GRAY, 5: GRAY, 8: GRAY,
+        9: YELLOW, 10: YELLOW, 11: YELLOW, 12: YELLOW, 13: YELLOW, 14: YELLOW, 15: YELLOW,
+        16: GREEN,
+    }
+    data_fill_by_col = {15: YELLOW, 16: GREEN}
+    col_widths_mm = [14, 14, 18, 16, 14, 16, 14, 14, 16, 14, 18, 12, 15, 15, 14, 15, 24, 16]
+
+    rows = []
+    for block in build_month_blocks(year, month):
+        for day in block["days"]:
+            d = datetime.strptime(day["date"], "%Y-%m-%d")
+            rows.append([
+                d.strftime("%d-%m"),
+                _fmt_int_pdf(day.get("online_count")), _fmt_money_pdf(day.get("online_net_sales")),
+                _fmt_money_pdf(day.get("sales")), _fmt_money_pdf(day.get("pagos")), _fmt_money_pdf(day.get("cash_balance")),
+                _fmt_money_pdf(day.get("comis")), _fmt_money_pdf(day.get("prize_free_plays")), _fmt_money_pdf(day.get("total_comm")),
+                _fmt_int_pdf(day.get("skoff_count")), _fmt_money_pdf(day.get("skoff_net_sales")),
+                _fmt_int_pdf(day.get("pays_units")), _fmt_money_pdf(day.get("pays_amount")), _fmt_money_pdf(day.get("skoff_sales_amount")),
+                _fmt_money_pdf(day.get("sales_comm")), _fmt_money_pdf(day.get("net_total")),
+                "", _fmt_money_pdf(day.get("cuenta_final")),
+            ])
+        sub, deb = block["subtotal"], block["debito"]
+        rows.append([
+            "Subtotal",
+            _fmt_int_pdf(sub.get("online_count")), _fmt_money_pdf(sub.get("online_net_sales")),
+            _fmt_money_pdf(sub.get("sales")), _fmt_money_pdf(sub.get("pagos")), "",
+            _fmt_money_pdf(sub.get("comis")), _fmt_money_pdf(sub.get("prize_free_plays")), _fmt_money_pdf(sub.get("total_comm")),
+            "", "",
+            _fmt_int_pdf(sub.get("pays_units")), _fmt_money_pdf(sub.get("pays_amount")), _fmt_money_pdf(sub.get("skoff_sales_amount")),
+            _fmt_money_pdf(sub.get("sales_comm")), "",
+            "", "",
+        ])
+        chase_text = ""
+        if block.get("chase_bank_date"):
+            d = _parse_date(block["chase_bank_date"])
+            chase_text = f"${_fmt_money_pdf(deb.get('net_debit'))}\n{d.strftime('%d/%m/%Y')}"
+        else:
+            chase_text = f"${_fmt_money_pdf(deb.get('net_debit'))}\n(sin confirmar)"
+        rows.append([
+            "Debito",
+            "", _fmt_money_pdf(deb.get("online_net_sales")),
+            _fmt_money_pdf(deb.get("sales")), "", "",
+            "", "", "",
+            "", "", "", _fmt_money_pdf(deb.get("pays_amount")), "",
+            "", "",
+            chase_text, "",
+        ])
+
+    title = f"Lottery — {month:02d}/{year}"
+    build_simple_table_pdf(
+        dest_path, title, headers, rows,
+        col_widths_mm=col_widths_mm,
+        header_fill_by_col=header_fill_by_col,
+        data_fill_by_col=data_fill_by_col,
+    )
+    return dest_path

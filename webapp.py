@@ -1245,6 +1245,40 @@ def carga_datos_lottery_historial():
     )
 
 
+@app.route("/carga-datos/lottery/exportar")
+def carga_datos_lottery_exportar():
+    """
+    Excel NUEVO (nunca toca el archivo real) con los bloques de Lottery del
+    mes -- pedido explícito del usuario (2026-09-19), mismo criterio que
+    Store Info/Caja. Ver lottery_db.build_lottery_export_workbook.
+    """
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    workspace_dir = tempfile.mkdtemp(prefix="lottery_export_")
+    dest_path = os.path.join(workspace_dir, f"Lottery {month:02d}-{year}.xlsx")
+    lottery_db.build_lottery_export_workbook(year, month, dest_path)
+    return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
+
+
+@app.route("/carga-datos/lottery/exportar/pdf")
+def carga_datos_lottery_exportar_pdf():
+    """Versión PDF del export de arriba -- ver lottery_db.build_lottery_export_pdf."""
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    workspace_dir = tempfile.mkdtemp(prefix="lottery_export_pdf_")
+    dest_path = os.path.join(workspace_dir, f"Lottery {month:02d}-{year}.pdf")
+    lottery_db.build_lottery_export_pdf(year, month, dest_path)
+    return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
+
+
 @app.route("/carga-datos/lottery/bloque/<int:iso_year>/<int:iso_week>/chase", methods=["POST"])
 def carga_datos_lottery_bloque_chase(iso_year, iso_week):
     chase_date_raw = (request.form.get("chase_bank_date") or "").strip()

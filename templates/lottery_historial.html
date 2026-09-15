@@ -124,6 +124,16 @@
       </tbody>
     </table>
   </div>
+
+  {% if blocks %}
+  <div style="margin-top: 14px; text-align: right; position: relative;">
+    <button type="button" class="btn-accent popover-trigger" data-popover-target="export-lottery">Exportar</button>
+    <div class="popover-panel export-menu" id="export-lottery">
+      <a href="{{ url_for('carga_datos_lottery_exportar', year=year, month=month) }}">Excel</a>
+      <a href="{{ url_for('carga_datos_lottery_exportar_pdf', year=year, month=month) }}">PDF</a>
+    </div>
+  </div>
+  {% endif %}
 </div>
 
 <style>
