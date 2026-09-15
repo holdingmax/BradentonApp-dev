@@ -513,6 +513,13 @@
        abrir nada -- ahí el panel se abre únicamente con un click
        (.expanded, ver más abajo y el JS toggleAppRailItem). */
     body:not(.rail-pinned) .app-rail-item:hover .app-rail-panel { display: block; }
+    /* Mientras se está arrastrando un ícono para reordenar la barra
+       (ver el IIFE de drag-and-drop más abajo), el mouse pasa por encima
+       de otros ítems y el :hover de arriba dispararía su flyout -- ruido
+       visual sin sentido en medio de un arrastre. body.rail-dragging (JS)
+       lo tapa con !important sin importar si el panel se mostraría por
+       hover (colapsada) o por .expanded (fijada). */
+    body.rail-dragging .app-rail-panel { display: none !important; }
     /* Título del módulo dentro del panel -- solo hace falta colapsada (el
        flyout de hover, sin ningún otro texto alrededor que diga sobre qué
        módulo estás parado, ver pedido del usuario); fijada expandida ya
@@ -1174,11 +1181,34 @@
         var saved;
         try { saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null'); } catch (e) { saved = null; }
         if (!Array.isArray(saved) || !saved.length) return;
+        var items = currentItems();
         var byKey = {};
-        currentItems().forEach(function (el) { byKey[el.dataset.railKey] = el; });
+        items.forEach(function (el) { byKey[el.dataset.railKey] = el; });
+        // Armar el orden final completo ANTES de mover nada -- moviendo
+        // (appendChild) un ítem guardado a la vez, en el orden guardado,
+        // empuja a cada uno sucesivamente más al fondo del contenedor y
+        // termina dejando cualquier ítem NUEVO (no incluido en el orden
+        // guardado -- ej. un módulo agregado en una sesión posterior a la
+        // última vez que se arrastró algo) primero de todos, exactamente al
+        // revés de lo esperado ("queda al final"). Se calcula la lista final
+        // (guardados en su orden + los nuevos al final, en su orden
+        // original) y recién ahí se aplica en una sola pasada.
+        var seen = {};
+        var ordered = [];
         saved.forEach(function (key) {
-          if (byKey[key]) container.appendChild(byKey[key]);
+          if (byKey[key] && !seen[key]) {
+            ordered.push(byKey[key]);
+            seen[key] = true;
+          }
         });
+        items.forEach(function (el) {
+          var key = el.dataset.railKey;
+          if (!seen[key]) {
+            ordered.push(el);
+            seen[key] = true;
+          }
+        });
+        ordered.forEach(function (el) { container.appendChild(el); });
       })();
 
       function persistOrder() {
@@ -1192,6 +1222,7 @@
         if (!item) return;
         draggingEl = item;
         item.classList.add('dragging');
+        document.body.classList.add('rail-dragging');
         event.dataTransfer.effectAllowed = 'move';
         event.dataTransfer.setData('text/plain', item.dataset.railKey || '');
       });
@@ -1208,6 +1239,7 @@
       container.addEventListener('dragend', function () {
         if (draggingEl) draggingEl.classList.remove('dragging');
         draggingEl = null;
+        document.body.classList.remove('rail-dragging');
         persistOrder();
       });
     })();
