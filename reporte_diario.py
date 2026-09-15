@@ -1637,6 +1637,22 @@ def build_store_info_export_workbook(rows, year, month, dest_path):
         cat = row.get("category_amounts") or {}
         credit_amounts = row.get("credit_terms") or []
 
+        # Las 3 fórmulas (Total Fuel/Total Ventas/Total Revenue) solo se
+        # escriben si TODOS sus componentes reales están cargados -- bug
+        # real encontrado en una revisión de bugs (2026-09-19): un día sin
+        # Store Info (o con algún campo suelto sin cargar) igual escribía
+        # la fórmula, y Excel trata una celda vacía como 0 al sumar -- el
+        # día terminaba mostrando "$0.00" en vez de en blanco, dando a
+        # entender que ese día tuvo $0 de ventas en vez de "sin cargar".
+        # Confirmado contra agosto-2026 real: 7 de 31 días sin ningún dato
+        # quedaban así. Mismo criterio de siempre: nunca un valor de baja
+        # confianza en silencio.
+        has_total_fuel = row.get("sales_fuel") is not None and row.get("desc_comb") is not None
+        has_total_ventas = has_total_fuel and None not in (
+            row.get("non_fuel_total"), row.get("desc_otros"), row.get("tax_collect"),
+        )
+        has_total_revenue = None not in (row.get("cash"), row.get("other_amount"), row.get("local_accounts"))
+
         values = {
             1: col_a_date,
             2: _parse_hhmm(row.get("from_time")),
@@ -1645,7 +1661,7 @@ def build_store_info_export_workbook(rows, year, month, dest_path):
             5: row.get("volume"),
             6: row.get("sales_fuel"),
             7: row.get("desc_comb"),
-            8: f"=SUM(F{r}:G{r})",
+            8: f"=SUM(F{r}:G{r})" if has_total_fuel else None,
             9: cat.get(CATEGORY_LABELS[0], 0.0),
             10: cat.get(CATEGORY_LABELS[1], 0.0),
             11: cat.get(CATEGORY_LABELS[2], 0.0),
@@ -1655,12 +1671,12 @@ def build_store_info_export_workbook(rows, year, month, dest_path):
             15: row.get("non_fuel_total"),
             16: row.get("desc_otros"),
             17: row.get("tax_collect"),
-            18: f"=+H{r}+O{r}+P{r}+Q{r}-M{r}",
+            18: f"=+H{r}+O{r}+P{r}+Q{r}-M{r}" if has_total_ventas else None,
             19: row.get("cash"),
             20: _build_credit_terms_formula(credit_amounts),
             21: row.get("other_amount"),
             22: row.get("local_accounts"),
-            23: f"=SUM(S{r}:V{r})",
+            23: f"=SUM(S{r}:V{r})" if has_total_revenue else None,
             24: row.get("network_revenue"),
         }
         for col, value in values.items():
