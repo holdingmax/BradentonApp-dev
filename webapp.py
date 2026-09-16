@@ -128,9 +128,10 @@ login_manager.login_message_category = "error"
 
 
 class WebUser(UserMixin):
-    def __init__(self, username, is_admin):
+    def __init__(self, username, is_admin, must_change_password=False):
         self.id = username
         self.is_admin = is_admin
+        self.must_change_password = must_change_password
 
 
 @login_manager.user_loader
@@ -138,7 +139,11 @@ def load_user(username):
     user = auth.get_user(username)
     if user is None:
         return None
-    return WebUser(username, user.get("is_admin", False))
+    return WebUser(
+        username,
+        user.get("is_admin", False),
+        user.get("must_change_password", False),
+    )
 
 
 @app.before_request
@@ -147,6 +152,23 @@ def require_login():
         return None
     if not current_user.is_authenticated:
         return redirect(url_for("login"))
+    return None
+
+
+# Cambio de contraseña obligatorio de "primer login" -- endpoints que SÍ
+# tienen que seguir funcionando aunque el usuario todavía lo tenga pendiente
+# (la propia página de cambio, y salir).
+_PASSWORD_CHANGE_EXEMPT_ENDPOINTS = {"perfil_password", "logout", "static"}
+
+
+@app.before_request
+def _require_password_change():
+    if not current_user.is_authenticated:
+        return None
+    if request.endpoint in _PASSWORD_CHANGE_EXEMPT_ENDPOINTS or request.endpoint is None:
+        return None
+    if getattr(current_user, "must_change_password", False):
+        return redirect(url_for("perfil_password"))
     return None
 
 
@@ -204,7 +226,12 @@ def login():
             flash("Usuario o contraseña incorrectos.", "error")
         else:
             remember = bool(request.form.get("remember"))
-            login_user(WebUser(username, user.get("is_admin", False)), remember=remember)
+            login_user(
+                WebUser(username, user.get("is_admin", False), user.get("must_change_password", False)),
+                remember=remember,
+            )
+            if user.get("must_change_password", False):
+                return redirect(url_for("perfil_password"))
             return redirect(url_for("carga_datos_index"))
 
     return render_template("login.html")
@@ -220,6 +247,7 @@ def logout():
 @app.route("/perfil/password", methods=["GET", "POST"])
 @login_required
 def perfil_password():
+    forced = getattr(current_user, "must_change_password", False)
     if request.method == "POST":
         current_password = request.form.get("current_password", "")
         new_password = request.form.get("new_password", "")
@@ -231,11 +259,14 @@ def perfil_password():
         else:
             try:
                 auth.set_password(current_user.id, new_password)
+                if forced:
+                    flash("Contraseña actualizada. Ya podés usar la app normalmente.", "success")
+                    return redirect(url_for("carga_datos_index"))
                 flash("Contraseña actualizada correctamente.", "success")
             except ValueError as exc:
                 flash(str(exc), "error")
         return redirect(url_for("perfil_password"))
-    return render_template("perfil_password.html")
+    return render_template("perfil_password.html", forced=forced)
 
 
 @app.route("/admin/users", methods=["GET", "POST"])
@@ -263,8 +294,12 @@ def admin_users():
                 if new_password != confirm_password:
                     flash("Las contraseñas no coinciden.", "error")
                 else:
-                    auth.set_password(request.form.get("username", "").strip(), new_password)
-                    flash("Contraseña actualizada.", "success")
+                    auth.set_password(
+                        request.form.get("username", "").strip(),
+                        new_password,
+                        must_change_password=True,
+                    )
+                    flash("Contraseña actualizada. Esa persona va a tener que cambiarla al iniciar sesión.", "success")
             elif action == "delete":
                 auth.delete_user(
                     request.form.get("username", "").strip(),
@@ -1350,7 +1385,15 @@ def carga_datos_lottery_dia_pdf(report_date, kind):
 
 @app.route("/carga-datos/lottery/documentos")
 def carga_datos_lottery_documentos():
-    """PDFs diarios ya guardados este mes -- ver lottery_db.get_month_pdf_list."""
+    """
+    PDFs diarios ya guardados este mes -- ver lottery_db.get_month_pdf_list.
+    Suma un cuadrito aparte (pedido explícito del usuario, 2026-09-19) para
+    el PDF mensual real de Florida Lottery -- solo se guarda, nunca se lee
+    ni se procesa (a diferencia del Excel de "Resumen mensual", que si se
+    lee -- ver carga_datos_lottery_resumen_mensual). Reusa documents_db.py,
+    módulo "lottery_resumen_mensual" -- mismo nombre de siempre, solo
+    cambió DÓNDE vive el formulario de carga.
+    """
     today = date.today()
     year = request.args.get("year", type=int) or today.year
     month = request.args.get("month", type=int) or today.month
@@ -1358,12 +1401,14 @@ def carga_datos_lottery_documentos():
         month = today.month
 
     pdfs = lottery_db.get_month_pdf_list(year, month)
+    monthly_pdfs = documents_db.list_documents("lottery_resumen_mensual", year, month)
     prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
     next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
 
     return render_template(
         "lottery_documentos.html",
         pdfs=pdfs,
+        monthly_pdfs=monthly_pdfs,
         year=year,
         month=month,
         month_name=_MONTH_NAMES_ES[month - 1],
@@ -1375,12 +1420,48 @@ def carga_datos_lottery_documentos():
     )
 
 
+@app.route("/carga-datos/lottery/documentos/mensual/subir", methods=["POST"])
+def carga_datos_lottery_documentos_mensual_subir():
+    """
+    Sube el único PDF mensual de Florida Lottery -- solo se guarda, ver
+    arriba. Un solo PDF por mes -- pedido explícito del usuario (2026-09-16):
+    "que no te deje cargar más PDF y que desaparezca el cuadro para cargar
+    hasta que se elimine el PDF que se cargó anteriormente". El formulario
+    ya se oculta solo en el template cuando ya hay uno -- este chequeo es
+    el respaldo del lado del servidor (nunca confiar solo en ocultar un
+    botón).
+    """
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    upload = request.files.get("pdf_file")
+    if not year or not month or not (1 <= month <= 12):
+        flash("Elegí a qué mes corresponde este PDF.", "error")
+        return redirect(url_for("carga_datos_lottery_documentos"))
+    if documents_db.list_documents("lottery_resumen_mensual", year, month):
+        flash("Ya hay un PDF mensual cargado este mes -- eliminalo antes de subir otro.", "error")
+        return redirect(url_for("carga_datos_lottery_documentos", year=year, month=month))
+    if upload is None or not upload.filename:
+        flash("Seleccioná el PDF mensual de Lottery.", "error")
+        return redirect(url_for("carga_datos_lottery_documentos", year=year, month=month))
+
+    path, filename = _save_upload_to_workspace(upload)
+    documents_db.store_document("lottery_resumen_mensual", path, filename, year, month)
+    flash("PDF mensual guardado.", "success")
+    return redirect(url_for("carga_datos_lottery_documentos", year=year, month=month))
+
+
 @app.route("/carga-datos/lottery/resumen-mensual")
 def carga_datos_lottery_resumen_mensual():
     """
-    El PDF de resumen mensual de Lottery -- solo para guardarlo y poder
-    verlo después, no se lee ni se procesa (a diferencia del cuadro
-    semanal). Reusa documents_db.py -- mismo patrón que EFT/Gettel/CMV.
+    Cierre mensual de Lottery -- pedido explícito del usuario (2026-09-16):
+    "lo ideal es no tener que subir ningún excel, ya que los datos debería
+    poder extraerlos de la misma lottery que se carga en la página". Las
+    dos tablas que este cuadro tiene en el Excel real ("LIQUIDACION CIERRE
+    LOTTERY" / "LIQUIDACION CIERRE RECAUDACION COMISIONES") resultaron ser
+    puras sumas de columnas que ya viven en lottery_days -- se recalculan
+    en el momento (ver lottery_db.compute_month_closing), nada se sube ni
+    se lee de ningún archivo. El único valor manual real es "Gastos
+    Adminits-Loteria" ($150 por default, editable) -- ver la ruta de abajo.
     """
     today = date.today()
     year = request.args.get("year", type=int) or today.year
@@ -1388,13 +1469,13 @@ def carga_datos_lottery_resumen_mensual():
     if not (1 <= month <= 12):
         month = today.month
 
-    docs = documents_db.list_documents("lottery_resumen_mensual", year, month)
+    closing = lottery_db.compute_month_closing(year, month)
     prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
     next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
 
     return render_template(
         "lottery_resumen_mensual.html",
-        docs=docs,
+        closing=closing,
         year=year,
         month=month,
         month_name=_MONTH_NAMES_ES[month - 1],
@@ -1406,22 +1487,6 @@ def carga_datos_lottery_resumen_mensual():
     )
 
 
-@app.route("/carga-datos/lottery/resumen-mensual/subir", methods=["POST"])
-def carga_datos_lottery_resumen_mensual_subir():
-    year = request.form.get("year", type=int)
-    month = request.form.get("month", type=int)
-    upload = request.files.get("resumen_file")
-    if not year or not month or not (1 <= month <= 12):
-        flash("Elegí a qué mes corresponde este resumen.", "error")
-        return redirect(url_for("carga_datos_lottery_resumen_mensual"))
-    if upload is None or not upload.filename:
-        flash("Seleccioná el PDF del resumen mensual.", "error")
-        return redirect(url_for("carga_datos_lottery_resumen_mensual", year=year, month=month))
-
-    path, filename = _save_upload_to_workspace(upload)
-    documents_db.store_document("lottery_resumen_mensual", path, filename, year, month)
-    flash("Resumen mensual guardado.", "success")
-    return redirect(url_for("carga_datos_lottery_resumen_mensual", year=year, month=month))
 
 
 @app.route("/controles")
@@ -2672,7 +2737,14 @@ def _parse_report_date(report_date):
 
 @app.route("/reporte/documentos")
 def reporte_documentos():
-    """PDFs de cierre diario ya guardados este mes -- ver CLAUDE.md, barra lateral por módulo."""
+    """
+    PDFs de cierre diario ya guardados este mes -- ver CLAUDE.md, barra
+    lateral por módulo. Suma un cuadrito aparte para el PDF de resumen
+    mensual (pedido explícito del usuario, 2026-09-16: "igual que en la
+    Lottery" -- vive en Documentos, un solo PDF por mes, reemplaza la
+    página propia que tenía antes). Reusa documents_db.py, módulo
+    "reporte_diario_resumen_mensual".
+    """
     today = date.today()
     year = request.args.get("year", type=int) or today.year
     month = request.args.get("month", type=int) or today.month
@@ -2682,12 +2754,14 @@ def reporte_documentos():
     pdfs = reportes_db.get_month_pdf_list(year, month)
     for pdf in pdfs:
         pdf["filename"] = os.path.basename(pdf["pdf_filename"]) if pdf["pdf_filename"] else None
+    monthly_pdfs = documents_db.list_documents("reporte_diario_resumen_mensual", year, month)
     prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
     next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
 
     return render_template(
         "reporte_documentos.html",
         pdfs=pdfs,
+        monthly_pdfs=monthly_pdfs,
         year=year,
         month=month,
         month_name=_MONTH_NAMES_ES[month - 1],
@@ -2700,61 +2774,30 @@ def reporte_documentos():
     )
 
 
-@app.route("/carga-datos/reporte-diario/resumen-mensual")
-def carga_datos_reporte_diario_resumen_mensual():
+@app.route("/reporte/documentos/mensual/subir", methods=["POST"])
+def reporte_documentos_mensual_subir():
     """
-    El reporte mensual de Reporte Diario -- el PDF en sí solo se guarda
-    para poder verlo después, nunca se lee ni se procesa (a diferencia del
-    PDF de cierre diario, uno por día). Pedido explícito del usuario
-    (2026-09-19): poder subirlo aparte, en un apartado extra -- mismo
-    patrón ya usado para el resumen mensual de Lottery (documents_db.py).
-
-    Por ahora es solo el cajón de archivos (subir/ver/eliminar) -- pedido
-    explícito del usuario (2026-09-19), revirtiendo el intento de esta
-    misma sesión de mostrar acá la tabla de Store Info del mes: "quiero
-    que lo dejes vacio de momento ya vamos a trabajar en eso mas tarde
-    cuando tenga una idea de como implementarlo".
+    Sube el único PDF de resumen mensual -- solo se guarda, ver arriba. Un
+    solo PDF por mes, con guarda del lado del servidor (mismo criterio que
+    el equivalente de Lottery, ver carga_datos_lottery_documentos_mensual_subir).
     """
-    today = date.today()
-    year = request.args.get("year", type=int) or today.year
-    month = request.args.get("month", type=int) or today.month
-    if not (1 <= month <= 12):
-        month = today.month
-
-    docs = documents_db.list_documents("reporte_diario_resumen_mensual", year, month)
-    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
-    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
-
-    return render_template(
-        "reporte_diario_resumen_mensual.html",
-        docs=docs,
-        year=year,
-        month=month,
-        month_name=_MONTH_NAMES_ES[month - 1],
-        prev_year=prev_year,
-        prev_month=prev_month,
-        next_year=next_year,
-        next_month=next_month,
-        **THEME_BY_KEY["reporte"],
-    )
-
-
-@app.route("/carga-datos/reporte-diario/resumen-mensual/subir", methods=["POST"])
-def carga_datos_reporte_diario_resumen_mensual_subir():
     year = request.form.get("year", type=int)
     month = request.form.get("month", type=int)
-    upload = request.files.get("resumen_file")
+    upload = request.files.get("pdf_file")
     if not year or not month or not (1 <= month <= 12):
-        flash("Elegí a qué mes corresponde este resumen.", "error")
-        return redirect(url_for("carga_datos_reporte_diario_resumen_mensual"))
+        flash("Elegí a qué mes corresponde este PDF.", "error")
+        return redirect(url_for("reporte_documentos"))
+    if documents_db.list_documents("reporte_diario_resumen_mensual", year, month):
+        flash("Ya hay un PDF mensual cargado este mes -- eliminalo antes de subir otro.", "error")
+        return redirect(url_for("reporte_documentos", year=year, month=month))
     if upload is None or not upload.filename:
-        flash("Seleccioná el archivo del resumen mensual.", "error")
-        return redirect(url_for("carga_datos_reporte_diario_resumen_mensual", year=year, month=month))
+        flash("Seleccioná el PDF de resumen mensual.", "error")
+        return redirect(url_for("reporte_documentos", year=year, month=month))
 
     path, filename = _save_upload_to_workspace(upload)
     documents_db.store_document("reporte_diario_resumen_mensual", path, filename, year, month)
-    flash("Resumen mensual guardado.", "success")
-    return redirect(url_for("carga_datos_reporte_diario_resumen_mensual", year=year, month=month))
+    flash("PDF mensual guardado.", "success")
+    return redirect(url_for("reporte_documentos", year=year, month=month))
 
 
 @app.route("/reporte/dia/<report_date>")
@@ -3188,18 +3231,22 @@ def carga_datos_eft_historial():
 def carga_datos_eft_cupones_historial():
     """
     Historial COMPLETO de Cupones -- histórico desde inicios de 2026, nunca
-    filtrado por mes (agrupado por mes solo como separador visual, ver
-    eft_db.get_cupones_grouped_by_month), en su propio apartado separado de
-    los EFT -- pedido explícito del usuario (2026-09-18), ver el comentario
-    de carga_datos_eft_historial más arriba.
+    filtrado por mes, en su propio apartado separado de los EFT (ver el
+    comentario de carga_datos_eft_historial más arriba). Rediseñado a
+    pedido explícito del usuario (2026-09-16): columnas Fecha/DDC/Gross/
+    Fee/Net Amount/Diferencia/EFT/Mes EFT, orden ascendente (más antiguo
+    arriba, más nuevo abajo -- ver eft_db.get_cupones_flat) y la pantalla
+    arranca scrolleada al final (el JS de la plantilla lo hace, no acá).
     """
-    cupon_groups = eft_db.get_cupones_grouped_by_month()
-    for group in cupon_groups:
-        group["label"] = f"{_MONTH_NAMES_ES[group['month'] - 1]} {group['year']}" if group["month"] else "Sin fecha"
+    cupones = eft_db.get_cupones_flat()
+    for cp in cupones:
+        match = cp.get("match")
+        my = eft_db.eft_month_and_year(match["eft_date"]) if match else None
+        cp["eft_month_label"] = f"{_MONTH_NAMES_ES[my[1] - 1]} {my[0]}" if my else None
 
     return render_template(
         "carga_datos_eft_cupones_historial.html",
-        cupon_groups=cupon_groups,
+        cupones=cupones,
         **THEME_BY_KEY["carga_eft"],
     )
 

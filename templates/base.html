@@ -464,9 +464,23 @@
        orden final se guarda en localStorage (ver el script más abajo) --
        por navegador, no por cuenta (no hay ningún campo por-usuario para
        esto en el backend, ni hace falta uno para un solo admin). */
-    .app-rail-item { position: relative; cursor: grab; }
+    .app-rail-item { position: relative; cursor: default; }
     .app-rail-item:active { cursor: grabbing; }
-    .app-rail-item.dragging { opacity: 0.35; }
+    /* El ítem que se arrastra queda "levantado" (sombra), nunca
+       transparente -- antes tenía opacity:0.35 y a primera vista parecía
+       "desaparecer". El arrastre en sí ya NO es un drag nativo del sistema
+       operativo (ver el JS de reordenamiento más abajo, reescrito con
+       mousedown/mousemove/mouseup) -- por eso body.rail-dragging sí logra
+       forzar la manito en toda la barra mientras dura el arrastre, sin
+       importar sobre qué ícono esté el mouse en cada instante (con drag
+       nativo esto nunca se sostenía: el sistema operativo se quedaba con
+       el control del cursor apenas el mouse se movía sobre otro ícono). */
+    .app-rail-item.dragging {
+      cursor: grabbing;
+      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+      z-index: 20;
+    }
+    body.rail-dragging .app-rail-item { cursor: grabbing !important; }
     .app-rail-item-row {
       display: flex;
       align-items: center;
@@ -527,15 +541,35 @@
        también sería el mismo texto duplicado que ya se sacó una vez. */
     .app-rail-panel-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-soft); padding: 4px 8px 8px; }
     body.rail-pinned .app-rail-panel-title { display: none; }
+    /* Fijada expandida: el panel se abre/cierra con un click (.expanded),
+       animado -- pedido explícito del usuario (2026-09-16), "que se demore
+       0.5 segundos más para que parezca fluido". display:none no se puede
+       animar, así que el panel queda siempre en el DOM y se anima su
+       max-height/opacity en su lugar (overflow:hidden lo tapa mientras
+       está en 0). */
     body.rail-pinned .app-rail-panel {
       position: static;
-      display: none;
+      display: block;
       background: none;
       border: none;
       box-shadow: none;
-      padding: 0 12px 12px 52px;
+      padding: 0 12px 0 52px;
+      max-height: 0;
+      overflow: hidden;
+      opacity: 0;
+      /* Cerrar más rápido que abrir -- pedido explícito del usuario
+         (2026-09-16): esta es la duración que se usa al CERRAR (el estado
+         final, sin .expanded, es el que manda la transición de cierre). */
+      transition: max-height 0.33s ease, opacity 0.28s ease, padding-bottom 0.33s ease;
     }
-    body.rail-pinned .app-rail-item.expanded .app-rail-panel { display: block; }
+    body.rail-pinned .app-rail-item.expanded .app-rail-panel {
+      max-height: 400px;
+      opacity: 1;
+      padding-bottom: 12px;
+      /* Duración de APERTURA (el estado final es .expanded acá) -- se
+         mantiene en 0.5s/0.4s, más lenta que el cierre a propósito. */
+      transition: max-height 0.5s ease, opacity 0.4s ease, padding-bottom 0.5s ease;
+    }
     a.app-rail-panel-link {
       display: block;
       padding: 8px;
@@ -986,7 +1020,7 @@
       <span class="app-rail-brand-word">Bradenton App</span>
     </div>
     <div class="app-rail-items">
-      <div class="app-rail-item" draggable="true" data-rail-key="reporte-diario">
+      <div class="app-rail-item" data-rail-key="reporte-diario">
         <div class="app-rail-item-row" onclick="toggleAppRailItem(this)">
           <span class="app-rail-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20V13M2 20h20"/></svg>
@@ -1000,10 +1034,9 @@
           <a class="app-rail-panel-link" href="{{ url_for('reporte_historial') }}">Ventas por Departamento</a>
           <a class="app-rail-panel-link" href="{{ url_for('reporte_store_info_historial') }}">Store Info</a>
           <a class="app-rail-panel-link" href="{{ url_for('reporte_documentos') }}">Documentos</a>
-          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_reporte_diario_resumen_mensual') }}">Resumen mensual</a>
         </div>
       </div>
-      <div class="app-rail-item" draggable="true" data-rail-key="chase">
+      <div class="app-rail-item" data-rail-key="chase">
         <div class="app-rail-item-row" onclick="toggleAppRailItem(this)">
           <span class="app-rail-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10 12 4l9 6"/><path d="M4 10v9M9 10v9M15 10v9M20 10v9"/><path d="M2 21h20"/></svg>
@@ -1018,7 +1051,7 @@
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_documentos', module_key='chase') }}">Documentos</a>
         </div>
       </div>
-      <div class="app-rail-item" draggable="true" data-rail-key="eft">
+      <div class="app-rail-item" data-rail-key="eft">
         <div class="app-rail-item-row" onclick="toggleAppRailItem(this)">
           <span class="app-rail-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 8h13l-4-4"/><path d="M17 16H4l4 4"/></svg>
@@ -1034,7 +1067,7 @@
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_documentos', module_key='eft') }}">Documentos</a>
         </div>
       </div>
-      <div class="app-rail-item" draggable="true" data-rail-key="caja">
+      <div class="app-rail-item" data-rail-key="caja">
         <div class="app-rail-item-row" onclick="toggleAppRailItem(this)">
           <span class="app-rail-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="13" rx="2"/><circle cx="12" cy="13.5" r="2.4"/><path d="M2 7l2.5-4h15L22 7"/></svg>
@@ -1044,11 +1077,11 @@
         </div>
         <div class="app-rail-panel">
           <div class="app-rail-panel-title">Caja</div>
-          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_caja') }}">Ver guardado</a>
+          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_caja') }}">Cuadro del mes</a>
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_documentos', module_key='caja') }}">Documentos</a>
         </div>
       </div>
-      <div class="app-rail-item" draggable="true" data-rail-key="gettel">
+      <div class="app-rail-item" data-rail-key="gettel">
         <div class="app-rail-item-row" onclick="toggleAppRailItem(this)">
           <span class="app-rail-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13l1.5-4.5A2 2 0 0 1 6.4 7h11.2a2 2 0 0 1 1.9 1.5L21 13"/><path d="M3 13v4a1 1 0 0 0 1 1h1a1 1 0 0 0 1-1v-1h12v1a1 1 0 0 0 1 1h1a1 1 0 0 0 1-1v-4"/><circle cx="7.5" cy="17" r="1.6"/><circle cx="16.5" cy="17" r="1.6"/></svg>
@@ -1059,11 +1092,11 @@
         <div class="app-rail-panel">
           <div class="app-rail-panel-title">Gettel / Toyota</div>
           <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('carga_datos_gettel') }}">Cargar</a>
-          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_gettel_historial') }}">Ver guardado</a>
+          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_gettel_historial') }}">Cuadro del mes</a>
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_documentos', module_key='gettel_toyota') }}">Documentos</a>
         </div>
       </div>
-      <div class="app-rail-item" draggable="true" data-rail-key="cmv">
+      <div class="app-rail-item" data-rail-key="cmv">
         <div class="app-rail-item-row" onclick="toggleAppRailItem(this)">
           <span class="app-rail-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg>
@@ -1080,7 +1113,7 @@
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_documentos', module_key='cmv_ventas') }}">Documentos (Ventas)</a>
         </div>
       </div>
-      <div class="app-rail-item" draggable="true" data-rail-key="lottery">
+      <div class="app-rail-item" data-rail-key="lottery">
         <div class="app-rail-item-row" onclick="toggleAppRailItem(this)">
           <span class="app-rail-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2"/><line x1="9.5" y1="6" x2="9.5" y2="18" stroke-dasharray="2.2 2.2"/><circle cx="6" cy="12" r="0.6" fill="currentColor" stroke="none"/><circle cx="18" cy="12" r="0.6" fill="currentColor" stroke="none"/></svg>
@@ -1096,7 +1129,7 @@
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_lottery_resumen_mensual') }}">Resumen mensual</a>
         </div>
       </div>
-      <div class="app-rail-item" draggable="true" data-rail-key="proveedores">
+      <div class="app-rail-item" data-rail-key="proveedores">
         <div class="app-rail-item-row" onclick="toggleAppRailItem(this)">
           <span class="app-rail-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="7" width="13" height="10" rx="1"/><path d="M14 10h4l3 3v4h-7z"/><circle cx="6" cy="18.5" r="1.6"/><circle cx="17.5" cy="18.5" r="1.6"/></svg>
@@ -1111,7 +1144,7 @@
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_documentos', module_key='proveedores') }}">Documentos</a>
         </div>
       </div>
-      <div class="app-rail-item" draggable="true" data-rail-key="horas-trabajo">
+      <div class="app-rail-item" data-rail-key="horas-trabajo">
         <div class="app-rail-item-row" onclick="toggleAppRailItem(this)">
           <span class="app-rail-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>
@@ -1199,24 +1232,43 @@
     // Cada ítem de la barra lateral arranca cerrado cuando la barra está
     // fijada expandida -- pedido explícito del usuario (2026-09-14): antes
     // los 9 paneles se mostraban TODOS abiertos a la vez y varios quedaban
-    // fuera de la pantalla. Tocar la fila abre/cierra solo su propio panel
-    // (no afecta a los demás, se pueden tener varios abiertos a la vez si
-    // hace falta comparar). Sin efecto visual mientras la barra está
-    // colapsada (ahí el panel sigue siendo un flyout de :hover, como ya
-    // era).
+    // fuera de la pantalla. Tocar la fila abre/cierra solo su propio panel.
+    // Ajuste 2026-09-16, pedido explícito: si ya había OTRO ítem abierto,
+    // se cierra solo al abrir uno nuevo -- comportamiento de acordeón, nunca
+    // dos paneles abiertos a la vez. Sin efecto visual mientras la barra
+    // está colapsada (ahí el panel sigue siendo un flyout de :hover).
     function toggleAppRailItem(row) {
-      row.parentElement.classList.toggle('expanded');
+      var item = row.parentElement;
+      var wasExpanded = item.classList.contains('expanded');
+      var container = item.parentElement;
+      if (container) {
+        Array.prototype.forEach.call(container.querySelectorAll('.app-rail-item.expanded'), function (other) {
+          if (other !== item) other.classList.remove('expanded');
+        });
+      }
+      item.classList.toggle('expanded', !wasExpanded);
     }
     // Reordenar la barra lateral arrastrando -- pedido explícito del
     // usuario (2026-09-18): "mantener apretado el click en los íconos...
     // pudieras desplazarlos de arriba a abajo... que le queden así hasta
-    // que los quiera cambiar". Arrastre nativo HTML5 (draggable="true" en
-    // cada .app-rail-item, con data-rail-key como identificador estable --
-    // nunca el texto del label, por si algún día cambia). El orden final
+    // que los quiera cambiar". Con data-rail-key como identificador estable
+    // (nunca el texto del label, por si algún día cambia). El orden final
     // se guarda en localStorage y se reaplica al cargar la página -- un
     // ítem nuevo que no esté en el orden guardado (ej. un módulo agregado
     // más adelante) simplemente queda al final, en su orden original, en
     // vez de desaparecer.
+    //
+    // Arrastre propio con mousedown/mousemove/mouseup (2026-09-16, en vez
+    // del arrastre nativo HTML5 de antes) -- el nativo (draggable="true" +
+    // dragstart/dragover/drop/dragend) le entrega el control del cursor al
+    // sistema operativo mientras dura el arrastre, así que ningún CSS
+    // (:active, .dragging, ni siquiera con !important) lograba que la
+    // manito se viera de forma consistente al pasar por encima de otros
+    // íconos -- limitación real del navegador, no un error de CSS. Acá el
+    // "arrastre" nunca es un drag de verdad del sistema operativo: es JS
+    // moviendo el propio elemento (insertBefore) mientras el mouse se
+    // mueve con el botón apretado, así que el cursor queda 100% bajo
+    // nuestro control en todo momento.
     (function () {
       var container = document.querySelector('.app-rail-items');
       if (!container) return;
@@ -1265,31 +1317,58 @@
         try { localStorage.setItem(STORAGE_KEY, JSON.stringify(order)); } catch (e) {}
       }
 
-      var draggingEl = null;
-      container.addEventListener('dragstart', function (event) {
+      var DRAG_MOVE_THRESHOLD = 5;
+      var candidateEl = null, draggingEl = null;
+      var startX = 0, startY = 0;
+
+      function onMove(event) {
+        if (!candidateEl) return;
+        if (!draggingEl) {
+          var dx = event.clientX - startX, dy = event.clientY - startY;
+          if ((dx * dx + dy * dy) < (DRAG_MOVE_THRESHOLD * DRAG_MOVE_THRESHOLD)) return;
+          // Recién ahora, con movimiento real de por medio, arranca el
+          // "arrastre" -- un click simple (sin mover) nunca llega acá.
+          draggingEl = candidateEl;
+          draggingEl.classList.add('dragging');
+          document.body.classList.add('rail-dragging');
+        }
+        event.preventDefault();
+        var items = currentItems();
+        for (var i = 0; i < items.length; i++) {
+          var target = items[i];
+          if (target === draggingEl) continue;
+          var rect = target.getBoundingClientRect();
+          if (event.clientY < rect.top || event.clientY > rect.bottom) continue;
+          var before = (event.clientY - rect.top) < rect.height / 2;
+          container.insertBefore(draggingEl, before ? target : target.nextSibling);
+          break;
+        }
+      }
+
+      function onUp() {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        if (draggingEl) {
+          draggingEl.classList.remove('dragging');
+          document.body.classList.remove('rail-dragging');
+          persistOrder();
+        }
+        candidateEl = null;
+        draggingEl = null;
+      }
+
+      container.addEventListener('mousedown', function (event) {
+        // Un link dentro del panel desplegado (ej. "Cargar PDF") tiene que
+        // seguir navegando normal -- solo el ícono/fila del módulo arranca
+        // un posible arrastre.
+        if (event.target.closest('a')) return;
         var item = event.target.closest('.app-rail-item');
         if (!item) return;
-        draggingEl = item;
-        item.classList.add('dragging');
-        document.body.classList.add('rail-dragging');
-        event.dataTransfer.effectAllowed = 'move';
-        event.dataTransfer.setData('text/plain', item.dataset.railKey || '');
-      });
-      container.addEventListener('dragover', function (event) {
-        if (!draggingEl) return;
-        event.preventDefault();
-        var target = event.target.closest('.app-rail-item');
-        if (!target || target === draggingEl) return;
-        var rect = target.getBoundingClientRect();
-        var before = (event.clientY - rect.top) < rect.height / 2;
-        container.insertBefore(draggingEl, before ? target : target.nextSibling);
-      });
-      container.addEventListener('drop', function (event) { event.preventDefault(); });
-      container.addEventListener('dragend', function () {
-        if (draggingEl) draggingEl.classList.remove('dragging');
-        draggingEl = null;
-        document.body.classList.remove('rail-dragging');
-        persistOrder();
+        candidateEl = item;
+        startX = event.clientX;
+        startY = event.clientY;
+        document.addEventListener('mousemove', onMove);
+        document.addEventListener('mouseup', onUp);
       });
     })();
     // Búsqueda de módulos (header) -- pedido explícito del usuario

@@ -44,6 +44,12 @@ def get_user(username):
     return load_users().get(username)
 
 
+def must_change_password(username):
+    """True si este usuario tiene pendiente el cambio obligatorio de contraseña."""
+    user = get_user(username)
+    return bool(user and user.get("must_change_password", False))
+
+
 def list_users():
     """Return [{"username": str, "is_admin": bool}, ...], sorted by username."""
     users = load_users()
@@ -75,17 +81,27 @@ def create_user(username, password, is_admin=False):
     users[username] = {
         "password_hash": generate_password_hash(password),
         "is_admin": bool(is_admin),
+        # La contraseña la eligió el admin, no la persona -- se le exige
+        # cambiarla ella misma la primera vez que entre (pedido explícito
+        # del usuario, 2026-09-16). Se limpia sola en set_password() salvo
+        # que se pida lo contrario (ver el reseteo manual de un admin).
+        "must_change_password": True,
     }
     save_users(users)
 
 
-def set_password(username, new_password):
+def set_password(username, new_password, must_change_password=False):
+    """Cambia la contraseña. `must_change_password=True` (reseteo hecho por
+    un admin, no por la propia persona) vuelve a exigir el cambio obligatorio
+    en el próximo login -- el cambio que hace el propio usuario (perfil)
+    siempre lo deja en False."""
     if not new_password:
         raise ValueError("La contraseña no puede estar vacía.")
     users = load_users()
     if username not in users:
         raise ValueError(f'No existe el usuario "{username}".')
     users[username]["password_hash"] = generate_password_hash(new_password)
+    users[username]["must_change_password"] = bool(must_change_password)
     save_users(users)
 
 

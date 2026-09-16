@@ -41,7 +41,40 @@
   {% endif %}
 </div>
 
+<div class="card monthly-pdf-card">
+  <h2>PDF mensual de Lottery</h2>
+  <p class="muted">El resumen mensual real que manda Florida Lottery — eliminá el que ya está cargado para poder subir otro.</p>
+
+  {% if not monthly_pdfs %}
+  <form method="post" action="{{ url_for('carga_datos_lottery_documentos_mensual_subir') }}" enctype="multipart/form-data" class="monthly-pdf-form">
+    <input type="hidden" name="year" value="{{ year }}">
+    <input type="hidden" name="month" value="{{ month }}">
+    <input type="file" name="pdf_file" accept="application/pdf" required>
+    <button type="submit">Guardar</button>
+  </form>
+  <p class="muted" style="margin-top: 12px;">Todavía no hay ningún PDF mensual guardado este mes.</p>
+  {% else %}
+  <ul class="doc-list" style="margin-top: 14px;">
+    {% for doc in monthly_pdfs %}
+    <li class="doc-list-item">
+      <div class="doc-list-info">
+        {{ pdf_links(url_for('carga_datos_documento_descargar', document_id=doc.id), doc.filename) }}
+        <span class="muted">Subido el {{ doc.uploaded_at }}</span>
+      </div>
+      <form method="post" action="{{ url_for('carga_datos_documento_eliminar', document_id=doc.id) }}" onsubmit="return confirm('¿Eliminar este documento?');">
+        <button type="submit" class="btn-danger-soft">Eliminar</button>
+      </form>
+    </li>
+    {% endfor %}
+  </ul>
+  {% endif %}
+</div>
+
 <style>
+  .monthly-pdf-card { margin-top: 18px; max-width: 480px; }
+  .monthly-pdf-form { display: flex; gap: 10px; align-items: center; margin-top: 12px; flex-wrap: wrap; }
+  .monthly-pdf-form input[type="file"] { flex: 1 1 auto; min-width: 180px; }
+  .monthly-pdf-form button { margin-top: 0; }
   .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
   .historial-nav-btn { text-decoration: none; display: inline-block; }
   .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }

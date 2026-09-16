@@ -7,41 +7,43 @@
 <div class="page-header">
   <span class="eyebrow">EFT y Cupones</span>
   <h1>Cupones</h1>
-  <p class="page-subtitle">Historial completo, histórico desde inicios de 2026 (nunca por mes) — cada DDC guardado, pendiente hasta que algún EFT lo confirme. Los EFT en sí viven en <a href="{{ url_for('carga_datos_eft_historial') }}">su propio apartado, por mes</a>.</p>
+  <p class="page-subtitle">Historial completo, histórico desde inicios de 2026 (nunca por mes) — del más antiguo al más nuevo, cada DDC guardado con su diferencia contra el EFT que lo pagó. Los EFT en sí viven en <a href="{{ url_for('carga_datos_eft_historial') }}">su propio apartado, por mes</a>.</p>
 </div>
 
 <div class="card">
-  {% if cupon_groups %}
-  <div class="historial-table-wrap">
-    <table class="historial-table">
+  {% if cupones %}
+  <div class="cupones-scroll" id="cuponesScroll">
+    <table class="historial-table cupones-table">
       <thead>
-        <tr><th>DDC</th><th>Fecha</th><th>Reportado</th><th>Estado</th></tr>
+        <tr>
+          <th>Fecha</th><th>DDC</th><th>Gross</th><th>Fee</th><th>Net Amount</th>
+          <th>Diferencia</th><th>EFT</th><th>Mes EFT</th>
+        </tr>
       </thead>
       <tbody>
-        {% for group in cupon_groups %}
-        <tr class="eft-month-divider">
-          <td colspan="4">{{ group.label }}</td>
-        </tr>
-        {% for cp in group.cupones %}
+        {% for cp in cupones %}
         <tr>
-          <td>{{ cp.coupon_id }}</td>
           <td class="historial-col-day">{{ cp.date or '—' }}</td>
+          <td>{{ cp.coupon_id }}</td>
+          <td>${{ "{:,.2f}".format(cp.gross or 0) }}</td>
+          <td>${{ "{:,.2f}".format(cp.fees or 0) }}</td>
+          <td>${{ "{:,.2f}".format(cp.net or 0) }}</td>
           <td>
-            {% if cp.reported_group_text %}
-            <span class="muted">Grupo: {{ cp.reported_group_text }} — ${{ "{:,.2f}".format(cp.reported_group_total or 0) }}</span>
+            {% if cp.diff is not none %}
+              <span class="{{ 'cupon-diff-ok' if cp.diff|abs < 0.01 else 'cupon-diff-off' }}">${{ "{:,.2f}".format(cp.diff) }}</span>
             {% else %}
-            ${{ "{:,.2f}".format(cp.net or 0) }}
+              <span class="muted">—</span>
             {% endif %}
           </td>
           <td>
             {% if cp.match %}
-            <span class="historial-badge historial-badge-ocr">EFT {{ cp.match.rcv_number }} ({{ cp.match.eft_date }})</span>
+            <span class="historial-badge historial-badge-ocr">{{ cp.match.rcv_number }}</span>
             {% else %}
             <span class="historial-badge historial-badge-manual">Pendiente</span>
             {% endif %}
           </td>
+          <td>{{ cp.eft_month_label or '—' }}</td>
         </tr>
-        {% endfor %}
         {% endfor %}
       </tbody>
     </table>
@@ -52,22 +54,26 @@
 </div>
 
 <style>
-  .historial-table-wrap { overflow-x: auto; margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; }
-  .historial-table { width: 100%; min-width: 480px; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
-  .historial-table th, .historial-table td { padding: 9px 14px; text-align: left; }
-  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
-  .historial-table tbody tr { border-bottom: 1px solid var(--border); }
-  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
+  .cupones-scroll { max-height: 72vh; overflow-y: auto; margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; }
+  .cupones-table { width: 100%; min-width: 640px; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .cupones-table th, .cupones-table td { padding: 9px 14px; text-align: left; }
+  .cupones-table thead th {
+    position: sticky; top: 0; z-index: 1;
+    background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border);
+  }
+  .cupones-table tbody tr { border-bottom: 1px solid var(--border); }
+  .cupones-table tbody tr:nth-child(even) { background: var(--surface-alt); }
   .historial-col-day { font-weight: 700; white-space: nowrap; }
   .historial-badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
   .historial-badge-ocr { background: var(--success-soft); color: var(--success); }
   .historial-badge-manual { background: var(--accent-soft); color: var(--accent); }
-
-  /* Diferenciador de mes en el listado histórico de Cupones. */
-  .eft-month-divider td {
-    background: var(--accent-soft); color: var(--accent);
-    font-weight: 700; font-size: 12.5px; text-transform: uppercase;
-    letter-spacing: 0.03em; padding: 7px 14px;
-  }
+  .cupon-diff-ok { color: var(--success); }
+  .cupon-diff-off { color: var(--danger, #B91C1C); font-weight: 700; }
 </style>
+<script>
+  (function () {
+    var el = document.getElementById("cuponesScroll");
+    if (el) { el.scrollTop = el.scrollHeight; }
+  })();
+</script>
 {% endblock %}

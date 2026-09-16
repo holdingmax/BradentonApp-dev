@@ -298,7 +298,11 @@ def get_cupones_with_status(limit=None):
     eft_coupons (mismo criterio que la columna F/H/I del Excel, calculado
     en el momento vía join en vez de guardado -- nunca puede quedar
     desactualizado). "pending" = True si ningún eft_coupons.coupon todavía
-    coincide con este DDC.
+    coincide con este DDC. `diff` (pedido explícito del usuario, 2026-09-16
+    -- "poner despues de si quedaron diferencias entre los EFT como se
+    tenia la columna G en el excel") es el mismo cálculo que esa columna G
+    real: Net Amount reportado menos lo que el EFT efectivamente pagó por
+    esa línea -- None si todavía no hay ningún EFT que lo cruce.
     """
     conn = _connect()
     try:
@@ -318,10 +322,43 @@ def get_cupones_with_status(limit=None):
             ).fetchone()
             entry = dict(row)
             entry["match"] = dict(match) if match else None
+            if entry["match"] is not None and entry["match"].get("paid_amount") is not None:
+                entry["diff"] = round((entry.get("net") or 0) - entry["match"]["paid_amount"], 2)
+            else:
+                entry["diff"] = None
             result.append(entry)
         return result
     finally:
         conn.close()
+
+
+def get_cupones_flat():
+    """
+    Todos los cupones guardados en un único listado plano, del más antiguo
+    al más nuevo (pedido explícito del usuario, 2026-09-16 -- "quiero que
+    los cupones se muestren desde el mas antiguo primero al mas nuevo... y
+    que cada vez que se abra la parte de cupones, que te lo abra a lo que
+    seria al final de la pagina"). Reemplaza a get_cupones_grouped_by_month
+    -- ya no hay divisor de mes visual, la columna "Mes EFT" cumple ese rol
+    ahora. Cupones sin fecha parseable quedan primero (antes que cualquier
+    fecha real conocida), para que la vista "al final de la página" siga
+    mostrando siempre los cupones fechados más recientes.
+    """
+    cupones = get_cupones_with_status()
+    for cp in cupones:
+        cp["_parsed_date"] = _parse_cupon_date(cp.get("date"))
+    cupones.sort(key=lambda cp: cp["_parsed_date"] or datetime.min)
+    for cp in cupones:
+        cp.pop("_parsed_date", None)
+    return cupones
+
+
+def eft_month_and_year(eft_date):
+    """(año, mes) del EFT que pagó este cupón, o None si no hay cruce/fecha parseable."""
+    parsed = _parse_eft_date(eft_date)
+    if parsed is None:
+        return None
+    return (parsed.year, parsed.month)
 
 
 def _parse_cupon_date(value):
@@ -346,44 +383,6 @@ def _parse_cupon_date(value):
         except ValueError:
             continue
     return None
-
-
-def get_cupones_grouped_by_month():
-    """
-    Los mismos cupones de get_cupones_with_status (históricos, nunca
-    filtrados por mes -- pedido explícito del usuario 2026-09-12: "esto
-    quiero que sea un excel el cual incluya todos los cupones que se cargan
-    de forma historica, no por mes") agrupados por mes calendario para poder
-    mostrar un "diferenciador de meses" -- más reciente primero. La
-    agrupación se hace con la fecha ya parseada en Python (nunca confiando
-    en el ORDER BY date de SQL, que es un simple orden de texto y podría
-    quedar mal si dos cargas guardaron el formato de fecha distinto).
-    Cupones sin fecha parseable quedan en un grupo aparte, al final.
-    """
-    cupones = get_cupones_with_status()
-    for cp in cupones:
-        cp["_parsed_date"] = _parse_cupon_date(cp.get("date"))
-    dated = sorted(
-        (cp for cp in cupones if cp["_parsed_date"] is not None),
-        key=lambda cp: cp["_parsed_date"],
-        reverse=True,
-    )
-    undated = [cp for cp in cupones if cp["_parsed_date"] is None]
-
-    groups = []
-    index_by_key = {}
-    for cp in dated:
-        d = cp.pop("_parsed_date")
-        key = (d.year, d.month)
-        if key not in index_by_key:
-            index_by_key[key] = {"year": d.year, "month": d.month, "cupones": []}
-            groups.append(index_by_key[key])
-        index_by_key[key]["cupones"].append(cp)
-    for cp in undated:
-        cp.pop("_parsed_date", None)
-    if undated:
-        groups.append({"year": None, "month": None, "cupones": undated})
-    return groups
 
 
 def get_unmatched_eft_coupons():

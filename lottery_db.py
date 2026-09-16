@@ -83,6 +83,18 @@ def _ensure_schema(conn):
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS lottery_month_closing (
+            year INTEGER NOT NULL,
+            month INTEGER NOT NULL,
+            gastos_admin REAL,
+            caja_skoff_ajuste REAL,
+            updated_at TEXT,
+            PRIMARY KEY (year, month)
+        )
+        """
+    )
     conn.commit()
 
 
@@ -603,35 +615,75 @@ def monthly_debit_total(year, month):
 # para "CUENTA FINAL"/Debito).
 # ---------------------------------------------------------------------------
 
+# La columna "C" (TOTAL) del Excel real venía como una columna oculta,
+# sin datos -- confirmado que en la práctica se puede borrar del todo,
+# nunca hace falta (2026-09-16, pedido explícito del usuario). Se sacó
+# por completo del export -- ya no existe ningún hueco/columna escondida,
+# todo el layout de acá en más corre un lugar a la izquierda respecto a
+# las notas viejas de esta sección (D pasa a ser C, E pasa a ser D, etc.)
+# -- confirmado contra el inventario técnico real que mandó el usuario
+# ("LOTTERY_estructura_tecnica.json", generado con esa columna ya
+# eliminada) para no perder ningún ancho/color/fórmula en el camino.
 _LOTTERY_EXPORT_HEADERS = (
     # (texto fila 3, ancho de columna en el Excel real)
-    ("Fecha", 11.9), ("Fecha", 11.4), ("TOTAL", 13.0),
+    ("Fecha", 11.9), ("Fecha", 11.4),
     ("COUNT", 6.7), ("NET SALES REPORT", 9.6), ("SALES", 10.1), ("Pagos", 9.9),
     ("Cash Balance", 11.1), ("Comis", 11.6), ("En %", 8.6), ("Prize Free Plays", 10.7),
     ("En %", 8.3), ("TOTAL SALES COM", 9.7),
     ("COUNT", 6.7), ("NET SALES", 10.6), ("Pays", 6.3), ("Pagos", 11.1),
     ("Books Settled", 10.4), ("Sales Com", 11.1), ("En %", 9.1), ("NET TOTAL", 10.7),
-    (None, 12.1), (None, 11.1), (None, 9.0),
+    (None, 12.1), (None, 11.1), (None, 13.0),
 )
 
 
+# Columnas en negrita en las filas de día -- corrección final del usuario
+# (2026-09-16): fechas + D/F/H/I/J/K/Q/S/U/V/W (ya no C/E/G/P/R/T, que
+# habían quedado de una lectura de columnas equivocada en la ronda anterior).
+_LOTTERY_DAY_BOLD_COLS = {1, 2, 4, 6, 8, 9, 10, 11, 17, 19, 21, 22, 23}
+
+# Comis/Prize Free Plays (online) y Pagos/Sales Com (skoff) van con la
+# fuente en rojo -- confirmado contra "LOTTERY. Analisis 09.2026
+# WEB.xlsx" (font.color real FFFF0000 en esas 4 columnas, no un simple
+# "negativo en rojo" del formato numérico).
+_LOTTERY_RED_FONT_COLS = {8, 10, 16, 18}
+
+# Los ratios "En %" (antes J/L/T) van con formato de porcentaje real, no
+# el formato contable con [Red] que se les aplicaba antes por error.
+_LOTTERY_PERCENT_COLS = {9, 11, 19}
+
+# Alineación pedida explícitamente por el usuario (2026-09-16): C..O más Q
+# centradas; P/R/S/T alineadas a la izquierda. Se aplica a cada fila (día,
+# Subtotal, Debito) donde estas columnas tengan contenido.
+_LOTTERY_CENTER_COLS = set(range(3, 16)) | {17}
+_LOTTERY_LEFT_COLS = {16, 18, 19, 20}
+
+
+def _lottery_apply_column_alignment(sheet, row, styles):
+    for col in _LOTTERY_CENTER_COLS:
+        sheet.cell(row=row, column=col).alignment = styles["center"]
+    for col in _LOTTERY_LEFT_COLS:
+        sheet.cell(row=row, column=col).alignment = styles["left"]
+
+
 def _lottery_write_day_row(sheet, row, day, styles):
-    """Una fila de día (D..I, K, N..S crudos + J/L/M/T/U/X calculados con
+    """Una fila de día (C..H, J, M..R crudos + I/K/L/S/T/W calculados con
     la misma fórmula real -- ver _DAY_FORMULAS)."""
     XlFont, THIN_BORDER = styles["font"], styles["border"]
+    BOLD_FONT = XlFont(bold=True)
+    RED_FONT = XlFont(bold=True, color="FFFF0000")
     business_date = _parse_date(day["date"])
     values = {
         1: business_date - timedelta(days=1), 2: business_date,
-        4: day.get("online_count"), 5: day.get("online_net_sales"),
-        6: day.get("sales"), 7: day.get("pagos"), 8: day.get("cash_balance"),
-        9: day.get("comis"), 11: day.get("prize_free_plays"),
-        14: day.get("skoff_count"), 15: day.get("skoff_net_sales"),
-        16: day.get("pays_units"), 17: day.get("pays_amount"),
-        18: day.get("skoff_sales_amount"), 19: day.get("sales_comm"),
+        3: day.get("online_count"), 4: day.get("online_net_sales"),
+        5: day.get("sales"), 6: day.get("pagos"), 7: day.get("cash_balance"),
+        8: day.get("comis"), 10: day.get("prize_free_plays"),
+        13: day.get("skoff_count"), 14: day.get("skoff_net_sales"),
+        15: day.get("pays_units"), 16: day.get("pays_amount"),
+        17: day.get("skoff_sales_amount"), 18: day.get("sales_comm"),
     }
     formulas = {
-        10: f"=+I{row}/F{row}", 12: f"=+K{row}/F{row}", 13: f"=+I{row}+K{row}",
-        20: f"=+S{row}/R{row}", 21: f"=+Q{row}+R{row}+S{row}", 24: f"=-G{row}-Q{row}",
+        9: f"=+H{row}/E{row}", 11: f"=+J{row}/E{row}", 12: f"=+H{row}+J{row}",
+        19: f"=+R{row}/Q{row}", 20: f"=+P{row}+Q{row}+R{row}", 23: f"=-F{row}-P{row}",
     }
     for col, value in values.items():
         cell = sheet.cell(row=row, column=col, value=value)
@@ -639,13 +691,39 @@ def _lottery_write_day_row(sheet, row, day, styles):
         if col in (1, 2):
             cell.number_format = "mm-dd-yy"
             cell.alignment = styles["center"]
+        if col in _LOTTERY_RED_FONT_COLS:
+            cell.font = RED_FONT
+        elif col in _LOTTERY_DAY_BOLD_COLS:
+            cell.font = BOLD_FONT
     for col, formula in formulas.items():
         cell = sheet.cell(row=row, column=col, value=formula)
-        cell.border = THIN_BORDER
-        cell.number_format = styles["plain_fmt"]
+        # La columna W ("Cuenta Final" del día) va sin borde en el Excel
+        # real -- confirmado contra "LOTTERY. Analisis 09.2026 WEB.xlsx".
+        if col != 23:
+            cell.border = THIN_BORDER
+        cell.number_format = "0.00%" if col in _LOTTERY_PERCENT_COLS else styles["plain_fmt"]
+        if col in _LOTTERY_DAY_BOLD_COLS:
+            cell.font = BOLD_FONT
     for col, fill in styles["day_fill_by_col"].items():
         sheet.cell(row=row, column=col).fill = fill
-    sheet.cell(row=row, column=21).font = XlFont(bold=True)
+    sheet.cell(row=row, column=20).font = XlFont(bold=True)
+    _lottery_apply_column_alignment(sheet, row, styles)
+    _lottery_apply_group_borders(sheet, row, styles)
+
+
+def _lottery_apply_group_borders(sheet, row, styles):
+    """Los tres grupos de columnas (ONLINE C-L / SKOFF M-T / CUENTA FINAL
+    U) van separados por un borde más grueso ("medium") en el Excel real
+    -- confirmado columna por columna contra "LOTTERY. Analisis 09.2026
+    WEB.xlsx". Se aplica encima del borde fino ya escrito, sin pisar los
+    otros tres lados de cada celda."""
+    for col, sides in styles["group_border_sides"].items():
+        cell = sheet.cell(row=row, column=col)
+        base = cell.border
+        cell.border = styles["border_factory"](
+            left=sides.get("left", base.left), right=sides.get("right", base.right),
+            top=base.top, bottom=base.bottom,
+        )
 
 
 def _lottery_write_block(sheet, start_row, block, styles):
@@ -653,40 +731,67 @@ def _lottery_write_block(sheet, start_row, block, styles):
     `start_row` -- devuelve la fila siguiente (sin ningún espacio entre
     bloques, igual que el archivo real)."""
     XlFont, THIN_BORDER = styles["font"], styles["border"]
+    RED_BOLD = XlFont(bold=True, color="FFFF0000")
     for offset, day in enumerate(block["days"]):
         _lottery_write_day_row(sheet, start_row + offset, day, styles)
 
     sub_row = start_row + 7
     d1, d2 = start_row, start_row + 6
-    for col, letter in ((4, "D"), (5, "E"), (6, "F"), (7, "G"), (9, "I"), (11, "K"), (13, "M"), (16, "P"), (17, "Q"), (18, "R"), (19, "S")):
+    for col, letter in ((3, "C"), (4, "D"), (5, "E"), (6, "F"), (8, "H"), (10, "J"), (12, "L"), (15, "O"), (16, "P"), (17, "Q"), (18, "R")):
         cell = sheet.cell(row=sub_row, column=col, value=f"=SUM({letter}{d1}:{letter}{d2})")
         cell.border = THIN_BORDER
         cell.number_format = styles["plain_fmt"]
-        cell.font = XlFont(bold=True)
-    lratio = sheet.cell(row=sub_row, column=12, value=f"=+K{sub_row}/F{sub_row}")
+        cell.font = RED_BOLD if col in _LOTTERY_RED_FONT_COLS else XlFont(bold=True)
+    lratio = sheet.cell(row=sub_row, column=11, value=f"=+J{sub_row}/E{sub_row}")
     lratio.border = THIN_BORDER
+    lratio.font = XlFont(bold=True)
     for col, fill in styles["subtotal_fill_by_col"].items():
         sheet.cell(row=sub_row, column=col).fill = fill
+    _lottery_apply_column_alignment(sheet, sub_row, styles)
+    _lottery_apply_group_borders(sheet, sub_row, styles)
 
     deb_row = sub_row + 1
     deb_values = {
-        5: f"=+E{sub_row}-F{sub_row}",
-        6: f"=+F{sub_row}+G{sub_row}+I{sub_row}+K{sub_row}+10",
-        17: f"=+Q{sub_row}+R{sub_row}+S{sub_row}",
-        21: "Debito",
-        22: f"=+F{deb_row}+Q{deb_row}",
+        4: f"=+D{sub_row}-E{sub_row}",
+        5: f"=+E{sub_row}+F{sub_row}+H{sub_row}+J{sub_row}+10",
+        16: f"=+P{sub_row}+Q{sub_row}+R{sub_row}",
+        20: "Debito",
+        21: f"=+E{deb_row}+P{deb_row}",
     }
     for col, value in deb_values.items():
         cell = sheet.cell(row=deb_row, column=col, value=value)
         cell.border = THIN_BORDER
-        if col in (5, 6, 17, 22):
+        if col in (4, 5, 16, 21):
             cell.number_format = styles["plain_fmt"]
         cell.font = XlFont(bold=True)
     if block.get("chase_bank_date"):
         d = _parse_date(block["chase_bank_date"])
-        sheet.cell(row=deb_row, column=23, value=f"Chase Bank {d.strftime('%d/%m/%Y')}").font = XlFont(bold=True)
+        chase_cell = sheet.cell(row=deb_row, column=22, value=f"Chase Bank {d.strftime('%d/%m/%Y')}")
+        chase_cell.font = XlFont(bold=True)
+        # "Ajustar el texto" pedido explícito del usuario (2026-09-16) -- el
+        # texto de dos líneas (Chase Bank + fecha) no debe sobresalir de la
+        # celda.
+        chase_cell.alignment = styles["wrap_chase"]
     for col, fill in styles["debito_fill_by_col"].items():
         sheet.cell(row=deb_row, column=col).fill = fill
+    # Las celdas del Debito entre E:J y P:R se ven en el Excel real como
+    # una sola celda unificada (más ancha, centrada) -- y esa fila queda
+    # más alta (30 en vez de 15.75) para que se note el cambio de bloque.
+    # El merge tiene que hacerse ANTES de terminar de poner bordes: openpyxl
+    # borra el borde de cualquier celda interior de un rango recién
+    # mergeado, así que asignarlo después es lo único que lo deja visible.
+    sheet.merge_cells(start_row=deb_row, start_column=5, end_row=deb_row, end_column=10)
+    sheet.merge_cells(start_row=deb_row, start_column=16, end_row=deb_row, end_column=18)
+    # Todas las celdas vacías que rodean el resultado del bloque (entre C y
+    # L, y entre M y T) llevan borde completo -- pedido explícito del
+    # usuario (2026-09-16), no solo las que ya tenían un valor propio.
+    for col in range(3, 21):
+        sheet.cell(row=deb_row, column=col).border = THIN_BORDER
+    _lottery_apply_column_alignment(sheet, deb_row, styles)
+    sheet.cell(row=deb_row, column=5).alignment = styles["center"]
+    sheet.cell(row=deb_row, column=16).alignment = styles["center"]
+    sheet.row_dimensions[deb_row].height = 30.0
+    _lottery_apply_group_borders(sheet, deb_row, styles)
 
     return deb_row + 1
 
@@ -706,63 +811,232 @@ def build_lottery_export_workbook(year, month, dest_path):
     ORANGE = PatternFill("solid", fgColor="FFFFC000")
     GREEN = PatternFill("solid", fgColor="FF92D050")
     PLAIN_FMT = '#,##0.00_ ;[Red]\\-#,##0.00\\ '
+    MONEY_FMT = '"$"\\ #,##0.00'
     THIN_SIDE = XlSide(style="thin", color="FF000000")
+    MEDIUM_SIDE = XlSide(style="medium", color="FF000000")
     THIN_BORDER = XlBorder(left=THIN_SIDE, right=THIN_SIDE, top=THIN_SIDE, bottom=THIN_SIDE)
-    CENTER = XlAlignment(horizontal="center")
+    CENTER = XlAlignment(horizontal="center", vertical="center")
+    LEFT = XlAlignment(horizontal="left", vertical="center")
+    WRAP_CHASE = XlAlignment(wrap_text=True, vertical="center")
 
     styles = {
-        "font": XlFont, "border": THIN_BORDER, "center": CENTER, "plain_fmt": PLAIN_FMT,
-        "day_fill_by_col": {21: YELLOW, 22: GREEN, 24: ORANGE},
-        "subtotal_fill_by_col": {6: GREEN, 7: GREEN, 13: GREEN, 16: YELLOW, 17: GREEN, 18: YELLOW, 19: YELLOW, 22: GREEN},
-        "debito_fill_by_col": {5: YELLOW, 6: GRAY, 17: YELLOW, 22: GREEN},
+        "font": XlFont, "border": THIN_BORDER, "center": CENTER, "left": LEFT,
+        "wrap_chase": WRAP_CHASE, "plain_fmt": PLAIN_FMT,
+        "money_fmt": MONEY_FMT, "yellow": YELLOW, "green": GREEN, "orange": ORANGE,
+        "day_fill_by_col": {20: YELLOW, 21: GREEN, 23: ORANGE},
+        "subtotal_fill_by_col": {5: GREEN, 6: GREEN, 12: GREEN, 15: YELLOW, 16: GREEN, 17: YELLOW, 18: YELLOW, 21: GREEN},
+        "debito_fill_by_col": {4: YELLOW, 5: GRAY, 16: YELLOW, 21: GREEN},
+        # Separadores más gruesos entre los 3 grupos de columnas (ONLINE
+        # C-L / SKOFF M-T / CUENTA FINAL U) -- confirmado contra el Excel
+        # real, 2026-09-16.
+        "border_factory": XlBorder,
+        "group_border_sides": {
+            3: {"left": MEDIUM_SIDE}, 5: {"left": MEDIUM_SIDE},
+            12: {"right": MEDIUM_SIDE},
+            21: {"left": MEDIUM_SIDE, "right": MEDIUM_SIDE},
+        },
     }
 
     workbook = openpyxl.Workbook()
     sheet = workbook.active
     sheet.title = f"{month:02d}.{year}"
+    sheet.row_dimensions[1].height = 16.5
 
-    sheet.cell(row=1, column=1, value=f"BGS - {month:02d}/{year} - Lottery")
-    sheet["A1"].font = XlFont(name="Segoe UI", bold=True, size=14, underline="single")
-    sheet.merge_cells(start_row=1, start_column=1, end_row=1, end_column=24)
-    sheet.row_dimensions[1].height = 21
+    sheet.cell(row=2, column=3, value="ONLINE").fill = GRAY
+    sheet.cell(row=2, column=3).font = XlFont(bold=True)
+    sheet.cell(row=2, column=3).alignment = CENTER
+    sheet.merge_cells(start_row=2, start_column=3, end_row=2, end_column=11)
+    sheet.cell(row=2, column=13, value="SKOFF = SCRATCH-OFF ").fill = YELLOW
+    sheet.cell(row=2, column=13).font = XlFont(bold=True)
+    sheet.cell(row=2, column=13).alignment = CENTER
+    sheet.merge_cells(start_row=2, start_column=13, end_row=2, end_column=20)
+    sheet.cell(row=2, column=21, value="CUENTA FINAL").fill = GREEN
+    sheet.cell(row=2, column=21).font = XlFont(bold=True)
+    # "Ajustar el texto" pedido explícito del usuario (2026-09-16) -- el
+    # banner "CUENTA FINAL" en una columna angosta necesita wrap_text para
+    # no cortarse, igual que el Excel real (confirmado ahí también).
+    sheet.cell(row=2, column=21).alignment = XlAlignment(horizontal="center", vertical="center", wrap_text=True)
+    sheet.merge_cells(start_row=2, start_column=21, end_row=3, end_column=21)
+    sheet.row_dimensions[2].height = 19.95
 
-    sheet.cell(row=2, column=4, value="ONLINE").fill = GRAY
-    sheet.cell(row=2, column=4).font = XlFont(bold=True)
-    sheet.cell(row=2, column=4).alignment = CENTER
-    sheet.merge_cells(start_row=2, start_column=4, end_row=2, end_column=12)
-    sheet.cell(row=2, column=14, value="SKOFF = SCRATCH-OFF").fill = YELLOW
-    sheet.cell(row=2, column=14).font = XlFont(bold=True)
-    sheet.cell(row=2, column=14).alignment = CENTER
-    sheet.merge_cells(start_row=2, start_column=14, end_row=2, end_column=21)
-    sheet.cell(row=2, column=22, value="CUENTA FINAL").fill = GREEN
-    sheet.cell(row=2, column=22).font = XlFont(bold=True)
-    sheet.cell(row=2, column=22).alignment = CENTER
-    sheet.merge_cells(start_row=2, start_column=22, end_row=3, end_column=22)
-    sheet.row_dimensions[2].height = 20
-
-    no_fill_cols = {9, 11}  # Comis/Prize Free Plays -- sin relleno en el real
+    no_fill_cols = {8, 10}  # Comis/Prize Free Plays -- sin relleno en el real
     for col, (text, width) in enumerate(_LOTTERY_EXPORT_HEADERS, start=1):
         if text is not None:
             cell = sheet.cell(row=3, column=col, value=text)
             cell.font = XlFont(bold=True, size=10)
             cell.alignment = XlAlignment(horizontal="center", vertical="center", wrap_text=True)
             cell.border = THIN_BORDER
-            if col == 3:
-                cell.fill = ORANGE
-            elif 14 <= col <= 21:
+            if 13 <= col <= 20:
                 cell.fill = YELLOW
             elif col not in no_fill_cols:
                 cell.fill = GRAY
         sheet.column_dimensions[openpyxl.utils.get_column_letter(col)].width = width
-    sheet.row_dimensions[3].height = 32
-    sheet.freeze_panes = "A4"
+    sheet.row_dimensions[3].height = 39.0
 
     row = 4
     for block in build_month_blocks(year, month):
         row = _lottery_write_block(sheet, row, block, styles)
 
+    _lottery_write_closing_section(sheet, row - 1, styles)
+
     workbook.save(dest_path)
     return dest_path
+
+
+def _lottery_write_closing_section(sheet, last_debito_row, styles):
+    """
+    Escribe, justo debajo del último bloque semanal, las dos tablas de
+    cierre de mes -- "LIQUIDACION CIERRE LOTTERY" / "LIQUIDACION CIERRE
+    RECAUDACION COMISIONES" -- con las MISMAS fórmulas y el mismo diseño
+    que el Excel real (confirmado contra "LOTTERY. Analisis 09.2026
+    WEB.xlsx", fila por fila, antes de escribir esto).
+
+    Las dos filas de "TOTAL DEL MES" (acá llamadas r_total1/r_total2) se
+    arman sumando los mismos Subtotal de cada bloque -- a diferencia del
+    archivo real de referencia (que tenía algunas de estas fórmulas
+    "atrasadas", sin actualizar tras agregarse un bloque nuevo a mano),
+    acá siempre suman TODOS los bloques del mes, para que el total sea
+    correcto sin importar cuántos bloques tenga un mes en particular.
+    """
+    import openpyxl
+    from openpyxl.styles import Border as XlBorder, Side as XlSide
+
+    XlFont, THIN_BORDER = styles["font"], styles["border"]
+    YELLOW, GREEN, CENTER = styles["yellow"], styles["green"], styles["center"]
+    MONEY_FMT, PLAIN_FMT = styles["money_fmt"], styles["plain_fmt"]
+    THIN_SIDE = XlSide(style="thin", color="FF000000")
+
+    # Un bloque son 9 filas (7 días + Subtotal + Debito) sin espacio entre
+    # ellos, arrancando en la fila 4 -- de ahí se derivan los Subtotal.
+    subtotal_rows = list(range(11, last_debito_row, 9))
+    first_day_row = 4
+
+    r_total1 = last_debito_row + 1
+    r_total2 = last_debito_row + 2
+    r_helper = last_debito_row + 5
+    r_title1 = last_debito_row + 6
+    r_online, r_skoff, r_gastos = last_debito_row + 7, last_debito_row + 8, last_debito_row + 9
+    r_pagar1, r_pagar2 = last_debito_row + 10, last_debito_row + 11
+    r_sum1, r_diff1 = last_debito_row + 12, last_debito_row + 13
+    r_title2 = last_debito_row + 14
+    r_pagarcom, r_pagaronline, r_pagarskoff = last_debito_row + 15, last_debito_row + 16, last_debito_row + 17
+    r_chase, r_comonline, r_comskoff, r_caja = (
+        last_debito_row + 18, last_debito_row + 19, last_debito_row + 20, last_debito_row + 21,
+    )
+    r_blank2, r_sum2, r_diff2 = last_debito_row + 22, last_debito_row + 23, last_debito_row + 24
+
+    def joined(letter):
+        return "=+" + "+".join(f"{letter}{r}" for r in subtotal_rows)
+
+    # --- TOTAL DEL MES (dos filas justo después del último bloque) ---
+    total1 = {
+        "C": f"=SUM(C{first_day_row}:C{last_debito_row})",
+        "D": joined("D"), "E": joined("E"), "F": joined("F"), "L": joined("L"),
+        "N": f"=SUM(N{first_day_row}:N{last_debito_row})",
+        "P": joined("P"), "Q": joined("Q"), "R": joined("R"),
+        "U": f"=SUM(U{first_day_row}:U{last_debito_row})",
+        "W": f"=SUM(W{first_day_row}:W{last_debito_row})+0",
+    }
+    fill_by_col_total1 = {16: YELLOW, 17: YELLOW, 18: YELLOW, 23: styles["orange"]}
+    INT_FMT = "#,##0_ ;[Red]\\-#,##0\\ "
+    for letter, formula in total1.items():
+        col = openpyxl.utils.column_index_from_string(letter)
+        cell = sheet.cell(row=r_total1, column=col, value=formula)
+        cell.font = XlFont(bold=True)
+        cell.number_format = INT_FMT if letter == "C" else PLAIN_FMT
+        if col in fill_by_col_total1:
+            cell.fill = fill_by_col_total1[col]
+
+    total2 = {
+        "D": f"=+E{r_total1}-D{r_total1}",
+        "E": joined("E"),
+        "L": f"=+L{r_total1}/E{r_total1}",
+        "N": f"=SUM(N{first_day_row}:N{last_debito_row})+0",
+    }
+    for letter, formula in total2.items():
+        col = openpyxl.utils.column_index_from_string(letter)
+        cell = sheet.cell(row=r_total2, column=col, value=formula)
+        cell.font = XlFont(bold=True)
+        cell.number_format = "0.00%" if letter == "L" else PLAIN_FMT
+        if letter in ("E", "N"):
+            cell.fill = styles["orange"]
+
+    # --- Fila auxiliar (helper, sin etiqueta visible en el Excel real) ---
+    g = sheet.cell(row=r_helper, column=7, value=f"=+G{r_online}+G{r_skoff}")
+    g.font = XlFont(bold=True)
+    g.number_format = MONEY_FMT
+    h = sheet.cell(row=r_helper, column=8, value=f"=+G{r_helper}-N{r_title1}")
+    h.number_format = "_-* #,##0.00_-;\\-* #,##0.00_-;_-* \"-\"??_-;_-@_-"
+
+    # --- Título 1 ---
+    title1 = sheet.cell(row=r_title1, column=4, value="LIQUIDACION CIERRE LOTTERY ")
+    title1.font = XlFont(bold=True, underline="single")
+    title1.alignment = CENTER
+    sheet.merge_cells(start_row=r_title1, start_column=4, end_row=r_title1, end_column=6)
+    for col in (4, 5, 6):
+        sheet.cell(row=r_title1, column=col).border = XlBorder(bottom=THIN_BORDER.bottom)
+
+    def box_row(row_num, label_col4=None, label_col5=None, fill_by_col=None, values=None):
+        fill_by_col = fill_by_col or {}
+        values = values or {}
+        for col in range(4, 9):
+            cell = sheet.cell(row=row_num, column=col)
+            cell.font = XlFont(bold=True)
+            cell.border = THIN_BORDER
+            cell.fill = fill_by_col.get(col, YELLOW)
+        if label_col4 is not None:
+            sheet.cell(row=row_num, column=4, value=label_col4)
+        if label_col5 is not None:
+            sheet.cell(row=row_num, column=5, value=label_col5)
+        for col, value in values.items():
+            cell = sheet.cell(row=row_num, column=col, value=value)
+            cell.number_format = MONEY_FMT
+
+    box_row(r_online, "Caja-On Line", values={7: f"=+E{r_total2}+0"})
+    box_row(r_skoff, "Caja-Skoff", values={7: f"=+N{r_total1}+4774.2"})
+    box_row(r_gastos, "Gastos Adminits-Loteria", values={7: 150})
+    box_row(r_pagar1, "a", "Lottery a Pagar", fill_by_col={5: GREEN, 6: GREEN, 8: GREEN}, values={8: f"=+E{r_total2}+0"})
+    box_row(r_pagar2, "a", "Lottery a Pagar", fill_by_col={5: GREEN, 6: GREEN, 8: GREEN}, values={8: f"=+N{r_total1}+G{r_gastos}+4774.2"})
+
+    sum1_g = sheet.cell(row=r_sum1, column=7, value=f"=SUM(G{r_online}:G{r_gastos+2})")
+    sum1_g.font, sum1_g.border, sum1_g.fill, sum1_g.number_format = XlFont(bold=True), THIN_BORDER, YELLOW, MONEY_FMT
+    sum1_h = sheet.cell(row=r_sum1, column=8, value=f"=SUM(H{r_online}:H{r_gastos+2})")
+    sum1_h.font, sum1_h.border, sum1_h.fill, sum1_h.number_format = XlFont(bold=True), THIN_BORDER, YELLOW, MONEY_FMT
+    for col in (4, 5, 6):
+        c = sheet.cell(row=r_sum1, column=col)
+        c.border, c.fill = THIN_BORDER, YELLOW
+
+    diff1 = sheet.cell(row=r_diff1, column=8, value=f"=+G{r_sum1}-H{r_sum1}")
+    diff1.number_format = MONEY_FMT
+
+    # --- Título 2 ---
+    title2 = sheet.cell(row=r_title2, column=4, value="LIQUIDACION CIERRE RECAUDACION COMISIONES")
+    title2.font = XlFont(bold=True, underline="single")
+
+    box_row(r_pagarcom, "Lottery a Pagar", fill_by_col={4: GREEN}, values={7: f"=+H{r_comonline}+H{r_comskoff}+H{r_chase}"})
+    box_row(r_pagaronline, "Lottery a Pagar-Online", values={7: f"=-F{r_total1}"})
+    box_row(r_pagarskoff, "Lottery a Pagar-skoff", values={7: f"=-P{r_total1}+0+W3"})
+    box_row(r_chase, "a", "Chase Bank", values={8: f"=+U{r_total1}"})
+    box_row(r_comonline, "a", "Comision On-Line", values={8: f"=-L{r_total1}"})
+    box_row(r_comskoff, "a", "Comision Skoff", values={8: f"=-R{r_total1}"})
+    box_row(r_caja, "a", "Caja", fill_by_col={5: GREEN, 6: GREEN, 8: GREEN}, values={8: f"=-F{r_total1}-P{r_total1}"})
+    box_row(r_blank2)
+
+    sum2_g = sheet.cell(row=r_sum2, column=7, value=f"=SUM(G{r_pagarcom}:G{r_blank2})")
+    sum2_g.font, sum2_g.fill, sum2_g.border, sum2_g.number_format = XlFont(bold=True), YELLOW, THIN_BORDER, MONEY_FMT
+    sum2_h = sheet.cell(row=r_sum2, column=8, value=f"=SUM(H{r_pagarcom}:H{r_blank2})")
+    sum2_h.font, sum2_h.fill, sum2_h.border, sum2_h.number_format = XlFont(bold=True), YELLOW, THIN_BORDER, MONEY_FMT
+    for col in (4, 5, 6):
+        c = sheet.cell(row=r_sum2, column=col)
+        c.fill, c.border = YELLOW, THIN_BORDER
+
+    diff2 = sheet.cell(row=r_diff2, column=8, value=f"=+G{r_sum2}-H{r_sum2}")
+    diff2.number_format = MONEY_FMT
+
+    # W3 -- celda auxiliar que usa la fórmula de "Lottery a Pagar-skoff"
+    # de arriba (siempre 0 en el Excel real, pero la fórmula la referencia
+    # de todos modos -- se replica tal cual para no romper esa fórmula).
+    sheet.cell(row=3, column=23, value=0)
 
 
 def _fmt_money_pdf(value):
@@ -845,3 +1119,130 @@ def build_lottery_export_pdf(year, month, dest_path):
         data_fill_by_col=data_fill_by_col,
     )
     return dest_path
+
+
+# --- Cierre mensual: "LIQUIDACION CIERRE LOTTERY" / "LIQUIDACION CIERRE
+# RECAUDACION COMISIONES" (pedido explícito del usuario, 2026-09-16) -------
+#
+# Estas dos tablas viven al pie de la hoja del Excel de Lottery real -- un
+# asiento contable que, mirando sus fórmulas reales (confirmado contra los
+# Excel de Julio/Agosto/Septiembre 2026 con openpyxl, columna por columna,
+# antes de escribir código), resultó ser ENTERAMENTE derivable de datos que
+# esta página ya tiene guardados -- nunca hace falta subir ningún Excel
+# nuevo (primer intento de esta sesión, descartado a pedido explícito del
+# usuario: "lo ideal es no tener que subir ningún excel").
+#
+# Mapeo real de cada celda (fila E55:I71 del Excel de septiembre-2026, el
+# mismo layout en los 3 meses reales revisados):
+#   Tabla 1 "LIQUIDACION CIERRE LOTTERY" (Debe=H, Haber=I):
+#     Caja-On Line     (Debe)  = +F50+0            -> SUM mensual de "sales" (F, ONLINE/SALES)
+#     Caja-Skoff       (Debe)  = +O49+4774.2        -> SUM mensual de "skoff_net_sales" (O) + una constante fija
+#     Gastos Adminits-Loteria (Debe) = 150 (tipeado a mano en el Excel -- ACÁ es el único campo editable)
+#     a Lottery a Pagar (Haber) = +F50+0            -> = Caja-On Line (mismo monto, asiento espejo)
+#     a Lottery a Pagar (Haber) = +O49+H57+4774.2   -> = Caja-Skoff + Gastos Adminits-Loteria
+#   Tabla 2 "LIQUIDACION CIERRE RECAUDACION COMISIONES" (Debe=H, Haber=I):
+#     Lottery a Pagar         (Debe)  = +I67+I68+I66 -> suma de las 3 filas "Haber" de abajo (Chase Bank+Comision On-Line+Comision Skoff)
+#     Lottery a Pagar-Online  (Debe)  = -G49          -> -SUM mensual de "pagos" (G, ONLINE/Pagos)
+#     Lottery a Pagar-skoff   (Debe)  = -Q49+0+X3(=0) -> -SUM mensual de "pays_amount" (Q, SKOFF/Pagos)
+#     a Chase Bank    (Haber) = +V49  -> SUM del "Debito"/net_debit (V) de cada bloque semanal del mes
+#     a Comision On-Line (Haber) = -M49 -> -SUM mensual de "total_comm" (M=I+K, ONLINE/TOTAL SALES COM)
+#     a Comision Skoff   (Haber) = -S49 -> -SUM mensual de "sales_comm" (S, SKOFF/Sales Com)
+#     a Caja             (Haber) = -G49-Q49 -> -(Pagos ONLINE) - (Pagos SKOFF)
+#
+# La cifra que en el Excel real sumaba Caja-Skoff (4774.2 en Agosto Y
+# Septiembre 2026, sin fórmula en los dos) pasó por dos vueltas: primero se
+# replicó como constante fija, después -- a pedido del usuario ("no es
+# fija") -- se volvió un campo editable por mes ("Ajuste Caja-Skoff"). El
+# usuario terminó pidiendo sacar ese cuadrito de la página del todo -- así
+# que Caja-Skoff quedó SIN ningún ajuste, solo la suma real de
+# `skoff_net_sales` -- ver el pendiente en CLAUDE.md si en algún momento
+# hiciera falta reincorporar esa cifra de otra forma.
+#
+# "Gastos Adminits-Loteria" es fijo -- confirmado explícitamente por el
+# usuario ("los 150 sí son fijos y no hace falta editar") -- una constante
+# de código, sin ningún campo editable ni fila en la base.
+#
+# Todo lo demás se recalcula EN VIVO cada vez que se entra a la página,
+# sumando los mismos días que ya muestra "Cuadro del mes" para ese mes
+# (build_month_blocks) -- incluida la cola de días que se pasa al mes
+# vecino, igual que hace el Excel real. Si el mes todavía no tiene ningún
+# PDF cargado, todo sale en 0 y la página lo muestra vacío (has_data=False).
+
+_GASTOS_ADMIN_FIJO = 150.0
+
+
+def compute_month_closing(year, month):
+    """
+    Arma en el momento las dos tablas de cierre de mes -- ver el comentario
+    de arriba para el mapeo completo. Nunca lee ni escribe ningún Excel.
+    """
+    blocks = build_month_blocks(year, month)
+    days = [d for block in blocks for d in block["days"]]
+    has_data = any(_has_any_data(d) for d in days)
+
+    def total(field):
+        values = [d.get(field) for d in days if d.get(field) is not None]
+        return round(sum(values), 2) if values else 0.0
+
+    total_sales = total("sales")
+    total_pagos_online = total("pagos")
+    total_total_comm = total("total_comm")
+    total_skoff_net_sales = total("skoff_net_sales")
+    total_pagos_skoff = total("pays_amount")
+    total_sales_comm = total("sales_comm")
+    total_net_debit = round(sum((b["debito"].get("net_debit") or 0.0) for b in blocks), 2)
+
+    gastos_admin = _GASTOS_ADMIN_FIJO
+    days_with_data = sum(1 for d in days if _has_any_data(d))
+
+    caja_online = total_sales
+    caja_skoff = total_skoff_net_sales
+    lottery_a_pagar_1 = caja_online
+    lottery_a_pagar_2 = round(caja_skoff + gastos_admin, 2)
+
+    com_chase_bank = total_net_debit
+    com_comision_online = round(-total_total_comm, 2)
+    com_comision_skoff = round(-total_sales_comm, 2)
+    com_caja = round(-total_pagos_online - total_pagos_skoff, 2)
+    com_lottery_a_pagar_online = round(-total_pagos_online, 2)
+    com_lottery_a_pagar_skoff = round(-total_pagos_skoff, 2)
+    com_lottery_a_pagar = round(com_chase_bank + com_comision_online + com_comision_skoff, 2)
+
+    result = {
+        "has_data": has_data,
+        "days_with_data": days_with_data,
+        "gastos_admin": gastos_admin,
+        "caja_online": caja_online,
+        "caja_skoff": caja_skoff,
+        "lottery_a_pagar_1": lottery_a_pagar_1,
+        "lottery_a_pagar_2": lottery_a_pagar_2,
+        "com_lottery_a_pagar": com_lottery_a_pagar,
+        "com_lottery_a_pagar_online": com_lottery_a_pagar_online,
+        "com_lottery_a_pagar_skoff": com_lottery_a_pagar_skoff,
+        "com_chase_bank": com_chase_bank,
+        "com_comision_online": com_comision_online,
+        "com_comision_skoff": com_comision_skoff,
+        "com_caja": com_caja,
+        # Totales crudos, expuestos solo para que la página pueda mostrar
+        # "de dónde sale" cada celda (mismo criterio que los popovers de
+        # verificación de Store Info/Lottery historial) -- no forman parte
+        # del asiento en sí.
+        "total_sales": total_sales,
+        "total_pagos_online": total_pagos_online,
+        "total_total_comm": total_total_comm,
+        "total_skoff_net_sales": total_skoff_net_sales,
+        "total_pagos_skoff": total_pagos_skoff,
+        "total_sales_comm": total_sales_comm,
+        "total_net_debit": total_net_debit,
+    }
+    result["debe_total"] = round(caja_online + caja_skoff + gastos_admin, 2)
+    result["haber_total"] = round(lottery_a_pagar_1 + lottery_a_pagar_2, 2)
+    result["diferencia"] = round(result["debe_total"] - result["haber_total"], 2)
+    result["com_debe_total"] = round(
+        com_lottery_a_pagar + com_lottery_a_pagar_online + com_lottery_a_pagar_skoff, 2
+    )
+    result["com_haber_total"] = round(
+        com_chase_bank + com_comision_online + com_comision_skoff + com_caja, 2
+    )
+    result["com_diferencia"] = round(result["com_debe_total"] - result["com_haber_total"], 2)
+    return result

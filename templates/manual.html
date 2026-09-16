@@ -8,7 +8,7 @@
 <div class="page-header">
   <span class="eyebrow">BradentonApp</span>
   <h1>Manual de Usuario</h1>
-  <p class="page-subtitle">Guía paso a paso de cada módulo: qué es, qué Excel/PDF hay que subir y qué pasa después — pensada para alguien que nunca usó la página. Por ahora cubre Herramientas y Controles.</p>
+  <p class="page-subtitle">Guía completa de la página tal como está hoy: cómo se usa la barra lateral, cada módulo de Carga de Datos, cada Control, y tu cuenta. Se va a volver a actualizar más adelante, a medida que se sigan sumando cosas.</p>
 </div>
 
 <div class="manual-shell">
@@ -17,6 +17,8 @@
       <span class="manual-toc-label">Cómo funciona</span>
       <ul class="manual-toc-list">
         <li><a href="#intro" data-target="intro">Ideas generales</a></li>
+        <li><a href="#usar-pagina" data-target="usar-pagina">Barra lateral, buscador y mes</a></li>
+        <li><a href="#cuenta" data-target="cuenta">Tu cuenta</a></li>
       </ul>
     </div>
     <div>
@@ -25,22 +27,15 @@
         <svg class="manual-toc-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
       </button>
       <ul class="manual-toc-list">
+        <li><a href="#reporte" data-target="reporte" style="--dot: var(--c-reporte)"><span class="manual-toc-dot"></span>Reporte Diario</a></li>
         <li><a href="#chase" data-target="chase" style="--dot: var(--c-chase)"><span class="manual-toc-dot"></span>Chase Bank</a></li>
         <li><a href="#eft" data-target="eft" style="--dot: var(--c-eft)"><span class="manual-toc-dot"></span>EFT y Cupones</a></li>
         <li><a href="#caja" data-target="caja" style="--dot: var(--c-caja)"><span class="manual-toc-dot"></span>Caja</a></li>
-      </ul>
-    </div>
-    <div>
-      <button type="button" class="manual-toc-toggle" aria-expanded="true">
-        <span class="manual-toc-label">Herramientas</span>
-        <svg class="manual-toc-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
-      </button>
-      <ul class="manual-toc-list">
-        <li><a href="#cmv" data-target="cmv" style="--dot: var(--c-cmv)"><span class="manual-toc-dot"></span>CMV</a></li>
         <li><a href="#gettel" data-target="gettel" style="--dot: var(--c-gettel)"><span class="manual-toc-dot"></span>Gettel / Toyota</a></li>
-        <li><a href="#reporte" data-target="reporte" style="--dot: var(--c-reporte)"><span class="manual-toc-dot"></span>Reporte Diario</a></li>
+        <li><a href="#cmv" data-target="cmv" style="--dot: var(--c-cmv)"><span class="manual-toc-dot"></span>CMV</a></li>
         <li><a href="#lottery" data-target="lottery" style="--dot: var(--c-lottery)"><span class="manual-toc-dot"></span>Lottery</a></li>
         <li><a href="#proveedores" data-target="proveedores" style="--dot: var(--c-proveedores)"><span class="manual-toc-dot"></span>Proveedores</a></li>
+        <li><a href="#horas" data-target="horas" style="--dot: var(--c-horas)"><span class="manual-toc-dot"></span>Horas de Trabajo</a></li>
       </ul>
     </div>
     <div>
@@ -57,21 +52,30 @@
         <li><a href="#control-caja" data-target="control-caja" style="--dot: var(--c-caja)"><span class="manual-toc-dot"></span>Caja</a></li>
       </ul>
     </div>
+    <div>
+      <button type="button" class="manual-toc-toggle" aria-expanded="false">
+        <span class="manual-toc-label">Herramientas (heredado)</span>
+        <svg class="manual-toc-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <ul class="manual-toc-list">
+        <li><a href="#herramientas" data-target="herramientas">Qué es y cuándo usarlo</a></li>
+      </ul>
+    </div>
   </nav>
 
   <div class="manual-main">
     <section class="manual-intro" id="intro">
       <h2>Ideas generales</h2>
-      <p>La app tiene dos formas de trabajar bien distintas — Herramientas transforma un archivo, Controles solo lo compara. Acá abajo, cómo funciona cada una.</p>
+      <p>La página tiene tres partes con una lógica bien distinta entre sí: <b>Carga de Datos</b> es la que se usa día a día — subís un PDF o un Excel y queda guardado, organizado y editable, dentro de la propia página, sin generar ningún archivo nuevo. <b>Controles</b> no guarda ni transforma nada: solo compara lo que ya está cargado contra un Mayor contable o un reporte oficial, para confirmar que un mes cierra bien antes de darlo por terminado. <b>Herramientas</b> es el sistema original con el que arrancó todo esto (generaba un Excel nuevo cada vez) — hoy ya no hace falta para el trabajo de todos los días, se explica al final del manual solo por si hiciera falta consultarlo.</p>
 
-      <h3 class="manual-intro-subhead">Cómo funciona Herramientas</h3>
+      <h3 class="manual-intro-subhead">Cómo funciona Carga de Datos</h3>
       <div class="manual-flow-steps">
-        <div class="manual-flow-step"><span class="n">1</span><p>Subís el o los archivos que te pide el cuadro — tu Excel, un PDF, o el extracto del banco.</p></div>
-        <div class="manual-flow-step"><span class="n">2</span><p>Apretás <b>Procesar</b>.</p></div>
-        <div class="manual-flow-step"><span class="n">3</span><p>La app arma el resultado sola y se abre ya actualizado, en Excel, en tu propia PC — no hay que ir a buscarlo a ningún lado.</p></div>
+        <div class="manual-flow-step"><span class="n">1</span><p>Entrás al módulo que corresponda desde la <b>barra lateral</b> (a la izquierda de la pantalla) y subís el o los PDF/Excel que te pide.</p></div>
+        <div class="manual-flow-step"><span class="n">2</span><p>Guardás — algunas cargas grandes muestran una barra de progreso real mientras se procesa cada archivo.</p></div>
+        <div class="manual-flow-step"><span class="n">3</span><p>Lo cargado queda guardado y organizado por día/mes/año dentro de la misma página — se puede ver, y en la mayoría de los módulos también corregir a mano, sin volver a subir nada.</p></div>
       </div>
 
-      <p style="margin-bottom: 10px;"><b>Tu archivo original nunca se toca.</b> Todo se hace sobre una copia — así que si algo sale mal, o subiste el archivo equivocado, no se rompe ni se pierde nada. Cerrás ese Excel sin guardar y volvés a intentarlo tranquilo.</p>
+      <p style="margin-bottom: 10px;"><b>El archivo que subís nunca se pierde ni se sobrescribe con datos malos.</b> Si algo no se puede leer con confianza, la página no inventa un valor: avisa qué día/archivo revisar a mano en vez de guardar algo incorrecto en silencio.</p>
 
       <h4>Qué significa cada color de aviso</h4>
       <div class="manual-legend">
@@ -80,17 +84,56 @@
         <div class="manual-legend-item"><span class="manual-legend-swatch" style="background: var(--error)"></span>Rojo — <b>no se cargó nada</b>, corregí y reintentá</div>
       </div>
 
-      <p style="margin: 14px 0 18px;">Al lado de cada casilla de archivo hay un botón <b>Limpiar</b> para vaciarla y elegir de nuevo. Cuando dos cuadros de una misma página comparten el mismo Excel, ese archivo se sube <b>una sola vez</b> arriba de todo — no hace falta elegirlo de nuevo para el segundo cuadro.</p>
+      <p style="margin: 14px 0 18px;">Si estás corrigiendo algo a mano (un día de Reporte Diario, un empleado de Horas de Trabajo, etc.) y tratás de salir de la página sin guardar, aparece un aviso — podés ignorarlo si de verdad no querés guardar ese cambio.</p>
 
       <h3 class="manual-intro-subhead">Cómo funciona Controles</h3>
-      <p style="margin-bottom: 10px;">Acá no se transforma ningún archivo: subís los archivos ya cargados de un mes y la app los compara, mostrando el resultado en la misma pantalla — no se descarga ni se modifica nada, salvo <b>Valuación de Existencia Final</b>, la única excepción, que sí completa una copia y la ofrece para descargar.</p>
-      <p style="margin: 0 0 18px;">En vez del semáforo verde/ámbar/rojo de Herramientas, cada chequeo muestra <b>"OK"</b> en verde (coincide) o <b>"Diferencia"</b> en rojo (revisar antes de dar el mes por cerrado). Cada control tiene su propio margen de tolerancia — desde $0 exacto hasta un rango más amplio — aclarado en su propia explicación.</p>
+      <p style="margin-bottom: 10px;">Acá no se transforma ningún archivo: subís los archivos ya cargados de un mes (o de Carga de Datos, o un Excel/Mayor externo, según el control) y la página los compara, mostrando el resultado en la misma pantalla — no se descarga ni se modifica nada, salvo <b>Valuación de Existencia Final</b>, la única excepción, que sí completa una copia y la ofrece para descargar.</p>
+      <p style="margin: 0 0 18px;">En vez del semáforo verde/ámbar/rojo de Carga de Datos, cada chequeo muestra <b>"OK"</b> en verde (coincide) o <b>"Diferencia"</b> en rojo (revisar antes de dar el mes por cerrado). Cada control tiene su propio margen de tolerancia — desde $0 exacto hasta un rango más amplio — aclarado en su propia explicación.</p>
+    </section>
+
+    <section class="manual-intro" id="usar-pagina">
+      <h2>Barra lateral, buscador y mes</h2>
+      <p>Tres formas de moverse por la página, además de entrar módulo por módulo.</p>
+
+      <h3 class="manual-intro-subhead">La barra lateral</h3>
+      <p style="margin-bottom: 10px;">Es la columna angosta de íconos pegada al borde izquierdo de la pantalla — ahí vive cada módulo de Carga de Datos. Pasando el mouse por encima de un ícono (barra colapsada) se despliega un menú con sus links; el botón de arriba de todo la <b>fija expandida</b> (ícono + nombre de cada módulo, sin tener que pasar el mouse) hasta que la vuelvas a tocar. Fijada, tocar un ícono abre o cierra su propio menú — abrir uno cierra automáticamente el que estaba abierto, para no llenar la pantalla de menús a la vez.</p>
+      <p style="margin: 0 0 18px;">El orden de los íconos se puede cambiar: mantené apretado un ícono y arrastralo arriba o abajo — el orden que dejes queda guardado en tu navegador, no hace falta volver a acomodarlo cada vez que entrás.</p>
+
+      <h3 class="manual-intro-subhead">Selector de mes/año</h3>
+      <p style="margin: 0 0 18px;">En cualquier pantalla con navegación mensual (Reporte Diario, Lottery, Caja, etc.), tocá el título del mes (ej. "Agosto 2026") para abrir un calendario chico — elegí el mes y, si hace falta cambiar de año, tocá el año para ver una década entera. Si estás parado en el mes actual, en vez del link para "ir" a otro mes ves la leyenda "Mes actual".</p>
+
+      <h3 class="manual-intro-subhead">Buscador (arriba de la página)</h3>
+      <p style="margin: 0;">Escribí el nombre de un módulo ("lottery", "proveedores"...) para saltar directo ahí, incluso si te equivocás de letra. También sirve para encontrar un <b>archivo ya guardado por su nombre</b> — un PDF de factura, un Excel de Aplicacion TC y EFT, etc. — sin tener que acordarte en qué módulo/mes lo subiste.</p>
+    </section>
+
+    <section class="manual-intro" id="cuenta">
+      <h2>Tu cuenta</h2>
+      <p style="margin-bottom: 10px;">Tocando tu nombre de usuario (arriba a la derecha) se despliega un menú con <b>Cambiar contraseña</b> (para vos mismo) y, si sos administrador, <b>Gestionar usuarios</b> (crear cuentas nuevas, resetear la contraseña de otra persona, o eliminar una cuenta).</p>
+      <p style="margin: 0;"><b>Solo un administrador puede crear cuentas nuevas</b> — no hay auto-registro. Cuando un admin crea una cuenta (o le resetea la contraseña a alguien), esa persona tiene que cambiarla ella misma la primera vez que entra: apenas inicia sesión, la página la manda directo a "Cambiar contraseña" de forma obligatoria, y no puede usar nada más de la app hasta que elija una propia.</p>
     </section>
 
     <div class="manual-section-heading">
       <h2>Carga de Datos</h2>
-      <p>Acá no se genera ningún Excel — lo que subís queda categorizado y guardado dentro de la propia página, mes a mes. Se van sumando módulos de a uno.</p>
+      <p>Acá no se genera ningún Excel — lo que subís queda categorizado y guardado dentro de la propia página, mes a mes, organizado por día/semana según el módulo.</p>
     </div>
+
+    <section class="manual-module" id="reporte" style="--c: var(--c-reporte)">
+      <div class="manual-module-head">
+        <div class="manual-module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></div>
+        <div><span class="manual-kicker">Carga de Datos</span><h2>Reporte Diario</h2></div>
+      </div>
+      <p class="manual-lede">Todos los días el sistema del POS genera un PDF de cierre con toda la información de ese día — cuánto se vendió por departamento, y los datos generales de la tienda (Store Info: combustible, tarjetas, efectivo, etc.). Subiendo ese único PDF, las dos cosas quedan guardadas solas, día por día, sin generar ningún Excel — y de paso, ese mismo PDF alimenta también las columnas ONLINE/SKOFF de Lottery (ver más abajo), sin tener que cargarlo dos veces.</p>
+      <h3>Qué necesitás antes de empezar</h3>
+      <ul class="manual-need"><li>El o los PDF de cierre diario del POS — se pueden subir varios días juntos, de una sola vez.</li></ul>
+      <h3>Cómo se usa</h3>
+      <ol class="manual-steps">
+        <li><span class="n">1</span><p>Barra lateral → Reporte Diario → <b>Cargar PDF</b>. Subís uno o más PDF de cierre y Guardás — una barra de progreso real muestra cuántos ya se procesaron (el OCR de un PDF escaneado puede tardar).</p></li>
+        <li><span class="n">2</span><p><b>Ventas por Departamento</b> muestra el mes completo, un día por fila, con las columnas fijas (Tabacco/Soda/Beer-Wine/Lotto/Gettel/Resto) — entrando a un día se puede corregir cualquier departamento a mano, o agregar uno que el PDF no haya traído.</p></li>
+        <li><span class="n">3</span><p><b>Store Info</b> muestra los mismos datos generales del día — completá o corregí un día que quedó incompleto desde ahí mismo.</p></li>
+        <li><span class="n">4</span><p><b>Documentos</b> guarda una copia de cada PDF ya subido, un renglón por día, para volver a abrirlo cuando haga falta — ahí mismo, al pie, hay un cuadrito aparte para el PDF de resumen de fin de mes (solo se guarda, no se procesa) — entra uno solo por mes, hay que eliminar el que ya está para subir otro.</p></li>
+      </ol>
+      <div class="manual-tip"><div><b>Tené en cuenta:</b> si un día no cierra bien (la suma de los departamentos cargados no coincide con el total impreso en el PDF), aparece un aviso con la fecha exacta para revisar y completar ese día a mano — suele pasar cuando el OCR se salteó un departamento poco común.</div></div>
+    </section>
 
     <section class="manual-module" id="chase" style="--c: var(--c-chase)">
       <div class="manual-module-head">
@@ -102,11 +145,12 @@
       <ul class="manual-need"><li>El extracto de movimientos de Chase, tal cual lo bajás de la banca online — puede ser el CSV o el Excel, sin tocar nada.</li></ul>
       <h3>Cómo se usa</h3>
       <ol class="manual-steps">
-        <li><span class="n">1</span><p>Subís el extracto de Chase (CSV o Excel) — podés subir el extracto completo cada vez que quieras, o solo lo nuevo: nunca se duplica, cada movimiento se identifica por fecha + descripción + monto.</p></li>
-        <li><span class="n">2</span><p>Apretás Guardar.</p></li>
-        <li><span class="n">3</span><p>Los movimientos quedan categorizados y guardados — los podés ver ordenados por mes en "Ver lo ya guardado", sin abrir ningún Excel.</p></li>
+        <li><span class="n">1</span><p>Barra lateral → Chase Bank → Cargar extracto. Subís el extracto (CSV o Excel) — podés subir el extracto completo cada vez que quieras, o solo lo nuevo: nunca se duplica, cada movimiento se identifica por fecha + descripción + monto.</p></li>
+        <li><span class="n">2</span><p>Guardás.</p></li>
+        <li><span class="n">3</span><p>Los movimientos quedan categorizados y guardados — los ves ordenados por mes en "Movimientos guardados", con un botón "corregir" en cada fila para cambiar el Detalle a mano si hace falta.</p></li>
+        <li><span class="n">4</span><p>"Exportar Excel del mes" arma un Excel nuevo con los movimientos ya categorizados de ese mes, por si necesitás mandarlo o revisarlo aparte.</p></li>
       </ol>
-      <div class="manual-tip"><div><b>Tené en cuenta:</b> más abajo en la misma página hay una tabla con todas las reglas (palabra clave → Detalle a asignar). Si dos reglas podrían aplicar al mismo movimiento, gana la que tiene la palabra clave más larga. Solo un administrador puede crear, editar o borrar reglas — si un movimiento queda sin clasificar, pedile a un admin que agregue la regla que falta y volvé a subir el mismo extracto para recategorizarlo.</div></div>
+      <div class="manual-tip"><div><b>Tené en cuenta:</b> más abajo en la misma página hay una tabla con todas las reglas (palabra clave → Detalle a asignar). Si dos reglas podrían aplicar al mismo movimiento, gana la que tiene la palabra clave más larga. Solo un administrador puede crear, editar o borrar reglas — si un movimiento queda sin clasificar, pedile a un admin que agregue la regla que falta y volvé a subir el mismo extracto para recategorizarlo. Una corrección hecha a mano en "corregir" sobrevive a una recarga futura del mismo extracto.</div></div>
     </section>
 
     <section class="manual-module" id="eft" style="--c: var(--c-eft)">
@@ -117,124 +161,110 @@
       <p class="manual-lede">J.H. Williams es quien procesa las ventas con cupón de la tienda y te paga ese dinero con un tiempo de demora. El PDF del EFT bancario (la transferencia que llega de J.H. Williams) trae el detalle de qué cupones pagó, cada uno con su número DDC. El reporte mensual de ese mismo proveedor lista todos los cupones del mes — cada uno queda cruzado solo contra el EFT que lo pagó, comparando el número DDC, sin generar ningún Excel.</p>
       <h3>Qué necesitás antes de empezar</h3>
       <ul class="manual-need">
-        <li>El PDF del EFT bancario que llega de J.H. Williams (opcional en cada carga, pero al menos uno hace falta para que haya algo contra qué cruzar).</li>
+        <li>El PDF del EFT bancario que llega de J.H. Williams (podés subir varios de una vez).</li>
         <li>El reporte mensual que manda J.H. Williams (CSV o Excel), cuando lo tengas — es opcional, se puede seguir cargando EFT sin él.</li>
       </ul>
       <h3>Cómo se usa</h3>
       <ol class="manual-steps">
-        <li><span class="n">1</span><p><b>EFT (PDF del banco)</b>: subís el PDF y Guardás — cada cupón que trae adentro queda guardado con su número DDC. Si algún cupón no trae DDC en el PDF, se puede agregar a mano después.</p></li>
+        <li><span class="n">1</span><p><b>EFT (PDF del banco)</b>: subís uno o más PDF y Guardás — cada cupón que traen adentro queda guardado con su número DDC, ordenados por la fecha real del EFT. Si algún cupón no trae DDC en el PDF, se agrega a mano después.</p></li>
         <li><span class="n">2</span><p><b>Cupones (reporte mensual)</b>: subís el reporte y Guardás — cada DDC queda pendiente hasta que algún EFT (ya cargado, o uno que llegue después) lo confirme.</p></li>
-        <li><span class="n">3</span><p>Los EFT del mes (con sus cupones) y el historial completo de Cupones (con su estado — Pendiente, o el EFT que lo pagó) viven en dos apartados separados.</p></li>
+        <li><span class="n">3</span><p>"Aplicacion TC y EFT" muestra los EFT del mes, con las facturas que paga cada uno resaltadas arriba y una autosuma al pie; "Cupones (histórico)" tiene el listado completo de todos los cupones, con su estado — Pendiente, o el EFT que lo pagó.</p></li>
+        <li><span class="n">4</span><p><b>Documentos</b> guarda cada PDF/reporte ya subido — y también podés subir ahí cualquier otra factura o comprobante suelto de J.H. Williams que no sea ni un EFT ni el reporte mensual (ej. un cargo de servicio).</p></li>
       </ol>
-      <div class="manual-tip"><div><b>Tené en cuenta:</b> si un cupón dentro de un EFT no tiene número DDC (el PDF a veces no lo trae), hay un link "agregar DDC" al lado para completarlo a mano — una vez puesto, se cruza solo contra Cupones sin tener que hacer nada más.</div></div>
+      <div class="manual-tip"><div><b>Tené en cuenta:</b> si un cupón dentro de un EFT no tiene número DDC (el PDF a veces no lo trae), hay un link "agregar DDC" al lado para completarlo a mano — una vez puesto, se cruza solo contra Cupones sin tener que hacer nada más. Un EFT cargado por error se puede eliminar desde su propio bloque.</div></div>
     </section>
 
-    <div class="manual-section-heading">
-      <h2>Herramientas</h2>
-      <p>Guía módulo por módulo: qué Excel o PDF pedís, qué hace, y qué mirar después de procesar.</p>
-    </div>
-
-    <section class="manual-module" id="cmv" style="--c: var(--c-cmv)">
+    <section class="manual-module" id="caja" style="--c: var(--c-caja)">
       <div class="manual-module-head">
-        <div class="manual-module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg></div>
-        <div><span class="manual-kicker">Herramientas</span><h2>CMV</h2></div>
+        <div class="manual-module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="10" width="18" height="10" rx="1"/><path d="M6 10V7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v3"/><path d="M9 15h6"/></svg></div>
+        <div><span class="manual-kicker">Carga de Datos</span><h2>Caja</h2></div>
       </div>
-      <p class="manual-lede">El Excel Maestro CMV es donde se lleva el costo de la mercadería vendida — tiene una hoja por cada departamento de la tienda (bebidas, snacks, cigarrillos, etc.) con el costo de cada producto y cuánto se vendió de él. Este módulo tiene dos cuadros separados que actualizan ese mismo archivo: <b>CMV Costo</b> carga el costo y precio que manda el distribuidor (el archivo de Elistar), y <b>CMV Ventas</b> carga cuánto se vendió de cada producto según el POS.</p>
-      <h3>Qué necesitás antes de empezar</h3>
+      <p class="manual-lede">Acá no se sube ningún PDF ni Excel — Caja cruza en el momento lo que ya guardaron Chase Bank, Lottery y Reporte Diario (Store Info) para el mes que estés mirando (Depósitos, Food Truck/Hielo, Cuenta Final de Lottery, Total Sales/Cash/Other/Total Revenue), y calcula solo el DIF EFECT y el Saldo día por día.</p>
+      <h3>Qué podés cargar a mano</h3>
       <ul class="manual-need">
-        <li>El Excel Maestro CMV del mes — el mismo que ya se usa para llevar el costo de mercadería.</li>
-        <li>Para Costo: el o los archivos de departamento que manda el distribuidor (Elistar).</li>
-        <li>Para Ventas: el o los reportes de ventas que baja del sistema del POS.</li>
+        <li>Los Gastos en efectivo de cada día, con el detalle de a quién se le pagó.</li>
+        <li>El Saldo Inicial del mes (por default es el Saldo Final calculado del mes anterior) y, si hace falta, un ajuste manual del Saldo Final.</li>
+        <li>Documentos del mes — Excel o comprobantes de referencia sueltos, solo para tenerlos a mano (no se leen ni se procesan).</li>
       </ul>
       <h3>Cómo se usa</h3>
       <ol class="manual-steps">
-        <li><span class="n">1</span><p>Subís el Excel Maestro CMV una sola vez, arriba de todo. <span class="manual-shared-tag">Compartido</span></p></li>
-        <li><span class="n">2</span><p><b>CMV Costo</b>: subís uno o más archivos de departamento y Procesás — actualiza el costo y precio de cada producto en la hoja COSTO.TODOS.</p></li>
-        <li><span class="n">3</span><p><b>CMV Ventas</b>: subís uno o más reportes de ventas y Procesás — actualiza, producto por producto, la hoja del departamento que corresponda.</p></li>
+        <li><span class="n">1</span><p>Barra lateral → Caja, y elegís el mes que querés ver.</p></li>
+        <li><span class="n">2</span><p>Todo lo que ya cargaste por Chase Bank, Lottery y Reporte Diario aparece solo, sin tener que subir nada de nuevo.</p></li>
+        <li><span class="n">3</span><p>Cargás los Gastos de cada día (con su detalle) y, si hace falta, el Saldo Inicial/Final — Guardás y el DIF EFECT/Saldo se recalculan solos.</p></li>
       </ol>
-      <div class="manual-tip"><div><b>Ojo:</b> cada carga de Ventas <b>reemplaza</b> todo lo que había cargado en esa hoja de departamento — no se suma a lo anterior. Subí siempre el reporte completo del mes para ese departamento, no una parte, aunque haya vendido menos productos que el mes pasado: no hay riesgo de "perder" nada, son datos de un mes ya cerrado.</div></div>
     </section>
 
     <section class="manual-module" id="gettel" style="--c: var(--c-gettel)">
       <div class="manual-module-head">
         <div class="manual-module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 13l1.5-4.5A2 2 0 0 1 6.4 7h11.2a2 2 0 0 1 1.9 1.5L21 13"/><path d="M3 13v4a1 1 0 0 0 1 1h1a1 1 0 0 0 1-1v-1h12v1a1 1 0 0 0 1 1h1a1 1 0 0 0 1-1v-4"/><circle cx="7.5" cy="17" r="1.6"/><circle cx="16.5" cy="17" r="1.6"/></svg></div>
-        <div><span class="manual-kicker">Herramientas</span><h2>Gettel / Toyota</h2></div>
+        <div><span class="manual-kicker">Carga de Datos</span><h2>Gettel / Toyota</h2></div>
       </div>
-      <p class="manual-lede">Gettel/Toyota son ventas que se hacen a través de esa cuenta — todos los días hay que sumarlas y volcar el total al Excel Cierre del mes, y aparte hay que ir registrando los pagos que te van haciendo por esas ventas. Antes esto se sumaba y se tipeaba a mano, día por día.</p>
+      <p class="manual-lede">Gettel/Toyota son ventas que se hacen a través de esa cuenta, con sus propios reportes de cupones de combustible (uno por vendedor). Este módulo guarda el Monto y los Galones de cada día directo en la página, sin generar ningún Excel — y esos mismos montos alimentan la categoría "Gettel" del resumen de Ventas por Departamento de Reporte Diario.</p>
       <h3>Qué necesitás antes de empezar</h3>
-      <ul class="manual-need">
-        <li>El Excel Cierre del mes (el mismo de siempre).</li>
-        <li>Para Cupones Diarios: el Excel diario de Gettel/Toyota, o si no lo tenés en Excel, un PDF o una foto legible del reporte.</li>
-        <li>Para Pagos: el o los PDF de los recibos de pago que te mandan.</li>
-      </ul>
+      <ul class="manual-need"><li>El Excel o PDF de cupones de combustible del vendedor (Gettel o Toyota) — se pueden mezclar varios archivos en la misma carga.</li></ul>
       <h3>Cómo se usa</h3>
       <ol class="manual-steps">
-        <li><span class="n">1</span><p>Subís el Excel Cierre una sola vez, arriba de todo. <span class="manual-shared-tag">Compartido</span></p></li>
-        <li><span class="n">2</span><p><b>Cupones Diarios</b>: subís el Excel diario (o un PDF/foto si no tenés el Excel) y Procesás — resume el día y lo suma al Cierre.</p></li>
-        <li><span class="n">3</span><p><b>Pagos</b>: subís uno o más PDF de recibos de pago y Procesás — se cargan en la hoja PAGO Cupones.</p></li>
+        <li><span class="n">1</span><p>Barra lateral → Gettel / Toyota → Cargar. Subís el o los archivos y Guardás.</p></li>
+        <li><span class="n">2</span><p>"Ver guardado" muestra Monto y Galones por día de cada vendedor, más la columna "Local Account" (de Store Info) y el DIF calculado (Local Account − Gettel − Toyota).</p></li>
+        <li><span class="n">3</span><p>"Documentos" guarda una copia de cada archivo ya subido.</p></li>
       </ol>
+      <div class="manual-tip"><div><b>Tené en cuenta:</b> un DIF distinto de cero es normal si todavía falta cargar Store Info o el reporte de algún vendedor para ese día — se resuelve solo apenas se completa lo que falta.</div></div>
     </section>
 
-    <section class="manual-module" id="reporte" style="--c: var(--c-reporte)">
+    <section class="manual-module" id="cmv" style="--c: var(--c-cmv)">
       <div class="manual-module-head">
-        <div class="manual-module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg></div>
-        <div><span class="manual-kicker">Herramientas</span><h2>Reporte Diario</h2></div>
+        <div class="manual-module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="6" rx="7" ry="3"/><path d="M5 6v6c0 1.7 3.1 3 7 3s7-1.3 7-3V6"/><path d="M5 12v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg></div>
+        <div><span class="manual-kicker">Carga de Datos</span><h2>CMV</h2></div>
       </div>
-      <p class="manual-lede">Todos los días el sistema del POS genera un PDF de cierre — el "Reporte Diario" — con toda la información de ese día: cuánto se vendió por departamento, y los datos generales de la tienda (ventas totales, tarjetas, etc.). Este módulo lee ese mismo PDF y reparte la información en dos destinos distintos: las ventas por producto van al Excel de Ventas, y la información general del día (Store Info) va al Excel Cierre.</p>
+      <p class="manual-lede">Lleva el costo de la mercadería vendida — sin generar ningún Excel Maestro. Dos partes independientes: <b>Costo</b> guarda el costo/precio de cada producto (por UPC) que manda el distribuidor, y <b>Ventas</b> guarda cuánto se vendió de cada producto según el POS, calculando Costo/Margen en el momento contra el Costo ya cargado.</p>
       <h3>Qué necesitás antes de empezar</h3>
       <ul class="manual-need">
-        <li>El o los PDF de cierre diario del POS (se pueden subir varios días juntos).</li>
-        <li>Según qué cuadro proceses: el Excel de Ventas o el Excel Cierre del mes correspondiente.</li>
+        <li>Para Costo: el o los archivos de departamento que manda el distribuidor (Elistar).</li>
+        <li>Para Ventas: el o los reportes de ventas que baja del sistema del POS (hace falta indicar mes/año, el archivo no lo trae).</li>
       </ul>
       <h3>Cómo se usa</h3>
       <ol class="manual-steps">
-        <li><span class="n">1</span><p>Subís el o los PDF de Reporte Diario, arriba de todo. <span class="manual-shared-tag">Compartido</span></p></li>
-        <li><span class="n">2</span><p><b>Ventas por Departamento</b>: subís el Excel de Ventas y Procesás — carga, producto por producto, lo que se vendió ese día.</p></li>
-        <li><span class="n">3</span><p><b>Store Info</b>: subís el Excel Cierre y Procesás — completa la fila del día con los datos generales de la tienda.</p></li>
+        <li><span class="n">1</span><p>Barra lateral → CMV → Cargar.</p></li>
+        <li><span class="n">2</span><p><b>Costo</b>: subís uno o más archivos de departamento y Guardás — reemplaza el costo/precio ya cargado para esos productos, sin tocar los demás.</p></li>
+        <li><span class="n">3</span><p><b>Ventas</b>: subís el reporte del mes, elegís mes/año, y Guardás.</p></li>
+        <li><span class="n">4</span><p>"Costo" / "Ventas" en la barra lateral muestran lo ya guardado, con Costo/Margen/Margen% calculados solos.</p></li>
       </ol>
-      <div class="manual-tip"><div><b>Tené en cuenta:</b> los dos cuadros son independientes — si solo necesitás uno de los dos, no hace falta procesar el otro.</div></div>
+      <div class="manual-tip"><div><b>Ojo:</b> cada carga de Ventas <b>reemplaza</b> todo lo que había cargado para ese departamento ese mes — no se suma a lo anterior. Subí siempre el reporte completo del mes para ese departamento, no una parte.</div></div>
     </section>
 
     <section class="manual-module" id="lottery" style="--c: var(--c-lottery)">
       <div class="manual-module-head">
         <div class="manual-module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v2a2 2 0 0 0 0 4v2a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-2a2 2 0 0 0 0-4z"/><path d="M13 7v10" stroke-dasharray="2 2"/></svg></div>
-        <div><span class="manual-kicker">Herramientas</span><h2>Lottery</h2></div>
+        <div><span class="manual-kicker">Carga de Datos</span><h2>Lottery</h2></div>
       </div>
-      <p class="manual-lede">Hay que cargar al Excel de Lottery del mes las ventas de lotería de todos los días. Para eso sirven dos tipos de reporte distintos, según cuál tengas a mano ese día: el <b>Reporte Diario Lottery</b> (un PDF que se descarga del portal de Retailer Wizard Lottery) y el <b>Reporte Diario</b> del propio POS (el mismo "Department Sales Report" que usa el módulo Reporte Diario, de arriba).</p>
+      <p class="manual-lede">Se arma en bloques de 7 días (lunes a domingo), igual que el Excel de Lottery real, con Subtotal y Debito calculados solos. Las columnas ONLINE/SKOFF ya se completan solas apenas subís el PDF de Reporte Diario (arriba) — acá solo hace falta cargar, aparte, el <b>Daily Sales Report</b> que se baja del portal de Florida Lottery.</p>
       <h3>Qué necesitás antes de empezar</h3>
-      <ul class="manual-need">
-        <li>El Excel de Lottery del mes.</li>
-        <li>El o los PDF del tipo de reporte que vayas a cargar (no hace falta tener los dos).</li>
-      </ul>
+      <ul class="manual-need"><li>El o los PDF de Daily Sales Report — se pueden subir varios juntos (podés cargar el mes entero de una vez).</li></ul>
       <h3>Cómo se usa</h3>
       <ol class="manual-steps">
-        <li><span class="n">1</span><p>Subís el Excel de Lottery una sola vez, arriba de todo. <span class="manual-shared-tag">Compartido</span></p></li>
-        <li><span class="n">2</span><p><b>Reporte Diario Lottery</b>: subís uno o más Reportes Diarios de Retailer Wizard Lottery (PDF) y Procesás.</p></li>
-        <li><span class="n">3</span><p><b>Reporte Diario</b>: subís uno o más Department Sales Report (PDF) y Procesás.</p></li>
+        <li><span class="n">1</span><p>Barra lateral → Lottery → Cargar PDF. Subís los Daily Sales Report y Guardás — una barra de progreso real muestra cuántos ya se cargaron.</p></li>
+        <li><span class="n">2</span><p>"Cuadro del mes" muestra los bloques de 7 días — hacé click en cualquier celda de Subtotal, Debito o "Cuenta Final" para ver el desglose que la arma y verificarla.</p></li>
+        <li><span class="n">3</span><p>Cargá la fecha real de Chase Bank de cada bloque (el día en que ese pago llega al banco) — se sugiere sola, encadenada de a 7 días desde el bloque más cercano ya confirmado, y se puede corregir a mano; si una fecha rompe la cadencia, el resto de los bloques ya confirmados se realinean solos.</p></li>
+        <li><span class="n">4</span><p>"PDFs cargados" guarda una copia de cada archivo; "Resumen mensual" es para subir el PDF de resumen de fin de mes, solo para tenerlo guardado; "Exportar" arma un Excel o PDF del cuadro del mes con el mismo diseño y colores del Excel real.</p></li>
       </ol>
-      <div class="manual-tip"><div><b>Tené en cuenta:</b> no hace falta cargar los dos tipos de reporte juntos — cada cuadro funciona por su cuenta, con el que tengas disponible ese día.</div></div>
     </section>
 
     <section class="manual-module" id="proveedores" style="--c: var(--c-proveedores)">
       <div class="manual-module-head">
         <div class="manual-module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="7" width="13" height="10" rx="1"/><path d="M14 10h4l3 3v4h-7z"/><circle cx="6" cy="18.5" r="1.6"/><circle cx="17.5" cy="18.5" r="1.6"/></svg></div>
-        <div><span class="manual-kicker">Herramientas</span><h2>Proveedores</h2></div>
+        <div><span class="manual-kicker">Carga de Datos</span><h2>Proveedores</h2></div>
       </div>
-      <p class="manual-lede">Este módulo lee automáticamente las facturas de compra en PDF de cada proveedor (bebidas, cigarrillos, hielo, etc.) y las carga en la hoja de ese proveedor dentro del Excel de Proveedores — reconoce solo, con leer el PDF, de qué proveedor es la factura y en qué hoja va, así que podés subir facturas de varios proveedores distintos juntas, sin separarlas antes. Aparte, cuando le pagás algo a un proveedor con la cuenta de Chase, este módulo registra ese pago en la hoja correspondiente, para que la cuenta corriente de cada proveedor quede al día.</p>
+      <p class="manual-lede">Lee automáticamente las facturas de compra en PDF de cada proveedor (bebidas, cigarrillos, hielo, etc.) y las guarda por proveedor y por mes — sin generar ningún Excel. Reconoce solo, con leer el PDF, de qué proveedor es la factura, así que podés subir facturas de varios proveedores distintos juntas, sin separarlas antes.</p>
       <h3>Qué necesitás antes de empezar</h3>
-      <ul class="manual-need">
-        <li>El Excel de Proveedores — archivo único, se va actualizando con cada carga.</li>
-        <li>Para Cargar Facturas: los PDF de las facturas, de cualquier proveedor, se pueden mezclar todos en la misma carga.</li>
-        <li>Para Cargar Pagos: el extracto de Chase ya categorizado — <b>este paso está temporalmente sin funcionar</b> (el módulo Chase Bank pasó a guardar los movimientos directo en la página en vez de generar ese Excel), hasta que le toque su turno de convertirse igual que Proveedores.</li>
-      </ul>
+      <ul class="manual-need"><li>El o los PDF de factura, de cualquier proveedor — se pueden mezclar todos en la misma carga.</li></ul>
       <h3>Cómo se usa</h3>
       <ol class="manual-steps">
-        <li><span class="n">1</span><p>Subís el Excel de Proveedores una sola vez, arriba de todo. <span class="manual-shared-tag">Compartido</span></p></li>
-        <li><span class="n">2</span><p><b>Cargar Facturas</b>: subís uno o más PDF de factura, de cualquier proveedor, todos juntos, y Procesás. Una factura que ya estaba cargada se salta sola, sin duplicarse. Si no se puede leer un dato con confianza, esa factura no se carga y te avisa cuál revisar a mano.</p></li>
-        <li><span class="n">3</span><p><b>Cargar Pagos (Chase)</b>: subís el extracto de Chase ya categorizado y Procesás — cada pago se ubica solo en la hoja del proveedor que corresponda. <i>Temporalmente sin funcionar, ver arriba.</i></p></li>
+        <li><span class="n">1</span><p>Barra lateral → Proveedores → Cargar factura. Subís uno o más PDF, de cualquier proveedor, todos juntos, y Guardás. Una factura que ya estaba cargada se salta sola, sin duplicarse. Si no se puede leer un dato con confianza, esa factura no se carga y avisa cuál revisar a mano.</p></li>
+        <li><span class="n">2</span><p>"Ver guardado" muestra las facturas del mes agrupadas por proveedor, con el N° de factura linkeado al PDF original.</p></li>
+        <li><span class="n">3</span><p>"Documentos" guarda cada PDF, en una carpeta por proveedor.</p></li>
       </ol>
       <h3>¿Apareció un proveedor nuevo?</h3>
-      <p class="manual-lede" style="margin-bottom: 0;">Si un administrador quiere sumar un proveedor que todavía no está en la lista, no hace falta pedirle a un programador que escriba código nuevo — con "+ Agregar un proveedor nuevo (sin código)" (arriba de esta página, solo visible para administradores) alcanza con crear a mano la hoja del proveedor en el Excel (copiando una pestaña existente) y subir una factura de muestra: el asistente pregunta el N° de Factura, la Fecha y el Monto Total tal cual aparecen en esa factura, y aprende solo a leerlos de ahí en más. Sirve para facturas de texto limpio (digital o escaneo prolijo) — una factura manuscrita sigue necesitando cargarse a mano.</p>
+      <p class="manual-lede" style="margin-bottom: 0;">Si sos administrador y querés sumar un proveedor que todavía no está en la lista, no hace falta pedirle a un programador que escriba código nuevo — con "+ Agregar un proveedor nuevo (sin código)" alcanza con subir una factura de muestra: el asistente pregunta el N° de Factura, la Fecha y el Monto Total tal cual aparecen en esa factura, y aprende solo a leerlos de ahí en más. Sirve para facturas de texto limpio (digital o escaneo prolijo) — una factura manuscrita sigue necesitando cargarse a mano.</p>
       <h3>Qué tan confiable es cada proveedor</h3>
       <p style="margin: 0 0 12px; color: var(--text-soft); font-size: 13.5px;">Arriba de la página hay una lista desplegable con el mismo detalle — es una guía, no una regla fija.</p>
       <div class="manual-supplier-grid">
@@ -246,35 +276,36 @@
             <li>Johnson Brothers</li><li>Flori-Gas</li><li>Airgas National Carbonation</li>
             <li>Express Beverage of Tampa</li><li>FS Wholesale</li><li>LMT Trading</li>
             <li>Overflow Group Distribution</li><li>Swisher</li><li>Signarama</li><li>Midtown Wholesale</li>
+            <li>SkyHarvest USA</li>
           </ul>
         </div>
         <div class="manual-supplier-col">
           <div class="head"><span class="dot-check"></span>Revisá el resultado después</div>
           <ul>
             <li>Kooler Ice</li><li>Sam's Club</li><li>Red Bull</li><li>Colonial Wholesale</li>
-            <li>AZ Southeast Distributors</li><li>Coca-Cola</li><li>Pepsi</li><li>Brandon Liu</li><li>Slush Puppies</li>
+            <li>AZ Southeast Distributors</li><li>Coca-Cola</li><li>Pepsi</li>
           </ul>
         </div>
       </div>
+      <p style="margin: 12px 0 0; color: var(--text-soft); font-size: 13px;">Brandon Liu, Slush Puppies y Manatee County Utilities se siguen cargando a mano — sus facturas son manuscritas o no aplica automatizarlas.</p>
     </section>
 
-    <section class="manual-module" id="caja" style="--c: var(--c-caja)">
+    <section class="manual-module" id="horas" style="--c: var(--c-horas)">
       <div class="manual-module-head">
-        <div class="manual-module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="10" width="18" height="10" rx="1"/><path d="M6 10V7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v3"/><path d="M9 15h6"/></svg></div>
-        <div><span class="manual-kicker">Carga de Datos</span><h2>Caja</h2></div>
+        <div class="manual-module-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg></div>
+        <div><span class="manual-kicker">Carga de Datos</span><h2>Horas de Trabajo</h2></div>
       </div>
-      <p class="manual-lede">Acá no se sube nada — Caja cruza en el momento lo que ya guardaron Chase Bank, Lottery y Store Info para el mes que estés mirando (Depósitos, Food Truck/Hielo, Cuenta Final, Total Sales/Cash/TC/Other/Total Revenue), y calcula solo el DIF EFECT y el Saldo día por día. Se accede desde el ícono de la barra lateral, no aparece como una tarjeta para subir un archivo.</p>
-      <h3>Qué podés cargar a mano</h3>
-      <ul class="manual-need">
-        <li>Los Gastos en efectivo de cada día.</li>
-        <li>El Saldo Inicial del mes (por default es el Saldo Final calculado del mes anterior) y, si hace falta, un ajuste manual del Saldo Final.</li>
-      </ul>
+      <p class="manual-lede">Reemplaza la transcripción a mano del reporte semanal "Clock In/Out Detail Report" del POS (uno por semana, escaneado) — lee el total de horas trabajadas de cada empleado y calcula el pago (horas × tarifa por hora − descuento) en el momento, sin generar ningún Excel.</p>
+      <h3>Qué necesitás antes de empezar</h3>
+      <ul class="manual-need"><li>El PDF semanal "Clock In/Out Detail Report" — se pueden subir varias semanas juntas.</li></ul>
       <h3>Cómo se usa</h3>
       <ol class="manual-steps">
-        <li><span class="n">1</span><p>Entrás desde la barra lateral (grupo Book Keeping) al mes que querés ver.</p></li>
-        <li><span class="n">2</span><p>Todo lo que ya cargaste por Chase Bank, Lottery y Reporte Diario aparece solo, sin tener que subir nada de nuevo.</p></li>
-        <li><span class="n">3</span><p>Completás los Gastos de cada día y, si hace falta, el Saldo Inicial/Final — Guardás y el DIF EFECT/Saldo se recalculan solos.</p></li>
+        <li><span class="n">1</span><p>Barra lateral → Horas de Trabajo → Cargar reporte. Subís el o los PDF semanales y Guardás — una barra de progreso real muestra el avance (el OCR de esta tabla puede tardar).</p></li>
+        <li><span class="n">2</span><p>"Ver guardado" muestra un bloque por semana con Horas/Tarifa por hora/Descuento de cada empleado (todo editable) — el monto a pagar se calcula solo.</p></li>
+        <li><span class="n">3</span><p>"+ Agregar empleado" suma a mano a alguien que el PDF no haya podido leer.</p></li>
+        <li><span class="n">4</span><p>"Documentos" — el PDF semanal queda guardado como "Reporte semanal"; los comprobantes de pago a empleados se suben aparte, con el label "Pago".</p></li>
       </ol>
+      <div class="manual-tip"><div><b>Tené en cuenta:</b> la tarifa arranca en $15/hora por default en cada semana nueva y no se recuerda de una semana a la otra — revisala si algún empleado cobra distinto.</div></div>
     </section>
 
     <div class="manual-section-heading">
@@ -404,10 +435,21 @@
       </ol>
       <div class="manual-tip"><div><b>Tené en cuenta:</b> el margen de tolerancia acá es $0 exacto en los 4 chequeos.</div></div>
     </section>
+
+    <div class="manual-section-heading">
+      <h2>Herramientas (heredado)</h2>
+      <p>El sistema original de la app, de cuando cada módulo transformaba un Excel en vez de guardar los datos en la página.</p>
+    </div>
+
+    <section class="manual-intro" id="herramientas" style="grid-column: 1 / -1;">
+      <p style="margin-bottom: 10px;">Antes de que existiera Carga de Datos, cada módulo (Chase Bank, CMV, Gettel/Toyota, Reporte Diario, Lottery, Proveedores) funcionaba distinto: subías tu Excel real + un PDF, apretabas <b>Procesar</b>, y la página escribía el resultado en una copia de ese Excel que se descargaba al toque — nunca tocaba el archivo original. Hoy <b>ya no hace falta para el trabajo del día a día</b>: todo lo que antes se cargaba ahí (Ventas por Departamento, Store Info, Lottery, Gettel/Toyota, CMV, Proveedores, Chase Bank) tiene su equivalente en Carga de Datos, que guarda todo dentro de la propia página sin generar ningún Excel.</p>
+      <p style="margin-bottom: 10px;">Sigue existiendo y funcionando (se entra por URL directa, ya no aparece en el buscador ni en la navegación normal) por si alguna vez hiciera falta seguir escribiendo un Excel real puntual. Si entrás ahí por error, se reconoce fácil: cada cuadro pide subir tu propio Excel/PDF y tiene un botón <b>Procesar</b> — nada de eso existe del lado de Carga de Datos.</p>
+      <p style="margin: 0;">Con el tiempo, la idea es que este sistema deje de hacer falta del todo — no se agregan módulos nuevos acá, solo se mantiene por compatibilidad mientras se sigue confirmando que Carga de Datos ya cubre lo mismo.</p>
+    </section>
   </div>
 </div>
 
-<p class="manual-footnote">Manual en construcción — esta versión cubre los módulos de Herramientas y Controles.</p>
+<p class="manual-footnote">Este manual se actualiza cada vez que se suma o cambia algo importante en la página — la próxima actualización llega cuando se mejore más el proyecto.</p>
 
 <style>
   .manual-page { max-width: none; }
@@ -436,6 +478,7 @@
     --c-caja: #EA580C;
     --c-cierre-mensual: #334155;
     --c-valuacion: #059669;
+    --c-horas: #0891B2;
   }
 
   .manual-toc {

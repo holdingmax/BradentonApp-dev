@@ -4,40 +4,12 @@
 {% endblock %}
 {% block content %}
 {% from "_month_jump.html" import month_jump %}
-{% from "_pdf_links.html" import pdf_links %}
 <div class="page-header">
   <h1>Lottery — Resumen mensual</h1>
-  <p class="page-subtitle">El PDF de resumen mensual que manda Florida Lottery — se guarda tal cual para consultarlo, no se lee ni completa nada solo.</p>
+  <p class="page-subtitle">Las dos tablas de cierre que el Excel de Lottery trae al pie — "LIQUIDACION CIERRE LOTTERY" y "LIQUIDACION CIERRE RECAUDACION COMISIONES" — recalculadas solas con lo que ya cargaste en Lottery este mes. No hace falta subir nada acá. Tocá cualquier monto para ver de dónde sale.</p>
 </div>
 
 <div class="card">
-  <h2>Subir resumen</h2>
-  <p class="muted">El resumen que llega ya con su propio mes/año impreso — elegí a cuál corresponde antes de subirlo.</p>
-  <form method="post" action="{{ url_for('carga_datos_lottery_resumen_mensual_subir') }}" enctype="multipart/form-data" class="resumen-upload-form">
-    <div class="resumen-upload-row">
-      <div class="resumen-field">
-        <label class="muted">Mes</label>
-        <select name="month">
-          {% for i in range(1, 13) %}<option value="{{ i }}" {{ 'selected' if i == month }}>{{ ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"][i-1] }}</option>{% endfor %}
-        </select>
-      </div>
-      <div class="resumen-field resumen-field-year">
-        <label class="muted">Año</label>
-        <input type="number" name="year" value="{{ year }}">
-      </div>
-    </div>
-    <div class="resumen-field resumen-field-file">
-      <label class="muted">PDF del resumen</label>
-      <input type="file" name="resumen_file" accept="application/pdf" required>
-    </div>
-    <div class="form-actions">
-      <button type="submit">Guardar</button>
-    </div>
-  </form>
-</div>
-
-<div class="card" style="margin-top: 18px;">
-  <h2>Resúmenes guardados</h2>
   <div class="historial-nav">
     <a href="{{ url_for('carga_datos_lottery_resumen_mensual', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
     <div class="historial-nav-title">
@@ -51,61 +23,142 @@
     <a href="{{ url_for('carga_datos_lottery_resumen_mensual', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
   </div>
 
-  {% if docs %}
-  <ul class="doc-list">
-    {% for doc in docs %}
-    <li class="doc-list-item">
-      <span class="doc-list-icon">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>
-      </span>
-      <div class="doc-list-info">
-        {{ pdf_links(url_for('carga_datos_documento_descargar', document_id=doc.id), doc.filename) }}
-        <span class="muted">Subido el {{ doc.uploaded_at }}</span>
-      </div>
-      <form method="post" action="{{ url_for('carga_datos_documento_eliminar', document_id=doc.id) }}" onsubmit="return confirm('¿Eliminar este documento?');">
-        <button type="submit" class="btn-danger-soft">Eliminar</button>
-      </form>
-    </li>
+  {% if closing.has_data %}
+  {% macro money(v) -%}
+  {%- if v is none -%}—{%- else -%}${{ "{:,.2f}".format(v) }}{%- endif -%}
+  {%- endmacro %}
+  {% macro pop(uid, label, value, rows) %}
+  <button type="button" class="popover-trigger closing-value" data-popover-target="{{ uid }}">{{ money(value) }}</button>
+  <div class="popover-panel totals-breakdown-popover" id="{{ uid }}">
+    <div class="totals-breakdown-title">{{ label }}</div>
+    {% for row_label, row_value in rows %}
+    <div class="totals-breakdown-row"><span>{{ row_label }}</span><span>{{ money(row_value) }}</span></div>
     {% endfor %}
-  </ul>
+  </div>
+  {% endmacro %}
+  {% set uidp = year ~ '-' ~ month %}
+
+  <div class="closing-tables">
+    <div class="closing-table-block">
+      <h3>Liquidacion Cierre Lottery</h3>
+      <table class="closing-table">
+        <thead><tr><th>Cuenta</th><th>Debe</th><th>Haber</th></tr></thead>
+        <tbody>
+          <tr class="closing-row-debe">
+            <td>Caja-On Line</td>
+            <td>{{ pop('t1-a-' ~ uidp, 'Caja-On Line = suma de "Sales" (Daily Sales Report, ONLINE) de todos los días del mes', closing.caja_online, [('Sales sumado del mes', closing.total_sales), ('Días con datos', closing.days_with_data)]) }}</td>
+            <td></td>
+          </tr>
+          <tr class="closing-row-debe">
+            <td>Caja-Skoff</td>
+            <td>{{ pop('t1-b-' ~ uidp, 'Caja-Skoff = "Net Sales" Skoff (Reporte Diario) sumado del mes', closing.caja_skoff, [('Net Sales Skoff sumado del mes', closing.total_skoff_net_sales)]) }}</td>
+            <td></td>
+          </tr>
+          <tr class="closing-row-debe">
+            <td>Gastos Adminits-Loteria</td>
+            <td>{{ pop('t1-c-' ~ uidp, 'Gastos Adminits-Loteria — valor fijo, no se calcula ni se edita', closing.gastos_admin, [('Fijo', closing.gastos_admin)]) }}</td>
+            <td></td>
+          </tr>
+          <tr class="closing-row-haber">
+            <td>a Lottery a Pagar</td>
+            <td></td>
+            <td>{{ pop('t1-d-' ~ uidp, 'a Lottery a Pagar = Caja-On Line', closing.lottery_a_pagar_1, [('Caja-On Line', closing.caja_online)]) }}</td>
+          </tr>
+          <tr class="closing-row-haber">
+            <td>a Lottery a Pagar</td>
+            <td></td>
+            <td>{{ pop('t1-e-' ~ uidp, 'a Lottery a Pagar = Caja-Skoff + Gastos Adminits-Loteria', closing.lottery_a_pagar_2, [('Caja-Skoff', closing.caja_skoff), ('Gastos Adminits-Loteria', closing.gastos_admin)]) }}</td>
+          </tr>
+          <tr class="closing-row-total">
+            <td>Total</td>
+            <td>{{ pop('t1-f-' ~ uidp, 'Total Debe = Caja-On Line + Caja-Skoff + Gastos Adminits-Loteria', closing.debe_total, [('Caja-On Line', closing.caja_online), ('Caja-Skoff', closing.caja_skoff), ('Gastos Adminits-Loteria', closing.gastos_admin)]) }}</td>
+            <td>{{ pop('t1-g-' ~ uidp, 'Total Haber = las dos filas "a Lottery a Pagar"', closing.haber_total, [('a Lottery a Pagar', closing.lottery_a_pagar_1), ('a Lottery a Pagar', closing.lottery_a_pagar_2)]) }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="closing-table-block">
+      <h3>Liquidacion Cierre Recaudacion Comisiones</h3>
+      <table class="closing-table">
+        <thead><tr><th>Cuenta</th><th>Debe</th><th>Haber</th></tr></thead>
+        <tbody>
+          <tr class="closing-row-debe">
+            <td>Lottery a Pagar</td>
+            <td>{{ pop('t2-a-' ~ uidp, 'Lottery a Pagar = a Chase Bank + a Comision On-Line + a Comision Skoff', closing.com_lottery_a_pagar, [('a Chase Bank', closing.com_chase_bank), ('a Comision On-Line', closing.com_comision_online), ('a Comision Skoff', closing.com_comision_skoff)]) }}</td>
+            <td></td>
+          </tr>
+          <tr class="closing-row-debe">
+            <td>Lottery a Pagar-Online</td>
+            <td>{{ pop('t2-b-' ~ uidp, 'Lottery a Pagar-Online = −(Pagos ONLINE sumado del mes)', closing.com_lottery_a_pagar_online, [('Pagos Online sumado del mes', closing.total_pagos_online)]) }}</td>
+            <td></td>
+          </tr>
+          <tr class="closing-row-debe">
+            <td>Lottery a Pagar-skoff</td>
+            <td>{{ pop('t2-c-' ~ uidp, 'Lottery a Pagar-skoff = −(Pagos SKOFF sumado del mes)', closing.com_lottery_a_pagar_skoff, [('Pagos Skoff sumado del mes', closing.total_pagos_skoff)]) }}</td>
+            <td></td>
+          </tr>
+          <tr class="closing-row-haber">
+            <td>a Chase Bank</td>
+            <td></td>
+            <td>{{ pop('t2-d-' ~ uidp, 'a Chase Bank = suma de "Debito" de cada bloque semanal del mes (Cuadro del mes)', closing.com_chase_bank, [('Debito sumado del mes', closing.total_net_debit)]) }}</td>
+          </tr>
+          <tr class="closing-row-haber">
+            <td>a Comision On-Line</td>
+            <td></td>
+            <td>{{ pop('t2-e-' ~ uidp, 'a Comision On-Line = −(Comis + Prize Free Plays sumado del mes)', closing.com_comision_online, [('Comis + Prize Free Plays del mes', closing.total_total_comm)]) }}</td>
+          </tr>
+          <tr class="closing-row-haber">
+            <td>a Comision Skoff</td>
+            <td></td>
+            <td>{{ pop('t2-f-' ~ uidp, 'a Comision Skoff = −(Sales Com sumado del mes)', closing.com_comision_skoff, [('Sales Com del mes', closing.total_sales_comm)]) }}</td>
+          </tr>
+          <tr class="closing-row-haber">
+            <td>a Caja</td>
+            <td></td>
+            <td>{{ pop('t2-g-' ~ uidp, 'a Caja = −(Pagos Online) − (Pagos Skoff)', closing.com_caja, [('Pagos Online sumado del mes', closing.total_pagos_online), ('Pagos Skoff sumado del mes', closing.total_pagos_skoff)]) }}</td>
+          </tr>
+          <tr class="closing-row-total">
+            <td>Total</td>
+            <td>{{ pop('t2-h-' ~ uidp, 'Total Debe = Lottery a Pagar + Lottery a Pagar-Online + Lottery a Pagar-skoff', closing.com_debe_total, [('Lottery a Pagar', closing.com_lottery_a_pagar), ('Lottery a Pagar-Online', closing.com_lottery_a_pagar_online), ('Lottery a Pagar-skoff', closing.com_lottery_a_pagar_skoff)]) }}</td>
+            <td>{{ pop('t2-i-' ~ uidp, 'Total Haber = a Chase Bank + a Comision On-Line + a Comision Skoff + a Caja', closing.com_haber_total, [('a Chase Bank', closing.com_chase_bank), ('a Comision On-Line', closing.com_comision_online), ('a Comision Skoff', closing.com_comision_skoff), ('a Caja', closing.com_caja)]) }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
   {% else %}
-  <p class="muted resumen-empty">Todavía no hay ningún resumen guardado este mes.</p>
+  <p class="muted resumen-empty">Todavía no hay ningún dato de Lottery cargado para este mes — el cuadro se completa solo apenas subas algún PDF (Reporte Diario o Daily Sales Report).</p>
   {% endif %}
 </div>
 
 <style>
-  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 22px; padding-bottom: 18px; border-bottom: 1px solid var(--border); }
   .historial-nav-btn { text-decoration: none; display: inline-block; }
   .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
   .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
 
-  /* Formulario de subida más prolijo -- pedido explícito del usuario
-     (2026-09-18): la grilla genérica de 3 campos apretados uno al lado del
-     otro (con el nombre del PDF elegido cortándose) quedaba "horrible".
-     Mes/Año en su propia fila corta, el input de archivo en su propia fila
-     ancha (nunca se corta), y el botón separado al final. */
-  .resumen-upload-form { display: flex; flex-direction: column; gap: 16px; margin-top: 14px; max-width: 480px; }
-  .resumen-upload-row { display: flex; gap: 16px; }
-  .resumen-field { display: flex; flex-direction: column; gap: 5px; flex: 1 1 auto; }
-  .resumen-field-year { flex: 0 1 140px; }
-  .resumen-field select, .resumen-field input[type="number"] { padding: 8px 10px; }
-  .resumen-field-file input[type="file"] { width: 100%; box-sizing: border-box; }
-  .resumen-upload-form .form-actions { margin-top: 0; }
-
-  .doc-list { list-style: none; margin: 18px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-  .doc-list-item {
-    display: flex; align-items: center; gap: 12px;
-    padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface-alt);
-    flex-wrap: wrap;
-  }
-  .doc-list-icon { display: flex; align-items: center; color: var(--accent); flex-shrink: 0; }
-  .doc-list-icon svg { width: 20px; height: 20px; }
-  .doc-list-info { display: flex; flex-direction: column; gap: 2px; flex: 1 1 auto; min-width: 160px; }
-  .doc-list-info a { font-weight: 600; text-decoration: none; }
-  .doc-list-info a:hover { text-decoration: underline; }
-  .doc-list-info .muted { font-size: 11.5px; }
-  .doc-list-item form { margin: 0; }
-  .doc-list-item form button { margin-top: 0; padding: 6px 12px; font-size: 12px; }
   .resumen-empty { margin-top: 18px; }
+
+  /* Tablas de cierre -- mismo lenguaje visual (amarillo/verde) que el
+     Excel real, para que el usuario reconozca de un vistazo qué fila es
+     cuál sin tener que leer letra por letra. Cada monto es un botón
+     .popover-trigger (mismo mecanismo genérico de base.html que ya usan
+     Store Info/Lottery historial) -- tocarlo muestra de dónde sale. */
+  .closing-tables { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; margin-top: 18px; }
+  .closing-table-block h3 { margin: 0 0 10px; font-size: 14.5px; }
+  .closing-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  .closing-table th { text-align: left; padding: 6px 10px; color: var(--text-soft); font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.03em; border-bottom: 1px solid var(--border); }
+  .closing-table th:not(:first-child), .closing-table td:not(:first-child) { text-align: right; }
+  .closing-table td { padding: 7px 10px; border-bottom: 1px solid var(--border); }
+  .closing-row-debe { background: #FEF9C3; }
+  .closing-row-haber { background: #DCFCE7; }
+  .closing-row-total td { font-weight: 700; border-top: 2px solid var(--border); background: var(--surface-alt); }
+  .closing-value { font-weight: 700; }
+
+  .totals-breakdown-popover { min-width: 240px; }
+  .totals-breakdown-title { font-weight: 700; font-size: 11.5px; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  .totals-breakdown-row { display: flex; justify-content: space-between; gap: 16px; padding: 2px 0; }
+  .totals-breakdown-row span:first-child { color: var(--text-soft); }
 </style>
 {% endblock %}
