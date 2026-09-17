@@ -602,19 +602,38 @@ def build_chase_export_workbook(rows, year, month, dest_path):
     "quiero que el chase tenga una opcion de exportar el excel desde la
     pagina ya con la categorizacion automatica hecha". `rows` es la lista
     tal cual devuelve chase_db.get_month_transactions.
+
+    Ajustes 2026-09-17, pedido explícito del usuario:
+    - **Type y Detalle intercambiadas de lugar** -- Detalle ahora va MÁS A
+      LA DERECHA que Type (antes E=Detalle/F=Type, ahora E=Type/F=Detalle).
+    - **Autofiltro** en toda la fila de encabezado (`auto_filter.ref`) --
+      "se debería poder agregar un filtro a la columna de Detalle... para
+      tener la información rápida" -- Excel solo permite autofiltro por
+      RANGO, no por una sola columna suelta, así que se aplica a la tabla
+      entera (les da flechita de filtro a las 6 columnas, Detalle incluida
+      -- más útil igual, de paso deja filtrar por Type).
+    - **Amount/Balance centrados** -- "que los montos... estén todos
+      alineados al centro en su columna, así no se genera ese malestar
+      visual" -- antes quedaban alineados como cualquier número (a la
+      derecha por default de Excel), lo que hace que un monto negativo (con
+      el signo "-" a la izquierda) y uno positivo de otro largo "salten" de
+      posición visual al bajar por la lista. Centrado, el punto medio de
+      cada monto queda siempre en el mismo lugar sin importar su signo o
+      largo.
     """
     import openpyxl
-    from openpyxl.styles import Font
+    from openpyxl.styles import Alignment, Font
 
     workbook = openpyxl.Workbook()
     sheet = workbook.active
     sheet.title = "Chase"
 
-    headers = ["Posting Date", "Description", "Amount", "Balance", "Detalle", "Type"]
+    headers = ["Posting Date", "Description", "Amount", "Balance", "Type", "Detalle"]
     sheet.append(headers)
     for cell in sheet[1]:
         cell.font = Font(bold=True)
 
+    center = Alignment(horizontal="center")
     for row in rows:
         sheet.append(
             [
@@ -622,13 +641,18 @@ def build_chase_export_workbook(rows, year, month, dest_path):
                 row.get("description"),
                 row.get("amount"),
                 row.get("balance"),
-                row.get("detalle") or "",
                 row.get("type") or "",
+                row.get("detalle") or "",
             ]
         )
+        new_row = sheet[sheet.max_row]
+        new_row[2].alignment = center  # Amount
+        new_row[3].alignment = center  # Balance
 
-    for col_letter, width in zip("ABCDEF", (13, 42, 12, 12, 24, 16)):
+    for col_letter, width in zip("ABCDEF", (13, 42, 12, 12, 16, 24)):
         sheet.column_dimensions[col_letter].width = width
+
+    sheet.auto_filter.ref = sheet.dimensions
 
     workbook.save(dest_path)
     return dest_path
