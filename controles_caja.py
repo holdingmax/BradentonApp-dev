@@ -45,6 +45,7 @@ from datetime import date, datetime
 import pandas as pd
 from openpyxl import load_workbook
 
+from controles_utils import rounded_diff
 from caja import (
     CAJA_COL_CHASE_DEPOSITS,
     CAJA_COL_EXPENSES_CASH,
@@ -251,7 +252,7 @@ def _name_found_in_descripcion(name, descripcion):
 def _build_check(label, caja_value, mayor_value, unit="$"):
     caja_value = round(caja_value, 2)
     mayor_value = round(mayor_value, 2)
-    diff = round(caja_value - mayor_value, 2)
+    diff = rounded_diff(caja_value, mayor_value)
     return {
         "label": label,
         "caja_value": caja_value,

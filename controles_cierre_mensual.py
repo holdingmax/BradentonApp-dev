@@ -28,7 +28,7 @@ from datetime import datetime, timedelta
 
 from openpyxl import load_workbook
 
-from controles_utils import eval_literal_sum_cell
+from controles_utils import eval_literal_sum_cell, rounded_diff
 from reporte_diario import (
     DATE_SCAN_COLUMN,
     HEADER_ROW,
@@ -134,14 +134,8 @@ def _sum_store_info_month(sheet, year, month):
     return totals, missing_days, periods_seen
 
 
-def _rounded_diff(pdf_value, excel_value):
-    """round(..., 2), but never -0.00 -- confuses more than it clarifies."""
-    diff = round(pdf_value - excel_value, 2)
-    return diff if diff != 0 else 0.0
-
-
 def _build_check(label, pdf_value, excel_value, unit="$", tolerance=TOLERANCE):
-    diff = _rounded_diff(pdf_value, excel_value)
+    diff = rounded_diff(pdf_value, excel_value)
     return {
         "label": label,
         "pdf_value": round(pdf_value, 2),
@@ -392,7 +386,7 @@ def check_department_sales_monthly(ventas_path, monthly_pdf_path):
         excel_count = int(round(excel_bucket["count"]))
         pdf_count = int(round(pdf_bucket["count"]))
         count_diff = pdf_count - excel_count
-        amount_diff = _rounded_diff(pdf_bucket["amount"], excel_bucket["amount"])
+        amount_diff = rounded_diff(pdf_bucket["amount"], excel_bucket["amount"])
         checks.append(
             {
                 "label": label,
@@ -414,7 +408,7 @@ def check_department_sales_monthly(ventas_path, monthly_pdf_path):
     total_check = None
     if printed_totals is not None:
         total_count_diff = printed_totals["count"] - excel_grand_count
-        total_amount_diff = _rounded_diff(printed_totals["amount"], excel_grand_amount)
+        total_amount_diff = rounded_diff(printed_totals["amount"], excel_grand_amount)
         total_check = {
             "pdf_count": printed_totals["count"],
             "excel_count": excel_grand_count,

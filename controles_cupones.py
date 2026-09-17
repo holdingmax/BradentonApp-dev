@@ -33,6 +33,7 @@ from datetime import datetime
 import pandas as pd
 from openpyxl import load_workbook
 
+from controles_utils import rounded_diff
 from cupones_append import (
     CUPONES_COL_COUPON,
     CUPONES_COL_DATE,
@@ -248,7 +249,7 @@ def check_cupones_pending(mayor_path, eft_excel_path):
     pending_total_fees = round(sum(c["fees"] for c in pending_coupons), 2)
     pending_total_net = round(sum(c["net"] for c in pending_coupons), 2)
 
-    diff = round(saldo_final - pending_total_gross, 2)
+    diff = rounded_diff(saldo_final, pending_total_gross)
 
     return {
         "period_from": period_from,

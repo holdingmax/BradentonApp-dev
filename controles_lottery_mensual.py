@@ -25,7 +25,7 @@ from datetime import datetime
 
 from openpyxl import load_workbook
 
-from controles_utils import eval_literal_sum_cell
+from controles_utils import eval_literal_sum_cell, rounded_diff
 from reporte_diario import (
     LOTTERY_COL_CASH_BALANCE,
     LOTTERY_COL_COMIS,
@@ -103,7 +103,7 @@ def _sum_lottery_month(sheet, year, month):
 
 
 def _build_check(label, pdf_value, excel_value, unit="$", tolerance=TOLERANCE):
-    diff = round(pdf_value - excel_value, 2)
+    diff = rounded_diff(pdf_value, excel_value)
     return {
         "label": label,
         "pdf_value": round(pdf_value, 2),

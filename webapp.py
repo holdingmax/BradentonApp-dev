@@ -1519,12 +1519,23 @@ def control_cierre_mensual():
                 cierre_path, _cierre_filename = _save_upload_to_workspace(cierre_upload, workdir=workdir)
                 ventas_path, _ventas_filename = _save_upload_to_workspace(ventas_upload, workdir=workdir)
                 pdf_path, _pdf_filename = _save_upload_to_workspace(pdf_upload, workdir=workdir)
-                result = check_store_info_monthly(cierre_path, pdf_path)
-                department_result = check_department_sales_monthly(ventas_path, pdf_path)
             except Exception as exc:
                 flash(f"Error: {exc}", "error")
-                result = None
-                department_result = None
+            else:
+                # Los dos chequeos se aíslan por separado -- un problema con
+                # el Excel de Ventas (o con la sección "Department Sales
+                # Report" del PDF) no debe tirar abajo el resultado de Store
+                # Info si ese sí se pudo calcular bien, y viceversa (bug real
+                # corregido 2026-09-17: antes un solo try/except compartido
+                # descartaba ambos resultados apenas uno de los dos fallaba).
+                try:
+                    result = check_store_info_monthly(cierre_path, pdf_path)
+                except Exception as exc:
+                    flash(f"Error en Store Info: {exc}", "error")
+                try:
+                    department_result = check_department_sales_monthly(ventas_path, pdf_path)
+                except Exception as exc:
+                    flash(f"Error en Ventas por Departamento: {exc}", "error")
     return render_template(
         "control_cierre_mensual.html",
         result=result,
@@ -1631,6 +1642,18 @@ def control_valuacion():
                 bgs_path, _bgs_filename = _save_upload_to_workspace(bgs_upload, workdir=workdir)
                 chevron_path, _chevron_filename = _save_upload_to_workspace(chevron_upload, workdir=workdir)
                 result = check_and_complete_valuation(mayor_path, bgs_path, chevron_path)
+                # El temporal de una corrida anterior (si había uno, ej. el
+                # usuario corrigió algo y volvió a subir los 3 archivos) se
+                # borra antes de reemplazar el puntero en la sesión -- si no,
+                # queda huérfano para siempre en la carpeta temporal del
+                # sistema (bug real corregido 2026-09-17: nada lo borraba
+                # nunca, ni siquiera después de descargarlo).
+                previous_path = session.get("valuacion_download_path")
+                if previous_path and previous_path != result["download_path"] and os.path.isfile(previous_path):
+                    try:
+                        os.remove(previous_path)
+                    except OSError:
+                        pass
                 session["valuacion_download_path"] = result["download_path"]
                 session["valuacion_download_filename"] = result["download_filename"]
             except Exception as exc:

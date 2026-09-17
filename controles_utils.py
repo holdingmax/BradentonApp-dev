@@ -35,3 +35,16 @@ def eval_literal_sum_cell(value, sheet_label):
             )
         return sum(float(token) for token in re.findall(r"-?\d+\.?\d*", body))
     raise ValueError(f"Valor inesperado en una celda de {sheet_label}: {value!r}")
+
+
+def rounded_diff(a, b):
+    """
+    round(a - b, 2), pero nunca -0.00 -- un resto de coma flotante negativo
+    (ej. round(-0.0000001, 2) == -0.0) se muestra como "-$0.00" en pantalla,
+    que confunde más de lo que aclara cuando en realidad da exactamente
+    cero. Compartida entre los controles que restan dos totales (Cierre
+    Mensual, Lottery Mensual, Cupones, Mercadería, Caja) -- antes cada uno
+    tenía (o le faltaba) su propia versión de este mismo cálculo.
+    """
+    diff = round(a - b, 2)
+    return diff if diff != 0 else 0.0

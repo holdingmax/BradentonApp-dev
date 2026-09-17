@@ -49,6 +49,7 @@ from datetime import datetime
 import pandas as pd
 from openpyxl import load_workbook
 
+from controles_utils import rounded_diff
 from proveedores import COL_COMPROB, COL_DATE, COL_DEBE, COL_HABER, _find_last_real_row
 
 # Confirmado con el usuario (2026-09-08): a diferencia de Cupones, acá los
@@ -250,7 +251,7 @@ def check_mercaderia_invoices(proveedores_path, mayor_path):
 
     breakdown.sort(key=lambda item: item["amount"], reverse=True)
     proveedores_total = round(proveedores_total, 2)
-    diff = round(mayor_total - proveedores_total, 2)
+    diff = rounded_diff(mayor_total, proveedores_total)
 
     return {
         "period_from": period_from,
