@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% block head_extra %}
+<style>
+  .reportes-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; margin-top: 22px; }
+  .reportes-card { display: flex; flex-direction: column; gap: 14px; }
+  .reportes-card-head { display: flex; align-items: flex-start; gap: 14px; }
+  .reportes-card-desc { font-size: 12.5px; color: var(--text-soft); line-height: 1.45; margin: 0; }
+  .reportes-soon-badge {
+    display: inline-block; margin-top: 2px; padding: 2px 9px; border-radius: 999px;
+    font-size: 11px; font-weight: 600; background: var(--surface-alt); color: var(--text-soft);
+  }
+  .reportes-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .reportes-form select { padding: 7px 10px; }
+  .reportes-form button { white-space: nowrap; }
+</style>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <span class="eyebrow">Carga de Datos</span>
+  <h1>Reportes</h1>
+  <p class="page-subtitle">Reportes en PDF, con el logo y el nombre de la empresa -- por ahora solo en PDF, más adelante vemos qué más se suma.</p>
+</div>
+
+<div class="reportes-grid">
+  {% for tool in tools %}
+    {% if tool.ready %}
+    <div class="card reportes-card" style="--tool-accent: {{ tool.accent }};">
+      <div class="reportes-card-head">
+        <span class="tool-card-badge">{{ tool.icon|safe }}</span>
+        <span class="tool-card-body">
+          <span class="tool-card-label">{{ tool.label }}</span>
+          <p class="reportes-card-desc">{{ tool.description }}</p>
+        </span>
+      </div>
+      <form class="reportes-form" method="get" action="{{ url_for(tool.pdf_endpoint) }}">
+        <select name="month">
+          {% for name in month_names %}
+          <option value="{{ loop.index }}"{% if loop.index == current_month %} selected{% endif %}>{{ name }}</option>
+          {% endfor %}
+        </select>
+        <select name="year">
+          {% for y in years_by_key.get(tool.key, [current_year]) %}
+          <option value="{{ y }}"{% if y == current_year %} selected{% endif %}>{{ y }}</option>
+          {% endfor %}
+        </select>
+        <button type="submit">Descargar PDF</button>
+      </form>
+    </div>
+    {% else %}
+    <span class="tool-card" style="--tool-accent: {{ tool.accent }};">
+      <span class="tool-card-badge">{{ tool.icon|safe }}</span>
+      <span class="tool-card-body">
+        <span class="tool-card-label">{{ tool.label }}</span>
+        <span class="tool-card-desc">{{ tool.description }}</span>
+        <span class="reportes-soon-badge">Próximamente</span>
+      </span>
+    </span>
+    {% endif %}
+  {% endfor %}
+</div>
+{% endblock %}

@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}{% if request.path.startswith('/controles') or request.path.startswith('/carga-datos/controles') %}Controles{% else %}Herramientas{% endif %}{% endblock %}</title>
+  <title>{% block title %}{% if request.path.startswith('/carga-datos/reportes') %}Reportes{% elif request.path.startswith('/controles') %}Controles{% else %}Herramientas{% endif %}{% endblock %}</title>
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='logo.png') }}">
   <style>
     :root {
@@ -1183,8 +1183,8 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
         </button>
         <nav class="section-switch">
-          <a class="section-switch-item{{ ' active' if not request.path.startswith('/carga-datos/controles') else '' }}" href="{{ url_for('carga_datos_index') }}">Herramientas</a>
-          <a class="section-switch-item{{ ' active' if request.path.startswith('/carga-datos/controles') else '' }}" href="{{ url_for('carga_datos_controles') }}">Controles</a>
+          <a class="section-switch-item{{ ' active' if not request.path.startswith('/carga-datos/reportes') else '' }}" href="{{ url_for('carga_datos_index') }}">Herramientas</a>
+          <a class="section-switch-item{{ ' active' if request.path.startswith('/carga-datos/reportes') else '' }}" href="{{ url_for('carga_datos_reportes') }}">Reportes</a>
         </nav>
         {% block crumbs %}{% endblock %}
       </div>

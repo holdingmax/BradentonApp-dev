@@ -34,6 +34,7 @@ import chase_db
 from chase_rules import (
     add_dynamic_rule as add_chase_rule,
     build_chase_export_workbook,
+    build_chase_pdf_report,
     delete_dynamic_rule_by_index as delete_chase_custom_rule,
     delete_master_rule_by_index as delete_chase_master_rule,
     edit_dynamic_rule_by_index as edit_chase_custom_rule,
@@ -569,6 +570,53 @@ CARGA_DATOS_TOOLS = [
     },
 ]
 
+# Módulo "Reportes" (pedido explícito del usuario, 2026-09-17) -- reemplaza
+# al scaffold vacío que antes vivía en /carga-datos/controles ("vamos a
+# cambiar el modulo de controles por ese nombre y vamos a empezar con el
+# chase la opcion de exportar en un PDF"). Por ahora todos dan PDF nada más
+# ("todos estos van a dar la opcion de PDF de momento luego vemos que
+# incorporamos") -- `ready=False` en un tool de esta lista significa
+# "Próximamente", mismo criterio visual que ya usaba /controles cuando
+# arrancó sin ningún módulo (span.tool-card, sin link).
+REPORTES_TOOLS = [
+    {
+        "key": "reportes_chase",
+        "icon": _ICON_BANK,
+        "label": "Chase Bank",
+        "description": "Resumen por Detalle del mes (Depositos, Proveedores, etc.) con el total real de cada uno.",
+        "accent": "#16A34A",
+        "ready": True,
+        "pdf_endpoint": "reportes_chase_pdf",
+    },
+    {
+        "key": "reportes_eft",
+        "icon": _ICON_EXCHANGE,
+        "label": "EFT y Cupones",
+        "description": "Todos los EFT del mes seleccionado, más los cupones cargados hasta el momento y cuánto acumulan.",
+        "accent": "#3B5BDB",
+        "ready": True,
+        "pdf_endpoint": "reportes_eft_pdf",
+    },
+    {
+        "key": "reportes_diario",
+        "icon": _ICON_CALENDAR,
+        "label": "Reporte Diario",
+        "description": "Store Info del mes, día por día, con el período real que cubre.",
+        "accent": "#0284C7",
+        "ready": True,
+        "pdf_endpoint": "reportes_diario_pdf",
+    },
+    {
+        "key": "reportes_lottery",
+        "icon": _ICON_TICKET,
+        "label": "Lottery",
+        "description": "Los mismos bloques semanales de Lottery del mes, con membrete y período reales.",
+        "accent": "#0284C7",
+        "ready": True,
+        "pdf_endpoint": "reportes_lottery_pdf",
+    },
+]
+
 THEME_BY_KEY = {
     tool["key"]: {"accent": tool["accent"], "accent_soft": tool["accent_soft"]}
     for tool in TOOLS + CONTROLS + CARGA_DATOS_TOOLS
@@ -923,15 +971,127 @@ def carga_datos_index():
     return render_template("carga_datos_index.html", tools=upload_tools)
 
 
-@app.route("/carga-datos/controles")
-def carga_datos_controles():
+@app.route("/carga-datos/reportes")
+def carga_datos_reportes():
     """
-    Scaffold vacío, mismo criterio que /controles cuando arrancó sin ningún
-    módulo -- Carga de Datos pasa a tener su propia pareja Herramientas/
-    Controles (pedido explícito del usuario 2026-09-11), sin mezclar con la
-    de Excels. Sin módulos propios todavía.
+    Módulo "Reportes" (pedido explícito del usuario, 2026-09-17) --
+    reemplaza al scaffold vacío que antes vivía acá mismo bajo el nombre
+    "Controles" ("vamos a cambiar el modulo de controles por ese nombre y
+    vamos a empezar con el chase la opcion de exportar en un PDF"). Por
+    ahora solo Chase Bank tiene su reporte armado (PDF agrupado por
+    Detalle, ver chase_rules.build_chase_pdf_report) -- el resto (EFT/
+    Cupones, Reporte Diario, Lottery) queda "Próximamente", mismo criterio
+    que usó /controles cuando arrancó sin ningún módulo.
     """
-    return render_template("carga_datos_controles.html")
+    today = date.today()
+    return render_template(
+        "carga_datos_reportes.html",
+        tools=REPORTES_TOOLS,
+        month_names=_MONTH_NAMES_ES,
+        years_by_key={
+            "reportes_chase": chase_db.get_available_years() or [today.year],
+            "reportes_eft": eft_db.get_deposit_years() or [today.year],
+            "reportes_diario": reportes_db.get_store_info_years() or [today.year],
+            "reportes_lottery": lottery_db.get_available_years() or [today.year],
+        },
+        current_year=today.year,
+        current_month=today.month,
+    )
+
+
+@app.route("/carga-datos/reportes/chase/pdf")
+def reportes_chase_pdf():
+    """
+    Descarga el PDF de Reportes -> Chase Bank -- resumen por Detalle con el
+    total de cada categoría (pedido explícito del usuario, 2026-09-17: "que
+    en el PDF no se muestren todos los movimientos, sino que esten los
+    detalles y al lado el total de montos a ese detalle"), a diferencia del
+    Excel de /carga-datos/chase/exportar (ese sí lista cada movimiento).
+    Ver chase_rules.build_chase_pdf_report.
+    """
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    transactions = chase_db.get_month_transactions(year, month)
+    if not transactions:
+        flash("No hay ningún movimiento guardado ese mes para el reporte.", "error")
+        return redirect(url_for("carga_datos_reportes"))
+
+    workspace_dir = tempfile.mkdtemp(prefix="chase_reporte_")
+    dest_path = os.path.join(workspace_dir, f"Chase Reporte {month:02d}-{year}.pdf")
+    build_chase_pdf_report(transactions, year, month, dest_path)
+    return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
+
+
+@app.route("/carga-datos/reportes/eft/pdf")
+def reportes_eft_pdf():
+    """
+    Descarga el PDF de Reportes -> EFT y Cupones -- pedido explícito del
+    usuario, 2026-09-17: "Lo mismo quiero que hagas con el Reporte de los
+    EFT incluyendo todos los datos que se tengan del mes que se
+    selecciono, y lo mismo estar incluido en ese PDF los cupones cargados
+    hasta ese momento y cuanto acumulan". Ver eft_db.build_eft_pdf_report.
+    A diferencia de Chase, este PDF nunca queda vacío por falta de EFT ese
+    mes -- la sección de Cupones (acumulado histórico) siempre tiene algo
+    para mostrar, así que no se bloquea la descarga aunque el mes elegido
+    no tenga ningún EFT cargado todavía.
+    """
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    workspace_dir = tempfile.mkdtemp(prefix="eft_reporte_")
+    dest_path = os.path.join(workspace_dir, f"EFT Reporte {month:02d}-{year}.pdf")
+    eft_db.build_eft_pdf_report(year, month, dest_path)
+    return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
+
+
+@app.route("/carga-datos/reportes/reporte-diario/pdf")
+def reportes_diario_pdf():
+    """
+    Descarga el PDF de Reportes -> Reporte Diario -- pedido explícito del
+    usuario (2026-09-17: "Con los Reportes diarios tambien"). Reutiliza el
+    mismo PDF de Store Info ya validado (reporte_diario.build_store_info_
+    export_pdf, mismo que usa /reporte/store-info/historial) con el
+    membrete nuevo -- ver `company_header` en esa función.
+    """
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    store_info_rows = _build_store_info_rows(year, month)
+    workspace_dir = tempfile.mkdtemp(prefix="reporte_diario_reporte_")
+    dest_path = os.path.join(workspace_dir, f"Reporte Diario {month:02d}-{year}.pdf")
+    build_store_info_export_pdf(store_info_rows, year, month, dest_path, company_header=True)
+    return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
+
+
+@app.route("/carga-datos/reportes/lottery/pdf")
+def reportes_lottery_pdf():
+    """
+    Descarga el PDF de Reportes -> Lottery -- pedido explícito del usuario
+    (2026-09-17: "y la lottery"). Reutiliza el mismo PDF de Lottery ya
+    validado (lottery_db.build_lottery_export_pdf, mismo que usa
+    /carga-datos/lottery/historial) con el membrete nuevo -- ver
+    `company_header` en esa función.
+    """
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    workspace_dir = tempfile.mkdtemp(prefix="lottery_reporte_")
+    dest_path = os.path.join(workspace_dir, f"Lottery Reporte {month:02d}-{year}.pdf")
+    lottery_db.build_lottery_export_pdf(year, month, dest_path, company_header=True)
+    return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
 
 
 @app.route("/carga-datos/reporte-diario")

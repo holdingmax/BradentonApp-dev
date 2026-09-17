@@ -1720,7 +1720,7 @@ def _fmt_day_month_pdf(value):
     return value.strftime("%d-%m")
 
 
-def build_store_info_export_pdf(rows, year, month, dest_path):
+def build_store_info_export_pdf(rows, year, month, dest_path, company_header=False):
     """
     PDF (líneas/bordes + colores, sin fórmulas) con Store Info del mes --
     pedido explícito del usuario (2026-09-19): alternativa liviana al
@@ -1731,8 +1731,49 @@ def build_store_info_export_pdf(rows, year, month, dest_path):
     total_fuel/total_sales calculados. Colores idénticos a los del export
     a Excel (mismos hex, ver build_store_info_export_workbook) -- pedido
     explícito del usuario tras ver la primera versión sin color.
+
+    `company_header` -- opcional, default `False` (sin cambios para el
+    botón "Exportar PDF" ya existente de /reporte/store-info/historial).
+    `company_header=True` agrega el membrete (logo + nombre de la empresa)
+    y una línea de "Período" con la fecha real mínima/máxima de `rows` --
+    usado por el módulo nuevo "Reportes" (pedido explícito del usuario,
+    2026-09-17: "Con los Reportes diarios tambien"), reutilizando este
+    mismo PDF ya validado en vez de duplicar la lógica de columnas.
     """
     from pdf_export import build_simple_table_pdf
+
+    # Campos numéricos por fila, en el mismo orden que las columnas 2-15
+    # (Volume en adelante) -- "tc" se calcula aparte (suma de credit_terms,
+    # no un campo guardado directo, así que no está en `row` crudo -- no
+    # afecta el chequeo de "¿este día tiene algo cargado?" de más abajo,
+    # alcanza con que CUALQUIERA de los demás campos esté presente). Se
+    # reusa tanto para el "Período" como para cada fila y la fila de
+    # totales de abajo.
+    numeric_fields = (
+        "volume", "sales_fuel", "desc_comb", "total_fuel", "non_fuel_total",
+        "desc_otros", "tax_collect", "total_sales", "cash", "tc",
+        "local_accounts", "other_amount", "network_revenue", "total_revenue",
+    )
+
+    period_label = None
+    if company_header:
+        # `rows` trae UN renglón por CADA día del mes calendario, con o sin
+        # datos (ver reportes_db.get_month_store_info) -- así que no basta
+        # con mirar `row["date"]` (siempre está, aunque el día esté vacío).
+        # Se usa la fecha del día con ALGÚN valor real cargado, para que el
+        # "Período" refleje hasta dónde llegó la carga de verdad ("hay que
+        # aclarar hasta que dia llega el reporte"), no el mes completo.
+        dates = sorted(
+            row["date"]
+            for row in rows
+            if row.get("date") and any(row.get(field) is not None for field in numeric_fields)
+        )
+        if dates:
+            start_d = datetime.strptime(dates[0], "%Y-%m-%d")
+            end_d = datetime.strptime(dates[-1], "%Y-%m-%d")
+            period_label = f"Período: {start_d.strftime('%d/%m/%Y')} al {end_d.strftime('%d/%m/%Y')}"
+        else:
+            period_label = f"Período: sin días cargados todavía en {month:02d}/{year}"
 
     GRAY, ORANGE, YELLOW, PEACH = "#D9D9D9", "#FFC000", "#FFFF00", "#F8CBAD"
     GREEN_LIGHT, BLUEGRAY = "#A9D18E", "#ADB9CA"
@@ -1749,15 +1790,6 @@ def build_store_info_export_pdf(rows, year, month, dest_path):
         "Non Fuel", "Desc. Otros", "Tax Collect", "Total Sales", "Cash",
         "Tarjeta/Créd.", "Local Acc.", "Other", "Network Rev.", "Total Rev.",
     ]
-    # Campos numéricos por fila, en el mismo orden que las columnas 2-15
-    # (Volume en adelante) -- "tc" se calcula aparte (suma de credit_terms,
-    # no un campo guardado directo). Se reusa tanto para cada fila como
-    # para la fila de totales de abajo.
-    numeric_fields = (
-        "volume", "sales_fuel", "desc_comb", "total_fuel", "non_fuel_total",
-        "desc_otros", "tax_collect", "total_sales", "cash", "tc",
-        "local_accounts", "other_amount", "network_revenue", "total_revenue",
-    )
     table_rows = []
     totals = {field: 0.0 for field in numeric_fields}
     any_value = {field: False for field in numeric_fields}
@@ -1798,6 +1830,8 @@ def build_store_info_export_pdf(rows, year, month, dest_path):
         header_fill_by_col=header_fill_by_col,
         data_fill_by_col=data_fill_by_col,
         bold_last_row=True,
+        company_header=company_header,
+        period_label=period_label,
     )
 
 

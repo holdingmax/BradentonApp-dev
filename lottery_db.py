@@ -547,6 +547,21 @@ def _build_block(conn, iso_year, iso_week, days_by_date):
     }
 
 
+def get_available_years():
+    """
+    Años distintos con al menos un día de Lottery cargado -- pedido
+    explícito del usuario (2026-09-17, módulo nuevo "Reportes"): el
+    selector de mes/año del reporte de Lottery solo debe ofrecer años que
+    de verdad tengan datos, no un rango arbitrario.
+    """
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT DISTINCT substr(date, 1, 4) AS y FROM lottery_days ORDER BY y").fetchall()
+        return [int(row["y"]) for row in rows if row["y"]]
+    finally:
+        conn.close()
+
+
 def build_month_blocks(year, month):
     """
     Todos los bloques de 7 días (semana ISO) que tocan el mes pedido -- el
@@ -1085,13 +1100,44 @@ def _fmt_int_pdf(value):
     return "—" if value is None else "{:,.0f}".format(value)
 
 
-def build_lottery_export_pdf(year, month, dest_path):
+def build_lottery_export_pdf(year, month, dest_path, company_header=False):
     """
     Versión PDF (con los mismos colores del export a Excel, sin fórmulas)
     -- mismas columnas que ya muestra /carga-datos/lottery/historial, con
     los bloques de 7 días + Subtotal + Debito uno abajo del otro.
+
+    `company_header` -- opcional, default `False` (sin cambios para el
+    botón "Exportar" ya existente de /carga-datos/lottery/historial).
+    `company_header=True` agrega el membrete (logo + nombre de la empresa)
+    y una línea de "Período" -- usado por el módulo nuevo "Reportes"
+    (pedido explícito del usuario, 2026-09-17: "Con los Reportes diarios
+    tambien y la lottery"), reutilizando este mismo PDF ya validado en vez
+    de duplicar la lógica de columnas/colores.
     """
     from pdf_export import build_simple_table_pdf
+
+    period_label = None
+    if company_header:
+        month_start = date(year, month, 1).isoformat()
+        next_year, next_month = (year + 1, 1) if month == 12 else (year, month + 1)
+        month_end = date(next_year, next_month, 1).isoformat()
+        conn = _connect()
+        try:
+            loaded_dates = [
+                row["date"]
+                for row in conn.execute(
+                    "SELECT date FROM lottery_days WHERE date >= ? AND date < ? ORDER BY date",
+                    (month_start, month_end),
+                ).fetchall()
+            ]
+        finally:
+            conn.close()
+        if loaded_dates:
+            start_d = datetime.strptime(loaded_dates[0], "%Y-%m-%d")
+            end_d = datetime.strptime(loaded_dates[-1], "%Y-%m-%d")
+            period_label = f"Período: {start_d.strftime('%d/%m/%Y')} al {end_d.strftime('%d/%m/%Y')}"
+        else:
+            period_label = f"Período: sin días cargados todavía en {month:02d}/{year}"
 
     GRAY, YELLOW, ORANGE, GREEN = "#D9D9D9", "#FFFF00", "#FFC000", "#92D050"
     headers = [
@@ -1161,6 +1207,8 @@ def build_lottery_export_pdf(year, month, dest_path):
         data_fill_by_col=data_fill_by_col,
         font_size=9.5,
         cell_padding=6,
+        company_header=company_header,
+        period_label=period_label,
     )
     return dest_path
 

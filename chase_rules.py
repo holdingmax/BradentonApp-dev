@@ -656,3 +656,91 @@ def build_chase_export_workbook(rows, year, month, dest_path):
 
     workbook.save(dest_path)
     return dest_path
+
+
+def _fmt_money_pdf(value):
+    """
+    Mismo criterio de signo que ya usa el resto de la pantalla (cupones,
+    historial de Chase, etc.) -- "$" adelante, negativo con el signo "-"
+    ANTES del "$" ("-$5,200.00", nunca "$-5,200.00"), para que se lea igual
+    de natural que cualquier otro monto de la app.
+    """
+    if value is None:
+        return "—"
+    if value < 0:
+        return "-${:,.2f}".format(abs(value))
+    return "${:,.2f}".format(value)
+
+
+def _fmt_date_ddmmyyyy(value):
+    """`value` como lo guarda chase_db (posting_date, texto "YYYY-MM-DD")."""
+    if not value:
+        return ""
+    parts = str(value).split("-")
+    if len(parts) != 3:
+        return str(value)
+    year, month, day = parts
+    return f"{day}/{month}/{year}"
+
+
+def build_chase_pdf_report(rows, year, month, dest_path):
+    """
+    PDF del módulo nuevo "Reportes" (pedido explícito del usuario,
+    2026-09-17): a diferencia del Excel (`build_chase_export_workbook`,
+    que sí lista cada movimiento), este PDF es un RESUMEN -- "que en el PDF
+    no se muestren todos los movimientos, sino que esten los detalles y al
+    lado el total de montos a ese detalle, por ej DEPOSITOS: $28.000 y
+    asi, si son negativos salen negativos" -- una fila por Detalle (suma de
+    `amount` de todos los movimientos de ese Detalle en el mes, con su
+    signo real, nunca en valor absoluto) más una fila TOTAL en negrita al
+    pie con la suma de todo.
+
+    `rows` es la lista tal cual devuelve `chase_db.get_month_transactions`
+    (mismo caller que ya usa el Excel). El "Período" que se imprime en el
+    membrete NO es simplemente "01 al {último día del mes}" -- se calcula
+    con la fecha MÍNIMA/MÁXIMA que de verdad aparece en `rows`, porque el
+    mes puede no estar cargado completo todavía ("quizas no siempre se lo
+    extraiga en PDF al mes completo y hay que aclarar hasta que dia llega
+    el reporte"). Un mes sin ningún movimiento cargado todavía no rompe --
+    el período queda como aviso ("sin movimientos cargados") y la tabla
+    sale con una sola fila TOTAL en $0.00.
+    """
+    from pdf_export import build_simple_table_pdf
+
+    totals_by_detalle = {}
+    posting_dates = []
+    for row in rows:
+        label = (row.get("detalle") or "").strip() or "Sin categorizar"
+        amount = row.get("amount") or 0.0
+        totals_by_detalle[label] = totals_by_detalle.get(label, 0.0) + amount
+        if row.get("posting_date"):
+            posting_dates.append(row["posting_date"])
+
+    if posting_dates:
+        period_label = (
+            f"Período: {_fmt_date_ddmmyyyy(min(posting_dates))} al "
+            f"{_fmt_date_ddmmyyyy(max(posting_dates))}"
+        )
+    else:
+        period_label = f"Período: sin movimientos cargados todavía en {month:02d}/{year}"
+
+    table_rows = []
+    grand_total = 0.0
+    for label in sorted(totals_by_detalle.keys()):
+        total = totals_by_detalle[label]
+        grand_total += total
+        table_rows.append([label, _fmt_money_pdf(total)])
+    table_rows.append(["TOTAL", _fmt_money_pdf(grand_total)])
+
+    title = f"Chase Bank — Resumen por Detalle — {month:02d}/{year}"
+    build_simple_table_pdf(
+        dest_path,
+        title,
+        ["Detalle", "Total"],
+        table_rows,
+        col_widths_mm=[190, 70],
+        bold_last_row=True,
+        company_header=True,
+        period_label=period_label,
+    )
+    return dest_path

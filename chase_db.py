@@ -204,6 +204,23 @@ def get_month_transactions(year, month):
         conn.close()
 
 
+def get_available_years():
+    """
+    Años distintos con al menos un movimiento guardado -- pedido explícito
+    del usuario (2026-09-17, módulo nuevo "Reportes"): el selector de mes/
+    año del reporte de Chase solo debe ofrecer años que de verdad tengan
+    datos cargados, no un rango arbitrario/hardcodeado.
+    """
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT substr(posting_date, 1, 4) AS y FROM chase_transactions ORDER BY y"
+        ).fetchall()
+        return [int(row["y"]) for row in rows if row["y"]]
+    finally:
+        conn.close()
+
+
 def has_detalle_on_date(fecha, detalle):
     """
     True si existe algún movimiento ya guardado para ese día puntual con ese

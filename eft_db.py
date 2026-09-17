@@ -283,6 +283,28 @@ def _date_in_month(eft_date, year, month):
     return parsed.year == year and parsed.month == month
 
 
+def get_deposit_years():
+    """
+    Años distintos con al menos un EFT cargado -- pedido explícito del
+    usuario (2026-09-17, módulo nuevo "Reportes"): el selector de mes/año
+    del reporte de EFT solo debe ofrecer años que de verdad tengan EFT
+    cargados, no un rango arbitrario. `eft_date` se guarda como texto
+    MM/DD/YYYY (formato de origen del PDF), así que se parsea con
+    `_parse_eft_date` en vez de asumir que el texto ordena bien.
+    """
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT DISTINCT eft_date FROM eft_deposits").fetchall()
+        years = {
+            parsed.year
+            for parsed in (_parse_eft_date(row["eft_date"]) for row in rows)
+            if parsed is not None
+        }
+        return sorted(years)
+    finally:
+        conn.close()
+
+
 def list_all_deposits():
     conn = _connect()
     try:
@@ -593,3 +615,94 @@ def upsert_cupones(records, source_filename=None):
         return inserted, updated
     finally:
         conn.close()
+
+
+def _fmt_money_pdf(value):
+    """Mismo criterio de signo que chase_rules._fmt_money_pdf -- "-$" antes del monto, nunca "$-"."""
+    if value is None:
+        return "—"
+    if value < 0:
+        return "-${:,.2f}".format(abs(value))
+    return "${:,.2f}".format(value)
+
+
+def build_eft_pdf_report(year, month, dest_path):
+    """
+    PDF del módulo nuevo "Reportes" (pedido explícito del usuario,
+    2026-09-17): "Lo mismo quiero que hagas con el Reporte de los EFT
+    incluyendo todos los datos que se tengan del mes que se selecciono, y
+    lo mismo estar incluido en ese PDF los cupones cargados hasta ese
+    momento y cuanto acumulan". A diferencia de Chase (que sí se resume
+    por Detalle), acá "todos los datos" significa una fila por CADA EFT
+    (RCV) cargado ese mes -- no se agrupa nada, se listan todos.
+
+    Dos secciones (ver `pdf_export.build_multi_section_pdf`):
+    1. "EFT del mes" -- un renglón por depósito (RCV/Fecha/Gross/Fees/Net)
+       más una fila TOTAL. El período que se imprime en el membrete usa la
+       fecha MÍNIMA/MÁXIMA real de los EFT de ese mes (mismo criterio que
+       el PDF de Chase) -- nunca asume que el mes esté completo.
+    2. "Cupones" -- NO es un listado (serían miles de filas, va contra "que
+       se vea bien y agradable a la vista") sino el acumulado HISTÓRICO
+       completo -- "cupones cargados hasta ese momento" es today, no solo
+       los de este mes -- mismo total que ya muestra `/carga-datos/eft/
+       cupones/historial` (get_cupones_with_status, sin filtrar por mes).
+    """
+    from pdf_export import build_multi_section_pdf
+
+    deposits = get_month_deposits(year, month)
+    eft_rows = []
+    total_gross = total_fees = total_net = 0.0
+    parsed_dates = []
+    for entry in deposits:
+        dep = entry["deposit"]
+        parsed = _parse_eft_date(dep.get("eft_date"))
+        if parsed:
+            parsed_dates.append(parsed)
+        gross = dep.get("gross_total") or 0.0
+        fees = dep.get("fees_total") or 0.0
+        net = dep.get("net_total") or 0.0
+        total_gross += gross
+        total_fees += fees
+        total_net += net
+        eft_rows.append(
+            [
+                dep.get("rcv_number") or "—",
+                parsed.strftime("%d/%m/%Y") if parsed else (dep.get("eft_date") or "—"),
+                _fmt_money_pdf(gross),
+                _fmt_money_pdf(fees),
+                _fmt_money_pdf(net),
+            ]
+        )
+    eft_rows.append(["TOTAL", "", _fmt_money_pdf(total_gross), _fmt_money_pdf(total_fees), _fmt_money_pdf(total_net)])
+
+    if parsed_dates:
+        period_label = (
+            f"Período: {min(parsed_dates).strftime('%d/%m/%Y')} al "
+            f"{max(parsed_dates).strftime('%d/%m/%Y')}"
+        )
+    else:
+        period_label = f"Período: sin EFT cargados todavía en {month:02d}/{year}"
+
+    cupones = get_cupones_with_status()
+    cupones_total = sum((c.get("net") or 0.0) for c in cupones)
+    cupones_note = (
+        f"Cupones cargados hasta la fecha: {len(cupones)} — "
+        f"Acumulado: {_fmt_money_pdf(cupones_total)}"
+    )
+
+    title = f"EFT — {month:02d}/{year}"
+    sections = [
+        {
+            "heading": "EFT del mes",
+            "headers": ["RCV", "Fecha", "Gross", "Fees", "Net"],
+            "rows": eft_rows,
+            "col_widths_mm": [55, 45, 55, 55, 55],
+            "bold_last_row": True,
+        },
+        {
+            "heading": "Cupones",
+            "note": cupones_note,
+        },
+    ]
+    build_multi_section_pdf(dest_path, title, sections, period_label=period_label, company_header=True)
+    return dest_path

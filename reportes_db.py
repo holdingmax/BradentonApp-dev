@@ -405,6 +405,23 @@ def upsert_printed_totals(report_date, total_sales, total_units):
         conn.close()
 
 
+def get_store_info_years():
+    """
+    Años distintos con al menos un día de Store Info cargado -- pedido
+    explícito del usuario (2026-09-17, módulo nuevo "Reportes"): el
+    selector de mes/año del reporte de Reporte Diario solo debe ofrecer
+    años que de verdad tengan datos, no un rango arbitrario.
+    """
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT substr(date, 1, 4) AS y FROM daily_reports WHERE store_info_source IS NOT NULL ORDER BY y"
+        ).fetchall()
+        return [int(row["y"]) for row in rows if row["y"]]
+    finally:
+        conn.close()
+
+
 def get_month_store_info(year, month):
     """
     Un renglón por CADA día del mes, haya datos o no -- para el reporte
