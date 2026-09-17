@@ -620,3 +620,67 @@ def build_caja_export_pdf(report, year, month, dest_path):
         data_fill_by_col=data_fill_by_col,
         bold_last_row=True,
     )
+
+
+
+def get_available_years():
+    """
+    Años con datos de Caja -- pedido explícito del usuario (2026-09-17,
+    módulo "Reportes"): a diferencia de Chase/Lottery/Store Info, Caja no
+    guarda casi nada por su cuenta (se arma cruzando esas 3 fuentes +
+    gastos a mano, ver build_month_report_from_db más arriba), así que no
+    hay una sola tabla de la que sacar "qué años tienen Caja". Se unen los
+    años de las 4 fuentes reales -- si CUALQUIERA de ellas tiene algo ese
+    año, Caja puede tener un reporte con algo cargado.
+    """
+    years = set(chase_db.get_available_years())
+    years |= set(lottery_db.get_available_years())
+    years |= set(reportes_db.get_store_info_years())
+    years |= set(caja_db.get_expense_years())
+    return sorted(years)
+
+
+def build_caja_pdf_resumen(report, year, month, dest_path):
+    """
+    PDF resumido de Caja para el módulo "Reportes" -- pedido explícito
+    del usuario (2026-09-17, sesión siguiente): "agrega tambien el de
+    caja" (a los otros 3 reportes de Reportes, todos ya resumidos con
+    Detalle/Total). A diferencia de build_caja_export_pdf (una fila por
+    CADA día del mes -- el que sigue usando el botón "Exportar PDF" ya
+    existente de /carga-datos/caja, sin tocar), acá se muestra solo la
+    fila de totales de ese mismo reporte (`report["totals"]`, ya validada
+    y usada tal cual en el PDF completo) en formato Detalle/Total, mismo
+    estilo que los otros 3 reportes de este módulo.
+
+    Saldo Inicial/Saldo Final NO salen de sumar nada (son un saldo
+    corrido, no un monto del día) -- se muestran tal cual ya los expone
+    el reporte (`opening_balance`/`effective_closing_balance`), mismo
+    criterio que ya usa build_caja_export_pdf en el título.
+    """
+    from pdf_export import build_simple_table_pdf
+
+    totals = report["totals"]
+    table_rows = [
+        ["Saldo Inicial", _fmt_money_pdf(report.get("opening_balance"))],
+        ["Total Sales", _fmt_money_pdf(totals.get("total_sales"))],
+        ["Cash", _fmt_money_pdf(totals.get("cash"))],
+        ["Tarjeta/Crédito", _fmt_money_pdf(totals.get("tc"))],
+        ["Other", _fmt_money_pdf(totals.get("other_amount"))],
+        ["Total Revenue", _fmt_money_pdf(totals.get("total_revenue"))],
+        ["Depósitos", _fmt_money_pdf(totals.get("deposit"))],
+        ["Gastos", _fmt_money_pdf(totals.get("expenses_cash"))],
+        ["Lottery Cta. Final", _fmt_money_pdf(report.get("total_lottery"))],
+        ["Dif Efectivo (mes)", _fmt_money_pdf(totals.get("dif_efect"))],
+        ["Food Truck/Ice", _fmt_money_pdf(totals.get("food_ice"))],
+        ["Saldo Final", _fmt_money_pdf(report.get("effective_closing_balance"))],
+    ]
+
+    return build_simple_table_pdf(
+        dest_path,
+        f"Caja — Resumen — {month:02d}/{year}",
+        ["Detalle", "Total"],
+        table_rows,
+        col_widths_mm=[110, 80],
+        bold_last_row=True,
+        company_header=True,
+    )

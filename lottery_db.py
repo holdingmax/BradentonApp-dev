@@ -1213,6 +1213,106 @@ def build_lottery_export_pdf(year, month, dest_path, company_header=False):
     return dest_path
 
 
+def build_lottery_pdf_resumen(year, month, dest_path):
+    """
+    PDF resumido de Lottery para el módulo "Reportes" -- pedido explícito
+    del usuario (2026-09-17, sesión siguiente): "quiero que pongas los
+    pdf de reportes en reporte diario y lottery como los otros dos, mas
+    resumido y con los totales bien hecho". A diferencia de
+    build_lottery_export_pdf (día por día + Subtotal/Debito de cada
+    bloque de 7 días -- el que sigue usando el botón "Exportar" ya
+    existente de /carga-datos/lottery/historial, sin tocar), acá se
+    calculan los totales del MES CALENDARIO completo (no por bloque ISO)
+    y se muestran en una sola tabla Detalle/Total, mismo estilo que el
+    resumen de Chase (chase_rules.build_chase_pdf_report).
+
+    "Con los totales bien hecho" importa en particular acá: NO todas las
+    columnas de Lottery se pueden sumar sin más. Se reusa exactamente
+    _SUBTOTAL_SUM_FIELDS -- la misma lista, ya validada contra el Excel
+    real, que usa la fila Subtotal de cada bloque de 7 días (ver
+    _build_block más arriba) -- para sumar solo lo que de verdad es un
+    monto/cantidad del día. Cash Balance queda MAL si se suma (es un
+    saldo corrido, no un monto diario) -- se muestra el último valor
+    cargado del mes, como una foto, nunca una suma. Skoff Count/Sales
+    tampoco se suman (excluidos a propósito en el Excel real, ver el
+    comentario de _SUBTOTAL_SUM_FIELDS). El pago real vía Chase Bank no
+    sale de sumar una columna de lottery_days -- se reusa
+    monthly_debit_total(), ya validada, que solo cuenta los bloques cuya
+    fecha de Chase Bank cae dentro de este mes.
+    """
+    from pdf_export import build_simple_table_pdf
+
+    month_start = date(year, month, 1).isoformat()
+    next_year, next_month = (year + 1, 1) if month == 12 else (year, month + 1)
+    month_end = date(next_year, next_month, 1).isoformat()
+
+    conn = _connect()
+    try:
+        raw_rows = conn.execute(
+            "SELECT * FROM lottery_days WHERE date >= ? AND date < ? ORDER BY date",
+            (month_start, month_end),
+        ).fetchall()
+    finally:
+        conn.close()
+    days = [decorate_day(dict(row)) for row in raw_rows]
+    loaded_dates = [d["date"] for d in days if _has_any_data(d)]
+
+    if loaded_dates:
+        start_d = datetime.strptime(loaded_dates[0], "%Y-%m-%d")
+        end_d = datetime.strptime(loaded_dates[-1], "%Y-%m-%d")
+        period_label = f"Período: {start_d.strftime('%d/%m/%Y')} al {end_d.strftime('%d/%m/%Y')}"
+    else:
+        period_label = f"Período: sin días cargados todavía en {month:02d}/{year}"
+
+    totals = {}
+    for field in _SUBTOTAL_SUM_FIELDS:
+        values = [d.get(field) for d in days if d.get(field) is not None]
+        totals[field] = round(sum(values), 2) if values else None
+
+    net_total = None
+    if any(totals.get(f) is not None for f in ("pays_amount", "skoff_sales_amount", "sales_comm")):
+        net_total = round(
+            (totals.get("pays_amount") or 0.0) + (totals.get("skoff_sales_amount") or 0.0) + (totals.get("sales_comm") or 0.0),
+            2,
+        )
+
+    cash_balance_days = [d for d in days if d.get("cash_balance") is not None]
+    ending_cash_balance = cash_balance_days[-1]["cash_balance"] if cash_balance_days else None
+
+    debito_total = monthly_debit_total(year, month)
+
+    def money(field):
+        return _fmt_money_pdf(totals.get(field))
+
+    table_rows = [
+        ["Count (Online)", _fmt_int_pdf(totals.get("online_count"))],
+        ["Sales $ (Online)", money("online_net_sales")],
+        ["Sales (Terminal)", money("sales")],
+        ["Pagos (Terminal)", money("pagos")],
+        ["Comis", money("comis")],
+        ["Prize Free Plays", money("prize_free_plays")],
+        ["Total Comm (Comis + Prize)", money("total_comm")],
+        ["Pays Units (Skoff)", _fmt_int_pdf(totals.get("pays_units"))],
+        ["Pays $ (Skoff)", money("pays_amount")],
+        ["Sales Amt (Skoff)", money("skoff_sales_amount")],
+        ["Sales Comm (Skoff)", money("sales_comm")],
+        ["Net Total (Pays + Sales Amt + Sales Comm)", _fmt_money_pdf(net_total)],
+        ["Cash Balance (último día cargado, no es una suma)", _fmt_money_pdf(ending_cash_balance)],
+        ["Total pagado vía Chase Bank", _fmt_money_pdf(debito_total)],
+    ]
+
+    return build_simple_table_pdf(
+        dest_path,
+        f"Lottery — Resumen — {month:02d}/{year}",
+        ["Detalle", "Total"],
+        table_rows,
+        col_widths_mm=[140, 80],
+        bold_last_row=True,
+        company_header=True,
+        period_label=period_label,
+    )
+
+
 # --- Cierre mensual: "LIQUIDACION CIERRE LOTTERY" / "LIQUIDACION CIERRE
 # RECAUDACION COMISIONES" (pedido explícito del usuario, 2026-09-16) -------
 #

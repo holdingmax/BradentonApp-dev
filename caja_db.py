@@ -142,6 +142,26 @@ def get_month_expenses(year, month):
 
 
 
+def get_expense_years():
+    """
+    Años distintos con al menos un gasto de Caja cargado a mano -- pedido
+    explícito del usuario (2026-09-17, módulo "Reportes"): Caja no guarda
+    casi ningún dato propio (todo lo demás sale de Chase/Lottery/Store
+    Info al vuelo, ver caja.build_month_report_from_db), así que esto
+    cubre el caso de un mes con gastos cargados pero sin ninguna otra
+    fuente todavía -- ver caja.get_available_years, que une esto con los
+    años de las otras 3 fuentes.
+    """
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT substr(date, 1, 4) AS y FROM caja_expense_items ORDER BY y"
+        ).fetchall()
+        return [int(row["y"]) for row in rows if row["y"]]
+    finally:
+        conn.close()
+
+
 def get_month_settings(year, month):
     conn = _connect()
     try:

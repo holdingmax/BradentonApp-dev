@@ -1720,6 +1720,31 @@ def _fmt_day_month_pdf(value):
     return value.strftime("%d-%m")
 
 
+# Campos numéricos de Store Info + su label en el PDF resumen (pedido
+# explícito del usuario, 2026-09-17: reportes de Reportes "mas resumido
+# y con los totales bien hecho") -- mismo orden y mismos campos que ya
+# usa build_store_info_export_pdf fila por fila, hoisteados acá para que
+# el resumen (build_store_info_pdf_resumen, más abajo) use exactamente
+# los mismos campos/agregación, sin duplicar la lista y arriesgar que se
+# desincronicen.
+_STORE_INFO_TOTAL_FIELDS = (
+    ("volume", "Volume"),
+    ("sales_fuel", "Sales Fuel"),
+    ("desc_comb", "Desc. Comb"),
+    ("total_fuel", "Total Fuel"),
+    ("non_fuel_total", "Non Fuel"),
+    ("desc_otros", "Desc. Otros"),
+    ("tax_collect", "Tax Collect"),
+    ("total_sales", "Total Sales"),
+    ("cash", "Cash"),
+    ("tc", "Tarjeta/Créd."),
+    ("local_accounts", "Local Acc."),
+    ("other_amount", "Other"),
+    ("network_revenue", "Network Rev."),
+    ("total_revenue", "Total Rev."),
+)
+
+
 def build_store_info_export_pdf(rows, year, month, dest_path, company_header=False):
     """
     PDF (líneas/bordes + colores, sin fórmulas) con Store Info del mes --
@@ -1749,11 +1774,7 @@ def build_store_info_export_pdf(rows, year, month, dest_path, company_header=Fal
     # alcanza con que CUALQUIERA de los demás campos esté presente). Se
     # reusa tanto para el "Período" como para cada fila y la fila de
     # totales de abajo.
-    numeric_fields = (
-        "volume", "sales_fuel", "desc_comb", "total_fuel", "non_fuel_total",
-        "desc_otros", "tax_collect", "total_sales", "cash", "tc",
-        "local_accounts", "other_amount", "network_revenue", "total_revenue",
-    )
+    numeric_fields = tuple(field for field, _label in _STORE_INFO_TOTAL_FIELDS)
 
     period_label = None
     if company_header:
@@ -1831,6 +1852,74 @@ def build_store_info_export_pdf(rows, year, month, dest_path, company_header=Fal
         data_fill_by_col=data_fill_by_col,
         bold_last_row=True,
         company_header=company_header,
+        period_label=period_label,
+    )
+
+
+def build_store_info_pdf_resumen(rows, year, month, dest_path):
+    """
+    PDF resumido de Store Info para el módulo "Reportes" -- pedido
+    explícito del usuario (2026-09-17, sesión siguiente): "quiero que
+    pongas los pdf de reportes en reporte diario y lottery como los
+    otros dos, mas resumido y con los totales bien hecho". A diferencia
+    de build_store_info_export_pdf (una fila por CADA día del mes, 16
+    columnas -- la que sigue usando el botón "Exportar PDF" ya existente
+    de /reporte/store-info/historial, sin tocar), acá se arma una sola
+    tabla de dos columnas (Detalle/Total), una fila por cada campo de
+    _STORE_INFO_TOTAL_FIELDS, igual de "resumido" que el reporte de Chase
+    (chase_rules.build_chase_pdf_report).
+
+    Los totales son una SUMA simple de cada campo a lo largo de los días
+    del mes que tengan ese dato cargado -- correcto acá porque los 14
+    campos de Store Info son todos importes/cantidades del día (ventas,
+    volumen, impuestos, etc.), nunca un saldo corrido -- a diferencia de
+    Lottery (ver build_lottery_pdf_resumen en lottery_db.py), Store Info
+    no tiene ninguna columna "snapshot" que haya que excluir de la suma.
+    """
+    from pdf_export import build_simple_table_pdf
+
+    numeric_fields = tuple(field for field, _label in _STORE_INFO_TOTAL_FIELDS)
+
+    # Período real (mismo criterio que build_store_info_export_pdf con
+    # company_header=True): la fecha del día con ALGÚN valor cargado, no
+    # el mes calendario completo (rows trae un renglón por cada día del
+    # mes exista o no dato, ver reportes_db.get_month_store_info).
+    dates = sorted(
+        row["date"]
+        for row in rows
+        if row.get("date") and any(row.get(field) is not None for field in numeric_fields)
+    )
+    if dates:
+        start_d = datetime.strptime(dates[0], "%Y-%m-%d")
+        end_d = datetime.strptime(dates[-1], "%Y-%m-%d")
+        period_label = f"Período: {start_d.strftime('%d/%m/%Y')} al {end_d.strftime('%d/%m/%Y')}"
+    else:
+        period_label = f"Período: sin días cargados todavía en {month:02d}/{year}"
+
+    totals = {field: 0.0 for field in numeric_fields}
+    any_value = {field: False for field in numeric_fields}
+    for row in rows:
+        credit_terms = row.get("credit_terms") or []
+        values = dict(row)
+        values["tc"] = round(sum(credit_terms), 2) if credit_terms else None
+        for field in numeric_fields:
+            if values.get(field) is not None:
+                totals[field] += values[field]
+                any_value[field] = True
+
+    table_rows = [
+        [label, _fmt_money_pdf(round(totals[field], 2)) if any_value[field] else "—"]
+        for field, label in _STORE_INFO_TOTAL_FIELDS
+    ]
+
+    return build_simple_table_pdf(
+        dest_path,
+        f"Store Info — Resumen — {month:02d}/{year}",
+        ["Detalle", "Total"],
+        table_rows,
+        col_widths_mm=[110, 80],
+        bold_last_row=True,
+        company_header=True,
         period_label=period_label,
     )
 

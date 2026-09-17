@@ -43,7 +43,13 @@ from chase_rules import (
     list_display_rules as list_chase_display_rules,
 )
 import caja_db
-from caja import build_caja_export_pdf, build_caja_export_workbook, build_month_report_from_db as build_caja_month_report
+from caja import (
+    build_caja_export_pdf,
+    build_caja_export_workbook,
+    build_month_report_from_db as build_caja_month_report,
+    build_caja_pdf_resumen,
+    get_available_years as get_caja_available_years,
+)
 from cmv_costo import _consolidate_department_files, update_master_costo_todos_bulk
 import eft_db
 from eft_cta_cte import EFT_DUPLICATE_ALERT, extract_eft_data
@@ -81,6 +87,7 @@ from proveedores_dynamic_extractors import (
 from reporte_diario import (
     build_store_info_export_pdf,
     build_store_info_export_workbook,
+    build_store_info_pdf_resumen,
     extract_department_sales_for_day,
     extract_lottery_department_fields_from_pdf,
     extract_lottery_receipt_fields_from_sales_report,
@@ -601,7 +608,7 @@ REPORTES_TOOLS = [
         "key": "reportes_diario",
         "icon": _ICON_CALENDAR,
         "label": "Reporte Diario",
-        "description": "Store Info del mes, día por día, con el período real que cubre.",
+        "description": "Resumen del mes: totales de Volume, Sales, Cash, Tarjeta y Revenue -- con el período real que cubre.",
         "accent": "#0284C7",
         "ready": True,
         "pdf_endpoint": "reportes_diario_pdf",
@@ -610,10 +617,19 @@ REPORTES_TOOLS = [
         "key": "reportes_lottery",
         "icon": _ICON_TICKET,
         "label": "Lottery",
-        "description": "Los mismos bloques semanales de Lottery del mes, con membrete y período reales.",
+        "description": "Resumen del mes: totales de Sales, Comis, Pagos y Net Total, mas el pago real via Chase Bank.",
         "accent": "#0284C7",
         "ready": True,
         "pdf_endpoint": "reportes_lottery_pdf",
+    },
+    {
+        "key": "reportes_caja",
+        "icon": _ICON_REGISTER,
+        "label": "Caja",
+        "description": "Resumen del mes: Total Sales, Cash, Depositos, Gastos, Lottery y Saldo Inicial/Final.",
+        "accent": "#EA580C",
+        "ready": True,
+        "pdf_endpoint": "reportes_caja_pdf",
     },
 ]
 
@@ -993,6 +1009,7 @@ def carga_datos_reportes():
             "reportes_eft": eft_db.get_deposit_years() or [today.year],
             "reportes_diario": reportes_db.get_store_info_years() or [today.year],
             "reportes_lottery": lottery_db.get_available_years() or [today.year],
+            "reportes_caja": get_caja_available_years() or [today.year],
         },
         current_year=today.year,
         current_month=today.month,
@@ -1055,10 +1072,12 @@ def reportes_eft_pdf():
 def reportes_diario_pdf():
     """
     Descarga el PDF de Reportes -> Reporte Diario -- pedido explícito del
-    usuario (2026-09-17: "Con los Reportes diarios tambien"). Reutiliza el
-    mismo PDF de Store Info ya validado (reporte_diario.build_store_info_
-    export_pdf, mismo que usa /reporte/store-info/historial) con el
-    membrete nuevo -- ver `company_header` en esa función.
+    usuario (2026-09-17, sesión siguiente: "quiero que pongas los pdf de
+    reportes en reporte diario y lottery como los otros dos, mas
+    resumido"). Ya no reusa el PDF día-por-día de Store Info (ese sigue
+    intacto en /reporte/store-info/historial) -- ver
+    reporte_diario.build_store_info_pdf_resumen, resumen de una sola
+    tabla Detalle/Total, mismo criterio que Chase/EFT.
     """
     today = date.today()
     year = request.args.get("year", type=int) or today.year
@@ -1069,7 +1088,7 @@ def reportes_diario_pdf():
     store_info_rows = _build_store_info_rows(year, month)
     workspace_dir = tempfile.mkdtemp(prefix="reporte_diario_reporte_")
     dest_path = os.path.join(workspace_dir, f"Reporte Diario {month:02d}-{year}.pdf")
-    build_store_info_export_pdf(store_info_rows, year, month, dest_path, company_header=True)
+    build_store_info_pdf_resumen(store_info_rows, year, month, dest_path)
     return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
 
 
@@ -1077,10 +1096,13 @@ def reportes_diario_pdf():
 def reportes_lottery_pdf():
     """
     Descarga el PDF de Reportes -> Lottery -- pedido explícito del usuario
-    (2026-09-17: "y la lottery"). Reutiliza el mismo PDF de Lottery ya
-    validado (lottery_db.build_lottery_export_pdf, mismo que usa
-    /carga-datos/lottery/historial) con el membrete nuevo -- ver
-    `company_header` en esa función.
+    (2026-09-17, sesión siguiente: "quiero que pongas los pdf de reportes
+    en reporte diario y lottery como los otros dos, mas resumido y con
+    los totales bien hecho"). Ya no reusa el PDF día-por-día/bloques de 7
+    días (ese sigue intacto en /carga-datos/lottery/historial) -- ver
+    lottery_db.build_lottery_pdf_resumen, que suma el MES CALENDARIO
+    completo (no por bloque ISO) y excluye a propósito las columnas que
+    no son sumables (Cash Balance, Skoff Count/Sales).
     """
     today = date.today()
     year = request.args.get("year", type=int) or today.year
@@ -1090,7 +1112,30 @@ def reportes_lottery_pdf():
 
     workspace_dir = tempfile.mkdtemp(prefix="lottery_reporte_")
     dest_path = os.path.join(workspace_dir, f"Lottery Reporte {month:02d}-{year}.pdf")
-    lottery_db.build_lottery_export_pdf(year, month, dest_path, company_header=True)
+    lottery_db.build_lottery_pdf_resumen(year, month, dest_path)
+    return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
+
+
+@app.route("/carga-datos/reportes/caja/pdf")
+def reportes_caja_pdf():
+    """
+    Descarga el PDF de Reportes -> Caja -- pedido explícito del usuario
+    (2026-09-17, sesión siguiente: "agrega tambien el de caja"), mismo
+    criterio Detalle/Total que los otros 3 reportes de este módulo. Ver
+    caja.build_caja_pdf_resumen -- reusa build_caja_month_report (mismo
+    cálculo, ya validado, que usa /carga-datos/caja y su export
+    día-por-día en /carga-datos/caja/exportar/pdf, sin tocar ninguno).
+    """
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    report = build_caja_month_report(year, month)
+    workspace_dir = tempfile.mkdtemp(prefix="caja_reporte_")
+    dest_path = os.path.join(workspace_dir, f"Caja Reporte {month:02d}-{year}.pdf")
+    build_caja_pdf_resumen(report, year, month, dest_path)
     return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
 
 
