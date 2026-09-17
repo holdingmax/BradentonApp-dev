@@ -1012,6 +1012,7 @@
     .pdf-link-download:hover { color: var(--accent); background: var(--accent-soft); }
     .pdf-link-download svg { width: 14px; height: 14px; }
   </style>
+  {% block head_extra %}{% endblock %}
 </head>
 <body>
   <nav class="app-rail" id="app-rail">
@@ -1746,36 +1747,49 @@
     // progreso más granular -- ahí la barra pasa a un estado "indeterminado"
     // (rayado animado) en vez de quedarse trabada en 100%, para no dar la
     // falsa impresión de que ya terminó.
+    // noticeBox/showNotice/hideNotice viven a nivel de <script> (no
+    // adentro de ningun IIFE puntual) porque las 3 zonas que muestran
+    // #global-notice -- el flujo de descarga por fetch de acá abajo, el
+    // polling de Carga de Datos (jobs.py) más abajo, y el aviso pendiente
+    // tras un redirect (sessionStorage, al pie de este mismo <script>) --
+    // son 3 IIFE separados. Bug real corregido (2026-09-17, pedido
+    // explícito del usuario -- "a veces lo abro y no tiene ninguna X para
+    // cerrar"): antes de este cambio solo el primer IIFE tenía estas 3
+    // funciones (con su botón "×"), así que los otros dos armaban
+    // #global-notice a mano, sin ningún botón de cerrar -- justo el
+    // camino que usan los avisos de Carga de Datos con redirect (EFT,
+    // Reporte Diario, Lottery, Gettel, Proveedores), que es exactamente
+    // el que el usuario reportó sin X.
+    function noticeBox() {
+      return document.getElementById('global-notice');
+    }
+    function showNotice(message, kind) {
+      var box = noticeBox();
+      if (!box) return;
+      box.className = kind === 'error' ? 'flash-error' : (kind === 'warning' ? 'flash-warning' : 'flash-success');
+      box.style.display = 'flex';
+      box.style.justifyContent = 'space-between';
+      box.style.alignItems = 'flex-start';
+      box.style.gap = '14px';
+      box.innerHTML = '';
+
+      var text = document.createElement('div');
+      text.textContent = message;
+      box.appendChild(text);
+
+      var closeBtn = document.createElement('button');
+      closeBtn.type = 'button';
+      closeBtn.setAttribute('aria-label', 'Cerrar aviso');
+      closeBtn.textContent = '×';
+      closeBtn.style.cssText = 'background:none;border:none;font-size:18px;line-height:1;flex-shrink:0;color:inherit;padding:0;';
+      closeBtn.addEventListener('click', hideNotice);
+      box.appendChild(closeBtn);
+    }
+    function hideNotice() {
+      var box = noticeBox();
+      if (box) box.style.display = 'none';
+    }
     (function () {
-      function noticeBox() {
-        return document.getElementById('global-notice');
-      }
-      function showNotice(message, kind) {
-        var box = noticeBox();
-        if (!box) return;
-        box.className = kind === 'error' ? 'flash-error' : (kind === 'warning' ? 'flash-warning' : 'flash-success');
-        box.style.display = 'flex';
-        box.style.justifyContent = 'space-between';
-        box.style.alignItems = 'flex-start';
-        box.style.gap = '14px';
-        box.innerHTML = '';
-
-        var text = document.createElement('div');
-        text.textContent = message;
-        box.appendChild(text);
-
-        var closeBtn = document.createElement('button');
-        closeBtn.type = 'button';
-        closeBtn.setAttribute('aria-label', 'Cerrar aviso');
-        closeBtn.textContent = '×';
-        closeBtn.style.cssText = 'background:none;border:none;font-size:18px;line-height:1;flex-shrink:0;color:inherit;padding:0;';
-        closeBtn.addEventListener('click', hideNotice);
-        box.appendChild(closeBtn);
-      }
-      function hideNotice() {
-        var box = noticeBox();
-        if (box) box.style.display = 'none';
-      }
       function parseFilename(disposition) {
         if (!disposition) return null;
         var utf8Match = /filename\*=UTF-8''([^;]+)/i.exec(disposition);
@@ -1966,12 +1980,7 @@
                   return;
                 }
                 if (data.notice) {
-                  var box = document.getElementById('global-notice');
-                  if (box) {
-                    box.className = data.notice_level === 'error' ? 'flash-error' : (data.notice_level === 'warning' ? 'flash-warning' : 'flash-success');
-                    box.style.display = 'block';
-                    box.textContent = data.notice;
-                  }
+                  showNotice(data.notice, data.notice_level || 'warning');
                 }
                 setTimeout(function () { progress.reset(); }, 2500);
                 finish();
@@ -2042,11 +2051,8 @@
       if (!raw) return;
       try {
         var pending = JSON.parse(raw);
-        var box = document.getElementById('global-notice');
-        if (box && pending.text) {
-          box.className = pending.level === 'error' ? 'flash-error' : (pending.level === 'warning' ? 'flash-warning' : 'flash-success');
-          box.style.display = 'block';
-          box.textContent = pending.text;
+        if (pending.text) {
+          showNotice(pending.text, pending.level || 'warning');
         }
       } catch (parseErr) {}
     })();

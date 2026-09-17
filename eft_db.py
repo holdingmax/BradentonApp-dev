@@ -292,6 +292,62 @@ def list_all_deposits():
         conn.close()
 
 
+def backfill_grouped_cupones_from_eft():
+    """
+    Completa cupones "agrupados" con los montos reales de gross/fees/net
+    que ese DDC individual trae en un EFT ya cargado -- pedido explícito
+    del usuario (2026-09-17: "hay un montón de cupones que muestran
+    0.00... quiero que estos se completen en caso de que falten con los
+    datos de los DDC que vienen en los EFT").
+
+    Cuando el reporte mensual de Cupones trae una fila que combina varios
+    DDC con un solo total (un "batch"), `cupones_append.
+    expand_monthly_records_for_storage` guarda cada DDC como su propia
+    fila pero con gross/fees/net en 0 -- no hay forma de saber cómo se
+    reparte el total entre ellos SOLO con el reporte mensual. Si más
+    adelante se carga un EFT que sí trae ESE DDC puntual con su propio
+    monto (columna Reference del EFT, ver eft_cta_cte.py), ahí SÍ se sabe
+    el valor real de ese DDC individual -- se usa para completar la fila
+    en vez de dejarla en 0 para siempre.
+
+    Solo toca cupones que siguen en 0 Y que vinieron de un grupo
+    (`reported_group_text` no nulo) -- un cupón cargado individual (no
+    agrupado) nunca se pisa, y uno ya completado (por una corrida
+    anterior de esto mismo, o a mano) tampoco se vuelve a tocar, así que
+    es seguro llamarla en cada carga de la página (ver la ruta en
+    webapp.py) sin necesidad de ningún botón aparte -- se autocompleta
+    solo a medida que se van cargando más EFT.
+
+    Devuelve la cantidad de cupones completados en esta corrida.
+    """
+    conn = _connect()
+    try:
+        candidates = conn.execute(
+            """
+            SELECT coupon_id FROM cupones
+            WHERE reported_group_text IS NOT NULL AND gross = 0 AND fees = 0 AND net = 0
+            """
+        ).fetchall()
+        filled = 0
+        for row in candidates:
+            match = conn.execute(
+                "SELECT gross_amount, fees_amount, paid_amount FROM eft_coupons WHERE coupon = ? LIMIT 1",
+                (row["coupon_id"],),
+            ).fetchone()
+            if match is None:
+                continue
+            conn.execute(
+                "UPDATE cupones SET gross = ?, fees = ?, net = ? WHERE coupon_id = ?",
+                (match["gross_amount"] or 0.0, match["fees_amount"] or 0.0, match["paid_amount"] or 0.0, row["coupon_id"]),
+            )
+            filled += 1
+        if filled:
+            conn.commit()
+        return filled
+    finally:
+        conn.close()
+
+
 def get_cupones_with_status(limit=None):
     """
     Todos los cupones guardados, cada uno con su estado de cruce contra
@@ -303,6 +359,18 @@ def get_cupones_with_status(limit=None):
     tenia la columna G en el excel") es el mismo cálculo que esa columna G
     real: Net Amount reportado menos lo que el EFT efectivamente pagó por
     esa línea -- None si todavía no hay ningún EFT que lo cruce.
+
+    `group_remaining`/`group_pending_count` (2026-09-17, "que le
+    descuenten al cupón padre con el que vinieron en el batch, así queden
+    las diferencias en 0"): para un cupón agrupado que TODAVÍA sigue en 0
+    (ningún EFT lo resolvió todavía -- ver backfill_grouped_cupones_from_eft
+    arriba), se calcula cuánto le queda al grupo entero descontando lo que
+    ya resolvieron sus hermanos (`reported_group_total` menos la suma de
+    los hermanos que ya se completaron) -- así el cupón pendiente muestra
+    el saldo REAL que le queda al batch, no el total original del grupo
+    entero (que ya no aplica una vez que otros DDC del mismo batch se
+    fueron resolviendo). Ambos quedan en None para un cupón no agrupado, o
+    para uno agrupado que ya se resolvió (tiene su propio monto real).
     """
     conn = _connect()
     try:
@@ -326,7 +394,28 @@ def get_cupones_with_status(limit=None):
                 entry["diff"] = round((entry.get("net") or 0) - entry["match"]["paid_amount"], 2)
             else:
                 entry["diff"] = None
+            entry["group_remaining"] = None
+            entry["group_pending_count"] = None
             result.append(entry)
+
+        groups = {}
+        for entry in result:
+            group_text = entry.get("reported_group_text")
+            if group_text:
+                groups.setdefault(group_text, []).append(entry)
+        for members in groups.values():
+            group_total = next((m["reported_group_total"] for m in members if m.get("reported_group_total") is not None), None)
+            if group_total is None:
+                continue
+            resolved_sum = sum((m.get("net") or 0.0) for m in members if (m.get("net") or 0.0) != 0.0)
+            pending = [m for m in members if (m.get("net") or 0.0) == 0.0]
+            if not pending:
+                continue
+            remaining = round(group_total - resolved_sum, 2)
+            for m in pending:
+                m["group_remaining"] = remaining
+                m["group_pending_count"] = len(pending)
+
         return result
     finally:
         conn.close()
@@ -343,13 +432,21 @@ def get_cupones_flat():
     ahora. Cupones sin fecha parseable quedan primero (antes que cualquier
     fecha real conocida), para que la vista "al final de la página" siga
     mostrando siempre los cupones fechados más recientes.
+
+    `date_display` (pedido explícito del usuario, 2026-09-17 -- "quiero
+    que la fecha de los cupones sea dd/mm/yyyy") reusa el mismo parser
+    tolerante que ya usa el ordenamiento (`_parse_cupon_date`, entiende
+    los varios formatos crudos con los que quedó guardada `cupones.date`
+    según el reporte que la trajo) -- `date` en sí NO se toca, sigue
+    crudo tal cual se guardó, por si algo más lo llega a necesitar así.
     """
     cupones = get_cupones_with_status()
     for cp in cupones:
         cp["_parsed_date"] = _parse_cupon_date(cp.get("date"))
     cupones.sort(key=lambda cp: cp["_parsed_date"] or datetime.min)
     for cp in cupones:
-        cp.pop("_parsed_date", None)
+        parsed = cp.pop("_parsed_date", None)
+        cp["date_display"] = parsed.strftime("%d/%m/%Y") if parsed else None
     return cupones
 
 
@@ -383,6 +480,51 @@ def _parse_cupon_date(value):
         except ValueError:
             continue
     return None
+
+
+def delete_cupones_month(year, month):
+    """
+    Borra todos los cupones guardados cuya fecha caiga en (year, month) --
+    pedido explícito del usuario (2026-09-17: "no hay forma de borrar los
+    cupones cargados... debería haber una forma de borrar todos los
+    cupones del mes"). Usa el mismo parser tolerante que el resto de este
+    módulo (_parse_cupon_date) para decidir qué filas matchean, nunca un
+    LIKE contra el texto crudo -- la fecha puede haber quedado guardada en
+    más de un formato según el reporte que la trajo (ver get_cupones_flat).
+    Devuelve la cantidad de cupones borrados.
+    """
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT coupon_id, date FROM cupones").fetchall()
+        to_delete = []
+        for row in rows:
+            parsed = _parse_cupon_date(row["date"])
+            if parsed is not None and parsed.year == year and parsed.month == month:
+                to_delete.append(row["coupon_id"])
+        if to_delete:
+            conn.executemany(
+                "DELETE FROM cupones WHERE coupon_id = ?",
+                [(cid,) for cid in to_delete],
+            )
+            conn.commit()
+        return len(to_delete)
+    finally:
+        conn.close()
+
+
+def get_cupones_years():
+    """Años distintos con al menos un cupón guardado, ascendente -- para poblar el selector de \"borrar mes\"."""
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT date FROM cupones").fetchall()
+    finally:
+        conn.close()
+    years = set()
+    for row in rows:
+        parsed = _parse_cupon_date(row["date"])
+        if parsed is not None:
+            years.add(parsed.year)
+    return sorted(years)
 
 
 def get_unmatched_eft_coupons():

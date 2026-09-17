@@ -3,16 +3,56 @@
 {% block crumbs %}
 <nav class="crumbs"><a href="{{ url_for('carga_datos_eft') }}">EFT y Cupones</a><span class="current">Cupones</span></nav>
 {% endblock %}
+{% block head_extra %}
+<style>
+  .cupones-year { border: 1px solid var(--border); border-radius: 10px; margin-bottom: 14px; overflow: hidden; }
+  .cupones-year:last-child { margin-bottom: 0; }
+  .cupones-year-summary {
+    list-style: none; cursor: pointer; user-select: none;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 12px 16px; background: var(--surface-alt); font-weight: 700; font-size: 15px;
+  }
+  .cupones-year-summary::-webkit-details-marker { display: none; }
+  .cupones-year-summary .cupones-year-count { font-weight: 500; font-size: 12.5px; color: var(--text-soft); }
+  .cupones-year-summary .cupones-year-chevron { transition: transform 0.12s ease; color: var(--text-soft); width: 16px; height: 16px; flex-shrink: 0; }
+  .cupones-year[open] .cupones-year-chevron { transform: rotate(90deg); }
+  .cupones-scroll { max-height: 65vh; overflow-y: auto; }
+  .cupones-table { width: 100%; min-width: 640px; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .cupones-table th, .cupones-table td { padding: 9px 14px; text-align: left; }
+  .cupones-table thead th {
+    position: sticky; top: 0; z-index: 1;
+    background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border);
+  }
+  .cupones-table tbody tr { border-bottom: 1px solid var(--border); }
+  .cupones-table tbody tr:nth-child(even) { background: var(--surface-alt); }
+  .historial-col-day { font-weight: 700; white-space: nowrap; }
+  .historial-badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+  .historial-badge-ocr { background: var(--success-soft); color: var(--success); }
+  .historial-badge-manual { background: var(--accent-soft); color: var(--accent); }
+  .cupon-diff-ok { color: var(--success); }
+  .cupon-diff-off { color: var(--danger, #B91C1C); font-weight: 700; }
+  .cupones-group-hint { font-size: 12px; font-style: italic; white-space: nowrap; }
+  .cupones-delete-card { display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap; }
+  .cupones-delete-card select { padding: 7px 10px; }
+  .cupones-delete-card button { background: var(--error); border-color: var(--error); }
+  .cupones-delete-card button:hover { opacity: 0.9; }
+</style>
+{% endblock %}
 {% block content %}
 <div class="page-header">
   <span class="eyebrow">EFT y Cupones</span>
   <h1>Cupones</h1>
-  <p class="page-subtitle">Historial completo, histórico desde inicios de 2026 (nunca por mes) — del más antiguo al más nuevo, cada DDC guardado con su diferencia contra el EFT que lo pagó. Los EFT en sí viven en <a href="{{ url_for('carga_datos_eft_historial') }}">su propio apartado, por mes</a>.</p>
+  <p class="page-subtitle">Historial completo, histórico desde inicios de 2026 (nunca por mes) — del más antiguo al más nuevo, agrupado por año, cada DDC guardado con su diferencia contra el EFT que lo pagó. Los EFT en sí viven en <a href="{{ url_for('carga_datos_eft_historial') }}">su propio apartado, por mes</a>.</p>
 </div>
 
-<div class="card">
-  {% if cupones %}
-  <div class="cupones-scroll" id="cuponesScroll">
+{% if cupones_by_year %}
+{% for group in cupones_by_year %}
+<details class="cupones-year"{% if group.year == latest_year %} open{% endif %}>
+  <summary class="cupones-year-summary">
+    <span>{{ group.year if group.year is not none else "Sin fecha" }} <span class="cupones-year-count">({{ group.count }} cupón{{ "es" if group.count != 1 else "" }})</span></span>
+    <svg class="cupones-year-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+  </summary>
+  <div class="cupones-scroll" data-cupones-scroll>
     <table class="historial-table cupones-table">
       <thead>
         <tr>
@@ -21,9 +61,9 @@
         </tr>
       </thead>
       <tbody>
-        {% for cp in cupones %}
+        {% for cp in group.cupones %}
         <tr>
-          <td class="historial-col-day">{{ cp.date or '—' }}</td>
+          <td class="historial-col-day">{{ cp.date_display or cp.date or '—' }}</td>
           <td>{{ cp.coupon_id }}</td>
           <td>${{ "{:,.2f}".format(cp.gross or 0) }}</td>
           <td>${{ "{:,.2f}".format(cp.fees or 0) }}</td>
@@ -31,6 +71,8 @@
           <td>
             {% if cp.diff is not none %}
               <span class="{{ 'cupon-diff-ok' if cp.diff|abs < 0.01 else 'cupon-diff-off' }}">${{ "{:,.2f}".format(cp.diff) }}</span>
+            {% elif cp.group_remaining is not none %}
+              <span class="muted cupones-group-hint" title="{{ cp.reported_group_text }}">Grupo: faltan ${{ "{:,.2f}".format(cp.group_remaining) }} ({{ cp.group_pending_count }} pend.)</span>
             {% else %}
               <span class="muted">—</span>
             {% endif %}
@@ -48,32 +90,42 @@
       </tbody>
     </table>
   </div>
-  {% else %}
-  <p class="muted" style="margin-top: 18px;">Todavía no hay ningún cupón guardado.</p>
-  {% endif %}
+</details>
+{% endfor %}
+{% else %}
+<div class="card">
+  <p class="muted" style="margin-top: 0;">Todavía no hay ningún cupón guardado.</p>
+</div>
+{% endif %}
+
+<div class="card cupones-delete-card" style="margin-top: 18px;">
+  <div>
+    <label class="muted" style="display:block; margin-bottom:4px;">Borrar cupones de un mes</label>
+    <form method="post" action="{{ url_for('carga_datos_eft_cupones_borrar_mes') }}" style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap;"
+      onsubmit="return confirm('¿Borrar TODOS los cupones de ' + this.month.options[this.month.selectedIndex].text + ' ' + this.year.value + '? Esta acción no se puede deshacer.');">
+      <select name="month" required>
+        {% for name in month_names %}
+        <option value="{{ loop.index }}">{{ name }}</option>
+        {% endfor %}
+      </select>
+      <select name="year" required>
+        {% for y in delete_month_years %}
+        <option value="{{ y }}"{% if y == latest_year %} selected{% endif %}>{{ y }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit">Borrar cupones de ese mes</button>
+    </form>
+  </div>
 </div>
 
-<style>
-  .cupones-scroll { max-height: 72vh; overflow-y: auto; margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; }
-  .cupones-table { width: 100%; min-width: 640px; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
-  .cupones-table th, .cupones-table td { padding: 9px 14px; text-align: left; }
-  .cupones-table thead th {
-    position: sticky; top: 0; z-index: 1;
-    background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border);
-  }
-  .cupones-table tbody tr { border-bottom: 1px solid var(--border); }
-  .cupones-table tbody tr:nth-child(even) { background: var(--surface-alt); }
-  .historial-col-day { font-weight: 700; white-space: nowrap; }
-  .historial-badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
-  .historial-badge-ocr { background: var(--success-soft); color: var(--success); }
-  .historial-badge-manual { background: var(--accent-soft); color: var(--accent); }
-  .cupon-diff-ok { color: var(--success); }
-  .cupon-diff-off { color: var(--danger, #B91C1C); font-weight: 700; }
-</style>
 <script>
   (function () {
-    var el = document.getElementById("cuponesScroll");
-    if (el) { el.scrollTop = el.scrollHeight; }
+    // Cada año abierto (por defecto, solo el más reciente) arranca
+    // scrolleado a su propio final -- mismo criterio que la vista plana
+    // de antes (ver más abajo por qué ya no hace falta un solo id fijo).
+    document.querySelectorAll("[data-cupones-scroll]").forEach(function (el) {
+      el.scrollTop = el.scrollHeight;
+    });
   })();
 </script>
 {% endblock %}

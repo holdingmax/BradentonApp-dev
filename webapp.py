@@ -3261,17 +3261,72 @@ def carga_datos_eft_cupones_historial():
     arriba, más nuevo abajo -- ver eft_db.get_cupones_flat) y la pantalla
     arranca scrolleada al final (el JS de la plantilla lo hace, no acá).
     """
+    try:
+        backfilled = eft_db.backfill_grouped_cupones_from_eft()
+        if backfilled:
+            print(f"[cupones] {backfilled} cupón(es) de un batch completado(s) con datos de EFT ya cargados.")
+    except Exception as exc:
+        print(f"[cupones] no se pudo completar cupones agrupados desde EFT: {exc}")
+
     cupones = eft_db.get_cupones_flat()
     for cp in cupones:
         match = cp.get("match")
         my = eft_db.eft_month_and_year(match["eft_date"]) if match else None
         cp["eft_month_label"] = f"{_MONTH_NAMES_ES[my[1] - 1]} {my[0]}" if my else None
 
+    # Agrupado por año, cada uno con su propio desplegable (pedido
+    # explícito del usuario, 2026-09-17: "separar con un tipo desplegable
+    # los años... así no tenga que usar tanto el scroll") -- la lista ya
+    # viene ordenada ascendente (get_cupones_flat), así que agrupar
+    # preservando el orden de inserción alcanza, no hace falta reordenar.
+    # Un cupón sin fecha parseable (rarísimo, ver el docstring de
+    # get_cupones_flat) cae en su propio grupo "year=None" -- la plantilla
+    # lo rotula "Sin fecha" y, como esos ya ordenaban primero en la vista
+    # plana, ese grupo queda primero acá también.
+    groups_by_year = {}
+    for cp in cupones:
+        year = int(cp["date_display"][-4:]) if cp.get("date_display") else None
+        groups_by_year.setdefault(year, []).append(cp)
+    cupones_by_year = [
+        {"year": year, "cupones": items, "count": len(items)}
+        for year, items in groups_by_year.items()
+    ]
+    latest_year = max((g["year"] for g in cupones_by_year if g["year"] is not None), default=None)
+
     return render_template(
         "carga_datos_eft_cupones_historial.html",
-        cupones=cupones,
+        cupones_by_year=cupones_by_year,
+        latest_year=latest_year,
+        delete_month_years=eft_db.get_cupones_years(),
+        month_names=_MONTH_NAMES_ES,
         **THEME_BY_KEY["carga_eft"],
     )
+
+
+@app.route("/carga-datos/eft/cupones/borrar-mes", methods=["POST"])
+def carga_datos_eft_cupones_borrar_mes():
+    """
+    Borra todos los cupones guardados de un mes/año puntual -- pedido
+    explícito del usuario (2026-09-17: "no hay forma de borrar los
+    cupones cargados... debería haber una forma de borrar todos los
+    cupones del mes si se quisiera"). Acción irreversible -- el template
+    ya pide confirmación antes de mandar el POST.
+    """
+    try:
+        year = int(request.form.get("year"))
+        month = int(request.form.get("month"))
+        if not (1 <= month <= 12):
+            raise ValueError
+    except (TypeError, ValueError):
+        flash("Mes/año inválido.", "error")
+        return redirect(url_for("carga_datos_eft_cupones_historial"))
+
+    deleted = eft_db.delete_cupones_month(year, month)
+    if deleted:
+        flash(f"{deleted} cupón(es) de {_MONTH_NAMES_ES[month - 1]} {year} borrado(s).", "success")
+    else:
+        flash(f"No había ningún cupón guardado en {_MONTH_NAMES_ES[month - 1]} {year}.", "warning")
+    return redirect(url_for("carga_datos_eft_cupones_historial"))
 
 
 @app.route("/carga-datos/eft/coupon/<int:eft_coupon_id>/editar", methods=["POST"])
