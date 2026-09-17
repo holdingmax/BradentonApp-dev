@@ -778,8 +778,22 @@ def _filename_date_mismatch(filename, target_date):
     NINGUNA coincide con `target_date` -- False si coincide alguna, o si el
     nombre no trae ninguna fecha completa (no hay nada que chequear, se
     deja pasar como siempre). `target_date` acepta date o datetime.
+
+    Bug real corregido (2026-09-17): `datetime` es subclase de `date`, así
+    que `isinstance(target_date, date)` da True también para un
+    `datetime` -- la condición vieja (`not isinstance(...)`) nunca
+    disparaba la conversión a `.date()`, y comparar un `datetime` contra
+    un `set` de `date` (los candidatos del nombre de archivo) siempre da
+    "no coincide" en Python aunque el día/mes/año sean idénticos. Esto
+    rechazaba SIEMPRE los EFT (`parsed` ahí es un `datetime.strptime`,
+    nunca un `date` plano) con "la fecha leída no coincide con la del
+    nombre de archivo" pese a coincidir de verdad -- confirmado contra 4
+    EFT reales de julio-2026 que el usuario no podía cargar. Chequear
+    `isinstance(target_date, datetime)` en vez de `date` es lo correcto:
+    solo un `datetime` de verdad necesita bajar a `.date()` antes de
+    comparar contra los candidatos (que siempre son `date` planos).
     """
-    if hasattr(target_date, "date") and not isinstance(target_date, date):
+    if isinstance(target_date, datetime):
         target_date = target_date.date()
     candidates = _filename_date_candidates(filename)
     if not candidates:
