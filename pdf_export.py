@@ -28,6 +28,8 @@ def build_simple_table_pdf(
     header_fill_by_col=None,
     data_fill_by_col=None,
     bold_last_row=False,
+    font_size=8.5,
+    cell_padding=5,
 ):
     """
     `headers`: una fila de encabezado (texto), en negrita.
@@ -48,6 +50,12 @@ def build_simple_table_pdf(
     totales de los PDF... esten marcados en negrita" -- cuando `rows`
     termina en una fila de totales, poné esto en True para que salga en
     negrita igual que el encabezado.
+
+    `font_size`/`cell_padding` opcionales -- por default quedan igual que
+    siempre (8.5pt / 5pt), para no afectar a los PDF ya ajustados (Store
+    Info/Caja). Un caller con muchas columnas (ej. Lottery) puede pasar un
+    valor más grande si lo necesita -- pedido explícito del usuario
+    (2026-09-16): "se ve medio apretado".
     """
     doc = SimpleDocTemplate(
         dest_path,
@@ -73,11 +81,11 @@ def build_simple_table_pdf(
     style_commands = [
         ("GRID", (0, 0), (-1, -1), 0.6, colors.black),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+        ("FONTSIZE", (0, 0), (-1, -1), font_size),
         ("ALIGN", (0, 0), (-1, -1), "CENTER"),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("TOPPADDING", (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), cell_padding),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), cell_padding),
     ]
     last_row = len(rows)
     for col, hex_color in (header_fill_by_col or {}).items():

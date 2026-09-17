@@ -644,25 +644,34 @@ _LOTTERY_DAY_BOLD_COLS = {1, 2, 4, 6, 8, 9, 10, 11, 17, 19, 21, 22, 23}
 # Comis/Prize Free Plays (online) y Pagos/Sales Com (skoff) van con la
 # fuente en rojo -- confirmado contra "LOTTERY. Analisis 09.2026
 # WEB.xlsx" (font.color real FFFF0000 en esas 4 columnas, no un simple
-# "negativo en rojo" del formato numérico).
-_LOTTERY_RED_FONT_COLS = {8, 10, 16, 18}
+# "negativo en rojo" del formato numérico). F se agregó a pedido explícito
+# del usuario (2026-09-16, cuarta ronda de correcciones de formato).
+_LOTTERY_RED_FONT_COLS = {6, 8, 10, 16, 18}
 
 # Los ratios "En %" (antes J/L/T) van con formato de porcentaje real, no
 # el formato contable con [Red] que se les aplicaba antes por error.
 _LOTTERY_PERCENT_COLS = {9, 11, 19}
 
-# Alineación pedida explícitamente por el usuario (2026-09-16): C..O más Q
-# centradas; P/R/S/T alineadas a la izquierda. Se aplica a cada fila (día,
-# Subtotal, Debito) donde estas columnas tengan contenido.
-_LOTTERY_CENTER_COLS = set(range(3, 16)) | {17}
-_LOTTERY_LEFT_COLS = {16, 18, 19, 20}
+# C/M/O (los tres "COUNT"/"Pays" del layout) van sin decimales -- pedido
+# explícito del usuario (2026-09-16): "8, 90" en vez de "8,00 90,00". El
+# resto de las columnas numéricas crudas (D/E/F/G/H/J/N/P/Q/R) sí llevan
+# 2 decimales, como siempre.
+_LOTTERY_INT_COLS = {3, 13, 15}
+_LOTTERY_INT_FMT = "#,##0_ ;[Red]\\-#,##0\\ "
+
+# Alineación, cuarta ronda de correcciones (2026-09-16): C..M más O
+# centradas; N/P/Q/R/S/T alineadas a la derecha (reemplaza la ronda
+# anterior, que tenía Q centrada y P/R/S/T a la izquierda). Se aplica a
+# cada fila (día, Subtotal, Debito) donde estas columnas tengan contenido.
+_LOTTERY_CENTER_COLS = set(range(3, 14)) | {15}
+_LOTTERY_RIGHT_COLS = {14, 16, 17, 18, 19, 20}
 
 
 def _lottery_apply_column_alignment(sheet, row, styles):
     for col in _LOTTERY_CENTER_COLS:
         sheet.cell(row=row, column=col).alignment = styles["center"]
-    for col in _LOTTERY_LEFT_COLS:
-        sheet.cell(row=row, column=col).alignment = styles["left"]
+    for col in _LOTTERY_RIGHT_COLS:
+        sheet.cell(row=row, column=col).alignment = styles["right"]
 
 
 def _lottery_write_day_row(sheet, row, day, styles):
@@ -691,6 +700,8 @@ def _lottery_write_day_row(sheet, row, day, styles):
         if col in (1, 2):
             cell.number_format = "mm-dd-yy"
             cell.alignment = styles["center"]
+        else:
+            cell.number_format = styles["int_fmt"] if col in _LOTTERY_INT_COLS else styles["plain_fmt"]
         if col in _LOTTERY_RED_FONT_COLS:
             cell.font = RED_FONT
         elif col in _LOTTERY_DAY_BOLD_COLS:
@@ -704,11 +715,22 @@ def _lottery_write_day_row(sheet, row, day, styles):
         cell.number_format = "0.00%" if col in _LOTTERY_PERCENT_COLS else styles["plain_fmt"]
         if col in _LOTTERY_DAY_BOLD_COLS:
             cell.font = BOLD_FONT
+        if col == 23:
+            # "Centrados al medio" pedido explícito del usuario (2026-09-16).
+            cell.alignment = styles["center"]
     for col, fill in styles["day_fill_by_col"].items():
         sheet.cell(row=row, column=col).fill = fill
+    # U ("Cuenta Final" del bloque) va sin valor en las filas de día -- solo
+    # el relleno verde -- pero pedido explícito del usuario (2026-09-16,
+    # quinta ronda): igual necesitan su propio borde, como el resto de la
+    # tabla.
+    sheet.cell(row=row, column=21).border = THIN_BORDER
     sheet.cell(row=row, column=20).font = XlFont(bold=True)
     _lottery_apply_column_alignment(sheet, row, styles)
     _lottery_apply_group_borders(sheet, row, styles)
+    # Filas de día ligeramente más altas que el default -- pedido explícito
+    # del usuario (2026-09-16), "solo un poco".
+    sheet.row_dimensions[row].height = 16.5
 
 
 def _lottery_apply_group_borders(sheet, row, styles):
@@ -740,7 +762,7 @@ def _lottery_write_block(sheet, start_row, block, styles):
     for col, letter in ((3, "C"), (4, "D"), (5, "E"), (6, "F"), (8, "H"), (10, "J"), (12, "L"), (15, "O"), (16, "P"), (17, "Q"), (18, "R")):
         cell = sheet.cell(row=sub_row, column=col, value=f"=SUM({letter}{d1}:{letter}{d2})")
         cell.border = THIN_BORDER
-        cell.number_format = styles["plain_fmt"]
+        cell.number_format = styles["int_fmt"] if col in _LOTTERY_INT_COLS else styles["plain_fmt"]
         cell.font = RED_BOLD if col in _LOTTERY_RED_FONT_COLS else XlFont(bold=True)
     lratio = sheet.cell(row=sub_row, column=11, value=f"=+J{sub_row}/E{sub_row}")
     lratio.border = THIN_BORDER
@@ -763,7 +785,11 @@ def _lottery_write_block(sheet, start_row, block, styles):
         cell.border = THIN_BORDER
         if col in (4, 5, 16, 21):
             cell.number_format = styles["plain_fmt"]
-        cell.font = XlFont(bold=True)
+        # Columna U ("Cuenta Final" del bloque) -- pedido explícito del
+        # usuario (2026-09-16): son pocos valores (uno por bloque), así que
+        # se les sube el tamaño de texto para que resalten (ajustado a 12
+        # en la corrección siguiente, misma fecha -- 14 quedaba muy grande).
+        cell.font = XlFont(bold=True, size=12) if col == 21 else XlFont(bold=True)
     if block.get("chase_bank_date"):
         d = _parse_date(block["chase_bank_date"])
         chase_cell = sheet.cell(row=deb_row, column=22, value=f"Chase Bank {d.strftime('%d/%m/%Y')}")
@@ -817,21 +843,27 @@ def build_lottery_export_workbook(year, month, dest_path):
     THIN_BORDER = XlBorder(left=THIN_SIDE, right=THIN_SIDE, top=THIN_SIDE, bottom=THIN_SIDE)
     CENTER = XlAlignment(horizontal="center", vertical="center")
     LEFT = XlAlignment(horizontal="left", vertical="center")
+    RIGHT = XlAlignment(horizontal="right", vertical="center")
     WRAP_CHASE = XlAlignment(wrap_text=True, vertical="center")
 
     styles = {
-        "font": XlFont, "border": THIN_BORDER, "center": CENTER, "left": LEFT,
-        "wrap_chase": WRAP_CHASE, "plain_fmt": PLAIN_FMT,
+        "font": XlFont, "border": THIN_BORDER, "center": CENTER, "left": LEFT, "right": RIGHT,
+        "wrap_chase": WRAP_CHASE, "plain_fmt": PLAIN_FMT, "int_fmt": _LOTTERY_INT_FMT,
         "money_fmt": MONEY_FMT, "yellow": YELLOW, "green": GREEN, "orange": ORANGE,
-        "day_fill_by_col": {20: YELLOW, 21: GREEN, 23: ORANGE},
+        # L (TOTAL SALES COM) va con relleno gris en las filas de día --
+        # pedido explícito del usuario (2026-09-16), quinta ronda.
+        "day_fill_by_col": {12: GRAY, 20: YELLOW, 21: GREEN, 23: ORANGE},
         "subtotal_fill_by_col": {5: GREEN, 6: GREEN, 12: GREEN, 15: YELLOW, 16: GREEN, 17: YELLOW, 18: YELLOW, 21: GREEN},
         "debito_fill_by_col": {4: YELLOW, 5: GRAY, 16: YELLOW, 21: GREEN},
         # Separadores más gruesos entre los 3 grupos de columnas (ONLINE
         # C-L / SKOFF M-T / CUENTA FINAL U) -- confirmado contra el Excel
-        # real, 2026-09-16.
+        # real, 2026-09-16. D (NET SALES REPORT) además queda enmarcada
+        # con borde medium a los dos lados -- pedido explícito del usuario,
+        # quinta ronda de correcciones de formato (misma fecha).
         "border_factory": XlBorder,
         "group_border_sides": {
-            3: {"left": MEDIUM_SIDE}, 5: {"left": MEDIUM_SIDE},
+            3: {"left": MEDIUM_SIDE}, 4: {"left": MEDIUM_SIDE, "right": MEDIUM_SIDE},
+            5: {"left": MEDIUM_SIDE},
             12: {"right": MEDIUM_SIDE},
             21: {"left": MEDIUM_SIDE, "right": MEDIUM_SIDE},
         },
@@ -841,6 +873,9 @@ def build_lottery_export_workbook(year, month, dest_path):
     sheet = workbook.active
     sheet.title = f"{month:02d}.{year}"
     sheet.row_dimensions[1].height = 16.5
+    # Pedido explícito del usuario (2026-09-16): que el Excel se abra
+    # siempre con un zoom del 85%, sin que el usuario tenga que ajustarlo.
+    sheet.sheet_view.zoomScale = 85
 
     sheet.cell(row=2, column=3, value="ONLINE").fill = GRAY
     sheet.cell(row=2, column=3).font = XlFont(bold=True)
@@ -870,6 +905,9 @@ def build_lottery_export_workbook(year, month, dest_path):
                 cell.fill = YELLOW
             elif col not in no_fill_cols:
                 cell.fill = GRAY
+            if col == 4:
+                # D (NET SALES REPORT) enmarcada -- ver group_border_sides.
+                cell.border = XlBorder(left=MEDIUM_SIDE, right=MEDIUM_SIDE, top=THIN_SIDE, bottom=THIN_SIDE)
         sheet.column_dimensions[openpyxl.utils.get_column_letter(col)].width = width
     sheet.row_dimensions[3].height = 39.0
 
@@ -1059,7 +1097,7 @@ def build_lottery_export_pdf(year, month, dest_path):
     headers = [
         "Día", "Count\n(Online)", "Sales $\n(Online)", "Sales\n(Terminal)", "Pagos\n(Terminal)",
         "Cash Bal.", "Comis", "Prize FP", "Total Comm",
-        "Count\n(Skoff)", "Sales\n(Skoff)", "Pays U", "Pays $", "Sales Amt", "Sales Comm", "Net Total",
+        "Count\n(Skoff)", "Sales\n(Skoff)", "Pays U", "Pays $", "Sales\nAmt", "Sales\nComm", "Net\nTotal",
         "Chase Bank", "Total Pagos",
     ]
     header_fill_by_col = {
@@ -1068,7 +1106,11 @@ def build_lottery_export_pdf(year, month, dest_path):
         16: GREEN,
     }
     data_fill_by_col = {15: YELLOW, 16: GREEN}
-    col_widths_mm = [14, 14, 18, 16, 14, 16, 14, 14, 16, 14, 18, 12, 15, 15, 14, 15, 24, 16]
+    # Anchos escalados ~1.2x sobre los originales -- pedido explícito del
+    # usuario (2026-09-16): "se ve medio apretado" -- usan casi todo el
+    # ancho disponible de la página (legal apaisado, 335.6mm entre
+    # márgenes) en vez de dejar ~57mm libres sin usar.
+    col_widths_mm = [16.8, 16.8, 21.6, 19.2, 16.8, 19.2, 16.8, 16.8, 19.2, 16.8, 21.6, 14.4, 18.0, 18.0, 16.8, 18.0, 28.8, 19.2]
 
     rows = []
     for block in build_month_blocks(year, month):
@@ -1117,6 +1159,8 @@ def build_lottery_export_pdf(year, month, dest_path):
         col_widths_mm=col_widths_mm,
         header_fill_by_col=header_fill_by_col,
         data_fill_by_col=data_fill_by_col,
+        font_size=9.5,
+        cell_padding=6,
     )
     return dest_path
 
