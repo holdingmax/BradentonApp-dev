@@ -481,6 +481,19 @@
       z-index: 20;
     }
     body.rail-dragging .app-rail-item { cursor: grabbing !important; }
+    /* Bug real corregido (2026-09-17, pedido explícito del usuario --
+       "los textos por los que voy pasando se quedan seleccionados en
+       azul, antes no pasaba"): el arrastre mueve el mouse con el botón
+       apretado sobre TEXTO real (app-rail-label, el título del panel,
+       etc.) -- el navegador arma su selección de texto normal con ese
+       gesto salvo que se le pida explícitamente que no lo haga. Con el
+       drag nativo de HTML5 (versión vieja, ver el comentario de arriba)
+       el navegador ya suprimía la selección solo, por eso "antes no
+       pasaba" -- el mousedown/mousemove propio que lo reemplazó nunca
+       necesitó pedirlo hasta ahora. Se aplica a toda la barra (no solo al
+       ítem que se arrastra) porque el mouse pasa por encima de CUALQUIER
+       otro ícono/label mientras dura el arrastre. */
+    body.rail-dragging .app-rail { -webkit-user-select: none; user-select: none; }
     .app-rail-item-row {
       display: flex;
       align-items: center;

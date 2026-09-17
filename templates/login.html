@@ -146,6 +146,20 @@
     .toggle-password:hover { color: var(--text); }
     .toggle-password svg { width: 18px; height: 18px; display: block; }
     .toggle-password .icon-eye-off { display: none; }
+
+    /* Bug real corregido (2026-09-17, reportado por el usuario con una
+       captura: aparecían DOS íconos de ojo juntos en el campo de
+       contraseña) -- no es un problema del botón propio (ese ya
+       funcionaba bien, alternando icon-eye/icon-eye-off en JS), es el
+       botón NATIVO de "revelar contraseña" que Edge/IE agregan solo a
+       cualquier <input type="password"> (pseudo-elemento ::-ms-reveal)
+       -- nunca se lo había ocultado, así que quedaba flotando al lado
+       del ícono propio de la app, dando la impresión de "dos ojos".
+       Firefox/Chrome no tienen este pseudo-elemento así que ahí nunca se
+       vio el problema -- por eso "antes no pasaba" (el botón propio es
+       reciente, Edge lo tenía ahí desde siempre, invisible mientras no
+       hubiera otro ícono al lado con el que confundirse). */
+    #password::-ms-reveal, #password::-ms-clear { display: none; }
     button {
       width: 100%;
       background: var(--accent);
