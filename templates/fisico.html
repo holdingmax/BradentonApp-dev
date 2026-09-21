@@ -7,11 +7,10 @@
 {% from "_month_jump.html" import month_jump %}
 <div class="page-header">
   <span class="eyebrow">Físico</span>
-  <h1>Inventario Teórico vs. Real de Combustible</h1>
+  <h1>Inventario Teórico de Combustible</h1>
   <p class="page-subtitle">
     Reconciliación mensual: lo que <strong>debería</strong> quedar en los tanques según compras y ventas
-    (Inventario Teórico) contra lo que midieron los tanques de verdad (lectura física).
-    Las facturas de compra se cargan (solo por PDF) en
+    (Inventario Teórico), mes a mes. Las facturas de compra se cargan (solo por PDF) en
     <a href="{{ url_for('carga_datos_combustible') }}">Combustible</a>.
   </p>
 </div>
@@ -65,62 +64,6 @@
 </div>
 
 <div class="card">
-  <h2>Lectura Física Real</h2>
-  {% if report.real_gallons is not none %}
-  <div class="fis-real-row">
-    <div class="fis-stat">
-      <div class="fis-stat-label">Inventario Final Real (medido)</div>
-      <div class="fis-stat-gal">{{ "{:,.2f}".format(report.real_gallons) }} <span class="muted">gal</span></div>
-      {% if report.real_reading_date %}<div class="muted" style="font-size:12px;">lectura del {{ report.real_reading_date }}</div>{% endif %}
-    </div>
-    <div class="fis-diferencia-box {{ 'fis-dif-falta' if report.diferencia_gallons and report.diferencia_gallons > 0 else 'fis-dif-sobra' if report.diferencia_gallons and report.diferencia_gallons < 0 else 'fis-dif-ok' }}">
-      <div class="fis-stat-label">Diferencia (Teórico &minus; Real)</div>
-      <div class="fis-final-gal">{{ "{:,.2f}".format(report.diferencia_gallons) }} <span class="muted">gal</span></div>
-      <div class="fis-final-amount">{{ "${:,.2f}".format(report.diferencia_amount) if report.diferencia_amount is not none else '—' }} &middot; {{ "{:.2%}".format(report.diferencia_pct) if report.diferencia_pct is not none else '—' }}</div>
-      <div class="muted" style="font-size:12px; margin-top:4px;">
-        {% if report.diferencia_gallons and report.diferencia_gallons > 0 %}Falta combustible (merma) frente a lo teórico.
-        {% elif report.diferencia_gallons and report.diferencia_gallons < 0 %}Sobra combustible frente a lo teórico.
-        {% else %}Coincide exacto con lo teórico.{% endif %}
-      </div>
-    </div>
-  </div>
-  {% else %}
-  <p class="muted">Todavía no se cargó la lectura física de los tanques para este mes.</p>
-  {% endif %}
-
-  <form method="post" action="{{ url_for('fisico_lectura_real') }}" class="fis-form-inline">
-    <input type="hidden" name="year" value="{{ year }}">
-    <input type="hidden" name="month" value="{{ month }}">
-    <label>Galones medidos
-      <input type="number" step="0.01" name="real_gallons" value="{{ report.real_gallons if report.real_gallons is not none else '' }}" placeholder="Dejar vacío para borrar">
-    </label>
-    <label>Fecha de lectura
-      <input type="date" name="real_reading_date" value="{{ report.real_reading_date or '' }}">
-    </label>
-    <button type="submit">Guardar lectura</button>
-  </form>
-</div>
-
-<div class="card">
-  <h2>Ajustar Inventario Inicial</h2>
-  <p class="page-subtitle" style="margin-bottom:14px;">
-    Normalmente se encadena solo del Inventario Final Teórico del mes anterior. Usá esto solo para el primer mes que
-    se usa este módulo, o para corregir a mano si hace falta. Dejá los campos vacíos para volver al valor encadenado.
-  </p>
-  <form method="post" action="{{ url_for('fisico_ajustar_inicial') }}" class="fis-form-inline">
-    <input type="hidden" name="year" value="{{ year }}">
-    <input type="hidden" name="month" value="{{ month }}">
-    <label>Galones iniciales
-      <input type="number" step="0.01" name="initial_gallons" value="{{ report.initial_gallons if report.initial_source == 'manual' else '' }}" placeholder="Dejar vacío para encadenar">
-    </label>
-    <label>Monto inicial $
-      <input type="number" step="0.01" name="initial_amount" value="{{ report.initial_amount if report.initial_source == 'manual' else '' }}" placeholder="Dejar vacío para encadenar">
-    </label>
-    <button type="submit">Guardar inicial</button>
-  </form>
-</div>
-
-<div class="card">
   <h2>Facturas de {{ month_name }} {{ year }}</h2>
   <p class="page-subtitle" style="margin-bottom:14px;">
     Se cargan solo por PDF en <a href="{{ url_for('carga_datos_combustible') }}">Combustible</a> -- acá se puede
@@ -134,8 +77,8 @@
           <th>Fecha Factura</th>
           <th>Fecha Vencimiento</th>
           <th>N° Factura</th>
-          <th>Fuente</th>
-          <th>Detalle</th>
+          <th>Precio / Gal (sin tax)</th>
+          <th>Precio / Gal (con tax)</th>
           <th>Galones</th>
           <th>Monto $</th>
           <th>Precio / Gal</th>
@@ -148,11 +91,19 @@
           <td>{{ inv.invoice_date }}</td>
           <td>{{ inv.due_date or '—' }}</td>
           <td>{{ inv.invoice_number or '—' }}</td>
-          <td><span class="historial-badge {{ 'historial-badge-ocr' if inv.source == 'pdf' else 'historial-badge-manual' }}">{{ 'PDF' if inv.source == 'pdf' else 'Manual' }}</span></td>
-          <td class="comb-detail-cell">
+          <td class="fis-price-cell">
             {% if inv.lines %}
             {% for line in inv.lines %}
-            <div class="comb-detail-line">{{ "{:,.0f}".format(line.qty_freight) }} gal {{ line.product_code }}{{ ' (' + line.description + ')' if line.description else '' }} @ ${{ "%.4f"|format(line.unit_price_with_tax) }} c/tax (${{ "%.4f"|format(line.unit_price_wo_tax) }} s/tax)</div>
+            <div class="fis-price-line">{{ line.product_code or '—' }}: {{ "${:,.4f}".format(line.unit_price_wo_tax) if line.unit_price_wo_tax is not none else '—' }}</div>
+            {% endfor %}
+            {% else %}
+            <span class="muted">—</span>
+            {% endif %}
+          </td>
+          <td class="fis-price-cell">
+            {% if inv.lines %}
+            {% for line in inv.lines %}
+            <div class="fis-price-line">{{ line.product_code or '—' }}: {{ "${:,.4f}".format(line.unit_price_with_tax) if line.unit_price_with_tax is not none else '—' }}</div>
             {% endfor %}
             {% else %}
             <span class="muted">—</span>
@@ -194,6 +145,28 @@
   {% else %}
   <p class="muted">Todavía no hay ninguna factura cargada este mes. <a href="{{ url_for('carga_datos_combustible') }}">Cargar una factura</a>.</p>
   {% endif %}
+
+  <details class="fis-inicial-details">
+    <summary>
+      Ajustar inventario inicial
+      <span class="muted">({{ "manual" if report.initial_source == "manual" else "encadenado del mes anterior" if report.initial_source == "prev_month_computed" else "sin datos" }})</span>
+    </summary>
+    <p class="page-subtitle" style="margin: 10px 0 12px;">
+      Normalmente se encadena solo del Inventario Final Teórico del mes anterior. Usá esto solo para el primer mes que
+      se usa este módulo, o para corregir a mano si hace falta. Dejá los campos vacíos para volver al valor encadenado.
+    </p>
+    <form method="post" action="{{ url_for('fisico_ajustar_inicial') }}" class="fis-form-inline">
+      <input type="hidden" name="year" value="{{ year }}">
+      <input type="hidden" name="month" value="{{ month }}">
+      <label>Galones iniciales
+        <input type="number" step="0.01" name="initial_gallons" value="{{ report.initial_gallons if report.initial_source == 'manual' else '' }}" placeholder="Dejar vacío para encadenar">
+      </label>
+      <label>Monto inicial $
+        <input type="number" step="0.01" name="initial_amount" value="{{ report.initial_amount if report.initial_source == 'manual' else '' }}" placeholder="Dejar vacío para encadenar">
+      </label>
+      <button type="submit">Guardar inicial</button>
+    </form>
+  </details>
 </div>
 
 <style>
@@ -212,20 +185,9 @@
   .historial-col-action form { margin: 0; display: inline; }
   .historial-col-action button { margin-top: 0; padding: 6px 12px; font-size: 12.5px; }
 
-  .historial-badge {
-    display: inline-block;
-    padding: 3px 9px;
-    border-radius: 999px;
-    font-size: 11.5px;
-    font-weight: 600;
-    white-space: nowrap;
-  }
-  .historial-badge-ocr { background: var(--success-soft); color: var(--success); }
-  .historial-badge-manual { background: var(--accent-soft); color: var(--accent); }
-
-  .comb-detail-cell { white-space: normal; min-width: 260px; }
-  .comb-detail-line { font-size: 12px; color: var(--text-soft); }
-  .comb-detail-line + .comb-detail-line { margin-top: 2px; }
+  .fis-price-cell { white-space: normal; min-width: 150px; }
+  .fis-price-line { font-size: 12px; color: var(--text-soft); }
+  .fis-price-line + .fis-price-line { margin-top: 2px; }
 
   .fis-inv-edit-row td { background: var(--surface-alt); white-space: normal; }
   .fis-inv-edit-form {
@@ -281,18 +243,15 @@
   .fis-final-gal { font-size: 24px; font-weight: 700; color: var(--text); letter-spacing: -0.01em; margin-bottom: 4px; }
   .fis-final-amount { font-size: 15px; font-weight: 700; color: var(--text-soft); }
 
-  .fis-real-row {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: 14px;
-    margin-bottom: 16px;
-  }
-  .fis-diferencia-box { border-radius: var(--radius); padding: 16px 18px; border: 1.5px solid var(--border); }
-  .fis-dif-falta { border-color: var(--error); background: var(--error-soft); }
-  .fis-dif-falta .fis-final-amount, .fis-dif-falta .fis-final-gal { color: var(--error); }
-  .fis-dif-sobra { border-color: var(--success); background: var(--success-soft); }
-  .fis-dif-sobra .fis-final-amount, .fis-dif-sobra .fis-final-gal { color: var(--success); }
-  .fis-dif-ok { border-color: var(--border); background: var(--surface-alt); }
+  /* Complemento chico dentro de Facturas -- pedido explícito del usuario
+     (2026-09-21): "a lo de ajustar el inventario inicial quiero que lo
+     pongas como un pequeno complemento del cuadro Facturas... en vez de
+     que sea un cuadro por aparte". Colapsado por default (details/summary
+     nativo), así no compite visualmente con la tabla de facturas. */
+  .fis-inicial-details { margin-top: 18px; border-top: 1px solid var(--border); padding-top: 14px; }
+  .fis-inicial-details summary { cursor: pointer; font-size: 13px; font-weight: 700; color: var(--text-soft); }
+  .fis-inicial-details summary:hover { color: var(--text); }
+  .fis-inicial-details[open] summary { margin-bottom: 4px; }
 
   .fis-form-inline { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; margin-top: 4px; }
   .fis-form-inline label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; font-weight: 600; color: var(--text-soft); }
