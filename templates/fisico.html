@@ -1,0 +1,345 @@
+{% extends "base.html" %}
+{% block main_class %}main-full{% endblock %}
+{% block crumbs %}
+<nav class="crumbs"><span class="current">Físico</span></nav>
+{% endblock %}
+{% block content %}
+{% from "_month_jump.html" import month_jump %}
+<div class="page-header">
+  <span class="eyebrow">Físico</span>
+  <h1>Inventario Teórico vs. Real de Combustible</h1>
+  <p class="page-subtitle">
+    Reconciliación mensual: lo que <strong>debería</strong> quedar en los tanques según compras y ventas
+    (Inventario Teórico) contra lo que midieron los tanques de verdad (lectura física).
+    Las facturas de compra se cargan (solo por PDF) en
+    <a href="{{ url_for('carga_datos_combustible') }}">Combustible</a>.
+  </p>
+</div>
+
+<div class="card">
+  <div class="historial-nav">
+    <a href="{{ url_for('fisico_view', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
+    <div class="historial-nav-title">
+      {{ month_jump('fisico_view', year, month) }}
+      {% if year == today.year and month == today.month %}
+      <span class="muted">Mes actual</span>
+      {% else %}
+      <a href="{{ url_for('fisico_view') }}" class="muted">Ir al mes actual</a>
+      {% endif %}
+    </div>
+    <a href="{{ url_for('fisico_view', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
+  </div>
+</div>
+
+{% macro fis_stat(label, gallons, amount, gal_decimals=2) %}
+<div class="fis-stat">
+  <div class="fis-stat-label">{{ label }}</div>
+  <div class="fis-stat-gal">{{ ("{:,.%sf}" % gal_decimals).format(gallons) if gallons is not none else '—' }} <span class="muted">gal</span></div>
+  <div class="fis-stat-amount">{{ "${:,.2f}".format(amount) if amount is not none else '—' }}</div>
+</div>
+{% endmacro %}
+
+<div class="card">
+  <h2>Inventario Teórico de {{ month_name }} {{ year }}</h2>
+  <div class="fis-stat-grid">
+    {{ fis_stat("Inventario Inicial" + (" (manual)" if report.initial_source == "manual" else " (encadenado)" if report.initial_source == "prev_month_computed" else " (sin datos)"), report.initial_gallons, report.initial_amount) }}
+    {{ fis_stat("+ Compras del mes (" + report.invoices|length|string + " factura" + ("s" if report.invoices|length != 1 else "") + ")", report.invoices_gallons, report.invoices_amount) }}
+    {{ fis_stat("= Total Compras", report.total_gallons, report.total_amount) }}
+    {{ fis_stat("Ventas del mes", report.ventas_gallons, report.ventas_amount) }}
+  </div>
+  <div class="fis-final-row">
+    <div class="fis-final-box">
+      <div class="fis-final-label">Inventario Final Teórico</div>
+      <div class="fis-final-gal">{{ "{:,.2f}".format(report.final_teorico_gallons) }} <span class="muted">gal</span></div>
+      <div class="fis-final-amount">${{ "{:,.2f}".format(report.final_teorico_amount) }}</div>
+    </div>
+    <div class="fis-final-box">
+      <div class="fis-final-label">Precio Promedio / Gal</div>
+      <div class="fis-final-gal">{{ "${:,.4f}".format(report.avg_price) if report.avg_price is not none else '—' }}</div>
+      <div class="muted" style="font-size:12px;">costo ponderado de Inventario Inicial + Compras</div>
+    </div>
+  </div>
+  <p class="muted" style="margin-top:10px; font-size:12.5px;">
+    Ventas valuadas al costo de compra (no al precio de venta) -- {{ "{:,.2f}".format(-report.ventas_gallons) }} gal vendidos según Store Info del mes.
+  </p>
+</div>
+
+<div class="card">
+  <h2>Lectura Física Real</h2>
+  {% if report.real_gallons is not none %}
+  <div class="fis-real-row">
+    <div class="fis-stat">
+      <div class="fis-stat-label">Inventario Final Real (medido)</div>
+      <div class="fis-stat-gal">{{ "{:,.2f}".format(report.real_gallons) }} <span class="muted">gal</span></div>
+      {% if report.real_reading_date %}<div class="muted" style="font-size:12px;">lectura del {{ report.real_reading_date }}</div>{% endif %}
+    </div>
+    <div class="fis-diferencia-box {{ 'fis-dif-falta' if report.diferencia_gallons and report.diferencia_gallons > 0 else 'fis-dif-sobra' if report.diferencia_gallons and report.diferencia_gallons < 0 else 'fis-dif-ok' }}">
+      <div class="fis-stat-label">Diferencia (Teórico &minus; Real)</div>
+      <div class="fis-final-gal">{{ "{:,.2f}".format(report.diferencia_gallons) }} <span class="muted">gal</span></div>
+      <div class="fis-final-amount">{{ "${:,.2f}".format(report.diferencia_amount) if report.diferencia_amount is not none else '—' }} &middot; {{ "{:.2%}".format(report.diferencia_pct) if report.diferencia_pct is not none else '—' }}</div>
+      <div class="muted" style="font-size:12px; margin-top:4px;">
+        {% if report.diferencia_gallons and report.diferencia_gallons > 0 %}Falta combustible (merma) frente a lo teórico.
+        {% elif report.diferencia_gallons and report.diferencia_gallons < 0 %}Sobra combustible frente a lo teórico.
+        {% else %}Coincide exacto con lo teórico.{% endif %}
+      </div>
+    </div>
+  </div>
+  {% else %}
+  <p class="muted">Todavía no se cargó la lectura física de los tanques para este mes.</p>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('fisico_lectura_real') }}" class="fis-form-inline">
+    <input type="hidden" name="year" value="{{ year }}">
+    <input type="hidden" name="month" value="{{ month }}">
+    <label>Galones medidos
+      <input type="number" step="0.01" name="real_gallons" value="{{ report.real_gallons if report.real_gallons is not none else '' }}" placeholder="Dejar vacío para borrar">
+    </label>
+    <label>Fecha de lectura
+      <input type="date" name="real_reading_date" value="{{ report.real_reading_date or '' }}">
+    </label>
+    <button type="submit">Guardar lectura</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Ajustar Inventario Inicial</h2>
+  <p class="page-subtitle" style="margin-bottom:14px;">
+    Normalmente se encadena solo del Inventario Final Teórico del mes anterior. Usá esto solo para el primer mes que
+    se usa este módulo, o para corregir a mano si hace falta. Dejá los campos vacíos para volver al valor encadenado.
+  </p>
+  <form method="post" action="{{ url_for('fisico_ajustar_inicial') }}" class="fis-form-inline">
+    <input type="hidden" name="year" value="{{ year }}">
+    <input type="hidden" name="month" value="{{ month }}">
+    <label>Galones iniciales
+      <input type="number" step="0.01" name="initial_gallons" value="{{ report.initial_gallons if report.initial_source == 'manual' else '' }}" placeholder="Dejar vacío para encadenar">
+    </label>
+    <label>Monto inicial $
+      <input type="number" step="0.01" name="initial_amount" value="{{ report.initial_amount if report.initial_source == 'manual' else '' }}" placeholder="Dejar vacío para encadenar">
+    </label>
+    <button type="submit">Guardar inicial</button>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Facturas de {{ month_name }} {{ year }}</h2>
+  <p class="page-subtitle" style="margin-bottom:14px;">
+    Se cargan solo por PDF en <a href="{{ url_for('carga_datos_combustible') }}">Combustible</a> -- acá se puede
+    corregir un campo mal leído ("Editar") o eliminar una factura.
+  </p>
+  {% if report.invoices %}
+  <div class="historial-table-wrap">
+    <table class="historial-table">
+      <thead>
+        <tr>
+          <th>Fecha Factura</th>
+          <th>Fecha Vencimiento</th>
+          <th>N° Factura</th>
+          <th>Fuente</th>
+          <th>Detalle</th>
+          <th>Galones</th>
+          <th>Monto $</th>
+          <th>Precio / Gal</th>
+          <th class="historial-col-action"></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for inv in report.invoices %}
+        <tr id="fis-inv-view-{{ inv.id }}">
+          <td>{{ inv.invoice_date }}</td>
+          <td>{{ inv.due_date or '—' }}</td>
+          <td>{{ inv.invoice_number or '—' }}</td>
+          <td><span class="historial-badge {{ 'historial-badge-ocr' if inv.source == 'pdf' else 'historial-badge-manual' }}">{{ 'PDF' if inv.source == 'pdf' else 'Manual' }}</span></td>
+          <td class="comb-detail-cell">
+            {% if inv.lines %}
+            {% for line in inv.lines %}
+            <div class="comb-detail-line">{{ "{:,.0f}".format(line.qty_freight) }} gal {{ line.product_code }}{{ ' (' + line.description + ')' if line.description else '' }} @ ${{ "%.4f"|format(line.unit_price_with_tax) }} c/tax (${{ "%.4f"|format(line.unit_price_wo_tax) }} s/tax)</div>
+            {% endfor %}
+            {% else %}
+            <span class="muted">—</span>
+            {% endif %}
+          </td>
+          <td>{{ "{:,.2f}".format(inv.gallons) }}</td>
+          <td>${{ "{:,.2f}".format(inv.amount) }}</td>
+          <td>${{ "{:,.4f}".format(inv.amount / inv.gallons) if inv.gallons else '—' }}</td>
+          <td class="historial-col-action">
+            <button type="button" class="btn-secondary" onclick="fisInvEditToggle({{ inv.id }}, true, event)">Editar</button>
+          </td>
+        </tr>
+        <tr id="fis-inv-edit-{{ inv.id }}" class="fis-inv-edit-row" hidden>
+          <td colspan="9">
+            <form method="post" action="{{ url_for('carga_datos_combustible_editar', invoice_id=inv.id) }}" class="fis-inv-edit-form">
+              <input type="hidden" name="year" value="{{ year }}">
+              <input type="hidden" name="month" value="{{ month }}">
+              <label class="muted">Fecha Factura<input type="date" name="invoice_date" value="{{ inv.invoice_date }}" required></label>
+              <label class="muted">Fecha Vencimiento<input type="date" name="due_date" value="{{ inv.due_date or '' }}"></label>
+              <label class="muted">N° Factura<input type="text" name="invoice_number" value="{{ inv.invoice_number or '' }}"></label>
+              <label class="muted">Galones<input type="number" step="0.01" name="gallons" value="{{ inv.gallons }}" required></label>
+              <label class="muted">Monto $<input type="number" step="0.01" name="amount" value="{{ inv.amount }}" required></label>
+              <div class="fis-inv-edit-actions">
+                <button type="submit" class="btn-secondary">Guardar</button>
+                <button type="button" class="btn-secondary" onclick="fisInvEditToggle({{ inv.id }}, false, event)">Cancelar</button>
+              </div>
+            </form>
+            <form method="post" action="{{ url_for('carga_datos_combustible_eliminar', invoice_id=inv.id) }}" onsubmit="return confirm('¿Eliminar esta factura?');" class="fis-inv-delete-form">
+              <input type="hidden" name="year" value="{{ year }}">
+              <input type="hidden" name="month" value="{{ month }}">
+              <button type="submit" class="btn-danger-soft">Eliminar factura</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">Todavía no hay ninguna factura cargada este mes. <a href="{{ url_for('carga_datos_combustible') }}">Cargar una factura</a>.</p>
+  {% endif %}
+</div>
+
+<style>
+  /* .historial-nav / .historial-table -- ver carga_datos_combustible.html: no están en base.html */
+  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .historial-nav-btn { text-decoration: none; display: inline-block; }
+  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
+  .historial-table-wrap { overflow-x: auto; margin-top: 8px; border: 1px solid var(--border); border-radius: 10px; }
+  .historial-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .historial-table th, .historial-table td { padding: 9px 14px; text-align: left; white-space: nowrap; }
+  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr { border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
+  .historial-col-action { text-align: right; }
+  .historial-col-action form { margin: 0; display: inline; }
+  .historial-col-action button { margin-top: 0; padding: 6px 12px; font-size: 12.5px; }
+
+  .historial-badge {
+    display: inline-block;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .historial-badge-ocr { background: var(--success-soft); color: var(--success); }
+  .historial-badge-manual { background: var(--accent-soft); color: var(--accent); }
+
+  .comb-detail-cell { white-space: normal; min-width: 260px; }
+  .comb-detail-line { font-size: 12px; color: var(--text-soft); }
+  .comb-detail-line + .comb-detail-line { margin-top: 2px; }
+
+  .fis-inv-edit-row td { background: var(--surface-alt); white-space: normal; }
+  .fis-inv-edit-form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 12px;
+    padding: 10px 4px;
+  }
+  .fis-inv-edit-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: var(--text-soft); }
+  .fis-inv-edit-form input {
+    padding: 7px 9px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 13.5px;
+    color: var(--text);
+    min-width: 130px;
+  }
+  .fis-inv-edit-form input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .fis-inv-edit-actions { display: flex; gap: 8px; }
+  .fis-inv-edit-actions button { margin-top: 0; }
+  .fis-inv-delete-form { margin: 0 4px 10px; display: inline-block; }
+  .fis-inv-delete-form button { margin-top: 0; padding: 7px 12px; font-size: 12.5px; }
+
+  .fis-stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 14px;
+    margin-bottom: 16px;
+  }
+  .fis-stat {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-alt);
+    padding: 14px 16px;
+  }
+  .fis-stat-label { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-soft); margin-bottom: 8px; }
+  .fis-stat-gal { font-size: 19px; font-weight: 700; color: var(--text); letter-spacing: -0.01em; margin-bottom: 3px; }
+  .fis-stat-amount { font-size: 14px; font-weight: 600; color: var(--text-soft); }
+
+  .fis-final-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px;
+  }
+  .fis-final-box {
+    border: 1.5px solid var(--accent);
+    border-radius: var(--radius);
+    background: var(--accent-soft);
+    padding: 16px 18px;
+  }
+  .fis-final-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-soft); margin-bottom: 8px; }
+  .fis-final-gal { font-size: 24px; font-weight: 700; color: var(--text); letter-spacing: -0.01em; margin-bottom: 4px; }
+  .fis-final-amount { font-size: 15px; font-weight: 700; color: var(--text-soft); }
+
+  .fis-real-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px;
+    margin-bottom: 16px;
+  }
+  .fis-diferencia-box { border-radius: var(--radius); padding: 16px 18px; border: 1.5px solid var(--border); }
+  .fis-dif-falta { border-color: var(--error); background: var(--error-soft); }
+  .fis-dif-falta .fis-final-amount, .fis-dif-falta .fis-final-gal { color: var(--error); }
+  .fis-dif-sobra { border-color: var(--success); background: var(--success-soft); }
+  .fis-dif-sobra .fis-final-amount, .fis-dif-sobra .fis-final-gal { color: var(--success); }
+  .fis-dif-ok { border-color: var(--border); background: var(--surface-alt); }
+
+  .fis-form-inline { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; margin-top: 4px; }
+  .fis-form-inline label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; font-weight: 600; color: var(--text-soft); }
+  .fis-form-inline input {
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 400;
+    color: var(--text);
+    min-width: 160px;
+  }
+  .fis-form-inline input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .fis-form-inline button { margin-top: 0; }
+</style>
+<script>
+  // Fila de edición inline para las facturas de PDF -- mismo patrón que
+  // eftEditToggle en carga_datos_eft_historial.html: una view-row y una
+  // edit-row hermana, se togglean mostrando una sola a la vez; solo una
+  // fila editable abierta por vez; tocar afuera la cierra sola.
+  (function () {
+    window.fisInvEditToggle = function (id, show, evt) {
+      if (evt) evt.stopPropagation();
+      var view = document.getElementById('fis-inv-view-' + id);
+      var edit = document.getElementById('fis-inv-edit-' + id);
+      if (!view || !edit) return;
+      document.querySelectorAll('.fis-inv-edit-row').forEach(function (row) {
+        if (row !== edit && !row.hidden) {
+          row.hidden = true;
+          var otherId = row.id.replace('fis-inv-edit-', '');
+          var otherView = document.getElementById('fis-inv-view-' + otherId);
+          if (otherView) otherView.hidden = false;
+        }
+      });
+      view.hidden = show;
+      edit.hidden = !show;
+    };
+    document.addEventListener('click', function (event) {
+      document.querySelectorAll('.fis-inv-edit-row').forEach(function (row) {
+        if (row.hidden) return;
+        if (row.contains(event.target)) return;
+        var id = row.id.replace('fis-inv-edit-', '');
+        var trigger = event.target.closest ? event.target.closest('[onclick*="fisInvEditToggle(' + id + '"]') : null;
+        if (trigger) return;
+        window.fisInvEditToggle(id, false);
+      });
+    });
+  })();
+</script>
+{% endblock %}

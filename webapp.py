@@ -99,6 +99,9 @@ from reporte_diario import (
     process_store_info,
 )
 import proyecciones
+import fisico
+import fisico_db
+import fisico_invoice_parser
 import reportes_db
 import lottery_db
 import gettel_db
@@ -349,6 +352,7 @@ _ICON_SCALE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke
 # guardados) -- pedido explícito del usuario (2026-09-16), distinto del
 # ícono de cada módulo para que se note de un vistazo que es un archivo.
 _ICON_FILE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>'
+_ICON_FUEL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="22" x2="15" y2="22"/><line x1="4" y1="9" x2="14" y2="9"/><path d="M14 22V4a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v18"/><path d="M14 13h2a2 2 0 0 1 2 2v2a2 2 0 0 0 2 2v0a2 2 0 0 0 2-2V9.83a2 2 0 0 0-.59-1.42L18 5"/></svg>'
 _ICON_CLOCK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>'
 
 TOOLS = [
@@ -576,6 +580,31 @@ CARGA_DATOS_TOOLS = [
         "description": "Subí el reporte semanal de Clock In/Out — horas por empleado, sueldo y descuentos calculados solos, sin generar ningún Excel.",
         "accent": "#0891B2",
         "accent_soft": "#D3F0F4",
+    },
+    {
+        "key": "carga_combustible",
+        "code": "CB",
+        "icon": _ICON_FUEL,
+        "label": "Combustible",
+        "url": "/carga-datos/combustible",
+        "description": "Cargá a mano las facturas de compra de combustible — alimentan el cuadro de Físico (Inventario Teórico vs. real).",
+        "accent": "#92400E",
+        "accent_soft": "#FDE8CE",
+    },
+    {
+        # Nunca aparece en la grilla de Herramientas (ver el filtro de
+        # carga_datos_index más abajo, mismo criterio que "carga_caja") --
+        # existe solo para que THEME_BY_KEY tenga el tema de /fisico
+        # (la página de "Cuadro del mes", que no es una carga en sí misma,
+        # las facturas se cargan en /carga-datos/combustible de arriba).
+        "key": "fisico",
+        "code": "FI",
+        "icon": _ICON_FUEL,
+        "label": "Físico",
+        "url": "/fisico",
+        "description": "Inventario Teórico de combustible del mes (compras + ventas) contra la lectura física real de los tanques.",
+        "accent": "#92400E",
+        "accent_soft": "#FDE8CE",
     },
 ]
 
@@ -985,7 +1014,7 @@ def carga_datos_index():
     # usuario (2026-09-12, cuarta tanda): no le corresponde una tarjeta acá
     # ("no se le tiene que cargar ningun PDF o excel para completar"), solo
     # queda accesible desde la barra lateral (grupo Book Keeping).
-    upload_tools = [tool for tool in CARGA_DATOS_TOOLS if tool["key"] != "carga_caja"]
+    upload_tools = [tool for tool in CARGA_DATOS_TOOLS if tool["key"] not in ("carga_caja", "fisico")]
     return render_template("carga_datos_index.html", tools=upload_tools)
 
 
@@ -1200,6 +1229,243 @@ def carga_datos_proyecciones_margenes():
     year = request.form.get("year", type=int) or date.today().year
     month = request.form.get("month", type=int) or date.today().month
     return redirect(url_for("carga_datos_proyecciones", year=year, month=month))
+
+
+# Módulo "Combustible" + apartado "Fisico" -- pedido explícito del usuario
+# (2026-09-18, misma sesión que Proyecciones): cargar a mano las facturas
+# de compra de combustible ("Combustible", herramienta de Carga de Datos)
+# para armar el cuadro de reconciliación mensual Inventario Teórico vs.
+# lectura física real ("Fisico", apartado propio de la barra lateral) --
+# ver fisico.py/fisico_db.py para la fórmula real decodificada de un
+# ejemplo (`hoja_fisico.xlsx`). El usuario confirmó (2026-09-18)
+# preferir carga manual mientras no hubiera un ejemplo real de factura;
+# el 2026-09-21 subió 5 facturas reales y pidió que el PDF se lea solo
+# -- ver fisico_invoice_parser.py y carga_datos_combustible_subir_pdf()
+# más abajo. La carga manual queda como respaldo para cuando no hay un
+# PDF limpio (o es de otro formato/proveedor).
+@app.route("/carga-datos/combustible")
+def carga_datos_combustible():
+    """
+    Pedido explícito del usuario (2026-09-21): se saca la carga a mano --
+    esta página queda solo para subir el PDF de la factura. El detalle del
+    mes (facturas ya cargadas, editar, eliminar) vive en /fisico -- mismo
+    criterio que ya usa Gettel/Toyota ("Cargar" separado de "Cuadro del
+    mes"). No hace falta año/mes acá: cada factura se archiva sola, en el
+    mes de su propia Fecha de Factura leída del PDF (ver
+    _run_carga_datos_combustible_job).
+    """
+    return render_template("carga_datos_combustible.html", **THEME_BY_KEY["carga_combustible"])
+
+
+@app.route("/carga-datos/combustible/<int:invoice_id>/editar", methods=["POST"])
+def carga_datos_combustible_editar(invoice_id):
+    """
+    Corrige a mano un campo mal leído de una factura ya cargada por PDF --
+    la única edición que queda disponible ahora que se sacó la carga
+    manual (pedido explícito del usuario, 2026-09-21). El detalle por
+    grado (`lines`) no se edita acá, solo el agregado que usa
+    fisico.build_month_report.
+    """
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    invoice_date = (request.form.get("invoice_date") or "").strip()
+    due_date = (request.form.get("due_date") or "").strip() or None
+    invoice_number = request.form.get("invoice_number")
+    gallons_raw = (request.form.get("gallons") or "").strip()
+    amount_raw = (request.form.get("amount") or "").strip()
+
+    try:
+        if not invoice_date:
+            raise ValueError("Falta la Fecha de Factura.")
+        gallons = float(gallons_raw)
+        amount = float(amount_raw)
+        fisico_db.update_invoice(invoice_id, invoice_date, due_date, invoice_number, gallons, amount)
+        flash("Factura corregida.", "success")
+        redirect_year, redirect_month = (int(part) for part in invoice_date.split("-")[:2])
+    except ValueError:
+        flash("Revisá la Fecha, los Galones y el Monto -- tienen que ser válidos.", "error")
+        redirect_year, redirect_month = year, month
+
+    return redirect(url_for("fisico_view", year=redirect_year, month=redirect_month))
+
+
+@app.route("/carga-datos/combustible/subir-pdf", methods=["POST"])
+def carga_datos_combustible_subir_pdf():
+    """
+    Carga por PDF -- pedido explícito de Alfonso (2026-09-21), con 5
+    facturas reales del proveedor de combustible como ejemplo (ver
+    fisico_invoice_parser.py para el detalle de qué se lee y por qué).
+    Mismo patrón de siempre para lotes de PDF (jobs.py + threading, ver
+    _run_carga_datos_proveedores_job): cada archivo se procesa aislado --
+    un PDF roto o de otro formato no tira abajo el resto del lote, y no
+    se guarda nada de esa factura puntual (fisico_invoice_parser nunca
+    adivina con baja confianza). Duplicado = mismo N° de factura ya
+    guardado, en cualquier mes -- mismo criterio que
+    proveedores_db.save_invoice.
+    """
+    uploads = [f for f in request.files.getlist("pdf_files") if f and f.filename]
+    if not uploads:
+        return _error_response("Seleccioná uno o más PDF de factura de combustible.")
+
+    paths = _save_uploads_to_workspace(uploads)
+    job_id = jobs.create_job(len(paths))
+    threading.Thread(target=_run_carga_datos_combustible_job, args=(job_id, paths), daemon=True).start()
+    return jsonify({"job_id": job_id, "total": len(paths)})
+
+
+def _run_carga_datos_combustible_job(job_id, paths):
+    """Corre en su propio hilo -- mismo patrón que _run_carga_datos_proveedores_job, ver ese docstring."""
+    try:
+        saved = []
+        duplicates = []
+        failed = []
+
+        for index, path in enumerate(paths, start=1):
+            filename = os.path.basename(path)
+            try:
+                result = fisico_invoice_parser.extract_fuel_invoice(path)
+            except fisico_invoice_parser.PDF_READ_EXCEPTIONS as exc:
+                failed.append({"filename": filename, "error": str(exc)})
+                jobs.update_job(job_id, done=index, total=len(paths))
+                continue
+
+            existing = fisico_db.find_invoice_by_number(result["invoice_number"])
+            if existing:
+                duplicates.append({"filename": filename, "invoice_number": result["invoice_number"]})
+                jobs.update_job(job_id, done=index, total=len(paths))
+                continue
+
+            fisico_db.add_invoice(
+                result["invoice_date"],
+                result["due_date"],
+                result["invoice_number"],
+                result["total_gallons"],
+                result["total_amount_due"],
+                source="pdf",
+                bol_number=result["bol_number"],
+                lines=result["lines"],
+            )
+            saved.append({
+                "filename": filename,
+                "invoice_number": result["invoice_number"],
+                "date": result["invoice_date"],
+            })
+            jobs.update_job(job_id, done=index, total=len(paths))
+
+        parts = []
+        if saved:
+            parts.append(f"{len(saved)} factura(s) guardada(s).")
+        if duplicates:
+            nums = ", ".join(d["invoice_number"] for d in duplicates)
+            parts.append(f"{len(duplicates)} factura(s) ya estaban cargadas y se omitieron ({nums}).")
+        if failed:
+            for item in failed:
+                parts.append(f"{item['filename']}: {item['error']}")
+        if not parts:
+            parts.append("No se guardó ninguna factura de este lote.")
+        level = (
+            "success" if (saved and not duplicates and not failed)
+            else ("error" if not saved else "warning")
+        )
+
+        if saved:
+            # Pedido explícito del usuario (2026-09-21): el resultado ya no
+            # se mira en esta misma página (que ahora es solo el upload) --
+            # va directo al Cuadro del mes de Físico, en el mes de la
+            # PRIMER factura guardada del lote (auto-detectado de su propia
+            # Fecha de Factura, no de ningún selector).
+            d = saved[0]["date"]
+            redirect_url = f"/fisico?year={d.year}&month={d.month}"
+        else:
+            # Nada se guardó (todo duplicado/fallido) -- se queda en la
+            # página de carga para que se vea el aviso de qué pasó.
+            redirect_url = "/carga-datos/combustible"
+
+        jobs.update_job(
+            job_id, status="done", done=len(paths), total=len(paths),
+            notice=" ".join(parts), notice_level=level, redirect_url=redirect_url,
+        )
+    except Exception as exc:
+        jobs.update_job(job_id, status="error", error=f"Error: {exc}")
+
+
+@app.route("/carga-datos/combustible/<int:invoice_id>/eliminar", methods=["POST"])
+def carga_datos_combustible_eliminar(invoice_id):
+    """El botón de eliminar vive en /fisico ahora (la tabla de facturas se movió ahí), no en esta página de carga."""
+    fisico_db.delete_invoice(invoice_id)
+    flash("Factura eliminada.", "success")
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    return redirect(url_for("fisico_view", year=year, month=month))
+
+
+@app.route("/fisico")
+def fisico_view():
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    report = fisico.build_month_report(year, month)
+    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+
+    return render_template(
+        "fisico.html",
+        report=report,
+        year=year,
+        month=month,
+        month_name=_MONTH_NAMES_ES[month - 1],
+        prev_year=prev_year,
+        prev_month=prev_month,
+        next_year=next_year,
+        next_month=next_month,
+        **THEME_BY_KEY["fisico"],
+    )
+
+
+@app.route("/fisico/inicial", methods=["POST"])
+def fisico_ajustar_inicial():
+    """
+    Override manual del Inventario Inicial Teórico -- hace falta para el
+    primer mes que se usa este módulo (no hay mes anterior del que
+    encadenar) y queda disponible siempre por si hace falta corregirlo,
+    mismo criterio que carga_datos_caja_saldo. Vacío borra el override
+    (vuelve a encadenarse del mes anterior).
+    """
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    gallons_raw = (request.form.get("initial_gallons") or "").strip()
+    amount_raw = (request.form.get("initial_amount") or "").strip()
+
+    try:
+        gallons_value = float(gallons_raw) if gallons_raw else None
+        amount_value = float(amount_raw) if amount_raw else None
+        fisico_db.set_month_initial_override(year, month, gallons_value, amount_value)
+        flash("Inventario Inicial guardado.", "success")
+    except ValueError:
+        flash("No se pudo guardar: revisá que los galones/monto sean números válidos.", "error")
+
+    return redirect(url_for("fisico_view", year=year, month=month))
+
+
+@app.route("/fisico/lectura-real", methods=["POST"])
+def fisico_lectura_real():
+    """Lectura física real de los tanques -- siempre un dato externo, nunca se calcula. Vacío la borra (mes vuelve a "pendiente")."""
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    gallons_raw = (request.form.get("real_gallons") or "").strip()
+    reading_date = (request.form.get("real_reading_date") or "").strip() or None
+
+    try:
+        gallons_value = float(gallons_raw) if gallons_raw else None
+        fisico_db.set_month_real_ending(year, month, gallons_value, reading_date)
+        flash("Lectura física guardada.", "success")
+    except ValueError:
+        flash("No se pudo guardar: los galones tienen que ser un número válido.", "error")
+
+    return redirect(url_for("fisico_view", year=year, month=month))
 
 
 @app.route("/carga-datos/reporte-diario")

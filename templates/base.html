@@ -1186,6 +1186,20 @@
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_documentos', module_key='horas_trabajo') }}">Documentos</a>
         </div>
       </div>
+      <div class="app-rail-item" data-rail-key="fisico">
+        <div class="app-rail-item-row" onclick="toggleAppRailItem(this)">
+          <span class="app-rail-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="22" x2="15" y2="22"/><line x1="4" y1="9" x2="14" y2="9"/><path d="M14 22V4a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v18"/><path d="M14 13h2a2 2 0 0 1 2 2v2a2 2 0 0 0 2 2v0a2 2 0 0 0 2-2V9.83a2 2 0 0 0-.59-1.42L18 5"/></svg>
+          </span>
+          <span class="app-rail-label">Físico</span>
+          <svg class="app-rail-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
+        </div>
+        <div class="app-rail-panel">
+          <div class="app-rail-panel-title">Físico</div>
+          <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('carga_datos_combustible') }}">Cargar Facturas</a>
+          <a class="app-rail-panel-link" href="{{ url_for('fisico_view') }}">Cuadro del mes</a>
+        </div>
+      </div>
     </div>
   </nav>
   <div class="app-shell">

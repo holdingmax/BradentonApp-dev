@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block main_class %}main-full{% endblock %}
+{% block crumbs %}
+<nav class="crumbs"><span class="current">Combustible</span></nav>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <span class="eyebrow">Combustible</span>
+  <h1>Subir factura en PDF</h1>
+  <p class="page-subtitle">
+    Se lee sola: galonaje de compra (el que se anota en la hoja física, no el de facturación), precio del
+    combustible con y sin tax por grado, el total de la factura, y el mes al que pertenece (por la Fecha de
+    Factura del PDF). Se pueden elegir varias a la vez. Un N° de factura ya cargado se detecta solo y se omite.
+    El detalle del mes, para corregir o eliminar una factura, está en
+    <a href="{{ url_for('fisico_view') }}">Físico</a>.
+  </p>
+</div>
+
+<div class="card">
+  <h2>Factura(s) en PDF</h2>
+  <form method="post" action="{{ url_for('carga_datos_combustible_subir_pdf') }}" enctype="multipart/form-data" class="background-job-form">
+    <input type="file" name="pdf_files" id="combustible-pdf-input" multiple accept="application/pdf" class="accumulate-files" required>
+    <div class="form-actions">
+      <button type="submit">Subir y cargar</button>
+      <button type="button" class="btn-secondary clear-file-btn" data-target="combustible-pdf-input">Limpiar</button>
+    </div>
+  </form>
+</div>
+{% endblock %}
