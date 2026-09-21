@@ -11,7 +11,7 @@
 <div class="card">
   <h2>Reporte semanal</h2>
   <p class="muted">"Clock In/Out Detail Report" — se lee la fecha del reporte y, por empleado, el total de horas de la semana (columna Total). Tarifa por hora, descuento y horas quedan editables después de cargar.</p>
-  <form method="post" action="{{ url_for('carga_datos_horas_trabajo_subir') }}" enctype="multipart/form-data" class="background-job-form">
+  <form method="post" action="{{ url_for('carga_datos_horas_trabajo_subir') }}" enctype="multipart/form-data" class="background-job-form" data-resume-job="{{ resume_job_id or '' }}">
     <label class="muted">PDF de Clock In/Out</label>
     <input type="file" name="report_files" id="horas-source-input" multiple accept="application/pdf" class="accumulate-files" required>
     <div class="form-actions">

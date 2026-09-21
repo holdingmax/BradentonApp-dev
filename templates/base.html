@@ -1955,6 +1955,112 @@
       document.querySelectorAll('form.background-job-form').forEach(function (form) {
         var progress = attachUploadProgress(form);
         var pollTimer = null;
+        var submitBtn = form.querySelector('button[type=submit]');
+        var originalLabel = submitBtn ? submitBtn.textContent : null;
+
+        function finish() {
+          if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+          if (submitBtn) {
+            submitBtn.disabled = false;
+            submitBtn.textContent = originalLabel;
+          }
+        }
+
+        function ack(jobId) {
+          // Fire-and-forget -- ver jobs.acknowledge_job. El peor caso si
+          // falla es que el aviso se repita una vez más la próxima vez que
+          // se entra a esta página, nada más.
+          try {
+            var ackXhr = new XMLHttpRequest();
+            ackXhr.open('POST', '/jobs/' + jobId + '/ack', true);
+            ackXhr.send();
+          } catch (ackErr) {}
+        }
+
+        function poll(jobId) {
+          var xhr = new XMLHttpRequest();
+          xhr.open('GET', '/jobs/' + jobId + '/status', true);
+          xhr.onload = function () {
+            if (xhr.status !== 200) {
+              progress.set(0, 'No se pudo consultar el progreso.', true);
+              pollTimer = setTimeout(function () { poll(jobId); }, 2000);
+              return;
+            }
+            var data = JSON.parse(xhr.responseText);
+            if (data.status === 'running' && data.phase === 'saving') {
+              // Los PDF ya se leyeron -- ahora se están guardando en la
+              // página (vuelve a leer cada uno, más lento que la lectura
+              // de arriba porque no corre en paralelo) -- progreso real
+              // de ESTE paso, no el mismo número de antes repetido.
+              var savePct = data.total > 0 ? Math.round((data.done / data.total) * 100) : 0;
+              progress.set(savePct, 'Guardando en la página: ' + data.done + ' de ' + data.total + ' (' + savePct + '%) -- puede tardar varios minutos más, no cierres esta pestaña.');
+              pollTimer = setTimeout(function () { poll(jobId); }, 1200);
+            } else if (data.status === 'running') {
+              var pct = data.total > 0 ? Math.round((data.done / data.total) * 100) : 0;
+              progress.set(pct, data.done + ' de ' + data.total + ' PDF procesados (' + pct + '%) -- podés cambiar de pestaña, sigue solo en el servidor.');
+              pollTimer = setTimeout(function () { poll(jobId); }, 1200);
+            } else if (data.status === 'done') {
+              progress.set(100, 'Listo -- ' + data.done + ' de ' + data.total + ' PDF procesados.');
+              if (data.redirect_url) {
+                // Carga de Datos -- pedido explícito del usuario
+                // (2026-09-16, segunda tanda): a diferencia de Herramientas
+                // (se queda en la misma página), acá el destino real es la
+                // página de "ya guardado" -- el aviso viaja en
+                // sessionStorage (un hilo en segundo plano no tiene sesión
+                // de Flask real para usar flash()) y se muestra apenas
+                // carga la página de destino, ver el chequeo al pie de
+                // este mismo <script>.
+                if (data.notice) {
+                  try {
+                    sessionStorage.setItem('pendingNotice', JSON.stringify({ text: data.notice, level: data.notice_level || 'warning' }));
+                  } catch (storageErr) {}
+                }
+                ack(jobId);
+                window.location.href = data.redirect_url;
+                return;
+              }
+              if (data.notice) {
+                showNotice(data.notice, data.notice_level || 'warning');
+              }
+              ack(jobId);
+              setTimeout(function () { progress.reset(); }, 2500);
+              finish();
+            } else if (data.status === 'error') {
+              progress.reset();
+              alert(data.error || 'Error al procesar.');
+              ack(jobId);
+              finish();
+            } else if (data.status === 'not_found') {
+              progress.reset();
+              alert('Se perdió el seguimiento de esta carga (el servidor se reinició). Revisá en "Ver guardado" si algo quedó cargado, y volvé a intentar si hace falta.');
+              finish();
+            } else {
+              progress.reset();
+              finish();
+            }
+          };
+          xhr.onerror = function () {
+            pollTimer = setTimeout(function () { poll(jobId); }, 2000);
+          };
+          xhr.send();
+        }
+
+        // Reenganche a un job que ya estaba corriendo (o recién terminado
+        // sin mostrar todavía) cuando el usuario entra/vuelve a entrar a
+        // esta página -- pedido explícito del usuario (2026-09-21): "la
+        // idea es que siga y que te tire un mensaje de que se completo la
+        // carga", el bug real era que la carga SÍ seguía sola en el
+        // servidor, pero esta pestaña no tenía forma de enterarse (ver
+        // jobs.get_active_job). `data-resume-job` lo pone la propia ruta
+        // Flask de esta página (resume_job_id) cuando corresponde.
+        var resumeJobId = form.dataset.resumeJob;
+        if (resumeJobId) {
+          if (submitBtn) {
+            submitBtn.disabled = true;
+            submitBtn.textContent = 'Procesando...';
+          }
+          poll(resumeJobId);
+        }
 
         form.addEventListener('submit', function (event) {
           if (form.classList.contains('needs-shared-master')) {
@@ -1966,84 +2072,9 @@
           event.preventDefault();
           progress.reset();
 
-          var submitBtn = form.querySelector('button[type=submit]');
-          var originalLabel = submitBtn ? submitBtn.textContent : null;
           if (submitBtn) {
             submitBtn.disabled = true;
             submitBtn.textContent = 'Procesando...';
-          }
-
-          function finish() {
-            if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
-            if (submitBtn) {
-              submitBtn.disabled = false;
-              submitBtn.textContent = originalLabel;
-            }
-          }
-
-          function poll(jobId) {
-            var xhr = new XMLHttpRequest();
-            xhr.open('GET', '/jobs/' + jobId + '/status', true);
-            xhr.onload = function () {
-              if (xhr.status !== 200) {
-                progress.set(0, 'No se pudo consultar el progreso.', true);
-                pollTimer = setTimeout(function () { poll(jobId); }, 2000);
-                return;
-              }
-              var data = JSON.parse(xhr.responseText);
-              if (data.status === 'running' && data.phase === 'saving') {
-                // Los PDF ya se leyeron -- ahora se están guardando en la
-                // página (vuelve a leer cada uno, más lento que la lectura
-                // de arriba porque no corre en paralelo) -- progreso real
-                // de ESTE paso, no el mismo número de antes repetido.
-                var savePct = data.total > 0 ? Math.round((data.done / data.total) * 100) : 0;
-                progress.set(savePct, 'Guardando en la página: ' + data.done + ' de ' + data.total + ' (' + savePct + '%) -- puede tardar varios minutos más, no cierres esta pestaña.');
-                pollTimer = setTimeout(function () { poll(jobId); }, 1200);
-              } else if (data.status === 'running') {
-                var pct = data.total > 0 ? Math.round((data.done / data.total) * 100) : 0;
-                progress.set(pct, data.done + ' de ' + data.total + ' PDF procesados (' + pct + '%) -- podés cambiar de pestaña, sigue solo en el servidor.');
-                pollTimer = setTimeout(function () { poll(jobId); }, 1200);
-              } else if (data.status === 'done') {
-                progress.set(100, 'Listo -- ' + data.done + ' de ' + data.total + ' PDF procesados.');
-                if (data.redirect_url) {
-                  // Carga de Datos -- pedido explícito del usuario
-                  // (2026-09-16, segunda tanda): a diferencia de Herramientas
-                  // (se queda en la misma página), acá el destino real es la
-                  // página de "ya guardado" -- el aviso viaja en
-                  // sessionStorage (un hilo en segundo plano no tiene sesión
-                  // de Flask real para usar flash()) y se muestra apenas
-                  // carga la página de destino, ver el chequeo al pie de
-                  // este mismo <script>.
-                  if (data.notice) {
-                    try {
-                      sessionStorage.setItem('pendingNotice', JSON.stringify({ text: data.notice, level: data.notice_level || 'warning' }));
-                    } catch (storageErr) {}
-                  }
-                  window.location.href = data.redirect_url;
-                  return;
-                }
-                if (data.notice) {
-                  showNotice(data.notice, data.notice_level || 'warning');
-                }
-                setTimeout(function () { progress.reset(); }, 2500);
-                finish();
-              } else if (data.status === 'error') {
-                progress.reset();
-                alert(data.error || 'Error al procesar.');
-                finish();
-              } else if (data.status === 'not_found') {
-                progress.reset();
-                alert('Se perdió el seguimiento de esta carga (el servidor se reinició). Revisá en "Ver guardado" si algo quedó cargado, y volvé a intentar si hace falta.');
-                finish();
-              } else {
-                progress.reset();
-                finish();
-              }
-            };
-            xhr.onerror = function () {
-              pollTimer = setTimeout(function () { poll(jobId); }, 2000);
-            };
-            xhr.send();
           }
 
           var startXhr = new XMLHttpRequest();

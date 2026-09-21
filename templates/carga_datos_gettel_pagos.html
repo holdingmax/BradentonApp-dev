@@ -18,7 +18,7 @@
 
 <div class="card">
   <h2>Recibo(s) de Pago en PDF</h2>
-  <form method="post" action="{{ url_for('carga_datos_gettel_pagos_subir_pdf') }}" enctype="multipart/form-data" class="background-job-form">
+  <form method="post" action="{{ url_for('carga_datos_gettel_pagos_subir_pdf') }}" enctype="multipart/form-data" class="background-job-form" data-resume-job="{{ resume_job_id or '' }}">
     <input type="file" name="pdf_files" id="gettel-pagos-pdf-input" multiple accept="application/pdf" class="accumulate-files" required>
     <div class="form-actions">
       <button type="submit">Subir y cargar</button>

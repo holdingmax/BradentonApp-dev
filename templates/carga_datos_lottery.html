@@ -10,7 +10,7 @@
 
 <div class="card">
   <h2>Daily Sales Report</h2>
-  <form method="post" action="{{ url_for('carga_datos_lottery_subir') }}" enctype="multipart/form-data" class="background-job-form">
+  <form method="post" action="{{ url_for('carga_datos_lottery_subir') }}" enctype="multipart/form-data" class="background-job-form" data-resume-job="{{ resume_job_id or '' }}">
     <label class="muted">PDF del Daily Sales Report</label>
     <input type="file" name="pdf_files" id="lottery-pdf-input" multiple accept="application/pdf" class="accumulate-files" required>
     <div class="form-actions">

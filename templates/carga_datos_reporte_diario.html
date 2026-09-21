@@ -11,7 +11,7 @@
 <div class="card">
   <h2>PDF de cierre diario</h2>
   <p class="muted">Completa Ventas por Departamento y Store Info — y, del mismo PDF, las columnas ONLINE/SKOFF de Lottery.</p>
-  <form method="post" action="{{ url_for('carga_datos_reporte_diario_subir') }}" enctype="multipart/form-data" class="background-job-form">
+  <form method="post" action="{{ url_for('carga_datos_reporte_diario_subir') }}" enctype="multipart/form-data" class="background-job-form" data-resume-job="{{ resume_job_id or '' }}">
     <label class="muted">PDF de cierre diario</label>
     <input type="file" name="pdf_files" id="reporte-diario-pdf-input" multiple accept="application/pdf" class="accumulate-files" required>
     <div class="form-actions">

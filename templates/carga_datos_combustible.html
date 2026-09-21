@@ -18,7 +18,7 @@
 
 <div class="card">
   <h2>Factura(s) en PDF</h2>
-  <form method="post" action="{{ url_for('carga_datos_combustible_subir_pdf') }}" enctype="multipart/form-data" class="background-job-form">
+  <form method="post" action="{{ url_for('carga_datos_combustible_subir_pdf') }}" enctype="multipart/form-data" class="background-job-form" data-resume-job="{{ resume_job_id or '' }}">
     <input type="file" name="pdf_files" id="combustible-pdf-input" multiple accept="application/pdf" class="accumulate-files" required>
     <div class="form-actions">
       <button type="submit">Subir y cargar</button>

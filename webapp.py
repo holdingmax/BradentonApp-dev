@@ -554,6 +554,21 @@ CARGA_DATOS_TOOLS = [
         "accent_soft": "#D6F1EE",
     },
     {
+        # Pedido explícito del usuario (2026-09-21, misma tarde que la
+        # reconstrucción del lector de PDF de Gettel Pagos): antes solo
+        # se llegaba a esta carga desde la barra lateral (panel "Gettel /
+        # Toyota" -> "Cargar Pagos") -- Alfonso pidió que también tenga su
+        # propia tarjeta acá, agrupada junto a "Gettel / Toyota".
+        "key": "carga_gettel_pagos",
+        "code": "GP",
+        "icon": _ICON_EXCHANGE,
+        "label": "Gettel -- Pagos de Cupones",
+        "url": "/carga-datos/gettel/pagos",
+        "description": "Subí el/los PDF de recibos de Pago (Toyota/Kia) -- Fecha, N° de Transacción y Total del Cupón quedan guardados solos, sin generar ningún Excel.",
+        "accent": "#0D9488",
+        "accent_soft": "#D6F1EE",
+    },
+    {
         "key": "carga_cmv",
         "code": "CMV",
         "icon": _ICON_COINS,
@@ -1256,7 +1271,12 @@ def carga_datos_combustible():
     mes de su propia Fecha de Factura leída del PDF (ver
     _run_carga_datos_combustible_job).
     """
-    return render_template("carga_datos_combustible.html", **THEME_BY_KEY["carga_combustible"])
+    _active_job = jobs.get_active_job("combustible")
+    return render_template(
+        "carga_datos_combustible.html",
+        resume_job_id=(_active_job["id"] if _active_job else None),
+        **THEME_BY_KEY["carga_combustible"],
+    )
 
 
 @app.route("/carga-datos/combustible/<int:invoice_id>/editar", methods=["POST"])
@@ -1310,7 +1330,7 @@ def carga_datos_combustible_subir_pdf():
         return _error_response("Seleccioná uno o más PDF de factura de combustible.")
 
     paths = _save_uploads_to_workspace(uploads)
-    job_id = jobs.create_job(len(paths))
+    job_id = jobs.create_job(len(paths), kind="combustible")
     threading.Thread(target=_run_carga_datos_combustible_job, args=(job_id, paths), daemon=True).start()
     return jsonify({"job_id": job_id, "total": len(paths)})
 
@@ -1478,7 +1498,12 @@ def carga_datos_reporte_diario():
     plan de dejar este lado autosuficiente para subir datos sin depender de
     Herramientas). Ver carga_datos_reporte_diario_subir más abajo.
     """
-    return render_template("carga_datos_reporte_diario.html", **THEME_BY_KEY["reporte"])
+    _active_job = jobs.get_active_job("reporte_diario")
+    return render_template(
+        "carga_datos_reporte_diario.html",
+        resume_job_id=(_active_job["id"] if _active_job else None),
+        **THEME_BY_KEY["reporte"],
+    )
 
 
 def _run_carga_datos_reporte_diario_job(job_id, pdf_paths):
@@ -1643,7 +1668,7 @@ def carga_datos_reporte_diario_subir():
         return _error_response("Seleccioná uno o más PDF de cierre diario.")
 
     pdf_paths = _save_uploads_to_workspace(pdf_uploads)
-    job_id = jobs.create_job(len(pdf_paths))
+    job_id = jobs.create_job(len(pdf_paths), kind="reporte_diario")
     threading.Thread(target=_run_carga_datos_reporte_diario_job, args=(job_id, pdf_paths), daemon=True).start()
     return jsonify({"job_id": job_id, "total": len(pdf_paths)})
 
@@ -1651,7 +1676,12 @@ def carga_datos_reporte_diario_subir():
 @app.route("/carga-datos/lottery")
 def carga_datos_lottery():
     """Carga directa de Lottery (Daily Sales Report) del lado Carga de Datos -- solo PDF."""
-    return render_template("carga_datos_lottery.html", **THEME_BY_KEY["lottery"])
+    _active_job = jobs.get_active_job("lottery")
+    return render_template(
+        "carga_datos_lottery.html",
+        resume_job_id=(_active_job["id"] if _active_job else None),
+        **THEME_BY_KEY["lottery"],
+    )
 
 
 @app.route("/carga-datos/lottery/subir", methods=["POST"])
@@ -1668,7 +1698,7 @@ def carga_datos_lottery_subir():
         return _error_response("Seleccioná uno o más PDF de Daily Sales Report.")
 
     pdf_paths = _save_uploads_to_workspace(pdf_uploads)
-    job_id = jobs.create_job(len(pdf_paths))
+    job_id = jobs.create_job(len(pdf_paths), kind="lottery")
     threading.Thread(target=_run_carga_datos_lottery_job, args=(job_id, pdf_paths), daemon=True).start()
     return jsonify({"job_id": job_id, "total": len(pdf_paths)})
 
@@ -2981,6 +3011,20 @@ def job_status(job_id):
     )
 
 
+@app.route("/jobs/<job_id>/ack", methods=["POST"])
+def job_ack(job_id):
+    """
+    Pedido explícito del usuario (2026-09-21, ver el docstring de
+    jobs.get_active_job): el JS llama esto apenas terminó de mostrarle al
+    usuario el resultado final (notice o redirect) de un job -- para que
+    ese job deje de aparecer como "activo" la próxima vez que se entra a
+    esa página de carga. No hace falta esperar la respuesta ni reintentar
+    si falla (el peor caso es que el aviso se repita una vez más).
+    """
+    jobs.acknowledge_job(job_id)
+    return ("", 204)
+
+
 @app.route("/jobs/<job_id>/download")
 def job_download(job_id):
     job = jobs.get_job(job_id)
@@ -3569,7 +3613,12 @@ def carga_datos_eft():
     Carga directa de EFT y Cupones del lado Carga de Datos -- solo PDF/
     reporte mensual, sin ningún Excel. Ver eft_db.py.
     """
-    return render_template("carga_datos_eft.html", **THEME_BY_KEY["carga_eft"])
+    _active_job = jobs.get_active_job("eft")
+    return render_template(
+        "carga_datos_eft.html",
+        resume_job_id=(_active_job["id"] if _active_job else None),
+        **THEME_BY_KEY["carga_eft"],
+    )
 
 
 @app.route("/carga-datos/eft/subir", methods=["POST"])
@@ -3588,7 +3637,7 @@ def carga_datos_eft_subir():
         return _error_response("Seleccioná uno o más PDF de EFT.")
 
     pdf_paths = _save_uploads_to_workspace(pdf_uploads)
-    job_id = jobs.create_job(len(pdf_paths))
+    job_id = jobs.create_job(len(pdf_paths), kind="eft")
     threading.Thread(target=_run_carga_datos_eft_job, args=(job_id, pdf_paths), daemon=True).start()
     return jsonify({"job_id": job_id, "total": len(pdf_paths)})
 
@@ -4073,7 +4122,12 @@ def carga_datos_gettel():
     usuario: "quiero que empieces a crear los modulos de... el excel ese
     donde contengo los datos de gettel y toyota junto con sus gallons".
     """
-    return render_template("carga_datos_gettel.html", **THEME_BY_KEY["carga_gettel"])
+    _active_job = jobs.get_active_job("gettel")
+    return render_template(
+        "carga_datos_gettel.html",
+        resume_job_id=(_active_job["id"] if _active_job else None),
+        **THEME_BY_KEY["carga_gettel"],
+    )
 
 
 @app.route("/carga-datos/gettel/subir", methods=["POST"])
@@ -4083,7 +4137,7 @@ def carga_datos_gettel_subir():
         return _error_response("Seleccioná uno o más Excel/PDF de cupones de Gettel y/o Toyota.")
 
     paths = _save_uploads_to_workspace(uploads)
-    job_id = jobs.create_job(len(paths))
+    job_id = jobs.create_job(len(paths), kind="gettel")
     threading.Thread(target=_run_carga_datos_gettel_job, args=(job_id, paths), daemon=True).start()
     return jsonify({"job_id": job_id, "total": len(paths)})
 
@@ -4185,7 +4239,12 @@ def carga_datos_gettel_pagos():
     enlaza la barra lateral ("Cuadro de Pagos"). No hace falta año/mes acá:
     cada recibo se archiva solo, en el mes de su propia fecha leída del PDF.
     """
-    return render_template("carga_datos_gettel_pagos.html", **THEME_BY_KEY["carga_gettel"])
+    _active_job = jobs.get_active_job("gettel_pagos")
+    return render_template(
+        "carga_datos_gettel_pagos.html",
+        resume_job_id=(_active_job["id"] if _active_job else None),
+        **THEME_BY_KEY["carga_gettel_pagos"],
+    )
 
 
 @app.route("/carga-datos/gettel/pagos/subir-pdf", methods=["POST"])
@@ -4207,7 +4266,7 @@ def carga_datos_gettel_pagos_subir_pdf():
         return _error_response("Seleccioná uno o más PDF de pagos de Gettel.")
 
     paths = _save_uploads_to_workspace(uploads)
-    job_id = jobs.create_job(len(paths))
+    job_id = jobs.create_job(len(paths), kind="gettel_pagos")
     threading.Thread(target=_run_carga_datos_gettel_pagos_job, args=(job_id, paths), daemon=True).start()
     return jsonify({"job_id": job_id, "total": len(paths)})
 
@@ -4329,7 +4388,7 @@ def carga_datos_gettel_pagos_cuadro():
     return render_template(
         "gettel_pagos_cuadro.html", report=report, groups=groups, year=year, month=month,
         month_name=_MONTH_NAMES_ES[month - 1], prev_year=prev_year, prev_month=prev_month,
-        next_year=next_year, next_month=next_month, **THEME_BY_KEY["carga_gettel"],
+        next_year=next_year, next_month=next_month, **THEME_BY_KEY["carga_gettel_pagos"],
     )
 
 
@@ -4458,7 +4517,12 @@ def carga_datos_gettel_historial():
 
 @app.route("/carga-datos/horas-trabajo")
 def carga_datos_horas_trabajo():
-    return render_template("carga_datos_horas_trabajo.html", **THEME_BY_KEY["carga_horas"])
+    _active_job = jobs.get_active_job("horas_trabajo")
+    return render_template(
+        "carga_datos_horas_trabajo.html",
+        resume_job_id=(_active_job["id"] if _active_job else None),
+        **THEME_BY_KEY["carga_horas"],
+    )
 
 
 @app.route("/carga-datos/horas-trabajo/subir", methods=["POST"])
@@ -4468,7 +4532,7 @@ def carga_datos_horas_trabajo_subir():
         return _error_response("Seleccioná uno o más PDF de Clock In/Out.")
 
     paths = _save_uploads_to_workspace(uploads)
-    job_id = jobs.create_job(len(paths))
+    job_id = jobs.create_job(len(paths), kind="horas_trabajo")
     threading.Thread(target=_run_carga_datos_horas_trabajo_job, args=(job_id, paths), daemon=True).start()
     return jsonify({"job_id": job_id, "total": len(paths)})
 
@@ -4945,7 +5009,12 @@ def carga_datos_documento_eliminar(document_id):
 
 @app.route("/carga-datos/proveedores")
 def carga_datos_proveedores():
-    return render_template("carga_datos_proveedores.html", **THEME_BY_KEY["carga_proveedores"])
+    _active_job = jobs.get_active_job("proveedores")
+    return render_template(
+        "carga_datos_proveedores.html",
+        resume_job_id=(_active_job["id"] if _active_job else None),
+        **THEME_BY_KEY["carga_proveedores"],
+    )
 
 
 @app.route("/carga-datos/proveedores/subir", methods=["POST"])
@@ -4962,7 +5031,7 @@ def carga_datos_proveedores_subir():
         return _error_response("Seleccioná uno o más PDF de factura.")
 
     paths = _save_uploads_to_workspace(uploads)
-    job_id = jobs.create_job(len(paths))
+    job_id = jobs.create_job(len(paths), kind="proveedores")
     threading.Thread(target=_run_carga_datos_proveedores_job, args=(job_id, paths), daemon=True).start()
     return jsonify({"job_id": job_id, "total": len(paths)})
 
