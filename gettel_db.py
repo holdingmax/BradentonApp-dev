@@ -187,6 +187,18 @@ def get_month_gettel_amount(year, month):
     return row["total"] or 0.0
 
 
+def get_toyota_days_years():
+    """Años con algo cargado en gettel_toyota_days -- pedido por gettel_reportes.get_available_years para poblar el selector de año del reporte Gettel de Reportes (2026-09-21)."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT substr(date, 1, 4) AS y FROM gettel_toyota_days ORDER BY y"
+        ).fetchall()
+    finally:
+        conn.close()
+    return [int(row["y"]) for row in rows if row["y"]]
+
+
 def get_day_gettel_amount(report_date):
     """Monto de Gettel de un solo día -- lo que alimenta la categoría "Gettel" del resumen por categoría de un día puntual."""
     day = get_day(report_date)

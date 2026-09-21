@@ -107,6 +107,7 @@ import lottery_db
 import gettel_db
 import gettel_pagos as gettel_pagos_logic
 import gettel_pagos_parser
+import gettel_reportes
 import cmv_db
 import documents_db
 import proveedores_db
@@ -679,6 +680,22 @@ REPORTES_TOOLS = [
         "ready": True,
         "pdf_endpoint": "reportes_caja_pdf",
     },
+    {
+        # Pedido explícito del usuario (2026-09-21): reporte de Gettel con
+        # el mismo formato/colores del Excel real que mandó de ejemplo --
+        # 4 hojas (Pendiente mes anterior / mes actual / Pago Cupones /
+        # Pendiente mes actual resultante), ver gettel_reportes.py. A
+        # diferencia de los otros 4 reportes de este módulo, este es Excel
+        # (no PDF) -- hace falta reproducir colores/celdas unificadas que
+        # un PDF resumido no puede mostrar.
+        "key": "reportes_gettel",
+        "icon": _ICON_CAR,
+        "label": "Gettel — Cupones",
+        "description": "Pendiente del mes anterior, el mes actual, los pagos cargados y lo que queda pendiente para el mes que viene -- mismo formato y colores del Excel real.",
+        "accent": "#0D9488",
+        "ready": True,
+        "excel_endpoint": "reportes_gettel_excel",
+    },
 ]
 
 THEME_BY_KEY = {
@@ -1058,6 +1075,7 @@ def carga_datos_reportes():
             "reportes_diario": reportes_db.get_store_info_years() or [today.year],
             "reportes_lottery": lottery_db.get_available_years() or [today.year],
             "reportes_caja": get_caja_available_years() or [today.year],
+            "reportes_gettel": gettel_reportes.get_available_years() or [today.year],
         },
         current_year=today.year,
         current_month=today.month,
@@ -1184,6 +1202,31 @@ def reportes_caja_pdf():
     workspace_dir = tempfile.mkdtemp(prefix="caja_reporte_")
     dest_path = os.path.join(workspace_dir, f"Caja Reporte {month:02d}-{year}.pdf")
     build_caja_pdf_resumen(report, year, month, dest_path)
+    return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
+
+
+@app.route("/carga-datos/reportes/gettel/excel")
+def reportes_gettel_excel():
+    """
+    Descarga el Excel de Reportes -> Gettel -- pedido explícito del
+    usuario (2026-09-21): "ese excel que te pase es el que quiero que
+    uses para crear el reporte de gettel, usando los formatos y colores
+    que tiene" -- 4 hojas (Pendiente mes anterior / mes actual / Pago
+    Cupones / Pendiente mes actual resultante), ver gettel_reportes.py.
+    A diferencia de los otros 4 reportes de este módulo (todos PDF), este
+    es Excel -- el pedido del usuario fue explícitamente reproducir el
+    formato/colores de un Excel real, no un PDF resumido.
+    """
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    report = gettel_reportes.resolve_month(year, month)
+    workspace_dir = tempfile.mkdtemp(prefix="gettel_reporte_")
+    dest_path = os.path.join(workspace_dir, f"Gettel Reporte {month:02d}-{year}.xlsx")
+    gettel_reportes.build_gettel_reportes_workbook(report, year, month, dest_path)
     return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
 
 

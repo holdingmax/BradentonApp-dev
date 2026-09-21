@@ -18,7 +18,7 @@
 <div class="page-header">
   <span class="eyebrow">Carga de Datos</span>
   <h1>Reportes</h1>
-  <p class="page-subtitle">Reportes en PDF, con el logo y el nombre de la empresa -- por ahora solo en PDF, más adelante vemos qué más se suma.</p>
+  <p class="page-subtitle">Reportes en PDF o Excel, con el logo y el nombre de la empresa -- vamos sumando cada módulo de a poco.</p>
 </div>
 
 <div class="reportes-grid">
@@ -32,7 +32,7 @@
           <p class="reportes-card-desc">{{ tool.description }}</p>
         </span>
       </div>
-      <form class="reportes-form" method="get" action="{{ url_for(tool.pdf_endpoint) }}">
+      <form class="reportes-form" method="get" action="{{ url_for(tool.pdf_endpoint or tool.excel_endpoint) }}">
         <select name="month">
           {% for name in month_names %}
           <option value="{{ loop.index }}"{% if loop.index == current_month %} selected{% endif %}>{{ name }}</option>
@@ -43,7 +43,7 @@
           <option value="{{ y }}"{% if y == current_year %} selected{% endif %}>{{ y }}</option>
           {% endfor %}
         </select>
-        <button type="submit">Descargar PDF</button>
+        <button type="submit">{% if tool.excel_endpoint %}Descargar Excel{% else %}Descargar PDF{% endif %}</button>
       </form>
     </div>
     {% else %}
