@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block main_class %}main-full{% endblock %}
+{% block crumbs %}
+<nav class="crumbs">
+  <a href="{{ url_for('carga_datos_proveedores') }}">Proveedores</a>
+  <a href="{{ url_for('carga_datos_proveedores_guardado') }}">Guardado</a>
+  <span class="current">{{ supplier_label }}</span>
+</nav>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <span class="eyebrow">Proveedores</span>
+  <h1>{{ supplier_label }}</h1>
+  <p class="page-subtitle">Todas las facturas cargadas y los pagos de Chase Bank ya vinculados a este proveedor, sin importar el mes. <a href="{{ url_for('carga_datos_documentos', module_key='proveedores') }}">Ver los PDF originales guardados</a>.</p>
+</div>
+
+<div class="card">
+  <div style="display:flex; gap:24px; flex-wrap:wrap; margin-bottom: 12px;">
+    <div>
+      <div class="muted" style="font-size:12px;">Facturas cargadas</div>
+      <div style="font-size:20px; font-weight:700;">${{ "{:,.2f}".format(invoice_total) }}</div>
+      <div class="muted" style="font-size:12.5px;">{{ invoices|length }} factura(s)</div>
+    </div>
+    <div>
+      <div class="muted" style="font-size:12px;">Pagos vinculados (Chase Bank)</div>
+      <div style="font-size:20px; font-weight:700;">${{ "{:,.2f}".format(payment_total) }}</div>
+      <div class="muted" style="font-size:12.5px;">{{ payments|length }} movimiento(s)</div>
+    </div>
+    <div>
+      <div class="muted" style="font-size:12px;">Diferencia</div>
+      {% set dif = (invoice_total - payment_total) %}
+      <div style="font-size:20px; font-weight:700;">${{ "{:,.2f}".format(dif) }}</div>
+      <div class="muted" style="font-size:12.5px;">Facturas − pagos vinculados</div>
+    </div>
+  </div>
+
+  <h2>Facturas</h2>
+  {% if invoices %}
+  <div class="historial-table-wrap">
+    <table class="historial-table">
+      <thead><tr><th>Fecha</th><th>N° Factura</th><th>Monto</th></tr></thead>
+      <tbody>
+        {% for inv in invoices %}
+        <tr>
+          <td class="historial-col-day">{{ inv.invoice_date }}</td>
+          <td>
+            {% if inv.document %}
+            {% from "_pdf_links.html" import pdf_links %}
+            {{ pdf_links(url_for('carga_datos_documento_descargar', document_id=inv.document.id), inv.invoice_no) }}
+            {% else %}
+            {{ inv.invoice_no }}
+            {% endif %}
+          </td>
+          <td>${{ "{:,.2f}".format(inv.amount) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted" style="margin-top: 10px;">Todavía no hay ninguna factura cargada de este proveedor.</p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Pagos vinculados (Chase Bank)</h2>
+  <p class="muted">Movimientos del extracto de Chase ya vinculados a este proveedor -- por una regla de palabra clave, o a mano desde <a href="{{ url_for('chase_historial') }}">el historial de Chase</a>.</p>
+  {% if payments %}
+  <div class="historial-table-wrap">
+    <table class="historial-table">
+      <thead><tr><th>Fecha</th><th>Descripción</th><th>Monto</th><th>Vínculo</th></tr></thead>
+      <tbody>
+        {% for p in payments %}
+        <tr>
+          <td class="historial-col-day">{{ p.posting_date[8:10] }}/{{ p.posting_date[5:7] }}/{{ p.posting_date[0:4] }}</td>
+          <td>{{ p.description }}</td>
+          <td class="{{ 'chase-amount-neg' if p.amount < 0 else 'chase-amount-pos' }}">{{ "{:,.2f}".format(p.amount) }}</td>
+          <td class="muted">{{ 'A mano' if p.supplier_source == 'manual' else 'Regla' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted" style="margin-top: 10px;">Todavía no hay ningún pago de Chase vinculado a este proveedor -- si una descripción del banco lo nombra, se vincula solo; si no (ej. un cheque sin ningún dato), se puede vincular a mano desde <a href="{{ url_for('chase_historial') }}">Chase Bank</a>.</p>
+  {% endif %}
+</div>
+
+<style>
+  .historial-table-wrap { overflow-x: auto; margin-top: 10px; border: 1px solid var(--border); border-radius: 10px; }
+  .historial-table { width: 100%; min-width: 420px; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .historial-table th, .historial-table td { padding: 8px 14px; text-align: left; }
+  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr { border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
+  .historial-col-day { font-weight: 700; white-space: nowrap; }
+  .chase-amount-neg { color: var(--error); }
+  .chase-amount-pos { color: var(--success); }
+</style>
+{% endblock %}

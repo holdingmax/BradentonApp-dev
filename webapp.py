@@ -35,6 +35,7 @@ from chase_rules import (
     add_dynamic_rule as add_chase_rule,
     build_chase_export_workbook,
     build_chase_pdf_report,
+    categorize_chase_description,
     delete_dynamic_rule_by_index as delete_chase_custom_rule,
     delete_master_rule_by_index as delete_chase_master_rule,
     edit_dynamic_rule_by_index as edit_chase_custom_rule,
@@ -73,6 +74,8 @@ from controles_valuacion import check_and_complete_valuation
 from monthly_sales import _resolve_sheet_name, parse_monthly_sales_file, process_monthly_sales
 from proveedores import append_supplier_invoices, append_supplier_payments, extract_invoices_from_pdf
 from proveedores import _PDF_EXTRACTION_EXCEPTIONS
+from proveedores import list_supplier_registry_entries, match_supplier_for_chase_description
+import proveedores_pago_rules
 from proveedores_dynamic_extractors import (
     FIELD_LABELS as DYNAMIC_FIELD_LABELS,
     FIELDS as DYNAMIC_FIELDS,
@@ -2377,6 +2380,13 @@ def chase():
     if not rows:
         return _error_response("No se encontró ningún movimiento con fecha válida en el archivo.")
 
+    # Vínculo directo con un proveedor puntual (2026-09-21, pedido explícito
+    # del usuario) -- independiente del Detalle "PROVEEDORES" ya calculado
+    # arriba por extract_chase_transactions, ver
+    # proveedores.match_supplier_for_chase_description.
+    for row in rows:
+        row["supplier_key"] = _resolve_supplier_key_for_chase(row["description"])
+
     inserted, updated = chase_db.upsert_transactions(rows, source_filename=filename)
     skipped = total_rows - len(rows)
     uncategorized = sum(1 for row in rows if not row["detalle"])
@@ -2402,6 +2412,35 @@ def _require_admin(message):
         flash(message, "error")
         return False
     return True
+
+
+def _resolve_supplier_key_for_chase(description):
+    """Solo la supplier_key (sin el label) -- forma que pide chase_db.recategorize_all."""
+    supplier_key, _supplier_label = match_supplier_for_chase_description(description)
+    return supplier_key
+
+
+def _recategorize_all_chase_and_flash():
+    """
+    Recalcula Detalle y proveedor vinculado de TODOS los movimientos de
+    Chase ya guardados contra las reglas vigentes -- pedido explícito del
+    usuario (2026-09-21): crear/editar/eliminar una regla (de Chase o de
+    pago a proveedores) tiene que aplicarse solo a lo ya cargado, sin
+    obligar a resubir el extracto del banco de nuevo. Se llama después de
+    cualquier cambio a chase_rules.json/chase_master_rules.json/
+    proveedores_pago_rules.json. Nunca toca un valor ya corregido a mano
+    (ver chase_db.recategorize_all).
+    """
+    detalle_changed, supplier_changed = chase_db.recategorize_all(
+        categorize_chase_description, _resolve_supplier_key_for_chase
+    )
+    if detalle_changed or supplier_changed:
+        parts = []
+        if detalle_changed:
+            parts.append(f"{detalle_changed} movimiento(s) recategorizado(s)")
+        if supplier_changed:
+            parts.append(f"{supplier_changed} movimiento(s) vinculado(s)/desvinculado(s) de un proveedor")
+        flash("Aplicado a lo ya guardado: " + ", ".join(parts) + ".", "success")
 
 
 @app.route("/carga-datos/chase/rules/save", methods=["POST"])
@@ -2432,6 +2471,8 @@ def chase_rules_save():
             flash("Regla actualizada.", "success")
         else:
             flash("Tipo de regla inválido.", "error")
+            return redirect(url_for("chase"))
+        _recategorize_all_chase_and_flash()
     except ValueError as exc:
         flash(str(exc), "error")
     return redirect(url_for("chase"))
@@ -2456,6 +2497,8 @@ def chase_rules_delete():
             flash("Regla eliminada.", "success")
         else:
             flash("Seleccioná una regla de la tabla antes de eliminar.", "error")
+            return redirect(url_for("chase"))
+        _recategorize_all_chase_and_flash()
     except ValueError as exc:
         flash(str(exc), "error")
     return redirect(url_for("chase"))
@@ -2474,6 +2517,14 @@ def chase_historial():
     prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
     next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
 
+    # Vínculo a proveedor (2026-09-21) -- supplier_options alimenta el
+    # <select> del popover de categorización manual; supplier_labels
+    # resuelve el nombre a mostrar de la supplier_key ya guardada en cada
+    # movimiento (chase_db solo guarda la clave, nunca el label -- así un
+    # proveedor renombrado no queda desactualizado acá).
+    supplier_options = list_supplier_registry_entries()
+    supplier_labels = {entry["key"]: entry["label"] for entry in supplier_options}
+
     return render_template(
         "chase_historial.html",
         transactions=transactions,
@@ -2485,6 +2536,8 @@ def chase_historial():
         next_year=next_year,
         next_month=next_month,
         known_details=chase_db.list_known_details(),
+        supplier_options=supplier_options,
+        supplier_labels=supplier_labels,
         **THEME_BY_KEY["carga_chase"],
     )
 
@@ -2520,11 +2573,20 @@ def chase_categorizar():
     usuario (2026-09-12): "los datos sin categorizar del chase se puedan
     categorizar". Queda pegado (detalle_source="manual") aunque se vuelva a
     subir el mismo extracto después, ver chase_db.set_manual_detalle.
+
+    2026-09-21, ampliado: el mismo form también deja elegir a mano a qué
+    proveedor pertenece el movimiento (`supplier_key`, vía
+    chase_db.set_manual_supplier) -- necesario para un pago sin ningún
+    texto reusable en la Descripción (ej. un cheque, "CHECK 1770"), donde
+    ninguna regla de palabra clave puede resolverlo sola.
     """
     posting_date = request.form.get("posting_date", "").strip()
     description = request.form.get("description", "")
     amount_raw = request.form.get("amount", "").strip()
     detalle = request.form.get("detalle", "").strip()
+    current_detalle = request.form.get("current_detalle", "").strip()
+    supplier_key = request.form.get("supplier_key", "").strip()
+    current_supplier_key = request.form.get("current_supplier_key", "").strip()
     year = request.form.get("year", type=int)
     month = request.form.get("month", type=int)
 
@@ -2534,9 +2596,28 @@ def chase_categorizar():
         flash("No se pudo identificar el movimiento (monto inválido).", "error")
         return redirect(url_for("chase_historial", year=year, month=month))
 
-    ok = chase_db.set_manual_detalle(posting_date, description, amount, detalle)
-    if ok:
-        flash("Detalle guardado." if detalle else "Detalle borrado.", "success")
+    # set_manual_supplier corre siempre (es la señal de "el movimiento
+    # existe") -- set_manual_detalle solo se llama si el texto de verdad
+    # cambió, para no marcar como "manual" (y por lo tanto congelar contra
+    # futuras reglas) un Detalle que el usuario dejó tal cual estaba solo
+    # porque abrió el popover para vincular un proveedor.
+    ok_supplier = chase_db.set_manual_supplier(posting_date, description, amount, supplier_key)
+    detalle_changed = detalle != current_detalle
+    supplier_changed = supplier_key != current_supplier_key
+    if detalle_changed:
+        chase_db.set_manual_detalle(posting_date, description, amount, detalle)
+
+    if ok_supplier:
+        parts = []
+        if detalle_changed:
+            parts.append("Detalle guardado." if detalle else "Detalle borrado.")
+        if supplier_changed:
+            if supplier_key:
+                label = dict((e["key"], e["label"]) for e in list_supplier_registry_entries()).get(supplier_key, supplier_key)
+                parts.append(f"Vinculado a {label}.")
+            else:
+                parts.append("Se quitó el vínculo con el proveedor.")
+        flash(" ".join(parts) if parts else "Sin cambios.", "success")
     else:
         flash("No se encontró ese movimiento -- puede que ya no esté guardado.", "error")
     return redirect(url_for("chase_historial", year=year, month=month))
@@ -5225,6 +5306,143 @@ def carga_datos_proveedores_eliminar(invoice_id):
     ok = proveedores_db.delete_invoice(invoice_id)
     flash("Factura eliminada." if ok else "Esa factura ya no existe.", "success" if ok else "error")
     return redirect(url_for("carga_datos_proveedores_historial", year=year, month=month))
+
+
+# ---------------------------------------------------------------------------
+# Proveedores guardados -- una tarjeta por proveedor (2026-09-21, pedido
+# explícito del usuario: "cuando entremos a ver guardado, que salgan muchos
+# modulos como si fuera el de herramientas... y cuando se entra se va a ver
+# los detalles no solo de las facturas que se cargaron, sino tambien va a
+# estar conectado eso al detalle del banco donde los pagos a proveedores se
+# van a mover al proveedor directamente que sale en el asiento"). Reemplaza
+# la vista por mes (carga_datos_proveedores_historial, que sigue existiendo
+# tal cual para quien la prefiera) como el link "Ver guardado" de la barra
+# lateral.
+# ---------------------------------------------------------------------------
+
+@app.route("/carga-datos/proveedores/guardado")
+def carga_datos_proveedores_guardado():
+    registry = list_supplier_registry_entries()
+    registry_by_key = {entry["key"]: entry for entry in registry}
+    invoice_counts = {row["supplier_key"]: row for row in proveedores_db.list_suppliers_with_counts()}
+    payment_totals = chase_db.get_supplier_payment_totals()
+
+    # Unión de facturas + pagos vinculados -- un proveedor puede tener
+    # factura(s), pago(s), o los dos; un supplier_key con datos guardados
+    # pero ya sin entrada en el registro (ej. un proveedor dinámico
+    # eliminado después) igual tiene que poder verse, con el label que ya
+    # quedó guardado en su factura como respaldo.
+    all_keys = set(invoice_counts) | set(payment_totals)
+
+    suppliers = []
+    for key in all_keys:
+        invoices = invoice_counts.get(key)
+        payments = payment_totals.get(key)
+        if not invoices and not payments:
+            continue
+        label = (
+            registry_by_key.get(key, {}).get("label")
+            or (invoices["supplier_label"] if invoices else None)
+            or key
+        )
+        suppliers.append({
+            "key": key,
+            "label": label,
+            "invoice_count": invoices["n"] if invoices else 0,
+            "invoice_total": round(invoices["total"], 2) if invoices else 0.0,
+            "payment_count": payments["count"] if payments else 0,
+            "payment_total": round(payments["total"], 2) if payments else 0.0,
+        })
+    suppliers.sort(key=lambda s: s["label"])
+
+    return render_template(
+        "carga_datos_proveedores_guardado.html",
+        suppliers=suppliers,
+        pago_rules=proveedores_pago_rules.list_display_rules(),
+        supplier_options=registry,
+        **THEME_BY_KEY["carga_proveedores"],
+    )
+
+
+@app.route("/carga-datos/proveedores/guardado/<supplier_key>")
+def carga_datos_proveedores_guardado_detalle(supplier_key):
+    registry_by_key = {entry["key"]: entry for entry in list_supplier_registry_entries()}
+
+    invoices = proveedores_db.get_supplier_invoices(supplier_key)
+    docs_by_filename = {}
+    for doc in documents_db.list_all_documents("proveedores"):
+        docs_by_filename.setdefault(doc["filename"], doc)
+    for inv in invoices:
+        inv["document"] = docs_by_filename.get(inv.get("source_filename"))
+
+    label = (
+        registry_by_key.get(supplier_key, {}).get("label")
+        or (invoices[0]["supplier_label"] if invoices else None)
+        or supplier_key
+    )
+    payments = chase_db.get_supplier_transactions(supplier_key)
+
+    return render_template(
+        "carga_datos_proveedores_detalle.html",
+        supplier_key=supplier_key,
+        supplier_label=label,
+        invoices=invoices,
+        invoice_total=round(sum(inv["amount"] for inv in invoices), 2),
+        payments=payments,
+        payment_total=round(sum(p["amount"] for p in payments), 2),
+        **THEME_BY_KEY["carga_proveedores"],
+    )
+
+
+@app.route("/carga-datos/proveedores/reglas/guardar", methods=["POST"])
+def proveedores_pago_reglas_guardar():
+    """
+    Alta/edición de una regla keyword -> proveedor (proveedores_pago_rules.
+    json) -- mismo patrón admin-only que las reglas de Chase. `sheet_name`
+    viaja como value real del <select> de proveedor (siempre uno de
+    list_supplier_registry_entries -- así una regla nueva nunca puede
+    apuntar a un proveedor que no existe).
+    """
+    if not _require_admin("Solo un administrador puede gestionar las reglas de pago a proveedores."):
+        return redirect(url_for("carga_datos_proveedores_guardado"))
+
+    keyword = request.form.get("keyword", "")
+    sheet_name = request.form.get("sheet_name", "")
+    index = request.form.get("index", "").strip()
+    expected_keyword = request.form.get("expected_keyword") or None
+    expected_sheet_name = request.form.get("expected_sheet_name") or None
+
+    try:
+        if not index:
+            proveedores_pago_rules.add_dynamic_rule(keyword, sheet_name)
+            flash("Regla creada.", "success")
+        else:
+            proveedores_pago_rules.edit_dynamic_rule_by_index(
+                index, keyword, sheet_name, expected_keyword, expected_sheet_name
+            )
+            flash("Regla actualizada.", "success")
+        _recategorize_all_chase_and_flash()
+    except ValueError as exc:
+        flash(str(exc), "error")
+    return redirect(url_for("carga_datos_proveedores_guardado"))
+
+
+@app.route("/carga-datos/proveedores/reglas/eliminar", methods=["POST"])
+def proveedores_pago_reglas_eliminar():
+    if not _require_admin("Solo un administrador puede gestionar las reglas de pago a proveedores."):
+        return redirect(url_for("carga_datos_proveedores_guardado"))
+
+    index = request.form.get("index", "").strip()
+    expected_keyword = request.form.get("expected_keyword") or None
+    expected_sheet_name = request.form.get("expected_sheet_name") or None
+
+    try:
+        proveedores_pago_rules.delete_dynamic_rule_by_index(index, expected_keyword, expected_sheet_name)
+        flash("Regla eliminada.", "success")
+        _recategorize_all_chase_and_flash()
+    except ValueError as exc:
+        flash(str(exc), "error")
+    return redirect(url_for("carga_datos_proveedores_guardado"))
 
 
 @app.route("/proveedores")

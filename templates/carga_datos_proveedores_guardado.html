@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ url_for('carga_datos_proveedores') }}">Proveedores</a><span class="current">Guardado</span></nav>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <span class="eyebrow">Proveedores</span>
+  <h1>Guardado</h1>
+  <p class="page-subtitle">
+    Un cuadro por proveedor -- facturas cargadas y pagos ya vinculados de Chase Bank, sin importar el mes.
+    <a href="{{ url_for('carga_datos_proveedores_historial') }}">Ver por mes</a> ·
+    <a href="{{ url_for('carga_datos_documentos', module_key='proveedores') }}">Ver los PDF originales guardados</a>.
+  </p>
+</div>
+
+{% if suppliers %}
+<div class="tool-grid">
+  {% for s in suppliers %}
+  <a class="tool-card" href="{{ url_for('carga_datos_proveedores_guardado_detalle', supplier_key=s.key) }}" style="--tool-accent: {{ accent }};">
+    <span class="tool-card-badge">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="7" width="13" height="10" rx="1"/><path d="M14 10h4l3 3v4h-7z"/><circle cx="6" cy="18.5" r="1.6"/><circle cx="17.5" cy="18.5" r="1.6"/></svg>
+    </span>
+    <span class="tool-card-body">
+      <span class="tool-card-label">{{ s.label }}</span>
+      <span class="tool-card-desc">
+        {{ s.invoice_count }} factura(s) — ${{ "{:,.2f}".format(s.invoice_total) }}<br>
+        {{ s.payment_count }} pago(s) de Chase — ${{ "{:,.2f}".format(s.payment_total) }}
+      </span>
+    </span>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card">
+  <p class="muted">Todavía no hay ninguna factura ni ningún pago vinculado a un proveedor.</p>
+</div>
+{% endif %}
+
+<div class="card">
+  <h2>Reglas de pago a proveedores</h2>
+  <p class="muted">
+    Palabra clave (sin importar mayúsculas/acentos) de la Descripción de un movimiento de Chase → proveedor al que se vincula solo, sin resubir el extracto del banco. Si varias reglas matchean, gana la palabra clave más larga.
+    {% if current_user.is_admin %}Podés editar o eliminar cualquier regla.{% else %}Solo un administrador puede crear, editar o eliminar reglas.{% endif %}
+  </p>
+
+  {% if current_user.is_admin %}
+  <form method="post" action="{{ url_for('proveedores_pago_reglas_guardar') }}" id="pago-rule-form" style="display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;">
+    <input type="hidden" name="index" id="pago-rule-index" value="">
+    <input type="hidden" name="expected_keyword" id="pago-rule-expected-keyword" value="">
+    <input type="hidden" name="expected_sheet_name" id="pago-rule-expected-sheet-name" value="">
+    <div style="flex: 1; min-width: 160px;">
+      <label class="muted">Palabra clave</label>
+      <input type="text" name="keyword" id="pago-rule-keyword" required>
+    </div>
+    <div style="flex: 1; min-width: 200px;">
+      <label class="muted">Proveedor</label>
+      <select name="sheet_name" id="pago-rule-sheet-name" required>
+        <option value="" disabled selected>-- Elegir --</option>
+        {% for entry in supplier_options %}
+        <option value="{{ entry.sheet_name }}">{{ entry.label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button type="submit" id="pago-rule-submit" style="margin-top: 0;">Crear Regla</button>
+    <button type="button" id="pago-rule-cancel" class="btn-secondary" style="display: none; margin-top: 0;">Cancelar edición</button>
+  </form>
+
+  <div style="display: flex; gap: 10px; margin-top: 14px;">
+    <button type="button" id="pago-rule-edit-btn" class="btn-secondary" style="margin-top: 0;" disabled>Editar seleccionada</button>
+    <form method="post" action="{{ url_for('proveedores_pago_reglas_eliminar') }}" onsubmit="return confirm('¿Eliminar la regla seleccionada?');">
+      <input type="hidden" name="index" id="pago-delete-index" value="">
+      <input type="hidden" name="expected_keyword" id="pago-delete-expected-keyword" value="">
+      <input type="hidden" name="expected_sheet_name" id="pago-delete-expected-sheet-name" value="">
+      <button type="submit" id="pago-rule-delete-btn" class="btn-danger-soft" style="margin-top: 0;" disabled>Eliminar seleccionada</button>
+    </form>
+  </div>
+  {% endif %}
+
+  <table style="width: 100%; border-collapse: collapse; font-size: 13.5px; margin-top: 18px;">
+    <thead>
+      <tr style="text-align: left; border-bottom: 1px solid var(--border);">
+        <th style="padding: 8px 6px;">Palabra Clave</th>
+        <th style="padding: 8px 6px;">Proveedor</th>
+        {% if current_user.is_admin %}<th style="padding: 8px 6px; width: 26px;"></th>{% endif %}
+      </tr>
+    </thead>
+    <tbody>
+      {% for rule in pago_rules %}
+      <tr style="border-bottom: 1px solid var(--border);">
+        <td style="padding: 8px 6px;">{{ rule.keyword }}</td>
+        <td style="padding: 8px 6px;">{{ rule.sheet_name }}</td>
+        {% if current_user.is_admin %}
+        <td style="padding: 8px 6px; text-align: right;">
+          <input type="radio" name="pago_rule_radio" value="{{ rule.index }}" data-keyword="{{ rule.keyword }}" data-sheet-name="{{ rule.sheet_name }}">
+        </td>
+        {% endif %}
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  {% if current_user.is_admin %}
+  <script>
+    // Mismo patrón exacto que "Motor de Reglas Chase" (chase.html) -- un
+    // radio por fila alimenta "Editar seleccionada"/"Eliminar seleccionada".
+    (function () {
+      var radios = document.querySelectorAll('input[name="pago_rule_radio"]');
+      var editBtn = document.getElementById('pago-rule-edit-btn');
+      var deleteBtn = document.getElementById('pago-rule-delete-btn');
+      var deleteIndex = document.getElementById('pago-delete-index');
+      var deleteExpectedKeyword = document.getElementById('pago-delete-expected-keyword');
+      var deleteExpectedSheetName = document.getElementById('pago-delete-expected-sheet-name');
+      var form = document.getElementById('pago-rule-form');
+      var indexField = document.getElementById('pago-rule-index');
+      var expectedKeywordField = document.getElementById('pago-rule-expected-keyword');
+      var expectedSheetNameField = document.getElementById('pago-rule-expected-sheet-name');
+      var keywordField = document.getElementById('pago-rule-keyword');
+      var sheetNameField = document.getElementById('pago-rule-sheet-name');
+      var submitBtn = document.getElementById('pago-rule-submit');
+      var cancelBtn = document.getElementById('pago-rule-cancel');
+
+      function selectedRadio() {
+        for (var i = 0; i < radios.length; i++) {
+          if (radios[i].checked) return radios[i];
+        }
+        return null;
+      }
+
+      radios.forEach(function (radio) {
+        radio.addEventListener('change', function () {
+          var selected = selectedRadio();
+          editBtn.disabled = !selected;
+          deleteBtn.disabled = !selected;
+          deleteIndex.value = selected ? selected.value : '';
+          deleteExpectedKeyword.value = selected ? selected.dataset.keyword : '';
+          deleteExpectedSheetName.value = selected ? selected.dataset.sheetName : '';
+        });
+      });
+
+      editBtn.addEventListener('click', function () {
+        var selected = selectedRadio();
+        if (!selected) return;
+        indexField.value = selected.value;
+        expectedKeywordField.value = selected.dataset.keyword;
+        expectedSheetNameField.value = selected.dataset.sheetName;
+        keywordField.value = selected.dataset.keyword;
+        sheetNameField.value = selected.dataset.sheetName;
+        submitBtn.textContent = 'Guardar Cambios';
+        cancelBtn.style.display = '';
+        keywordField.focus();
+        form.scrollIntoView({behavior: 'smooth', block: 'center'});
+      });
+
+      cancelBtn.addEventListener('click', function () {
+        indexField.value = '';
+        expectedKeywordField.value = '';
+        expectedSheetNameField.value = '';
+        keywordField.value = '';
+        sheetNameField.value = '';
+        submitBtn.textContent = 'Crear Regla';
+        cancelBtn.style.display = 'none';
+      });
+    })();
+  </script>
+  {% endif %}
+</div>
+{% endblock %}

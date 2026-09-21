@@ -67,9 +67,18 @@
   .chase-categorize-trigger { font-size: 11.5px; font-weight: 400; color: var(--text-soft); text-decoration: underline; flex-shrink: 0; }
   .chase-categorize-trigger:hover { color: var(--accent); }
   .chase-categorize-panel { min-width: 220px; }
-  .chase-categorize-panel form { display: flex; gap: 6px; align-items: center; }
-  .chase-categorize-panel input[type=text] { width: 170px; padding: 5px 8px; font-size: 12.5px; }
+  .chase-categorize-panel form { display: flex; flex-direction: column; gap: 6px; align-items: stretch; }
+  .chase-categorize-panel input[type=text], .chase-categorize-panel select { width: 100%; padding: 5px 8px; font-size: 12.5px; }
   .chase-categorize-panel button { margin-top: 0; padding: 5px 10px; font-size: 12px; }
+
+  /* Vínculo directo a un proveedor (2026-09-21) -- una segunda línea chica
+     bajo el Detalle, solo si el movimiento ya quedó vinculado (solo por
+     regla o a mano). Independiente del Detalle -- un movimiento puede
+     tener Detalle "PROVEEDORES" y todavía no tener proveedor vinculado, o
+     viceversa. */
+  .chase-supplier-row { margin-top: 3px; font-size: 11.5px; }
+  .chase-supplier-link { color: var(--accent); text-decoration: none; font-weight: 600; }
+  .chase-supplier-link:hover { text-decoration: underline; }
 </style>
 <div class="page-header">
   <span class="eyebrow">Chase Bank</span>
@@ -128,6 +137,12 @@
               {% endif %}
               <button type="button" class="popover-trigger chase-categorize-trigger" data-popover-target="chase-cat-{{ loop.index }}">{{ 'corregir' if tx.detalle else 'categorizar' }}</button>
             </div>
+            {% if tx.supplier_key %}
+            <div class="chase-supplier-row">
+              <a class="chase-supplier-link" href="{{ url_for('carga_datos_proveedores_guardado_detalle', supplier_key=tx.supplier_key) }}">{{ supplier_labels.get(tx.supplier_key, tx.supplier_key) }}</a>
+              {% if tx.supplier_source == 'manual' %}<span class="muted">(a mano)</span>{% endif %}
+            </div>
+            {% endif %}
             <div class="popover-panel chase-categorize-panel" id="chase-cat-{{ loop.index }}">
               <form method="post" action="{{ url_for('chase_categorizar') }}">
                 <input type="hidden" name="posting_date" value="{{ tx.posting_date }}">
@@ -135,7 +150,15 @@
                 <input type="hidden" name="amount" value="{{ tx.amount }}">
                 <input type="hidden" name="year" value="{{ year }}">
                 <input type="hidden" name="month" value="{{ month }}">
+                <input type="hidden" name="current_detalle" value="{{ tx.detalle or '' }}">
+                <input type="hidden" name="current_supplier_key" value="{{ tx.supplier_key or '' }}">
                 <input type="text" name="detalle" value="{{ tx.detalle or '' }}" list="chase-detalle-options" placeholder="Detalle">
+                <select name="supplier_key">
+                  <option value="">— Proveedor: ninguno —</option>
+                  {% for entry in supplier_options %}
+                  <option value="{{ entry.key }}" {{ 'selected' if tx.supplier_key == entry.key else '' }}>{{ entry.label }}</option>
+                  {% endfor %}
+                </select>
                 <button type="submit" class="btn-secondary">Guardar</button>
               </form>
             </div>

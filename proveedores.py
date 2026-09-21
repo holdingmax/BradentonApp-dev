@@ -2063,6 +2063,46 @@ def _effective_supplier_registry():
     return {**SUPPLIER_REGISTRY, **_dynamic_supplier_entries()}
 
 
+def list_supplier_registry_entries():
+    """
+    [{"key", "label", "sheet_name"}, ...] de todos los proveedores conocidos
+    (hardcodeados + agregados sin código), ordenados por label -- para el
+    resto de la app (grilla de "Proveedores guardados", selector de
+    proveedor al categorizar un movimiento de Chase a mano) sin tener que
+    importar el registro entero.
+    """
+    registry = _effective_supplier_registry()
+    entries = [
+        {"key": key, "label": config["label"], "sheet_name": config["sheet_name"]}
+        for key, config in registry.items()
+    ]
+    entries.sort(key=lambda entry: entry["label"])
+    return entries
+
+
+def match_supplier_for_chase_description(description):
+    """
+    Cruza la Descripción cruda de un movimiento de Chase Bank contra las
+    reglas de pago por proveedor (keyword -> sheet_name, ver
+    proveedores_pago_rules.py) y resuelve el sheet_name devuelto contra el
+    registro real de proveedores -- pedido explícito del usuario
+    (2026-09-21): "los pagos a proveedores se van a mover al proveedor
+    directamente que sale en el asiento".
+
+    Devuelve (supplier_key, supplier_label), o (None, None) si ninguna
+    regla matchea o si la regla apunta a un sheet_name que ya no
+    corresponde a ningún proveedor conocido (typo o proveedor eliminado).
+    """
+    sheet_name = match_supplier_sheet(description)
+    if not sheet_name:
+        return None, None
+    target = sheet_name.strip().lower()
+    for key, config in _effective_supplier_registry().items():
+        if config["sheet_name"].strip().lower() == target:
+            return key, config["label"]
+    return None, None
+
+
 def _detect_supplier(pdf_path):
     """
     Detecta el proveedor por el contenido del PDF: primero intenta con el

@@ -62,6 +62,19 @@ def _ensure_columns(conn):
         conn.execute(
             "UPDATE chase_transactions SET detalle_source = 'rule' WHERE detalle IS NOT NULL AND detalle != ''"
         )
+    # supplier_key/supplier_source (2026-09-21, pedido explícito del usuario:
+    # "los pagos a proveedores se van a mover al proveedor directamente que
+    # sale en el asiento") -- vínculo INDEPENDIENTE del Detalle, entre un
+    # movimiento de Chase y un proveedor puntual de proveedores_db.py.
+    # supplier_key nunca es un Excel/sheet_name, es la clave real que ya usa
+    # proveedores_db (mismo criterio que detalle/detalle_source: "rule"
+    # cuando lo resolvió proveedores.match_supplier_for_chase_description,
+    # "manual" cuando lo eligió el usuario a mano y queda pegado para
+    # siempre, ver set_manual_supplier).
+    if "supplier_key" not in existing:
+        conn.execute("ALTER TABLE chase_transactions ADD COLUMN supplier_key TEXT")
+    if "supplier_source" not in existing:
+        conn.execute("ALTER TABLE chase_transactions ADD COLUMN supplier_source TEXT")
 
 
 def _row_to_dict(row):
@@ -74,6 +87,8 @@ def _row_to_dict(row):
         "detalle_source": row["detalle_source"],
         "type": row["type"],
         "source_filename": row["source_filename"],
+        "supplier_key": row["supplier_key"],
+        "supplier_source": row["supplier_source"],
     }
 
 
@@ -92,7 +107,10 @@ def upsert_transactions(rows, source_filename=None):
     vuelve a cargar el mismo extracto y las reglas cambiaron desde la
     última carga -- EXCEPTO si el usuario ya lo corrigió a mano
     (detalle_source="manual", ver set_manual_detalle) -- esa corrección
-    queda pegada para siempre, ninguna carga futura la pisa.
+    queda pegada para siempre, ninguna carga futura la pisa. El vínculo a un
+    proveedor puntual (`row["supplier_key"]`, opcional -- ver
+    proveedores.match_supplier_for_chase_description) sigue exactamente el
+    mismo criterio de forma INDEPENDIENTE, vía supplier_key/supplier_source.
 
     Devuelve (inserted, updated).
     """
@@ -113,8 +131,8 @@ def upsert_transactions(rows, source_filename=None):
             conn.execute(
                 """
                 INSERT INTO chase_transactions
-                    (posting_date, description, amount, balance, detalle, type, source_filename, updated_at, detalle_source)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (posting_date, description, amount, balance, detalle, type, source_filename, updated_at, detalle_source, supplier_key, supplier_source)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(posting_date, description, amount) DO UPDATE SET
                     balance = excluded.balance,
                     type = excluded.type,
@@ -123,12 +141,18 @@ def upsert_transactions(rows, source_filename=None):
                     detalle = CASE WHEN chase_transactions.detalle_source = 'manual'
                                    THEN chase_transactions.detalle ELSE excluded.detalle END,
                     detalle_source = CASE WHEN chase_transactions.detalle_source = 'manual'
-                                          THEN chase_transactions.detalle_source ELSE excluded.detalle_source END
+                                          THEN chase_transactions.detalle_source ELSE excluded.detalle_source END,
+                    supplier_key = CASE WHEN chase_transactions.supplier_source = 'manual'
+                                        THEN chase_transactions.supplier_key ELSE excluded.supplier_key END,
+                    supplier_source = CASE WHEN chase_transactions.supplier_source = 'manual'
+                                           THEN chase_transactions.supplier_source ELSE excluded.supplier_source END
                 """,
                 (
                     posting_date, row["description"], row["amount"], row.get("balance"),
                     row.get("detalle"), row.get("type"), source_filename, now,
                     "rule" if row.get("detalle") else None,
+                    row.get("supplier_key"),
+                    "rule" if row.get("supplier_key") else None,
                 ),
             )
             if exists:
@@ -168,6 +192,124 @@ def set_manual_detalle(posting_date, description, amount, detalle):
         )
         conn.commit()
         return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def set_manual_supplier(posting_date, description, amount, supplier_key):
+    """
+    Vincula (o desvincula) a mano un movimiento puntual con un proveedor de
+    proveedores_db -- pedido explícito del usuario (2026-09-21): un cheque
+    sin ninguna descripción útil ("CHECK 1770") nunca va a poder resolverse
+    solo por ninguna regla de palabra clave, así que hace falta poder
+    asignarlo directo. Igual que set_manual_detalle: queda pegado
+    (supplier_source="manual") para que una recarga del mismo extracto, o
+    una recategorización retroactiva (ver recategorize_all), no lo pise.
+    Dejarlo en blanco lo vuelve a dejar disponible para que una regla lo
+    resuelva solo en el futuro.
+
+    Devuelve True si encontró y actualizó el movimiento, False si no existe.
+    """
+    if isinstance(posting_date, (date, datetime)):
+        posting_date = posting_date.isoformat() if isinstance(posting_date, date) else posting_date.date().isoformat()
+    supplier_key = (supplier_key or "").strip() or None
+    supplier_source = "manual" if supplier_key else None
+    conn = _connect()
+    try:
+        cur = conn.execute(
+            """
+            UPDATE chase_transactions SET supplier_key = ?, supplier_source = ?, updated_at = ?
+            WHERE posting_date = ? AND description = ? AND amount = ?
+            """,
+            (supplier_key, supplier_source, datetime.utcnow().isoformat(), posting_date, description, amount),
+        )
+        conn.commit()
+        return cur.rowcount > 0
+    finally:
+        conn.close()
+
+
+def get_supplier_transactions(supplier_key):
+    """Todos los movimientos (cualquier mes) ya vinculados a un proveedor puntual, más reciente primero."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM chase_transactions WHERE supplier_key = ? ORDER BY posting_date DESC",
+            (supplier_key,),
+        ).fetchall()
+        return [_row_to_dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def get_supplier_payment_totals():
+    """{"supplier_key": {"count": N, "total": suma}} -- para la grilla de proveedores guardados."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            """
+            SELECT supplier_key, COUNT(*) AS n, SUM(amount) AS total
+            FROM chase_transactions WHERE supplier_key IS NOT NULL GROUP BY supplier_key
+            """
+        ).fetchall()
+        return {row["supplier_key"]: {"count": row["n"], "total": row["total"] or 0.0} for row in rows}
+    finally:
+        conn.close()
+
+
+def recategorize_all(categorize_fn, resolve_supplier_fn):
+    """
+    Recorre TODOS los movimientos ya guardados (cualquier mes, no solo el
+    que se esté mirando) y recalcula Detalle y proveedor vinculado contra
+    las reglas VIGENTES en este momento -- pedido explícito del usuario
+    (2026-09-21): crear, editar o eliminar una regla (de Chase o de pago a
+    proveedores) tiene que reflejarse al instante en lo que ya está
+    guardado, sin obligar a resubir el extracto del banco de nuevo.
+
+    Nunca toca un valor que el usuario ya fijó a mano (detalle_source o
+    supplier_source = "manual") -- los dos se recalculan de forma
+    INDEPENDIENTE uno del otro, igual que en upsert_transactions.
+
+    `categorize_fn`/`resolve_supplier_fn` reciben la Descripción cruda y
+    devuelven el Detalle / la supplier_key nuevos (o None) -- se inyectan
+    desde afuera (chase_rules.categorize_chase_description /
+    proveedores.match_supplier_for_chase_description) para que este módulo
+    de datos puro no tenga que importar ninguno de los dos.
+
+    Devuelve (detalle_changed, supplier_changed).
+    """
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT rowid AS _rowid, * FROM chase_transactions").fetchall()
+        detalle_changed = 0
+        supplier_changed = 0
+        now = datetime.utcnow().isoformat()
+        for row in rows:
+            updates = {}
+            if row["detalle_source"] != "manual":
+                new_detalle = categorize_fn(row["description"])
+                if new_detalle != row["detalle"]:
+                    updates["detalle"] = new_detalle
+                    updates["detalle_source"] = "rule" if new_detalle else None
+            if row["supplier_source"] != "manual":
+                new_supplier = resolve_supplier_fn(row["description"])
+                if new_supplier != row["supplier_key"]:
+                    updates["supplier_key"] = new_supplier
+                    updates["supplier_source"] = "rule" if new_supplier else None
+            if not updates:
+                continue
+            if "detalle" in updates:
+                detalle_changed += 1
+            if "supplier_key" in updates:
+                supplier_changed += 1
+            updates["updated_at"] = now
+            set_clause = ", ".join(f"{column} = ?" for column in updates)
+            conn.execute(
+                f"UPDATE chase_transactions SET {set_clause} WHERE rowid = ?",
+                (*updates.values(), row["_rowid"]),
+            )
+        conn.commit()
+        return detalle_changed, supplier_changed
     finally:
         conn.close()
 

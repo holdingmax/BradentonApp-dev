@@ -143,7 +143,40 @@ def add_dynamic_rule(keyword, sheet_name):
     return entry
 
 
-def delete_dynamic_rule_by_index(index):
+def _check_expected_rule(rules, idx, expected_keyword, expected_sheet_name):
+    """
+    Mismo resguardo que chase_rules._check_expected_rule: si el índice que
+    llega desde un form quedó desactualizado (otra pestaña/sesión editó o
+    borró una regla en el medio), rechazar en vez de editar/borrar a ciegas
+    lo que haya quedado en ese lugar.
+    """
+    if expected_keyword is None and expected_sheet_name is None:
+        return
+    current = rules[idx]
+    if current["keyword"] != expected_keyword or current["sheet_name"] != expected_sheet_name:
+        raise ValueError(
+            "Esta regla cambió mientras tanto (probablemente otra pestaña u otra sesión "
+            "la editó primero) -- recargá la página y volvé a intentarlo."
+        )
+
+
+def edit_dynamic_rule_by_index(index, keyword, sheet_name, expected_keyword=None, expected_sheet_name=None):
+    """Replace one persisted rule in place by index, keeping its position in the list."""
+    entry = _normalize_rule_entry(keyword, sheet_name)
+    rules = load_dynamic_rules()
+    try:
+        idx = int(index)
+    except (TypeError, ValueError):
+        raise ValueError("Índice de regla inválido.") from None
+    if idx < 0 or idx >= len(rules):
+        raise ValueError("La regla seleccionada no se encontró en el almacenamiento.")
+    _check_expected_rule(rules, idx, expected_keyword, expected_sheet_name)
+    rules[idx] = entry
+    save_dynamic_rules(rules)
+    return entry
+
+
+def delete_dynamic_rule_by_index(index, expected_keyword=None, expected_sheet_name=None):
     """Remove one persisted rule by index in proveedores_pago_rules.json."""
     rules = load_dynamic_rules()
     try:
@@ -152,9 +185,18 @@ def delete_dynamic_rule_by_index(index):
         raise ValueError("Índice de regla inválido.") from None
     if idx < 0 or idx >= len(rules):
         raise ValueError("La regla seleccionada no se encontró en el almacenamiento.")
+    _check_expected_rule(rules, idx, expected_keyword, expected_sheet_name)
     removed = rules.pop(idx)
     save_dynamic_rules(rules)
     return removed
+
+
+def list_display_rules():
+    """Reglas de pago a proveedores con su índice, para la grilla admin de la UI (editar/eliminar por fila)."""
+    return [
+        {"keyword": rule["keyword"], "sheet_name": rule["sheet_name"], "index": idx}
+        for idx, rule in enumerate(load_dynamic_rules())
+    ]
 
 
 def _rule_and_terms(keyword):
