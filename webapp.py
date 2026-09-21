@@ -555,11 +555,13 @@ CARGA_DATOS_TOOLS = [
         "accent_soft": "#D6F1EE",
     },
     {
-        # Pedido explícito del usuario (2026-09-21, misma tarde que la
-        # reconstrucción del lector de PDF de Gettel Pagos): antes solo
-        # se llegaba a esta carga desde la barra lateral (panel "Gettel /
-        # Toyota" -> "Cargar Pagos") -- Alfonso pidió que también tenga su
-        # propia tarjeta acá, agrupada junto a "Gettel / Toyota".
+        # Nunca aparece en la grilla de Herramientas (ver el filtro de
+        # carga_datos_index más abajo, mismo criterio que "carga_caja") --
+        # el usuario probó tenerla como tarjeta propia acá y pidió sacarla
+        # el mismo día (2026-09-21): "los pagos de los cupones van dentro
+        # del modulo de gettel, no separados". Sigue existiendo solo para
+        # que THEME_BY_KEY tenga su tema -- se llega siempre por la barra
+        # lateral, panel "Gettel / Toyota" -> "Cargar Pagos"/"Cuadro de Pagos".
         "key": "carga_gettel_pagos",
         "code": "GP",
         "icon": _ICON_EXCHANGE,
@@ -1048,7 +1050,15 @@ def carga_datos_index():
     # usuario (2026-09-12, cuarta tanda): no le corresponde una tarjeta acá
     # ("no se le tiene que cargar ningun PDF o excel para completar"), solo
     # queda accesible desde la barra lateral (grupo Book Keeping).
-    upload_tools = [tool for tool in CARGA_DATOS_TOOLS if tool["key"] not in ("carga_caja", "fisico")]
+    # Gettel -- Pagos de Cupones (2026-09-21, corrección de la misma tarde):
+    # el usuario pidió sacarla de acá -- "los pagos de los cupones van
+    # dentro del modulo de gettel, no separados" -- vuelve a ser accesible
+    # SOLO desde la barra lateral (panel "Gettel / Toyota" -> "Cargar
+    # Pagos"), mismo criterio que carga_caja/fisico.
+    upload_tools = [
+        tool for tool in CARGA_DATOS_TOOLS
+        if tool["key"] not in ("carga_caja", "fisico", "carga_gettel_pagos")
+    ]
     return render_template("carga_datos_index.html", tools=upload_tools)
 
 
