@@ -85,6 +85,7 @@ from proveedores_dynamic_extractors import (
     list_dynamic_suppliers_display,
 )
 from reporte_diario import (
+    DEPARTMENT_GROUPS,
     build_store_info_export_pdf,
     build_store_info_export_workbook,
     build_store_info_pdf_resumen,
@@ -97,6 +98,7 @@ from reporte_diario import (
     process_reporte_diario,
     process_store_info,
 )
+import proyecciones
 import reportes_db
 import lottery_db
 import gettel_db
@@ -1137,6 +1139,67 @@ def reportes_caja_pdf():
     dest_path = os.path.join(workspace_dir, f"Caja Reporte {month:02d}-{year}.pdf")
     build_caja_pdf_resumen(report, year, month, dest_path)
     return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
+
+
+# Módulo "Proyecciones" -- pedido explícito del usuario (2026-09-18): un
+# TERCER apartado, hermano de Herramientas y Reportes (ver el switch de 3
+# vías en base.html), con Ventas por Departamento y Store Info
+# proyectados a fin de mes -- ver proyecciones.py para la fórmula real
+# decodificada de la planilla de cierre (filas 37/38/39, columnas hasta
+# la O) y todo lo que queda deliberadamente afuera de esta v1.
+@app.route("/carga-datos/proyecciones")
+def carga_datos_proyecciones():
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    projection = proyecciones.build_projection(year, month)
+    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+
+    return render_template(
+        "carga_datos_proyecciones.html",
+        projection=projection,
+        year=year,
+        month=month,
+        month_name=_MONTH_NAMES_ES[month - 1],
+        prev_year=prev_year,
+        prev_month=prev_month,
+        next_year=next_year,
+        next_month=next_month,
+        accent="#B45309",
+        accent_soft="#FFFBEB",
+    )
+
+
+@app.route("/carga-datos/proyecciones/margenes", methods=["POST"])
+def carga_datos_proyecciones_margenes():
+    """
+    Guarda los márgenes editados a mano desde la propia página de
+    Proyecciones (uno por categoría de Ventas por Departamento, ver
+    proyecciones.DEFAULT_MARGINS) -- pedido explícito del usuario
+    (2026-09-18). Se tipean como porcentaje (ej. "15" para 15%) y se
+    guardan como fracción (0.15), mismo criterio que ya usaba la
+    planilla real. Un campo vacío o inválido deja ese margen sin tocar
+    (nunca lo borra ni lo pone en 0 por accidente).
+    """
+    margins = {}
+    for label, _members in DEPARTMENT_GROUPS:
+        raw = (request.form.get(f"margin_{label}") or "").strip()
+        if not raw:
+            continue
+        try:
+            margins[label] = float(raw) / 100.0
+        except ValueError:
+            continue
+    if margins:
+        reportes_db.save_department_margins(margins)
+
+    year = request.form.get("year", type=int) or date.today().year
+    month = request.form.get("month", type=int) or date.today().month
+    return redirect(url_for("carga_datos_proyecciones", year=year, month=month))
 
 
 @app.route("/carga-datos/reporte-diario")

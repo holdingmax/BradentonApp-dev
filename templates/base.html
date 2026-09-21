@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}{% if request.path.startswith('/carga-datos/reportes') %}Reportes{% elif request.path.startswith('/controles') %}Controles{% else %}Herramientas{% endif %}{% endblock %}</title>
+  <title>{% block title %}{% if request.path.startswith('/carga-datos/reportes') %}Reportes{% elif request.path.startswith('/carga-datos/proyecciones') %}Proyecciones{% elif request.path.startswith('/controles') %}Controles{% else %}Herramientas{% endif %}{% endblock %}</title>
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='logo.png') }}">
   <style>
     :root {
@@ -466,19 +466,32 @@
        esto en el backend, ni hace falta uno para un solo admin). */
     .app-rail-item { position: relative; cursor: default; }
     .app-rail-item:active { cursor: grabbing; }
-    /* El ítem que se arrastra queda "levantado" (sombra), nunca
-       transparente -- antes tenía opacity:0.35 y a primera vista parecía
-       "desaparecer". El arrastre en sí ya NO es un drag nativo del sistema
-       operativo (ver el JS de reordenamiento más abajo, reescrito con
-       mousedown/mousemove/mouseup) -- por eso body.rail-dragging sí logra
-       forzar la manito en toda la barra mientras dura el arrastre, sin
-       importar sobre qué ícono esté el mouse en cada instante (con drag
-       nativo esto nunca se sostenía: el sistema operativo se quedaba con
-       el control del cursor apenas el mouse se movía sobre otro ícono). */
+    /* El ítem que se arrastra queda "levantado" (sombra + zoom leve +
+       fondo más claro en la fila), nunca transparente -- antes tenía
+       opacity:0.35 y a primera vista parecía "desaparecer". Ajuste
+       2026-09-18 (pedido explícito del usuario -- "cuesta ver al icono
+       moviendose cuando lo arrastras"): la sombra sola quedaba muy sutil
+       sobre el fondo oscuro de la barra (#111827), así que además de
+       agrandarla se suma un scale(1.06) y un resaltado real del fondo +
+       borde con el color de acento, para que el ítem se despegue
+       claramente del resto mientras se mueve. El arrastre en sí ya NO es
+       un drag nativo del sistema operativo (ver el JS de reordenamiento
+       más abajo, reescrito con mousedown/mousemove/mouseup) -- por eso
+       body.rail-dragging sí logra forzar la manito en toda la barra
+       mientras dura el arrastre, sin importar sobre qué ícono esté el
+       mouse en cada instante (con drag nativo esto nunca se sostenía: el
+       sistema operativo se quedaba con el control del cursor apenas el
+       mouse se movía sobre otro ícono). */
     .app-rail-item.dragging {
       cursor: grabbing;
-      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.4);
+      transform: scale(1.06);
+      box-shadow: 0 10px 26px rgba(0, 0, 0, 0.55), 0 0 0 2px var(--accent, #0B6FAE);
+      border-radius: 8px;
       z-index: 20;
+    }
+    .app-rail-item.dragging .app-rail-item-row {
+      background: rgba(255, 255, 255, 0.16);
+      color: #fff;
     }
     body.rail-dragging .app-rail-item { cursor: grabbing !important; }
     /* Bug real corregido (2026-09-17, pedido explícito del usuario --
@@ -1183,8 +1196,9 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
         </button>
         <nav class="section-switch">
-          <a class="section-switch-item{{ ' active' if not request.path.startswith('/carga-datos/reportes') else '' }}" href="{{ url_for('carga_datos_index') }}">Herramientas</a>
+          <a class="section-switch-item{{ ' active' if not (request.path.startswith('/carga-datos/reportes') or request.path.startswith('/carga-datos/proyecciones')) else '' }}" href="{{ url_for('carga_datos_index') }}">Herramientas</a>
           <a class="section-switch-item{{ ' active' if request.path.startswith('/carga-datos/reportes') else '' }}" href="{{ url_for('carga_datos_reportes') }}">Reportes</a>
+          <a class="section-switch-item{{ ' active' if request.path.startswith('/carga-datos/proyecciones') else '' }}" href="{{ url_for('carga_datos_proyecciones') }}">Proyecciones</a>
         </nav>
         {% block crumbs %}{% endblock %}
       </div>

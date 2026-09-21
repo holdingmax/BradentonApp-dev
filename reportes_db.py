@@ -87,7 +87,59 @@ def _ensure_schema(conn):
     # "Total Sales" (impreso tal cual por el reporte, columna R) --
     # agregadas 2026-09-12, ver CLAUDE.md.
     _ensure_columns(conn, "daily_reports", {"other_amount": "REAL", "total_sales": "REAL"})
+    # Márgenes de Proyecciones (uno por categoría de Ventas por
+    # Departamento, ver proyecciones.py) -- pedido explícito del usuario
+    # (2026-09-18): "no las entiendo bien... pero es lo que se usaba" --
+    # arrancan con los mismos valores estáticos del Excel real (filas
+    # 33/38, columnas I-N) pero el usuario los puede editar desde la
+    # propia página de Proyecciones sin tocar código. Un valor por fila,
+    # nunca se borran filas -- solo se pisan (ver save_department_margins).
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS department_margins (
+            category TEXT PRIMARY KEY,
+            margin REAL NOT NULL,
+            updated_at TEXT
+        )
+        """
+    )
     conn.commit()
+
+
+def get_department_margins(defaults):
+    """
+    {categoria: margen} ya guardado -- para cualquier categoría de
+    `defaults` (ver proyecciones.DEFAULT_MARGINS) que todavía no tenga
+    fila propia en la base, se devuelve el valor default tal cual (nunca
+    None) para que la página de Proyecciones siempre tenga los 6 números
+    completos desde el primer uso, antes de que el usuario edite nada.
+    """
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT category, margin FROM department_margins").fetchall()
+    finally:
+        conn.close()
+    saved = {row["category"]: row["margin"] for row in rows}
+    return {category: saved.get(category, default) for category, default in defaults.items()}
+
+
+def save_department_margins(margins):
+    """Pisa (o crea) el margen de cada categoría recibida en `margins` ({categoria: margen})."""
+    now = _now()
+    conn = _connect()
+    try:
+        for category, margin in margins.items():
+            conn.execute(
+                """
+                INSERT INTO department_margins (category, margin, updated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(category) DO UPDATE SET margin = excluded.margin, updated_at = excluded.updated_at
+                """,
+                (category, float(margin), now),
+            )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def _ensure_columns(conn, table, columns):

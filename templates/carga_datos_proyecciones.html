@@ -1,0 +1,225 @@
+{% extends "base.html" %}
+{% block main_class %}main-full{% endblock %}
+{% block crumbs %}
+<nav class="crumbs"><span class="current">Proyecciones</span></nav>
+{% endblock %}
+{% block content %}
+{% from "_month_jump.html" import month_jump %}
+<div class="page-header">
+  <span class="eyebrow">Proyecciones</span>
+  <h1>Ventas por Departamento &amp; Store Info</h1>
+  <p class="page-subtitle">
+    Con el ritmo de venta de los días ya cargados este mes, se estima cómo va a cerrar el mes completo (30 días) --
+    mismo cálculo que usaba la hoja "Store Info" del Excel de cierre real.
+    Los valores <span class="proy-legend-chip proy-legend-actual">Actual</span> son lo cargado hasta hoy;
+    los <span class="proy-legend-chip proy-legend-proj">Proyectado</span> son la estimación a fin de mes.
+  </p>
+</div>
+
+<div class="card">
+  <div class="historial-nav">
+    <a href="{{ url_for('carga_datos_proyecciones', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
+    <div class="historial-nav-title">
+      {{ month_jump('carga_datos_proyecciones', year, month) }}
+      {% if year == today.year and month == today.month %}
+      <span class="muted">Mes actual</span>
+      {% else %}
+      <a href="{{ url_for('carga_datos_proyecciones') }}" class="muted">Ir al mes actual</a>
+      {% endif %}
+    </div>
+    <a href="{{ url_for('carga_datos_proyecciones', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
+  </div>
+
+  <div class="proy-days-strip">
+    <div class="proy-days-text">
+      <strong>{{ projection.days_loaded }}</strong> de {{ projection.days_in_month }} días cargados este mes
+      {% if projection.days_remaining > 0 %}<span class="muted">-- proyectando los {{ projection.days_remaining }} días que faltan al mismo ritmo</span>{% endif %}
+    </div>
+    <div class="proy-days-bar">
+      <div class="proy-days-bar-fill" style="width: {{ ((projection.days_loaded / projection.days_in_month) * 100) if projection.days_in_month else 0 }}%;"></div>
+    </div>
+  </div>
+</div>
+
+{% macro stat_pair(label, actual, proj, decimals=2, prefix='', suffix='') %}
+<div class="proy-stat">
+  <div class="proy-stat-label">{{ label }}</div>
+  <div class="proy-stat-actual">{{ prefix }}{{ ("{:,.%sf}" % decimals).format(actual) if actual is not none else '—' }}{{ suffix }}</div>
+  <div class="proy-stat-proj-row">
+    <span class="proy-legend-chip proy-legend-proj">Proyectado</span>
+    <span class="proy-stat-proj-value">{{ prefix }}{{ ("{:,.%sf}" % decimals).format(proj) if proj is not none else '—' }}{{ suffix }}</span>
+  </div>
+</div>
+{% endmacro %}
+
+<div class="card">
+  <h2>Store Info</h2>
+  <p class="page-subtitle" style="margin-bottom: 16px;">
+    La proyección de combustible todavía no incluye el ajuste por merma física (depende de un módulo "Físico" que
+    esta app no tiene todavía) -- es la proyección "cruda" con el ritmo de venta cargado hasta hoy.
+  </p>
+  <div class="proy-stat-grid">
+    {{ stat_pair("Volume (gal)", projection.store_info.volume_actual, projection.store_info.volume_proj) }}
+    {{ stat_pair("Total Fuel $", projection.store_info.total_fuel_actual, projection.store_info.total_fuel_proj, prefix="$") }}
+    {{ stat_pair("Precio / Galón", projection.store_info.price_per_gallon_actual, projection.store_info.price_per_gallon_proj, decimals=3, prefix="$") }}
+    {{ stat_pair("Total Non Fuel", projection.store_info.non_fuel_actual, projection.store_info.non_fuel_proj, prefix="$") }}
+  </div>
+  {% if projection.store_info.non_fuel_margin_proj is not none %}
+  <p class="muted proy-derived-note">
+    Margen implícito proyectado de Total Non Fuel (Utilidad proyectada de Ventas por Departamento / Total Non Fuel proyectado): <strong>{{ "{:.1%}".format(projection.store_info.non_fuel_margin_proj) }}</strong> --
+    derivado, no se edita (Total Non Fuel siempre viaja independiente de la suma de categorías de abajo).
+  </p>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Ventas por Departamento</h2>
+  <p class="page-subtitle" style="margin-bottom: 16px;">
+    El margen de cada categoría es el mismo que usaba la planilla de cierre -- editalo si cambió y guardalo abajo.
+  </p>
+  <form method="post" action="{{ url_for('carga_datos_proyecciones_margenes') }}">
+    <input type="hidden" name="year" value="{{ year }}">
+    <input type="hidden" name="month" value="{{ month }}">
+    <div class="historial-table-wrap">
+      <table class="historial-table proy-dept-table">
+        <thead>
+          <tr>
+            <th>Categoría</th>
+            <th>Ventas Actual</th>
+            <th>Ventas Proyectada</th>
+            <th>Margen</th>
+            <th>Utilidad Actual</th>
+            <th>Utilidad Proyectada</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for dept in projection.departments %}
+          <tr>
+            <td>{{ dept.display_label }}</td>
+            <td>${{ "{:,.2f}".format(dept.amount_actual) }}</td>
+            <td class="proy-cell-proj">${{ "{:,.2f}".format(dept.amount_proj) if dept.amount_proj is not none else '—' }}</td>
+            <td class="proy-margin-cell">
+              <input type="number" step="0.01" min="0" max="500" class="proy-margin-input"
+                     name="margin_{{ dept.label }}" value="{{ "%.2f"|format(dept.margin * 100) }}">
+              <span class="muted">%</span>
+            </td>
+            <td class="proy-cell-utilidad">${{ "{:,.2f}".format(dept.utilidad_actual) }}</td>
+            <td class="proy-cell-utilidad proy-cell-proj">${{ "{:,.2f}".format(dept.utilidad_proj) if dept.utilidad_proj is not none else '—' }}</td>
+          </tr>
+          {% endfor %}
+          <tr class="reporte-totals-row">
+            <td>Total</td>
+            <td>${{ "{:,.2f}".format(projection.departments_total_actual) }}</td>
+            <td class="proy-cell-proj">${{ "{:,.2f}".format(projection.departments_total_proj) if projection.departments_total_proj is not none else '—' }}</td>
+            <td></td>
+            <td class="proy-cell-utilidad">${{ "{:,.2f}".format(projection.utilidad_actual_total) }}</td>
+            <td class="proy-cell-utilidad proy-cell-proj">${{ "{:,.2f}".format(projection.utilidad_proj_total) if projection.utilidad_proj_total is not none else '—' }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="proy-margins-actions">
+      <button type="submit">Guardar márgenes</button>
+    </div>
+  </form>
+</div>
+
+<style>
+  /* Estas 3 clases (.historial-nav / .historial-table / .reporte-totals-row)
+     NO viven en base.html -- cada página que las usa las define en su
+     propio <style>, mismo criterio que reporte_store_info_historial.html
+     y el resto de las páginas "historial" de la app. Se habían quedado
+     afuera en la primera versión de esta página -- pedido explícito del
+     usuario (2026-09-18, sesión siguiente): "todas las columnas se ven
+     muy apretadas cuando sobra espacio en la derecha" -- sin esta regla
+     la tabla usaba el estilo default del navegador (angosta, pegada a la
+     izquierda, sin padding/bordes) en vez de ocupar el ancho de la
+     tarjeta.
+  */
+  .historial-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .historial-nav-btn { text-decoration: none; display: inline-block; }
+  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
+  .historial-table-wrap {
+    overflow-x: auto;
+    margin-top: 18px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  .historial-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .historial-table th, .historial-table td { padding: 9px 14px; text-align: left; }
+  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr { border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
+  .reporte-totals-row td { font-weight: 700; background: var(--surface-alt); border-top: 2px solid var(--border); }
+
+  .proy-legend-chip {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .proy-legend-actual { background: var(--surface-alt); color: var(--text); border: 1px solid var(--border); }
+  .proy-legend-proj { background: var(--warning-soft); color: var(--warning); }
+
+  .proy-days-strip { margin-top: 18px; }
+  .proy-days-text { font-size: 13.5px; margin-bottom: 8px; }
+  .proy-days-bar {
+    height: 8px;
+    border-radius: 999px;
+    background: var(--surface-alt);
+    border: 1px solid var(--border);
+    overflow: hidden;
+  }
+  .proy-days-bar-fill {
+    height: 100%;
+    background: var(--warning);
+    border-radius: 999px;
+    transition: width 0.2s ease;
+  }
+
+  .proy-stat-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 14px;
+  }
+  .proy-stat {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-alt);
+    padding: 16px 18px;
+  }
+  .proy-stat-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-soft); margin-bottom: 8px; }
+  .proy-stat-actual { font-size: 24px; font-weight: 700; color: var(--text); letter-spacing: -0.01em; margin-bottom: 10px; }
+  .proy-stat-proj-row { display: flex; align-items: center; gap: 8px; }
+  .proy-stat-proj-value { font-size: 15px; font-weight: 700; color: var(--warning); }
+
+  .proy-derived-note { margin-top: 14px; font-size: 12.5px; }
+
+  .proy-dept-table td, .proy-dept-table th { white-space: nowrap; }
+  .proy-dept-table th:first-child, .proy-dept-table td:first-child { white-space: normal; }
+  .proy-cell-proj { color: var(--warning); font-weight: 700; }
+  .proy-cell-utilidad { color: var(--success); }
+  .proy-cell-utilidad.proy-cell-proj { color: var(--warning); }
+  .proy-margin-cell { display: flex; align-items: center; gap: 4px; }
+  .proy-margin-input {
+    width: 64px;
+    padding: 4px 6px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    font-size: 13px;
+    text-align: right;
+  }
+  .proy-margin-input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .proy-margins-actions { margin-top: 14px; }
+</style>
+{% endblock %}
+
