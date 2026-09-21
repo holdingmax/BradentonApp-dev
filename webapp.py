@@ -4426,10 +4426,12 @@ def carga_datos_gettel_pagos_cuadro():
         month = today.month
     report = gettel_pagos_logic.build_month_report(year, month)
     groups = gettel_pagos_logic.grouped_pagos(report["pagos"])
+    period_labels = gettel_pagos_logic.get_period_labels(year, month)
     prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
     next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
     return render_template(
         "gettel_pagos_cuadro.html", report=report, groups=groups, year=year, month=month,
+        period_labels=period_labels,
         month_name=_MONTH_NAMES_ES[month - 1], prev_year=prev_year, prev_month=prev_month,
         next_year=next_year, next_month=next_month, **THEME_BY_KEY["carga_gettel_pagos"],
     )

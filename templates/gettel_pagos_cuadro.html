@@ -42,27 +42,29 @@
         <table class="historial-table gpc-table">
           <thead>
             <tr>
-              <th>Fecha</th><th>Pago N°</th><th>Transc N°</th><th>Fuente</th><th>Empresa</th><th>Total Cupón</th><th class="historial-col-action"></th>
+              <th>Fecha</th><th>Pago N°</th><th>Transc N°</th><th>Empresa</th><th>Total Cupón</th><th class="historial-col-action"></th>
             </tr>
           </thead>
           <tbody>
             {% for group in groups %}
+            {% set group_index = loop.index %}
             {% for pago in group.rows %}
-            <tr id="gp-view-{{ pago.id }}">
+            <tr id="gp-view-{{ pago.id }}"{% if loop.first and group_index > 1 %} class="gpc-group-start"{% endif %}>
               {% if loop.first %}
               <td rowspan="{{ group.rows|length }}" class="gpc-merged-cell">{{ pago.fecha }}</td>
               <td rowspan="{{ group.rows|length }}" class="gpc-merged-cell">{{ pago.pago_n if pago.pago_n is not none else '—' }}</td>
               {% endif %}
               <td>{{ pago.transc_n or '—' }}</td>
-              <td><span class="historial-badge {{ 'historial-badge-ocr' if pago.source == 'pdf' else 'historial-badge-manual' }}">{{ 'PDF' if pago.source == 'pdf' else 'Manual' }}</span></td>
-              <td>{{ pago.empresa or '—' }}</td>
+              {% if loop.first %}
+              <td rowspan="{{ group.rows|length }}" class="gpc-merged-cell">{{ pago.empresa or '—' }}</td>
+              {% endif %}
               <td>${{ "{:,.2f}".format(pago.total_cupon) }}</td>
               <td class="historial-col-action">
                 <button type="button" class="btn-secondary" onclick="gpEditToggle({{ pago.id }}, true, event)">Editar</button>
               </td>
             </tr>
             <tr id="gp-edit-{{ pago.id }}" class="gp-edit-row" hidden>
-              <td colspan="7">
+              <td colspan="6">
                 <form method="post" action="{{ url_for('carga_datos_gettel_pagos_editar', pago_id=pago.id) }}" class="gp-edit-form">
                   <input type="hidden" name="year" value="{{ year }}">
                   <input type="hidden" name="month" value="{{ month }}">
@@ -88,7 +90,7 @@
           </tbody>
           <tfoot>
             <tr class="reporte-totals-row">
-              <td colspan="5">COBRADO</td>
+              <td colspan="4">COBRADO</td>
               <td>${{ "{:,.2f}".format(report.cobrado) }}</td>
               <td></td>
             </tr>
@@ -104,11 +106,17 @@
       <div class="gpc-total-row">
         <span class="gpc-total-label">Total del mes (Gettel)</span>
         <span class="gpc-total-value">${{ "{:,.2f}".format(report.total_mes) }}</span>
+        {% if period_labels.mes_range %}
+        <span class="muted gpc-total-source">{{ period_labels.mes_range }}</span>
+        {% endif %}
       </div>
       <div class="gpc-total-row gpc-total-highlight">
         <span class="gpc-total-label">Pendiente Mes Anterior</span>
         <span class="gpc-total-value">${{ "{:,.2f}".format(report.pendiente_anterior) }}</span>
         <span class="muted gpc-total-source">{{ "manual" if report.pendiente_source == "manual" else "encadenado del mes anterior" if report.pendiente_source == "prev_month_computed" else "sin datos" }}</span>
+        {% if period_labels.pendiente_anterior_range %}
+        <span class="muted gpc-total-source">{{ period_labels.pendiente_anterior_range }}</span>
+        {% endif %}
       </div>
       <div class="gpc-total-row gpc-total-strong">
         <span class="gpc-total-label">Total a Pagar</span>
@@ -155,16 +163,19 @@
   .historial-col-action { text-align: right; white-space: nowrap; }
   .historial-col-action button { margin-top: 0; padding: 6px 12px; font-size: 12.5px; }
 
-  .historial-badge {
-    display: inline-block;
-    padding: 3px 9px;
-    border-radius: 999px;
-    font-size: 11.5px;
-    font-weight: 600;
-    white-space: nowrap;
-  }
-  .historial-badge-ocr { background: var(--success-soft); color: var(--success); }
-  .historial-badge-manual { background: var(--accent-soft); color: var(--accent); }
+  /* Línea divisoria entre pagos -- pedido explícito del usuario (2026-09-21):
+     "quiero que pongas una linea divisoria entre los pagos para distinguirlos
+     bien". Se marca en la primera fila de cada grupo de pago, salvo el
+     primero (que ya tiene el borde superior de la tabla). */
+  .gpc-group-start td { border-top: 2px solid var(--accent); }
+
+  @keyframes gpc-fade-in { from { opacity: 0; } to { opacity: 1; } }
+  /* Edición más liviana -- pedido explícito del usuario (2026-09-21): "que
+     el boton de editar los pagos en gettel no sea tan brusco en el cambio
+     visual... que sea mas ligero". hidden pasa por display:none, que no se
+     puede transicionar -- un fade-in vía @keyframes sobre :not([hidden])
+     reinicia solo cada vez que la fila deja de estar oculta. */
+  .gp-edit-row:not([hidden]) td { animation: gpc-fade-in 0.22s ease; }
 
   .gp-edit-row td { background: var(--surface-alt); text-align: left; }
   .gp-edit-form {

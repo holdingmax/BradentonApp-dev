@@ -124,6 +124,64 @@ def get_available_years():
     return sorted(years)
 
 
+def _fmt_date_ddmmyyyy(value):
+    """`value` como lo guarda gettel_db (columna date, texto "YYYY-MM-DD") -- mismo criterio que chase_rules._fmt_date_ddmmyyyy."""
+    if not value:
+        return ""
+    parts = str(value).split("-")
+    if len(parts) != 3:
+        return str(value)
+    year, month, day = parts
+    return f"{day}/{month}/{year}"
+
+
+def _range_label(days):
+    """"DD/MM/YYYY al DD/MM/YYYY" de una lista de días (ordenada, ver gettel_reportes) -- None si no hay días."""
+    if not days:
+        return None
+    start = _fmt_date_ddmmyyyy(days[0]["date"])
+    end = _fmt_date_ddmmyyyy(days[-1]["date"])
+    return start if start == end else f"{start} al {end}"
+
+
+def get_period_labels(year, month):
+    """
+    Rango real de fechas ("DD/MM/YYYY al DD/MM/YYYY") que cubren
+    "Pendiente Mes Anterior" y "Total del mes" en el Cuadro de Pagos --
+    pedido explícito del usuario (2026-09-21): "cuando pongas el monto de
+    dias pendientes del mes anterior tienes que mostrar desde que dia
+    hasta que dia del mes anterior hay pendientes, lo mismo con lo que
+    abarca del mes hasta el momento".
+
+    Este módulo nunca guardó qué días individuales componen esos dos
+    montos (_resolve_pendiente_anterior encadena un solo mes atrás sin
+    ningún desglose por día -- ver docstring del módulo), así que el
+    rango se pide prestado a gettel_reportes.resolve_month, que sí arma
+    esa lista día a día a partir de los mismos gettel_db.gettel_toyota_
+    days que alimentan a este módulo (import perezoso: gettel_reportes ya
+    importa este módulo para reusar grouped_pagos, así se evita un ciclo).
+
+    OJO: esto es solo para MOSTRAR el período -- el monto que se ve al
+    lado (report.total_mes/report.pendiente_anterior de build_month_
+    report, más arriba) sigue siendo el que ya calculaba este módulo
+    (Gettel $ puro, sin Toyota/Rebate/Charge -- ver el aviso a Alfonso en
+    gettel_reportes.py). El rango es una aproximación razonable del
+    período que cubre ese monto, no una fuente de verdad distinta para
+    el monto en sí -- si algún día se decide unificar las dos fórmulas,
+    esto ya queda armado para servir a las dos por igual.
+
+    Devuelve un dict con "pendiente_anterior_range" y "mes_range", cada
+    uno None (sin días cargados en ese bloque) o el string del rango.
+    """
+    import gettel_reportes
+
+    report = gettel_reportes.resolve_month(year, month)
+    return {
+        "pendiente_anterior_range": _range_label(report["pendiente_anterior_days"]),
+        "mes_range": _range_label(report["mes_days"]),
+    }
+
+
 def _fmt_money(value):
     return "—" if value is None else "{:,.2f}".format(value)
 
