@@ -1,0 +1,288 @@
+{% extends "base.html" %}
+{% block main_class %}main-full{% endblock %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ url_for('carga_datos_gettel') }}">Gettel / Toyota</a><span class="current">Cuadro de Pagos</span></nav>
+{% endblock %}
+{% block content %}
+{% from "_month_jump.html" import month_jump %}
+<div class="page-header">
+  <span class="eyebrow">Gettel / Toyota</span>
+  <h1>Cuadro de Pagos</h1>
+  <p class="page-subtitle">
+    Replica el cuadro real "Pago Cupones": los cupones leídos de PDF en <a href="{{ url_for('carga_datos_gettel_pagos', year=year, month=month) }}">Pagos</a>
+    contra el Total del mes de Gettel (módulo de días) más lo que quedó pendiente del mes anterior. Acá se puede
+    corregir un campo mal leído ("Editar") o eliminar un cupón.
+  </p>
+</div>
+
+<div class="card">
+  <div class="historial-nav">
+    <a href="{{ url_for('carga_datos_gettel_pagos_cuadro', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
+    <div class="historial-nav-title">
+      {{ month_jump('carga_datos_gettel_pagos_cuadro', year, month) }}
+      {% if year == today.year and month == today.month %}
+      <span class="muted">Mes actual</span>
+      {% else %}
+      <a href="{{ url_for('carga_datos_gettel_pagos_cuadro') }}" class="muted">Ir al mes actual</a>
+      {% endif %}
+    </div>
+    <a href="{{ url_for('carga_datos_gettel_pagos_cuadro', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
+  </div>
+  <div class="gpc-export-actions">
+    <a class="btn-secondary" href="{{ url_for('carga_datos_gettel_pagos_exportar_excel', year=year, month=month) }}">Exportar Excel</a>
+    <a class="btn-secondary" href="{{ url_for('carga_datos_gettel_pagos_exportar_pdf', year=year, month=month) }}">Exportar PDF</a>
+  </div>
+</div>
+
+<div class="card">
+  <div class="gpc-layout">
+    <div class="gpc-table-col">
+      {% if report.pagos %}
+      <div class="historial-table-wrap">
+        <table class="historial-table gpc-table">
+          <thead>
+            <tr>
+              <th>Fecha</th><th>Pago N°</th><th>Transc N°</th><th>Fuente</th><th>Empresa</th><th>Total Cupón</th><th class="historial-col-action"></th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for group in groups %}
+            {% for pago in group.rows %}
+            <tr id="gp-view-{{ pago.id }}">
+              {% if loop.first %}
+              <td rowspan="{{ group.rows|length }}" class="gpc-merged-cell">{{ pago.fecha }}</td>
+              <td rowspan="{{ group.rows|length }}" class="gpc-merged-cell">{{ pago.pago_n if pago.pago_n is not none else '—' }}</td>
+              {% endif %}
+              <td>{{ pago.transc_n or '—' }}</td>
+              <td><span class="historial-badge {{ 'historial-badge-ocr' if pago.source == 'pdf' else 'historial-badge-manual' }}">{{ 'PDF' if pago.source == 'pdf' else 'Manual' }}</span></td>
+              <td>{{ pago.empresa or '—' }}</td>
+              <td>${{ "{:,.2f}".format(pago.total_cupon) }}</td>
+              <td class="historial-col-action">
+                <button type="button" class="btn-secondary" onclick="gpEditToggle({{ pago.id }}, true, event)">Editar</button>
+              </td>
+            </tr>
+            <tr id="gp-edit-{{ pago.id }}" class="gp-edit-row" hidden>
+              <td colspan="7">
+                <form method="post" action="{{ url_for('carga_datos_gettel_pagos_editar', pago_id=pago.id) }}" class="gp-edit-form">
+                  <input type="hidden" name="year" value="{{ year }}">
+                  <input type="hidden" name="month" value="{{ month }}">
+                  <label class="muted">Fecha<input type="date" name="fecha" value="{{ pago.fecha }}" required></label>
+                  <label class="muted">Pago N°<input type="number" step="1" min="1" name="pago_n" value="{{ pago.pago_n if pago.pago_n is not none else '' }}"></label>
+                  <label class="muted">Transc N°<input type="text" name="transc_n" value="{{ pago.transc_n or '' }}"></label>
+                  <label class="muted">Empresa<input type="text" name="empresa" value="{{ pago.empresa or '' }}"></label>
+                  <label class="muted">Total Cupón $<input type="number" step="0.01" name="total_cupon" value="{{ pago.total_cupon }}" required></label>
+                  <div class="gp-edit-actions">
+                    <button type="submit" class="btn-secondary">Guardar</button>
+                    <button type="button" class="btn-secondary" onclick="gpEditToggle({{ pago.id }}, false, event)">Cancelar</button>
+                  </div>
+                </form>
+                <form method="post" action="{{ url_for('carga_datos_gettel_pagos_eliminar', pago_id=pago.id) }}" onsubmit="return confirm('¿Eliminar este cupón?');" class="gp-delete-form">
+                  <input type="hidden" name="year" value="{{ year }}">
+                  <input type="hidden" name="month" value="{{ month }}">
+                  <button type="submit" class="btn-danger-soft">Eliminar cupón</button>
+                </form>
+              </td>
+            </tr>
+            {% endfor %}
+            {% endfor %}
+          </tbody>
+          <tfoot>
+            <tr class="reporte-totals-row">
+              <td colspan="5">COBRADO</td>
+              <td>${{ "{:,.2f}".format(report.cobrado) }}</td>
+              <td></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      {% else %}
+      <p class="muted">Todavía no hay ningún cupón cargado este mes. <a href="{{ url_for('carga_datos_gettel_pagos', year=year, month=month) }}">Cargar recibos</a>.</p>
+      {% endif %}
+    </div>
+
+    <div class="gpc-totals-col">
+      <div class="gpc-total-row">
+        <span class="gpc-total-label">Total del mes (Gettel)</span>
+        <span class="gpc-total-value">${{ "{:,.2f}".format(report.total_mes) }}</span>
+      </div>
+      <div class="gpc-total-row gpc-total-highlight">
+        <span class="gpc-total-label">Pendiente Mes Anterior</span>
+        <span class="gpc-total-value">${{ "{:,.2f}".format(report.pendiente_anterior) }}</span>
+        <span class="muted gpc-total-source">{{ "manual" if report.pendiente_source == "manual" else "encadenado del mes anterior" if report.pendiente_source == "prev_month_computed" else "sin datos" }}</span>
+      </div>
+      <div class="gpc-total-row gpc-total-strong">
+        <span class="gpc-total-label">Total a Pagar</span>
+        <span class="gpc-total-value">${{ "{:,.2f}".format(report.total_a_pagar) }}</span>
+      </div>
+      <div class="gpc-total-row">
+        <span class="gpc-total-label">Cobrado</span>
+        <span class="gpc-total-value">${{ "{:,.2f}".format(report.cobrado) }}</span>
+      </div>
+      <div class="gpc-diferencia-box {{ 'gpc-dif-credito' if report.diferencia >= 0 else 'gpc-dif-pendiente' }}">
+        <span class="gpc-total-label">Diferencia</span>
+        <span class="gpc-total-value">${{ "{:,.2f}".format(report.diferencia) }}</span>
+        {% if report.diferencia >= 0 %}
+        <span class="gpc-diferencia-note">a acreditarse en 48 hs</span>
+        {% else %}
+        <span class="gpc-diferencia-note">pasa a Pendiente del mes siguiente</span>
+        {% endif %}
+      </div>
+
+      <form method="post" action="{{ url_for('carga_datos_gettel_pagos_pendiente') }}" class="gpc-pendiente-form">
+        <input type="hidden" name="year" value="{{ year }}">
+        <input type="hidden" name="month" value="{{ month }}">
+        <label>Ajustar Pendiente Mes Anterior
+          <input type="number" step="0.01" name="pendiente_anterior" value="{{ report.pendiente_anterior if report.pendiente_source == 'manual' else '' }}" placeholder="Vacío = encadenar">
+        </label>
+        <button type="submit">Guardar</button>
+      </form>
+    </div>
+  </div>
+</div>
+
+<style>
+  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .historial-nav-btn { text-decoration: none; display: inline-block; }
+  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
+  .historial-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
+  .historial-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .historial-table th, .historial-table td { padding: 9px 14px; text-align: center; }
+  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr { border-bottom: 1px solid var(--border); }
+  .reporte-totals-row td { font-weight: 700; background: var(--surface-alt); border-top: 2px solid var(--border); }
+  .gpc-merged-cell { font-weight: 700; background: var(--surface-alt); vertical-align: middle; }
+  .historial-col-action { text-align: right; white-space: nowrap; }
+  .historial-col-action button { margin-top: 0; padding: 6px 12px; font-size: 12.5px; }
+
+  .historial-badge {
+    display: inline-block;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .historial-badge-ocr { background: var(--success-soft); color: var(--success); }
+  .historial-badge-manual { background: var(--accent-soft); color: var(--accent); }
+
+  .gp-edit-row td { background: var(--surface-alt); text-align: left; }
+  .gp-edit-form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 12px;
+    padding: 10px 4px;
+  }
+  .gp-edit-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: var(--text-soft); }
+  .gp-edit-form input {
+    padding: 7px 9px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 13.5px;
+    color: var(--text);
+    min-width: 120px;
+  }
+  .gp-edit-form input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .gp-edit-actions { display: flex; gap: 8px; }
+  .gp-edit-actions button { margin-top: 0; }
+  .gp-delete-form { margin: 0 4px 10px; display: inline-block; }
+  .gp-delete-form button { margin-top: 0; padding: 7px 12px; font-size: 12.5px; }
+
+  .gpc-export-actions { margin-top: 14px; display: flex; gap: 10px; flex-wrap: wrap; }
+  .gpc-export-actions a { text-decoration: none; }
+
+  .gpc-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 280px;
+    gap: 24px;
+    align-items: start;
+  }
+  @media (max-width: 780px) {
+    .gpc-layout { grid-template-columns: 1fr; }
+  }
+
+  .gpc-totals-col {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    border-left: 1px solid var(--border);
+    padding-left: 20px;
+  }
+  @media (max-width: 780px) {
+    .gpc-totals-col { border-left: none; padding-left: 0; padding-top: 16px; border-top: 1px solid var(--border); }
+  }
+  .gpc-total-row {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface-alt);
+    padding: 10px 14px;
+  }
+  .gpc-total-label { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-soft); }
+  .gpc-total-value { font-size: 19px; font-weight: 700; color: var(--text); letter-spacing: -0.01em; }
+  .gpc-total-source { font-size: 11px; }
+  .gpc-total-highlight { background: var(--success-soft); border-color: var(--success); }
+  .gpc-total-strong { border: 1.5px solid var(--accent); background: var(--accent-soft); }
+
+  .gpc-diferencia-box {
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    border: 1.5px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+  .gpc-dif-credito { border-color: var(--success); background: var(--success-soft); }
+  .gpc-dif-credito .gpc-total-value { color: var(--success); }
+  .gpc-dif-pendiente { border-color: var(--error); background: var(--error-soft); }
+  .gpc-dif-pendiente .gpc-total-value { color: var(--error); }
+  .gpc-diferencia-note { font-size: 11.5px; font-weight: 600; color: var(--text-soft); }
+
+  .gpc-pendiente-form { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+  .gpc-pendiente-form label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: var(--text-soft); }
+  .gpc-pendiente-form input {
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px;
+    color: var(--text);
+  }
+  .gpc-pendiente-form input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .gpc-pendiente-form button { margin-top: 0; }
+</style>
+<script>
+  // Mismo patrón que fisInvEditToggle en fisico.html / eftEditToggle en
+  // carga_datos_eft_historial.html -- una view-row y una edit-row hermana.
+  (function () {
+    window.gpEditToggle = function (id, show, evt) {
+      if (evt) evt.stopPropagation();
+      var view = document.getElementById('gp-view-' + id);
+      var edit = document.getElementById('gp-edit-' + id);
+      if (!view || !edit) return;
+      document.querySelectorAll('.gp-edit-row').forEach(function (row) {
+        if (row !== edit && !row.hidden) {
+          row.hidden = true;
+          var otherId = row.id.replace('gp-edit-', '');
+          var otherView = document.getElementById('gp-view-' + otherId);
+          if (otherView) otherView.hidden = false;
+        }
+      });
+      view.hidden = show;
+      edit.hidden = !show;
+    };
+    document.addEventListener('click', function (event) {
+      document.querySelectorAll('.gp-edit-row').forEach(function (row) {
+        if (row.hidden) return;
+        if (row.contains(event.target)) return;
+        var id = row.id.replace('gp-edit-', '');
+        var trigger = event.target.closest ? event.target.closest('[onclick*="gpEditToggle(' + id + '"]') : null;
+        if (trigger) return;
+        window.gpEditToggle(id, false);
+      });
+    });
+  })();
+</script>
+{% endblock %}

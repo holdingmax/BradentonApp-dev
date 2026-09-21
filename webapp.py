@@ -105,6 +105,8 @@ import fisico_invoice_parser
 import reportes_db
 import lottery_db
 import gettel_db
+import gettel_pagos as gettel_pagos_logic
+import gettel_pagos_parser
 import cmv_db
 import documents_db
 import proveedores_db
@@ -4162,6 +4164,215 @@ def _run_carga_datos_gettel_job(job_id, paths):
         )
     except Exception as exc:
         jobs.update_job(job_id, status="error", error=f"Error: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# Gettel -- Pagos de Cupones (2026-09-19, pedido explícito del usuario):
+# pestaña separada de carga (a mano, un cupón/transacción por vez, ver
+# gettel_pagos.py) más un cuadro que replica la hoja real "Pago Cupones"
+# (tabla + totales del mes conectados al módulo de días + Pendiente Mes
+# Anterior encadenado + export Excel/PDF). Reemplaza la lectura automática
+# de PDF de pagos de /gettel/pagos ("no esta leyendo bien los pagos").
+# ---------------------------------------------------------------------------
+@app.route("/carga-datos/gettel/pagos")
+def carga_datos_gettel_pagos():
+    """
+    Pedido explícito del usuario (2026-09-21, mismo día y mismo criterio
+    que Combustible): se saca la carga a mano -- esta página queda solo
+    para subir el/los PDF de recibos de "Pagos" (Toyota/Kia). El detalle
+    del mes (cupones ya cargados, editar, eliminar, totales) vive en
+    /carga-datos/gettel/pagos/cuadro -- ya era la página separada que
+    enlaza la barra lateral ("Cuadro de Pagos"). No hace falta año/mes acá:
+    cada recibo se archiva solo, en el mes de su propia fecha leída del PDF.
+    """
+    return render_template("carga_datos_gettel_pagos.html", **THEME_BY_KEY["carga_gettel"])
+
+
+@app.route("/carga-datos/gettel/pagos/subir-pdf", methods=["POST"])
+def carga_datos_gettel_pagos_subir_pdf():
+    """
+    Carga por PDF -- reemplaza la carga a mano (pedido explícito del
+    usuario, 2026-09-21) usando los 4 PDFs reales que subió como ejemplo
+    (ver gettel_pagos_parser.py para el detalle de qué se lee y por qué,
+    incluido el bug real que tenía la herramienta vieja /gettel/pagos).
+    Mismo patrón de siempre para lotes de PDF (jobs.py + threading, ver
+    _run_carga_datos_combustible_job): cada archivo se procesa aislado, y
+    DENTRO de cada archivo cada página/recibo también se aisla -- un recibo
+    ilegible no tira abajo el resto del mismo PDF. Duplicado = mismo N° de
+    Transacción ya guardado, en cualquier mes (ese número es un contador
+    corrido de la caja registradora, nunca se repite).
+    """
+    uploads = [f for f in request.files.getlist("pdf_files") if f and f.filename]
+    if not uploads:
+        return _error_response("Seleccioná uno o más PDF de pagos de Gettel.")
+
+    paths = _save_uploads_to_workspace(uploads)
+    job_id = jobs.create_job(len(paths))
+    threading.Thread(target=_run_carga_datos_gettel_pagos_job, args=(job_id, paths), daemon=True).start()
+    return jsonify({"job_id": job_id, "total": len(paths)})
+
+
+def _run_carga_datos_gettel_pagos_job(job_id, paths):
+    """Corre en su propio hilo -- mismo patrón que _run_carga_datos_combustible_job, ver ese docstring."""
+    try:
+        saved_receipts = []
+        duplicate_count = 0
+        failed = []
+        file_notes = []
+
+        for index, path in enumerate(paths, start=1):
+            filename = os.path.basename(path)
+            try:
+                result = gettel_pagos_parser.extract_pagos_from_pdf(path)
+            except gettel_pagos_parser.PDF_READ_EXCEPTIONS as exc:
+                failed.append({"filename": filename, "error": str(exc)})
+                jobs.update_job(job_id, done=index, total=len(paths))
+                continue
+
+            file_saved = 0
+            file_dupes = 0
+            for receipt in result["receipts"]:
+                existing = gettel_db.find_pago_by_transaction(receipt["transc_n"])
+                if existing:
+                    file_dupes += 1
+                    continue
+                gettel_db.add_pago(
+                    receipt["fecha"], result["pago_n"], receipt["transc_n"], receipt["total_cupon"],
+                    source="pdf", empresa=result["empresa"],
+                )
+                saved_receipts.append(receipt)
+                file_saved += 1
+
+            duplicate_count += file_dupes
+            note = f"{filename}: {file_saved} cupón(es) guardado(s) (Pago N° {result['pago_n']}, {result['empresa']})"
+            if file_dupes:
+                note += f", {file_dupes} ya estaba(n) cargado(s)"
+            if result["page_warnings"]:
+                note += f" -- sin leer con confianza: {' '.join(result['page_warnings'])}"
+            file_notes.append(note)
+            jobs.update_job(job_id, done=index, total=len(paths))
+
+        parts = list(file_notes)
+        if failed:
+            for item in failed:
+                parts.append(f"{item['filename']}: {item['error']}")
+        if not parts:
+            parts.append("No se guardó ningún cupón de este lote.")
+        level = (
+            "success" if (saved_receipts and not failed and not duplicate_count)
+            else ("error" if not saved_receipts else "warning")
+        )
+
+        if saved_receipts:
+            d = saved_receipts[0]["fecha"]
+            redirect_url = f"/carga-datos/gettel/pagos/cuadro?year={d.year}&month={d.month}"
+        else:
+            redirect_url = "/carga-datos/gettel/pagos"
+
+        jobs.update_job(
+            job_id, status="done", done=len(paths), total=len(paths),
+            notice=" | ".join(parts), notice_level=level, redirect_url=redirect_url,
+        )
+    except Exception as exc:
+        jobs.update_job(job_id, status="error", error=f"Error: {exc}")
+
+
+@app.route("/carga-datos/gettel/pagos/<int:pago_id>/editar", methods=["POST"])
+def carga_datos_gettel_pagos_editar(pago_id):
+    """
+    Corrige a mano un campo mal leído de un cupón ya cargado por PDF -- la
+    única edición que queda disponible ahora que se sacó la carga manual
+    (pedido explícito del usuario, 2026-09-21).
+    """
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    fecha = (request.form.get("fecha") or "").strip()
+    pago_n_raw = (request.form.get("pago_n") or "").strip()
+    transc_n = request.form.get("transc_n")
+    empresa = request.form.get("empresa")
+    total_cupon_raw = (request.form.get("total_cupon") or "").strip()
+    try:
+        if not fecha:
+            raise ValueError("Falta la Fecha.")
+        pago_n = int(pago_n_raw) if pago_n_raw else None
+        total_cupon = float(total_cupon_raw)
+        gettel_db.update_pago(pago_id, fecha, pago_n, transc_n, total_cupon, empresa=empresa)
+        flash("Cupón corregido.", "success")
+        redirect_year, redirect_month = (int(part) for part in fecha.split("-")[:2])
+    except ValueError:
+        flash("Revisá la Fecha, el N° de Pago y el Total del Cupón -- tienen que ser válidos.", "error")
+        redirect_year, redirect_month = year, month
+    return redirect(url_for("carga_datos_gettel_pagos_cuadro", year=redirect_year, month=redirect_month))
+
+
+@app.route("/carga-datos/gettel/pagos/<int:pago_id>/eliminar", methods=["POST"])
+def carga_datos_gettel_pagos_eliminar(pago_id):
+    """El botón de eliminar vive en el Cuadro de Pagos ahora (la tabla se movió ahí), no en la página de carga."""
+    gettel_db.delete_pago(pago_id)
+    flash("Pago eliminado.", "success")
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    return redirect(url_for("carga_datos_gettel_pagos_cuadro", year=year, month=month))
+
+
+@app.route("/carga-datos/gettel/pagos/cuadro")
+def carga_datos_gettel_pagos_cuadro():
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+    report = gettel_pagos_logic.build_month_report(year, month)
+    groups = gettel_pagos_logic.grouped_pagos(report["pagos"])
+    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+    return render_template(
+        "gettel_pagos_cuadro.html", report=report, groups=groups, year=year, month=month,
+        month_name=_MONTH_NAMES_ES[month - 1], prev_year=prev_year, prev_month=prev_month,
+        next_year=next_year, next_month=next_month, **THEME_BY_KEY["carga_gettel"],
+    )
+
+
+@app.route("/carga-datos/gettel/pagos/pendiente", methods=["POST"])
+def carga_datos_gettel_pagos_pendiente():
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    pendiente_raw = (request.form.get("pendiente_anterior") or "").strip()
+    try:
+        pendiente_value = float(pendiente_raw) if pendiente_raw else None
+        gettel_db.set_month_pendiente_anterior_override(year, month, pendiente_value)
+        flash("Pendiente Mes Anterior guardado.", "success")
+    except ValueError:
+        flash("No se pudo guardar: el monto tiene que ser un número válido.", "error")
+    return redirect(url_for("carga_datos_gettel_pagos_cuadro", year=year, month=month))
+
+
+@app.route("/carga-datos/gettel/pagos/exportar/excel")
+def carga_datos_gettel_pagos_exportar_excel():
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+    report = gettel_pagos_logic.build_month_report(year, month)
+    workspace_dir = tempfile.mkdtemp(prefix="gettel_pagos_export_")
+    dest_path = os.path.join(workspace_dir, f"Pago Cupones {month:02d}-{year}.xlsx")
+    gettel_pagos_logic.build_pagos_export_workbook(report, year, month, dest_path)
+    return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
+
+
+@app.route("/carga-datos/gettel/pagos/exportar/pdf")
+def carga_datos_gettel_pagos_exportar_pdf():
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+    report = gettel_pagos_logic.build_month_report(year, month)
+    workspace_dir = tempfile.mkdtemp(prefix="gettel_pagos_export_pdf_")
+    dest_path = os.path.join(workspace_dir, f"Pago Cupones {month:02d}-{year}.pdf")
+    gettel_pagos_logic.build_pagos_export_pdf(report, year, month, dest_path)
+    return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
 
 
 @app.route("/carga-datos/gettel/historial")

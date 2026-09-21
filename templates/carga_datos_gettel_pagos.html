@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block main_class %}main-full{% endblock %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ url_for('carga_datos_gettel') }}">Gettel / Toyota</a><span class="current">Pagos</span></nav>
+{% endblock %}
+{% block content %}
+<div class="page-header">
+  <span class="eyebrow">Gettel / Toyota</span>
+  <h1>Subir recibos de Pago en PDF</h1>
+  <p class="page-subtitle">
+    Se lee solo: cada página del PDF es un recibo ("LOCAL ACCT") -- se extrae la Fecha, el N° de Transacción y el
+    Total de cada uno. El N° de Pago y la Empresa (Toyota/Kia) se toman del nombre del archivo -- nombrá cada PDF
+    como "Pagos3 Toyota.pdf" (N° de pago + empresa). Se pueden elegir varios a la vez. Un N° de Transacción ya
+    cargado se detecta solo y se omite. Ver el cuadro completo del mes, para corregir o eliminar un cupón, en
+    <a href="{{ url_for('carga_datos_gettel_pagos_cuadro') }}">Cuadro de Pagos</a>.
+  </p>
+</div>
+
+<div class="card">
+  <h2>Recibo(s) de Pago en PDF</h2>
+  <form method="post" action="{{ url_for('carga_datos_gettel_pagos_subir_pdf') }}" enctype="multipart/form-data" class="background-job-form">
+    <input type="file" name="pdf_files" id="gettel-pagos-pdf-input" multiple accept="application/pdf" class="accumulate-files" required>
+    <div class="form-actions">
+      <button type="submit">Subir y cargar</button>
+      <button type="button" class="btn-secondary clear-file-btn" data-target="gettel-pagos-pdf-input">Limpiar</button>
+    </div>
+  </form>
+</div>
+{% endblock %}
