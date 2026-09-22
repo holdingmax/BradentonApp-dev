@@ -76,7 +76,7 @@ def _ensure_schema(conn):
         """
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_fuel_invoices_date ON fuel_invoices(invoice_date)")
-    _ensure_columns(conn, "fuel_invoices", {"bol_number": "TEXT"})
+    _ensure_columns(conn, "fuel_invoices", {"bol_number": "TEXT", "source_filename": "TEXT"})
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS fuel_invoice_lines (
@@ -132,7 +132,7 @@ def _date_key(value):
     return str(value)
 
 
-def add_invoice(invoice_date, due_date, invoice_number, gallons, amount, source="manual", bol_number=None, lines=None):
+def add_invoice(invoice_date, due_date, invoice_number, gallons, amount, source="manual", bol_number=None, lines=None, source_filename=None):
     """
     `lines` (opcional): detalle por grado leído del PDF -- lista de dicts
     con "product_code"/"description"/"qty_billing"/"qty_freight"/
@@ -142,6 +142,12 @@ def add_invoice(invoice_date, due_date, invoice_number, gallons, amount, source=
     PDF real. `gallons`/`amount` siguen siendo el agregado que usa
     fisico.build_month_report, sin importar si vinieron de `lines` ya
     sumadas o de la carga manual de siempre.
+
+    `source_filename` (opcional, 2026-09-22): el nombre del PDF tal cual
+    se subió -- se usa para cruzar contra documents_db (módulo
+    "combustible") y así poder linkear el N° de Factura a su PDF original
+    en Físico, mismo criterio ya usado por EFT/Proveedores. None en la
+    carga manual (no hay ningún PDF que guardar).
     """
     now = _now()
     conn = _connect()
@@ -149,8 +155,8 @@ def add_invoice(invoice_date, due_date, invoice_number, gallons, amount, source=
         conn.execute(
             """
             INSERT INTO fuel_invoices
-                (invoice_date, due_date, invoice_number, gallons, amount, source, bol_number, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (invoice_date, due_date, invoice_number, gallons, amount, source, bol_number, source_filename, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 _date_key(invoice_date),
@@ -160,6 +166,7 @@ def add_invoice(invoice_date, due_date, invoice_number, gallons, amount, source=
                 float(amount),
                 source,
                 (bol_number or "").strip() or None,
+                (source_filename or "").strip() or None,
                 now,
                 now,
             ),

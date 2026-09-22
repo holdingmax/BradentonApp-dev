@@ -11,7 +11,8 @@
   <p class="page-subtitle">
     Reconciliación mensual: lo que <strong>debería</strong> quedar en los tanques según compras y ventas
     (Inventario Teórico), mes a mes. Las facturas de compra se cargan (solo por PDF) en
-    <a href="{{ url_for('carga_datos_combustible') }}">Combustible</a>.
+    <a href="{{ url_for('carga_datos_combustible') }}">Combustible</a> ·
+    <a href="{{ url_for('carga_datos_documentos', module_key='combustible') }}">Ver los PDF originales guardados</a>.
   </p>
 </div>
 
@@ -29,6 +30,10 @@
     <a href="{{ url_for('fisico_view', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
   </div>
 </div>
+
+{% macro fis_date(value) -%}
+{%- if not value -%}—{%- else -%}{{ value[8:10] }}/{{ value[5:7] }}/{{ value[0:4] }}{%- endif -%}
+{%- endmacro %}
 
 {% macro fis_stat(label, gallons, amount, gal_decimals=2) %}
 <div class="fis-stat">
@@ -54,7 +59,7 @@
     </div>
     <div class="fis-final-box">
       <div class="fis-final-label">Precio Promedio / Gal</div>
-      <div class="fis-final-gal">{{ "${:,.4f}".format(report.avg_price) if report.avg_price is not none else '—' }}</div>
+      <div class="fis-final-gal">{{ "${:,.2f}".format(report.avg_price) if report.avg_price is not none else '—' }}</div>
       <div class="muted" style="font-size:12px;">costo ponderado de Inventario Inicial + Compras</div>
     </div>
   </div>
@@ -88,13 +93,19 @@
       <tbody>
         {% for inv in report.invoices %}
         <tr id="fis-inv-view-{{ inv.id }}">
-          <td>{{ inv.invoice_date }}</td>
-          <td>{{ inv.due_date or '—' }}</td>
-          <td>{{ inv.invoice_number or '—' }}</td>
+          <td>{{ fis_date(inv.invoice_date) }}</td>
+          <td>{{ fis_date(inv.due_date) }}</td>
+          <td>
+            {% if inv.document %}
+            <a href="{{ url_for('carga_datos_documento_descargar', document_id=inv.document.id) }}" target="_blank" rel="noopener" class="fis-invoice-link">{{ inv.invoice_number or '—' }}</a>
+            {% else %}
+            {{ inv.invoice_number or '—' }}
+            {% endif %}
+          </td>
           <td class="fis-price-cell">
             {% if inv.lines %}
             {% for line in inv.lines %}
-            <div class="fis-price-line">{{ line.product_code or '—' }}: {{ "${:,.4f}".format(line.unit_price_wo_tax) if line.unit_price_wo_tax is not none else '—' }}</div>
+            <div class="fis-price-line">{{ line.description or line.product_code or '—' }}: {{ "${:,.2f}".format(line.unit_price_wo_tax) if line.unit_price_wo_tax is not none else '—' }}</div>
             {% endfor %}
             {% else %}
             <span class="muted">—</span>
@@ -103,7 +114,7 @@
           <td class="fis-price-cell">
             {% if inv.lines %}
             {% for line in inv.lines %}
-            <div class="fis-price-line">{{ line.product_code or '—' }}: {{ "${:,.4f}".format(line.unit_price_with_tax) if line.unit_price_with_tax is not none else '—' }}</div>
+            <div class="fis-price-line">{{ line.description or line.product_code or '—' }}: {{ "${:,.2f}".format(line.unit_price_with_tax) if line.unit_price_with_tax is not none else '—' }}</div>
             {% endfor %}
             {% else %}
             <span class="muted">—</span>
@@ -111,7 +122,7 @@
           </td>
           <td>{{ "{:,.2f}".format(inv.gallons) }}</td>
           <td>${{ "{:,.2f}".format(inv.amount) }}</td>
-          <td>${{ "{:,.4f}".format(inv.amount / inv.gallons) if inv.gallons else '—' }}</td>
+          <td>${{ "{:,.2f}".format(inv.amount / inv.gallons) if inv.gallons else '—' }}</td>
           <td class="historial-col-action">
             <button type="button" class="btn-secondary" onclick="fisInvEditToggle({{ inv.id }}, true, event)">Editar</button>
           </td>
@@ -141,6 +152,14 @@
         {% endfor %}
       </tbody>
     </table>
+  </div>
+
+  <div style="margin-top: 14px; text-align: right; position: relative;">
+    <button type="button" class="btn-accent popover-trigger" data-popover-target="export-fisico">Exportar</button>
+    <div class="popover-panel export-menu" id="export-fisico">
+      <a href="{{ url_for('fisico_exportar', year=year, month=month) }}">Excel</a>
+      <a href="{{ url_for('fisico_exportar_pdf', year=year, month=month) }}">PDF</a>
+    </div>
   </div>
   {% else %}
   <p class="muted">Todavía no hay ninguna factura cargada este mes. <a href="{{ url_for('carga_datos_combustible') }}">Cargar una factura</a>.</p>
@@ -185,6 +204,7 @@
   .historial-col-action form { margin: 0; display: inline; }
   .historial-col-action button { margin-top: 0; padding: 6px 12px; font-size: 12.5px; }
 
+  .fis-invoice-link { text-decoration: underline; color: var(--accent); font-weight: 600; }
   .fis-price-cell { white-space: normal; min-width: 150px; }
   .fis-price-line { font-size: 12px; color: var(--text-soft); }
   .fis-price-line + .fis-price-line { margin-top: 2px; }
