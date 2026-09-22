@@ -85,7 +85,7 @@ from proveedores_dynamic_extractors import (
     build_rule_fields as build_dynamic_rule_fields,
     delete_dynamic_supplier,
     extract_with_dynamic_rule,
-    list_dynamic_suppliers_display,
+    load_dynamic_suppliers,
 )
 from reporte_diario import (
     DEPARTMENT_GROUPS,
@@ -523,7 +523,7 @@ CARGA_DATOS_TOOLS = [
         "icon": _ICON_BANK,
         "label": "Chase Bank",
         "url": "/carga-datos/chase",
-        "description": "Subí el extracto de Chase — cada movimiento queda categorizado y guardado solo, sin generar ningún Excel.",
+        "description": "Subí el extracto de Chase — cada movimiento queda categorizado y guardado solo.",
         "accent": "#16A34A",
         "accent_soft": "#DCF3E3",
     },
@@ -533,7 +533,7 @@ CARGA_DATOS_TOOLS = [
         "icon": _ICON_EXCHANGE,
         "label": "EFT y Cupones",
         "url": "/carga-datos/eft",
-        "description": "Subí el PDF de EFT y el reporte mensual de Cupones — se cruzan solos por DDC, sin generar ningún Excel.",
+        "description": "Subí el PDF de EFT y el reporte mensual de Cupones — se cruzan solos por DDC.",
         "accent": "#3B5BDB",
         "accent_soft": "#DDE3FA",
     },
@@ -553,7 +553,7 @@ CARGA_DATOS_TOOLS = [
         "icon": _ICON_CAR,
         "label": "Gettel / Toyota",
         "url": "/carga-datos/gettel",
-        "description": "Subí el Excel o PDF de cupones de Gettel/Toyota — Monto y Galones por día quedan guardados solos, sin generar ningún Excel.",
+        "description": "Subí el Excel o PDF de cupones de Gettel/Toyota — Monto y Galones por día quedan guardados solos.",
         "accent": "#0D9488",
         "accent_soft": "#D6F1EE",
     },
@@ -570,7 +570,7 @@ CARGA_DATOS_TOOLS = [
         "icon": _ICON_EXCHANGE,
         "label": "Gettel -- Pagos de Cupones",
         "url": "/carga-datos/gettel/pagos",
-        "description": "Subí el/los PDF de recibos de Pago (Toyota/Kia) -- Fecha, N° de Transacción y Total del Cupón quedan guardados solos, sin generar ningún Excel.",
+        "description": "Subí el/los PDF de recibos de Pago (Toyota/Kia) -- Fecha, N° de Transacción y Total del Cupón quedan guardados solos.",
         "accent": "#0D9488",
         "accent_soft": "#D6F1EE",
     },
@@ -580,7 +580,7 @@ CARGA_DATOS_TOOLS = [
         "icon": _ICON_COINS,
         "label": "CMV",
         "url": "/carga-datos/cmv",
-        "description": "Costo por UPC y ventas mensuales por departamento — guardados solos, sin generar ningún Excel.",
+        "description": "Costo por UPC y ventas mensuales por departamento — guardados solos.",
         "accent": "#7C3AED",
         "accent_soft": "#E9E0FC",
     },
@@ -590,7 +590,7 @@ CARGA_DATOS_TOOLS = [
         "icon": _ICON_TRUCK,
         "label": "Proveedores",
         "url": "/carga-datos/proveedores",
-        "description": "Subí las facturas de compra — se guardan solas por proveedor, sin generar ningún Excel.",
+        "description": "Subí las facturas de compra — se guardan solas por proveedor.",
         "accent": "#DB2777",
         "accent_soft": "#FBD9EA",
     },
@@ -600,7 +600,7 @@ CARGA_DATOS_TOOLS = [
         "icon": _ICON_CLOCK,
         "label": "Horas de Trabajo",
         "url": "/carga-datos/horas-trabajo",
-        "description": "Subí el reporte semanal de Clock In/Out — horas por empleado, sueldo y descuentos calculados solos, sin generar ningún Excel.",
+        "description": "Subí el reporte semanal de Clock In/Out — horas por empleado, sueldo y descuentos calculados solos.",
         "accent": "#0891B2",
         "accent_soft": "#D3F0F4",
     },
@@ -700,20 +700,22 @@ REPORTES_TOOLS = [
         "pdf_endpoint": "reportes_proveedores_pdf",
     },
     {
-        # Pedido explícito del usuario (2026-09-21): reporte de Gettel con
-        # el mismo formato/colores del Excel real que mandó de ejemplo --
-        # 4 hojas (Pendiente mes anterior / mes actual / Pago Cupones /
-        # Pendiente mes actual resultante), ver gettel_reportes.py. A
-        # diferencia de los otros 4 reportes de este módulo, este es Excel
-        # (no PDF) -- hace falta reproducir colores/celdas unificadas que
-        # un PDF resumido no puede mostrar.
+        # Pedido explícito del usuario (2026-09-21, corregido 2026-09-22):
+        # "el reporte de gettel deberia ser un PDF, no un excel" -- mismas
+        # 4 secciones que el Excel (Pendiente mes anterior / mes actual /
+        # Pago Cupones / Pendiente mes actual resultante, ver
+        # gettel_reportes.build_gettel_pdf_report), resumidas sin colores,
+        # mismo criterio que el resto de los reportes de este módulo. El
+        # Excel con el formato/colores real sigue existiendo -- se mudó al
+        # propio módulo Gettel ("Cuadro del mes" en la barra lateral, ver
+        # carga_datos_gettel_historial.html -> reportes_gettel_excel).
         "key": "reportes_gettel",
         "icon": _ICON_CAR,
         "label": "Gettel — Cupones",
-        "description": "Pendiente del mes anterior, el mes actual, los pagos cargados y lo que queda pendiente para el mes que viene -- mismo formato y colores del Excel real.",
+        "description": "Pendiente del mes anterior, el mes actual, los pagos cargados y lo que queda pendiente para el mes que viene.",
         "accent": "#0D9488",
         "ready": True,
-        "excel_endpoint": "reportes_gettel_excel",
+        "pdf_endpoint": "reportes_gettel_pdf",
     },
 ]
 
@@ -1259,14 +1261,16 @@ def reportes_proveedores_pdf():
 @app.route("/carga-datos/reportes/gettel/excel")
 def reportes_gettel_excel():
     """
-    Descarga el Excel de Reportes -> Gettel -- pedido explícito del
-    usuario (2026-09-21): "ese excel que te pase es el que quiero que
-    uses para crear el reporte de gettel, usando los formatos y colores
-    que tiene" -- 4 hojas (Pendiente mes anterior / mes actual / Pago
-    Cupones / Pendiente mes actual resultante), ver gettel_reportes.py.
-    A diferencia de los otros 4 reportes de este módulo (todos PDF), este
-    es Excel -- el pedido del usuario fue explícitamente reproducir el
-    formato/colores de un Excel real, no un PDF resumido.
+    Descarga el Excel de Gettel con el formato/colores del Excel real --
+    pedido explícito del usuario (2026-09-21): "ese excel que te pase es
+    el que quiero que uses para crear el reporte de gettel, usando los
+    formatos y colores que tiene" -- 4 hojas (Pendiente mes anterior / mes
+    actual / Pago Cupones / Pendiente mes actual resultante), ver
+    gettel_reportes.py. Se mudó de "Reportes" a este mismo módulo
+    (2026-09-22, pedido explícito: "el excel de gettel deberia ir en su
+    apartado de la barra lateral dentro de cuadro del mes") -- linkeado
+    desde carga_datos_gettel_historial.html, ya no desde Reportes (que
+    ahora usa reportes_gettel_pdf, un PDF resumido).
     """
     today = date.today()
     year = request.args.get("year", type=int) or today.year
@@ -1278,6 +1282,28 @@ def reportes_gettel_excel():
     workspace_dir = tempfile.mkdtemp(prefix="gettel_reporte_")
     dest_path = os.path.join(workspace_dir, f"Gettel Reporte {month:02d}-{year}.xlsx")
     gettel_reportes.build_gettel_reportes_workbook(report, year, month, dest_path)
+    return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
+
+
+@app.route("/carga-datos/reportes/gettel/pdf")
+def reportes_gettel_pdf():
+    """
+    Descarga el PDF de Reportes -> Gettel -- pedido explícito del usuario
+    (2026-09-22): "el reporte de gettel deberia ser un PDF, no un excel".
+    Mismas 4 secciones que el Excel (ver reportes_gettel_excel, que sigue
+    existiendo del lado de Gettel/Cuadro del mes), resumidas sin colores --
+    ver gettel_reportes.build_gettel_pdf_report.
+    """
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    report = gettel_reportes.resolve_month(year, month)
+    workspace_dir = tempfile.mkdtemp(prefix="gettel_reporte_")
+    dest_path = os.path.join(workspace_dir, f"Gettel Reporte {month:02d}-{year}.pdf")
+    gettel_reportes.build_gettel_pdf_report(report, year, month, dest_path)
     return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
 
 
@@ -1451,6 +1477,15 @@ def _run_carga_datos_combustible_job(job_id, paths):
                 jobs.update_job(job_id, done=index, total=len(paths))
                 continue
 
+            try:
+                documents_db.store_document(
+                    "combustible", path, filename,
+                    result["invoice_date"].year, result["invoice_date"].month,
+                    label=result["invoice_number"],
+                )
+            except Exception:
+                pass
+
             fisico_db.add_invoice(
                 result["invoice_date"],
                 result["due_date"],
@@ -1460,6 +1495,7 @@ def _run_carga_datos_combustible_job(job_id, paths):
                 source="pdf",
                 bol_number=result["bol_number"],
                 lines=result["lines"],
+                source_filename=filename,
             )
             saved.append({
                 "filename": filename,
@@ -1524,6 +1560,11 @@ def fisico_view():
         month = today.month
 
     report = fisico.build_month_report(year, month)
+    docs_by_filename = {}
+    for doc in documents_db.list_all_documents("combustible"):
+        docs_by_filename.setdefault(doc["filename"], doc)
+    for inv in report["invoices"]:
+        inv["document"] = docs_by_filename.get(inv.get("source_filename"))
     prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
     next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
 
@@ -1539,6 +1580,38 @@ def fisico_view():
         next_month=next_month,
         **THEME_BY_KEY["fisico"],
     )
+
+
+@app.route("/fisico/exportar")
+def fisico_exportar():
+    """Excel NUEVO (nunca toca ningún archivo real) con el Inventario Teórico + facturas del mes -- ver fisico.build_fisico_export_workbook."""
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    report = fisico.build_month_report(year, month)
+    workspace_dir = tempfile.mkdtemp(prefix="fisico_export_")
+    dest_path = os.path.join(workspace_dir, f"Fisico {month:02d}-{year}.xlsx")
+    fisico.build_fisico_export_workbook(report, year, month, dest_path)
+    return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
+
+
+@app.route("/fisico/exportar/pdf")
+def fisico_exportar_pdf():
+    """Versión PDF del export de arriba -- ver fisico.build_fisico_pdf_report."""
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    report = fisico.build_month_report(year, month)
+    workspace_dir = tempfile.mkdtemp(prefix="fisico_export_pdf_")
+    dest_path = os.path.join(workspace_dir, f"Fisico {month:02d}-{year}.pdf")
+    fisico.build_fisico_pdf_report(report, year, month, dest_path)
+    return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
 
 
 @app.route("/fisico/inicial", methods=["POST"])
@@ -2617,14 +2690,33 @@ def chase_categorizar():
     chase_db.set_manual_supplier) -- necesario para un pago sin ningún
     texto reusable en la Descripción (ej. un cheque, "CHECK 1770"), donde
     ninguna regla de palabra clave puede resolverlo sola.
+
+    2026-09-22: vincular un proveedor a un movimiento que todavía no
+    tenía Detalle lo marca solo como "PROVEEDORES" -- pedido explícito
+    del usuario ("cuando lo haga deberia ponerse automaticamente
+    PROVEEDORES al lado del asiento... asi va a quedar mas prolijo"),
+    para que un asiento vinculado nunca se quede mostrando "Sin
+    categorizar". Nunca pisa un Detalle que el movimiento ya tenía (de
+    una regla o cargado a mano antes) ni lo que el usuario haya tipeado
+    a mano en el mismo form -- solo completa el hueco cuando estaba
+    vacío de los dos lados.
+
+    2026-09-22, más tarde: al revés -- si el movimiento SÍ tenía un
+    proveedor vinculado y se lo saca (seleccionando "ninguno"), y el
+    Detalle sigue siendo el "PROVEEDORES" que quedó puesto por ese mismo
+    vínculo (sin que el usuario lo haya tipeado distinto en el mismo
+    form), vuelve a quedar "Sin categorizar" -- pedido explícito del
+    usuario: "si me confundi y no era de eso... deberia quedar en sin
+    categorizar" en vez de seguir mostrando PROVEEDORES sin nadie
+    vinculado.
     """
     posting_date = request.form.get("posting_date", "").strip()
     description = request.form.get("description", "")
     amount_raw = request.form.get("amount", "").strip()
     detalle = request.form.get("detalle", "").strip()
     current_detalle = request.form.get("current_detalle", "").strip()
-    supplier_key = request.form.get("supplier_key", "").strip()
     current_supplier_key = request.form.get("current_supplier_key", "").strip()
+    supplier_key = request.form.get("supplier_key", "").strip()
     year = request.form.get("year", type=int)
     month = request.form.get("month", type=int)
 
@@ -2634,29 +2726,32 @@ def chase_categorizar():
         flash("No se pudo identificar el movimiento (monto inválido).", "error")
         return redirect(url_for("chase_historial", year=year, month=month))
 
+    if supplier_key and not current_detalle and not detalle:
+        detalle = "PROVEEDORES"
+    elif (
+        not supplier_key
+        and current_supplier_key
+        and detalle == "PROVEEDORES"
+        and current_detalle == "PROVEEDORES"
+    ):
+        detalle = ""
+
     # set_manual_supplier corre siempre (es la señal de "el movimiento
     # existe") -- set_manual_detalle solo se llama si el texto de verdad
     # cambió, para no marcar como "manual" (y por lo tanto congelar contra
     # futuras reglas) un Detalle que el usuario dejó tal cual estaba solo
     # porque abrió el popover para vincular un proveedor.
     ok_supplier = chase_db.set_manual_supplier(posting_date, description, amount, supplier_key)
-    detalle_changed = detalle != current_detalle
-    supplier_changed = supplier_key != current_supplier_key
-    if detalle_changed:
+    if detalle != current_detalle:
         chase_db.set_manual_detalle(posting_date, description, amount, detalle)
 
-    if ok_supplier:
-        parts = []
-        if detalle_changed:
-            parts.append("Detalle guardado." if detalle else "Detalle borrado.")
-        if supplier_changed:
-            if supplier_key:
-                label = dict((e["key"], e["label"]) for e in list_supplier_registry_entries()).get(supplier_key, supplier_key)
-                parts.append(f"Vinculado a {label}.")
-            else:
-                parts.append("Se quitó el vínculo con el proveedor.")
-        flash(" ".join(parts) if parts else "Sin cambios.", "success")
-    else:
+    if not ok_supplier:
+        # Sin aviso de éxito -- pedido explícito del usuario (2026-09-22):
+        # "esta notificacion quiero que la quites, no hace falta" -- el
+        # badge de Detalle (y el popover del proveedor vinculado, ver
+        # chase_historial.html) ya muestran el resultado al instante, sin
+        # hacer falta un flash aparte. El único aviso que queda es el de
+        # error real (el movimiento ya no está guardado).
         flash("No se encontró ese movimiento -- puede que ya no esté guardado.", "error")
     return redirect(url_for("chase_historial", year=year, month=month))
 
@@ -4293,11 +4388,23 @@ def carga_datos_gettel():
     gettel_db, sin ningún Excel Cierre de destino -- pedido explícito del
     usuario: "quiero que empieces a crear los modulos de... el excel ese
     donde contengo los datos de gettel y toyota junto con sus gallons".
+
+    Un solo cuadro con dos formularios (2026-09-22, pedido explícito del
+    usuario): "la carga de pagos todavia no se puede hacer desde el modulo
+    de gettel en cargar datos, ahi solo se pueden subir los dias, se
+    deberia poder subir eso y tambien abajo los pagos, asi en la barra
+    lateral no tengamos el Cargar y Cargar pagos" -- esta misma página
+    ahora también sube los recibos de Pago (mismo form que antes vivía
+    solo, en `carga_datos_gettel_pagos.html` / `/carga-datos/gettel/pagos`
+    -- esa ruta sigue existiendo por compatibilidad de link viejo, ver su
+    propio docstring, pero redirige acá).
     """
     _active_job = jobs.get_active_job("gettel")
+    _active_pagos_job = jobs.get_active_job("gettel_pagos")
     return render_template(
         "carga_datos_gettel.html",
         resume_job_id=(_active_job["id"] if _active_job else None),
+        resume_pagos_job_id=(_active_pagos_job["id"] if _active_pagos_job else None),
         **THEME_BY_KEY["carga_gettel"],
     )
 
@@ -4403,20 +4510,15 @@ def _run_carga_datos_gettel_job(job_id, paths):
 @app.route("/carga-datos/gettel/pagos")
 def carga_datos_gettel_pagos():
     """
-    Pedido explícito del usuario (2026-09-21, mismo día y mismo criterio
-    que Combustible): se saca la carga a mano -- esta página queda solo
-    para subir el/los PDF de recibos de "Pagos" (Toyota/Kia). El detalle
-    del mes (cupones ya cargados, editar, eliminar, totales) vive en
-    /carga-datos/gettel/pagos/cuadro -- ya era la página separada que
-    enlaza la barra lateral ("Cuadro de Pagos"). No hace falta año/mes acá:
-    cada recibo se archiva solo, en el mes de su propia fecha leída del PDF.
+    Ruta vieja -- redirige a /carga-datos/gettel (2026-09-22, pedido
+    explícito del usuario: subir los días y subir los pagos quedan juntos
+    en la misma página, para no tener "Cargar" y "Cargar Pagos" como dos
+    entradas separadas en la barra lateral -- ver carga_datos_gettel()).
+    Se conserva el endpoint (no se borra) porque templates/enlaces viejos
+    (ej. gettel_pagos_cuadro.html) todavía apuntan acá con url_for --
+    redirige en vez de 404, mismo criterio que /excels -> /carga-datos.
     """
-    _active_job = jobs.get_active_job("gettel_pagos")
-    return render_template(
-        "carga_datos_gettel_pagos.html",
-        resume_job_id=(_active_job["id"] if _active_job else None),
-        **THEME_BY_KEY["carga_gettel_pagos"],
-    )
+    return redirect(url_for("carga_datos_gettel"))
 
 
 @app.route("/carga-datos/gettel/pagos/subir-pdf", methods=["POST"])
@@ -5045,6 +5147,7 @@ _DOCUMENTS_MODULES = {
     "lottery_resumen_mensual": {"title": "Lottery — Resumen mensual", "theme": "lottery", "back_endpoint": "carga_datos_lottery_historial"},
     "proveedores": {"title": "Proveedores", "theme": "carga_proveedores", "back_endpoint": "carga_datos_proveedores_historial"},
     "horas_trabajo": {"title": "Horas de Trabajo", "theme": "carga_horas", "back_endpoint": "carga_datos_horas_trabajo_historial"},
+    "combustible": {"title": "Combustible", "theme": "fisico", "back_endpoint": "fisico_view"},
 }
 
 
@@ -5585,6 +5688,7 @@ def carga_datos_proveedores_guardado_detalle(supplier_key):
     credit_memos = proveedores_db.get_supplier_credit_memos(supplier_key)
     manual_payments = proveedores_db.get_supplier_manual_payments(supplier_key)
     supplier_settings = proveedores_db.get_supplier_settings(supplier_key)
+    is_dynamic_supplier = supplier_key in load_dynamic_suppliers()
 
     ledger = _build_supplier_ledger(invoices, payments, credit_memos, manual_payments)
     today = date.today()
@@ -5612,6 +5716,7 @@ def carga_datos_proveedores_guardado_detalle(supplier_key):
         manual_payments=manual_payments,
         manual_payment_total=ledger["manual_payment_total"],
         supplier_settings=supplier_settings,
+        is_dynamic_supplier=is_dynamic_supplier,
         today_iso=today.isoformat(),
         **THEME_BY_KEY["carga_proveedores"],
     )
@@ -5712,7 +5817,6 @@ def carga_datos_proveedores_configuracion(supplier_key):
     allow_manual_payments = request.form.get("allow_manual_payments") == "on"
     allow_credit_memos = request.form.get("allow_credit_memos") == "on"
     proveedores_db.set_supplier_settings(supplier_key, allow_manual_payments, allow_credit_memos)
-    flash("Configuración guardada.", "success")
     return redirect(url_for("carga_datos_proveedores_guardado_detalle", supplier_key=supplier_key))
 
 
@@ -5923,10 +6027,9 @@ def _dynamic_wizard_admin_error():
 def proveedores_nuevo():
     if not current_user.is_admin:
         flash("Solo un administrador puede agregar proveedores nuevos.", "error")
-        return redirect(url_for("proveedores"))
+        return redirect(url_for("carga_datos_proveedores_guardado"))
     return render_template(
         "proveedores_nuevo.html",
-        dynamic_suppliers=list_dynamic_suppliers_display(),
         field_labels=DYNAMIC_FIELD_LABELS,
         fields=DYNAMIC_FIELDS,
         **THEME_BY_KEY["proveedores"],
@@ -6041,8 +6144,15 @@ def proveedores_nuevo_guardar():
 
 @app.route("/proveedores/nuevo/eliminar", methods=["POST"])
 def proveedores_nuevo_eliminar():
-    if not _require_admin("Solo un administrador puede agregar proveedores nuevos."):
-        return redirect(url_for("proveedores_nuevo"))
+    """
+    Eliminar un proveedor agregado dinámicamente (2026-09-22) -- llamado
+    tanto desde "Configurar" en el detalle del proveedor (caso normal)
+    como, si hiciera falta, desde cualquier otro lado que postee a esta
+    misma ruta. Siempre vuelve a la Planilla -- el detalle del proveedor
+    ya borrado no tiene sentido seguir mostrándolo.
+    """
+    if not _require_admin("Solo un administrador puede eliminar un proveedor."):
+        return redirect(url_for("carga_datos_proveedores_guardado"))
 
     clave = request.form.get("clave", "").strip()
     try:
@@ -6050,7 +6160,7 @@ def proveedores_nuevo_eliminar():
         flash("Proveedor eliminado.", "success")
     except ValueError as exc:
         flash(str(exc), "error")
-    return redirect(url_for("proveedores_nuevo"))
+    return redirect(url_for("carga_datos_proveedores_guardado"))
 
 
 @app.route("/balance-mensual")
