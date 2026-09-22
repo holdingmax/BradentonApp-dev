@@ -9,7 +9,7 @@
   <span class="eyebrow">Gettel / Toyota</span>
   <h1>Cuadro de Pagos</h1>
   <p class="page-subtitle">
-    Replica el cuadro real "Pago Cupones": los cupones leídos de PDF en <a href="{{ url_for('carga_datos_gettel_pagos', year=year, month=month) }}">Pagos</a>
+    Replica el cuadro real "Pago Cupones": los cupones leídos de PDF en <a href="{{ url_for('carga_datos_gettel') }}">Cargar</a>
     contra el Total del mes de Gettel (módulo de días) más lo que quedó pendiente del mes anterior. Acá se puede
     corregir un campo mal leído ("Editar") o eliminar un cupón.
   </p>
@@ -98,7 +98,7 @@
         </table>
       </div>
       {% else %}
-      <p class="muted">Todavía no hay ningún cupón cargado este mes. <a href="{{ url_for('carga_datos_gettel_pagos', year=year, month=month) }}">Cargar recibos</a>.</p>
+      <p class="muted">Todavía no hay ningún cupón cargado este mes. <a href="{{ url_for('carga_datos_gettel') }}">Cargar recibos</a>.</p>
       {% endif %}
     </div>
 

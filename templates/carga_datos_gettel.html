@@ -5,7 +5,7 @@
 {% block content %}
 <div class="page-header">
   <h1>Gettel / Toyota</h1>
-  <p class="page-subtitle">Subí el Excel de cupones (con las hojas Gettel/Toyota) o los PDF/foto de cada uno por separado — Monto y Galones por día quedan guardados solos, sin generar ningún Excel. <a href="{{ url_for('carga_datos_gettel_historial') }}">Ver lo ya guardado</a>.</p>
+  <p class="page-subtitle">Subí el Excel de cupones (con las hojas Gettel/Toyota) o los PDF/foto de cada uno por separado — Monto y Galones por día quedan guardados solos. <a href="{{ url_for('carga_datos_gettel_historial') }}">Ver lo ya guardado</a>.</p>
 </div>
 
 <div class="card">
@@ -17,6 +17,25 @@
     <div class="form-actions">
       <button type="submit">Guardar</button>
       <button type="button" class="btn-secondary clear-file-btn" data-target="gettel-source-input">Limpiar</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Recibos de Pago (PDF)</h2>
+  <p class="muted">
+    Se lee solo: cada página del PDF es un recibo ("LOCAL ACCT") -- se extrae la Fecha, el N° de Transacción y el
+    Total de cada uno. El N° de Pago y la Empresa (Toyota/Kia) se toman del nombre del archivo -- nombrá cada PDF
+    como "Pagos3 Toyota.pdf" (N° de pago + empresa). Se pueden elegir varios a la vez. Un N° de Transacción ya
+    cargado se detecta solo y se omite. Ver el cuadro completo del mes, para corregir o eliminar un cupón, en
+    <a href="{{ url_for('carga_datos_gettel_pagos_cuadro') }}">Cuadro de Pagos</a>.
+  </p>
+  <form method="post" action="{{ url_for('carga_datos_gettel_pagos_subir_pdf') }}" enctype="multipart/form-data" class="background-job-form" data-resume-job="{{ resume_pagos_job_id or '' }}">
+    <label class="muted">Recibo(s) de Pago en PDF</label>
+    <input type="file" name="pdf_files" id="gettel-pagos-pdf-input" multiple accept="application/pdf" class="accumulate-files" required>
+    <div class="form-actions">
+      <button type="submit">Subir y cargar</button>
+      <button type="button" class="btn-secondary clear-file-btn" data-target="gettel-pagos-pdf-input">Limpiar</button>
     </div>
   </form>
 </div>
