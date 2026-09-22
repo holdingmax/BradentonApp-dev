@@ -71,19 +71,34 @@
   .chase-categorize-panel input[type=text], .chase-categorize-panel select { width: 100%; padding: 5px 8px; font-size: 12.5px; }
   .chase-categorize-panel button { margin-top: 0; padding: 5px 10px; font-size: 12px; }
 
-  /* Vínculo directo a un proveedor (2026-09-21) -- una segunda línea chica
-     bajo el Detalle, solo si el movimiento ya quedó vinculado (solo por
-     regla o a mano). Independiente del Detalle -- un movimiento puede
-     tener Detalle "PROVEEDORES" y todavía no tener proveedor vinculado, o
-     viceversa. */
-  .chase-supplier-row { margin-top: 3px; font-size: 11.5px; }
-  .chase-supplier-link { color: var(--accent); text-decoration: none; font-weight: 600; }
+  /* Vínculo directo a un proveedor (2026-09-21, rediseñado 2026-09-22 --
+     pedido explícito del usuario: "cuando asigne un proveedor deberia
+     ponerse automaticamente PROVEEDORES al lado del asiento y que si
+     haces click encima del proveedores te diga a que proveedor
+     pertenece"). Ya no es una segunda línea chica aparte -- si el
+     movimiento tiene un proveedor vinculado (con o sin Detalle propio,
+     ver el fallback "Sin categorizar" de abajo), el badge mismo pasa a
+     ser un popover-trigger (`button.historial-badge`, especificidad
+     compuesta para ganarle a `.popover-trigger` genérico, mismo patrón
+     ya documentado en base.html para `button.btn-accent.popover-trigger`)
+     que muestra a qué proveedor pertenece sin navegar a ningún lado. */
+  button.historial-badge.chase-supplier-badge {
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+    font-weight: 600;
+  }
+  button.historial-badge.chase-supplier-badge:hover { filter: brightness(0.94); color: inherit; }
+  .chase-supplier-panel { min-width: 170px; }
+  .chase-supplier-panel-label { font-size: 11px; color: var(--text-soft); font-weight: 600; text-transform: uppercase; letter-spacing: 0.02em; }
+  .chase-supplier-panel-name { font-size: 13.5px; font-weight: 700; margin-top: 2px; }
+  .chase-supplier-link { display: inline-block; margin-top: 6px; color: var(--accent); text-decoration: none; font-weight: 600; font-size: 12px; }
   .chase-supplier-link:hover { text-decoration: underline; }
 </style>
 <div class="page-header">
   <span class="eyebrow">Chase Bank</span>
   <h1>Movimientos guardados</h1>
-  <p class="page-subtitle">Todo lo ya categorizado y guardado de este mes — sin tener que abrir ningún Excel. Podés cargar el extracto completo del mes de una vez, o de a poco (un rango corto por vez) — no se duplica nada. Un movimiento sin ninguna regla que lo categorice se puede corregir a mano acá abajo.</p>
+  <p class="page-subtitle">Todo lo ya categorizado y guardado de este mes. Podés cargar el extracto completo del mes de una vez, o de a poco (un rango corto por vez) — no se duplica nada. Un movimiento sin ninguna regla que lo categorice se puede corregir a mano acá abajo.</p>
 </div>
 <datalist id="chase-detalle-options">
   {% for value in known_details %}<option value="{{ value }}">{% endfor %}
@@ -129,18 +144,27 @@
           <td class="{{ 'chase-amount-neg' if tx.amount < 0 else 'chase-amount-pos' }}">{{ "{:,.2f}".format(tx.amount) }}</td>
           <td>{{ "{:,.2f}".format(tx.balance) if tx.balance is not none else '—' }}</td>
           <td class="chase-detalle-cell">
+            {% set is_proveedores = tx.detalle == 'PROVEEDORES' %}
+            {% set badge_text = tx.detalle if tx.detalle else 'Sin categorizar' %}
+            {% set badge_class = 'historial-badge-ocr' if tx.detalle else 'historial-badge-error' %}
             <div class="chase-detalle-row">
-              {% if tx.detalle %}
-              <span class="historial-badge {{ 'historial-badge-manual' if tx.detalle_source == 'manual' else 'historial-badge-ocr' }}">{{ tx.detalle }}</span>
+              {% if is_proveedores or tx.supplier_key %}
+              <button type="button" class="historial-badge {{ badge_class }} popover-trigger chase-supplier-badge" data-popover-target="chase-sup-{{ loop.index }}">{{ badge_text }}</button>
               {% else %}
-              <span class="historial-badge historial-badge-error">Sin categorizar</span>
+              <span class="historial-badge {{ badge_class }}">{{ badge_text }}</span>
               {% endif %}
               <button type="button" class="popover-trigger chase-categorize-trigger" data-popover-target="chase-cat-{{ loop.index }}">{{ 'corregir' if tx.detalle else 'categorizar' }}</button>
             </div>
-            {% if tx.supplier_key %}
-            <div class="chase-supplier-row">
-              <a class="chase-supplier-link" href="{{ url_for('carga_datos_proveedores_guardado_detalle', supplier_key=tx.supplier_key) }}">{{ supplier_labels.get(tx.supplier_key, tx.supplier_key) }}</a>
-              {% if tx.supplier_source == 'manual' %}<span class="muted">(a mano)</span>{% endif %}
+            {% if is_proveedores or tx.supplier_key %}
+            <div class="popover-panel chase-supplier-panel" id="chase-sup-{{ loop.index }}">
+              {% if tx.supplier_key %}
+              <div class="chase-supplier-panel-label">Proveedor vinculado</div>
+              <div class="chase-supplier-panel-name">{{ supplier_labels.get(tx.supplier_key, tx.supplier_key) }}</div>
+              <a class="chase-supplier-link" href="{{ url_for('carga_datos_proveedores_guardado_detalle', supplier_key=tx.supplier_key) }}">Ver ficha del proveedor &rarr;</a>
+              {% else %}
+              <div class="chase-supplier-panel-label">Proveedor vinculado</div>
+              <div class="muted" style="margin-top:2px;">Sin proveedor vinculado todavía -- asignalo con "corregir".</div>
+              {% endif %}
             </div>
             {% endif %}
             <div class="popover-panel chase-categorize-panel" id="chase-cat-{{ loop.index }}">
