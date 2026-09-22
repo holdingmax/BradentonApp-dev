@@ -1164,7 +1164,6 @@
           <div class="app-rail-panel-title">Gettel / Toyota</div>
           <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('carga_datos_gettel') }}">Cargar</a>
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_gettel_historial') }}">Cuadro del mes</a>
-          <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('carga_datos_gettel_pagos') }}">Cargar Pagos</a>
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_gettel_pagos_cuadro') }}">Cuadro de Pagos</a>
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_documentos', module_key='gettel_toyota') }}">Documentos</a>
         </div>
@@ -1216,6 +1215,9 @@
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_proveedores_guardado') }}">Planilla</a>
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_documentos', module_key='proveedores') }}">Documentos</a>
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_proveedores_reglas') }}">Reglas de pago</a>
+          {% if current_user.is_authenticated and current_user.is_admin %}
+          <a class="app-rail-panel-link" href="{{ url_for('proveedores_nuevo') }}">+ Proveedor nuevo</a>
+          {% endif %}
         </div>
       </div>
       <div class="app-rail-item" data-rail-key="horas-trabajo">
@@ -1245,6 +1247,7 @@
           <div class="app-rail-panel-title">Físico</div>
           <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('carga_datos_combustible') }}">Cargar Facturas</a>
           <a class="app-rail-panel-link" href="{{ url_for('fisico_view') }}">Cuadro del mes</a>
+          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_documentos', module_key='combustible') }}">Documentos</a>
         </div>
       </div>
     </div>
