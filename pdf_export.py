@@ -92,6 +92,7 @@ def build_simple_table_pdf(
     cell_padding=5,
     company_header=False,
     period_label=None,
+    footer_note=None,
 ):
     """
     `headers`: una fila de encabezado (texto), en negrita.
@@ -126,6 +127,12 @@ def build_simple_table_pdf(
     con el rango de fechas real que cubre el reporte (ej. "Período:
     01/08/2026 al 20/08/2026") -- pedido explícito del usuario para los PDF
     de "Reportes": "hay que aclarar hasta que dia llega el reporte".
+
+    `footer_note` -- opcional, default `None` (sin cambios para los
+    callers existentes). Un párrafo de texto libre DEBAJO de la tabla, para
+    avisar algo que la tabla sola no puede explicar (ej. "N bloques sin
+    fecha de Chase Bank confirmada, el total no los incluye" en el resumen
+    de Lottery) -- nunca reemplaza la tabla, solo la complementa.
     """
     doc = SimpleDocTemplate(
         dest_path,
@@ -173,6 +180,9 @@ def build_simple_table_pdf(
         style_commands.append(("FONTNAME", (0, last_row), (-1, last_row), "Helvetica-Bold"))
     table.setStyle(TableStyle(style_commands))
     elements.append(table)
+    if footer_note:
+        elements.append(Spacer(1, 8))
+        elements.append(Paragraph(footer_note, styles["Normal"]))
     doc.build(elements)
     return dest_path
 

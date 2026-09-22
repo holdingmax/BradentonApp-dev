@@ -683,12 +683,68 @@ def build_eft_pdf_report(year, month, dest_path):
     else:
         period_label = f"Período: sin EFT cargados todavía en {month:02d}/{year}"
 
+    # Cupones -- pedido explícito del usuario (2026-09-22): reemplaza el
+    # resumen histórico de una sola línea por DOS cuadros reales, los dos
+    # acotados al mes que se está reportando: (1) los cupones que un EFT
+    # de ESTE mes efectivamente pagó (match.eft_date, no cupon.date -- un
+    # EFT de septiembre puede pagar un cupón cargado con fecha de agosto,
+    # lo que importa acá es cuándo se cobró) y (2) los cupones con fecha
+    # de este mes que TODAVÍA no se aplicaron a ningún EFT (pendientes),
+    # para poder ver de un vistazo qué falta cobrar de lo que se cargó.
     cupones = get_cupones_with_status()
-    cupones_total = sum((c.get("net") or 0.0) for c in cupones)
-    cupones_note = (
-        f"Cupones cargados hasta la fecha: {len(cupones)} — "
-        f"Acumulado: {_fmt_money_pdf(cupones_total)}"
-    )
+
+    applied_rows = []
+    total_applied_net = total_applied_paid = 0.0
+    for c in cupones:
+        match = c.get("match")
+        if not match:
+            continue
+        eft_parsed = _parse_eft_date(match.get("eft_date"))
+        if not eft_parsed or eft_parsed.year != year or eft_parsed.month != month:
+            continue
+        cupon_parsed = _parse_cupon_date(c.get("date"))
+        net = c.get("net") or 0.0
+        paid = match.get("paid_amount") or 0.0
+        total_applied_net += net
+        total_applied_paid += paid
+        applied_rows.append(
+            [
+                c.get("coupon_id") or "—",
+                cupon_parsed.strftime("%d/%m/%Y") if cupon_parsed else (c.get("date") or "—"),
+                match.get("rcv_number") or "—",
+                eft_parsed.strftime("%d/%m/%Y"),
+                _fmt_money_pdf(net),
+                _fmt_money_pdf(paid),
+            ]
+        )
+    applied_rows.sort(key=lambda row: row[3])
+    if applied_rows:
+        applied_rows.append(
+            ["TOTAL", "", "", "", _fmt_money_pdf(total_applied_net), _fmt_money_pdf(total_applied_paid)]
+        )
+
+    pending_rows = []
+    total_pending = 0.0
+    for c in cupones:
+        if c.get("match"):
+            continue
+        cupon_parsed = _parse_cupon_date(c.get("date"))
+        if not cupon_parsed or cupon_parsed.year != year or cupon_parsed.month != month:
+            continue
+        net = c.get("net") or 0.0
+        total_pending += net
+        pending_rows.append(
+            [
+                c.get("coupon_id") or "—",
+                cupon_parsed.strftime("%d/%m/%Y"),
+                _fmt_money_pdf(c.get("gross")),
+                _fmt_money_pdf(c.get("fees")),
+                _fmt_money_pdf(net),
+            ]
+        )
+    pending_rows.sort(key=lambda row: row[1])
+    if pending_rows:
+        pending_rows.append(["TOTAL", "", "", "", _fmt_money_pdf(total_pending)])
 
     title = f"EFT — {month:02d}/{year}"
     sections = [
@@ -700,8 +756,28 @@ def build_eft_pdf_report(year, month, dest_path):
             "bold_last_row": True,
         },
         {
-            "heading": "Cupones",
-            "note": cupones_note,
+            "heading": "Cupones aplicados a EFT de este mes",
+            "headers": ["Cupón", "Fecha Cupón", "RCV", "Fecha EFT", "Net", "Pagado"],
+            "rows": applied_rows,
+            "col_widths_mm": [40, 40, 40, 40, 40, 40],
+            "bold_last_row": True,
+        }
+        if applied_rows
+        else {
+            "heading": "Cupones aplicados a EFT de este mes",
+            "note": "Ningún EFT de este mes pagó un cupón todavía.",
+        },
+        {
+            "heading": "Cupones pendientes (fecha de este mes, sin aplicar a ningún EFT)",
+            "headers": ["Cupón", "Fecha", "Gross", "Fees", "Net"],
+            "rows": pending_rows,
+            "col_widths_mm": [48, 48, 48, 48, 48],
+            "bold_last_row": True,
+        }
+        if pending_rows
+        else {
+            "heading": "Cupones pendientes (fecha de este mes, sin aplicar a ningún EFT)",
+            "note": "No hay cupones pendientes con fecha de este mes.",
         },
     ]
     build_multi_section_pdf(dest_path, title, sections, period_label=period_label, company_header=True)

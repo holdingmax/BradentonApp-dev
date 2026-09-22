@@ -696,14 +696,34 @@ def build_chase_pdf_report(rows, year, month, dest_path):
     pie con la suma de todo.
 
     `rows` es la lista tal cual devuelve `chase_db.get_month_transactions`
-    (mismo caller que ya usa el Excel). El "Período" que se imprime en el
-    membrete NO es simplemente "01 al {último día del mes}" -- se calcula
-    con la fecha MÍNIMA/MÁXIMA que de verdad aparece en `rows`, porque el
-    mes puede no estar cargado completo todavía ("quizas no siempre se lo
-    extraiga en PDF al mes completo y hay que aclarar hasta que dia llega
-    el reporte"). Un mes sin ningún movimiento cargado todavía no rompe --
-    el período queda como aviso ("sin movimientos cargados") y la tabla
-    sale con una sola fila TOTAL en $0.00.
+    (mismo caller que ya usa el Excel), ya ordenada por `posting_date ASC`.
+    El "Período" que se imprime en el membrete NO es simplemente "01 al
+    {último día del mes}" -- se calcula con la fecha MÍNIMA/MÁXIMA que de
+    verdad aparece en `rows`, porque el mes puede no estar cargado completo
+    todavía ("quizas no siempre se lo extraiga en PDF al mes completo y hay
+    que aclarar hasta que dia llega el reporte"). Un mes sin ningún
+    movimiento cargado todavía no rompe -- el período queda como aviso
+    ("sin movimientos cargados") y la tabla sale solo con Saldo Inicial/
+    Final en "—".
+
+    Saldo Inicial/Final (pedido explícito del usuario, 2026-09-22): "en vez
+    de decir total, que haya una columna que muestre cual era el saldo
+    inicial, y que luego de todos los movimientos al final diga saldo
+    final, que es el que tendria que ser igual al inicial del mes
+    siguiente, y el que se usa de inicial seria el final del mes anterior"
+    -- se reemplaza la vieja fila "TOTAL" (la suma de los movimientos, sin
+    ningún saldo real detrás) por el saldo BANCARIO real de Chase: la
+    columna `balance` que ya trae cada movimiento (el saldo que el propio
+    banco imprime después de esa transacción, guardado tal cual desde la
+    carga -- nunca calculado por esta app). Saldo Inicial = balance del
+    primer movimiento del mes menos su propio importe (el saldo ANTES de
+    que ese movimiento se aplicara); Saldo Final = balance del último
+    movimiento del mes (el mismo valor que después va a ser el Saldo
+    Inicial del mes siguiente, por diseño -- es el saldo real del banco,
+    no una suma propia que pueda desalinearse). Si algún movimiento del
+    mes no tiene `balance` guardado (carga vieja, de antes de que ese
+    campo existiera), queda "—" en vez de arriesgar un número mal
+    calculado.
     """
     from pdf_export import build_simple_table_pdf
 
@@ -724,13 +744,19 @@ def build_chase_pdf_report(rows, year, month, dest_path):
     else:
         period_label = f"Período: sin movimientos cargados todavía en {month:02d}/{year}"
 
-    table_rows = []
-    grand_total = 0.0
+    first_row = rows[0] if rows else None
+    last_row = rows[-1] if rows else None
+    saldo_inicial = None
+    if first_row is not None and first_row.get("balance") is not None:
+        saldo_inicial = first_row["balance"] - (first_row.get("amount") or 0.0)
+    saldo_final = None
+    if last_row is not None and last_row.get("balance") is not None:
+        saldo_final = last_row["balance"]
+
+    table_rows = [["SALDO INICIAL", _fmt_money_pdf(saldo_inicial)]]
     for label in sorted(totals_by_detalle.keys()):
-        total = totals_by_detalle[label]
-        grand_total += total
-        table_rows.append([label, _fmt_money_pdf(total)])
-    table_rows.append(["TOTAL", _fmt_money_pdf(grand_total)])
+        table_rows.append([label, _fmt_money_pdf(totals_by_detalle[label])])
+    table_rows.append(["SALDO FINAL", _fmt_money_pdf(saldo_final)])
 
     title = f"Chase Bank — Resumen por Detalle — {month:02d}/{year}"
     build_simple_table_pdf(

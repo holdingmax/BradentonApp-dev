@@ -1281,6 +1281,34 @@ def build_lottery_pdf_resumen(year, month, dest_path):
 
     debito_total = monthly_debit_total(year, month)
 
+    # Aviso de bloques sin fecha de Chase Bank confirmada -- investigado a
+    # pedido explícito del usuario (2026-09-22): "pone un monto pequeno en
+    # agosto cuando hay varios pagos hechos en el chase pero no lo suma
+    # bien". Confirmado con datos reales que la suma en sí está bien -- el
+    # monto chico no es un bug de cálculo, es que `monthly_debit_total`
+    # (a propósito, ver su docstring) solo cuenta bloques con la fecha de
+    # Chase Bank YA CONFIRMADA a mano -- de los 6 bloques que tocan agosto
+    # sólo 1 tenía la fecha cargada, mientras el resto (con pagos reales ya
+    # visibles en Chase Bank, Detalle "LOTTERY") seguía con la fecha
+    # SUGERIDA sin confirmar. En vez de arriesgar sumar una fecha no
+    # confirmada (violaría "nunca inventar un hecho bancario todavía no
+    # registrado"), el PDF avisa cuántos bloques con datos reales todavía
+    # no tienen su fecha confirmada, para que quede claro que el total no
+    # es la deuda de Chase de todo el mes -- es solo lo ya confirmado.
+    month_blocks = build_month_blocks(year, month)
+    unconfirmed_blocks = [
+        b for b in month_blocks
+        if b["has_data"] and not b["chase_bank_date"] and (b["debito"]["net_debit"] or 0) > 10
+    ]
+    if unconfirmed_blocks:
+        chase_note = (
+            f"Atención: {len(unconfirmed_blocks)} bloque(s) semanal(es) de este período "
+            "todavía no tienen la fecha de Chase Bank confirmada (Lottery → Cuadro del "
+            "mes) -- el total de arriba NO los incluye, aunque ya tengan datos cargados."
+        )
+    else:
+        chase_note = None
+
     def money(field):
         return _fmt_money_pdf(totals.get(field))
 
@@ -1310,6 +1338,7 @@ def build_lottery_pdf_resumen(year, month, dest_path):
         bold_last_row=True,
         company_header=True,
         period_label=period_label,
+        footer_note=chase_note,
     )
 
 

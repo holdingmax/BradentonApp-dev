@@ -583,3 +583,167 @@ def build_gettel_reportes_workbook(report, year, month, dest_path):
 
     workbook.save(dest_path)
     return dest_path
+
+
+# ---------------------------------------------------------------------------
+# Export a PDF -- pedido explícito del usuario (2026-09-22): "el reporte de
+# gettel deberia ser un PDF, no un excel, el excel de gettel deberia ir en
+# su apartado de la barra lateral dentro de cuadro del mes" -- reemplaza al
+# Excel como el reporte de "Reportes -> Gettel" (el Excel de arriba sigue
+# existiendo, ahora servido desde /carga-datos/gettel/historial, ver
+# webapp.py: reportes_gettel_excel / carga_datos_gettel_historial). Mismas
+# 4 secciones que las 4 hojas del Excel, mismo `resolve_month`, sin
+# reproducir ningún color/fórmula de Excel -- un PDF resumido, mismo
+# criterio que Chase/EFT/Caja/Proveedores en este mismo módulo "Reportes".
+# ---------------------------------------------------------------------------
+
+def _fmt_date_ddmmyyyy_gettel(value):
+    """`value` como lo guarda gettel_db (texto "YYYY-MM-DD")."""
+    if not value:
+        return "—"
+    parts = str(value).split("-")
+    if len(parts) != 3:
+        return str(value)
+    year, month, day = parts
+    return f"{day}/{month}/{year}"
+
+
+def _fmt_money_pdf_gettel(value):
+    """Mismo criterio de signo que chase_rules._fmt_money_pdf -- "-$" antes del monto, nunca "$-"."""
+    if value is None:
+        return "—"
+    if value < 0:
+        return "-${:,.2f}".format(abs(value))
+    return "${:,.2f}".format(value)
+
+
+def _gettel_days_section(heading, days, breakdown, total_value, note=None):
+    """
+    Una sección de días (mismo contenido que una hoja "Pendiente"/"Gettel-
+    Toyota" del Excel, sin colores) -- Fecha/Gettel $/Gettel Gal/Toyota $/
+    Toyota Gal por día, más una fila TOTAL con la fórmula real (Rebate x
+    Galón + Charge 3%) ya calculada por `_block_total`/`resolve_month`.
+    """
+    if not days:
+        return {
+            "heading": heading,
+            "note": note or f"Sin días -- Total Cupón a Cobrar: {_fmt_money_pdf_gettel(total_value)}.",
+        }
+    rows = []
+    for day in days:
+        rows.append(
+            [
+                _fmt_date_ddmmyyyy_gettel(day.get("date")),
+                _fmt_money_pdf_gettel(day.get("gettel_amount")),
+                "{:,.2f}".format(day.get("gettel_gallons") or 0.0),
+                _fmt_money_pdf_gettel(day.get("toyota_amount")),
+                "{:,.2f}".format(day.get("toyota_gallons") or 0.0),
+            ]
+        )
+    rows.append(
+        [
+            "Rebate x Galón (0.02)",
+            "",
+            "",
+            "",
+            _fmt_money_pdf_gettel(breakdown["rebate"]),
+        ]
+    )
+    rows.append(["Charge 3%", "", "", "", _fmt_money_pdf_gettel(breakdown["charge"])])
+    rows.append(["TOTAL CUPÓN A COBRAR", "", "", "", _fmt_money_pdf_gettel(total_value)])
+    section = {
+        "heading": heading,
+        "headers": ["Fecha", "Gettel $", "Gettel Gal", "Toyota $", "Toyota Gal"],
+        "rows": rows,
+        "col_widths_mm": [50, 50, 50, 50, 50],
+        "bold_last_row": True,
+    }
+    if note:
+        section["heading"] = f"{heading} — {note}"
+    return section
+
+
+def build_gettel_pdf_report(report, year, month, dest_path):
+    """
+    PDF del módulo "Reportes -> Gettel" -- mismas 4 secciones que las 4
+    hojas del Excel (`build_gettel_reportes_workbook`, ver el docstring del
+    módulo para la fórmula real de cada bloque), en el mismo orden pedido
+    por el usuario. `report` es el dict que devuelve `resolve_month`.
+    """
+    from pdf_export import build_multi_section_pdf
+
+    prev_year, prev_month = (year - 1, 12) if month == 1 else (year, month - 1)
+    prev_label = f"{prev_month:02d}.{prev_year}"
+    mes_label = f"{month:02d}.{year}"
+
+    pagos_rows = []
+    for pago in report["pagos"]:
+        pagos_rows.append(
+            [
+                _fmt_date_ddmmyyyy_gettel(pago.get("fecha")),
+                str(pago.get("pago_n") or "—"),
+                pago.get("transc_n") or "—",
+                pago.get("empresa") or "—",
+                _fmt_money_pdf_gettel(pago.get("total_cupon")),
+            ]
+        )
+    if pagos_rows:
+        pagos_rows.append(["TOTAL", "", "", "", _fmt_money_pdf_gettel(report["cobrado"])])
+
+    resumen_rows = [
+        [f"Total del mes ({mes_label})", _fmt_money_pdf_gettel(report["mes_breakdown"]["total"])],
+        [f"Pendiente Mes Anterior ({prev_label})", _fmt_money_pdf_gettel(report["pendiente_anterior_total"])],
+        ["Total a Pagar", _fmt_money_pdf_gettel(report["total_a_pagar"])],
+        ["Cobrado (pagos cargados este mes)", _fmt_money_pdf_gettel(report["cobrado"])],
+        ["Diferencia (Cobrado − Total a Pagar)", _fmt_money_pdf_gettel(report["diferencia"])],
+    ]
+
+    title = f"Gettel / Toyota — {mes_label}"
+    sections = [
+        _gettel_days_section(
+            f"Pendiente {prev_label}",
+            report["pendiente_anterior_days"],
+            _block_total(report["pendiente_anterior_days"]),
+            report["pendiente_anterior_total"],
+            note=(
+                "ingresado a mano, sin desglose por día -- ver Cuadro de Pagos de Gettel"
+                if report["pendiente_anterior_source"] == "manual"
+                else None
+            ),
+        ),
+        _gettel_days_section(
+            f"Gettel-Toyota {mes_label}",
+            report["mes_days"],
+            report["mes_breakdown"],
+            report["mes_breakdown"]["total"],
+        ),
+        {
+            "heading": "Pago Cupones",
+            "headers": ["Fecha", "Pago N°", "N° Transacción", "Empresa", "Total Cupón"],
+            "rows": pagos_rows,
+            "col_widths_mm": [45, 35, 55, 45, 50],
+            "bold_last_row": True,
+        }
+        if pagos_rows
+        else {"heading": "Pago Cupones", "note": "Sin pagos cargados este mes."},
+        {
+            "heading": "Resumen",
+            "headers": ["Detalle", "Total"],
+            "rows": resumen_rows,
+            "col_widths_mm": [140, 80],
+            "bold_last_row": False,
+        },
+        _gettel_days_section(
+            f"Pendiente {mes_label} (resultante -- pasa al mes que viene)",
+            report["pendiente_siguiente_days"],
+            report["pendiente_siguiente_breakdown"],
+            report["pendiente_siguiente_total"],
+            note=(
+                f"Incluye {_fmt_money_pdf_gettel(report['pendiente_no_desglosable'])} sin desglose por día."
+                if report["pendiente_no_desglosable"]
+                else None
+            ),
+        ),
+    ]
+    build_multi_section_pdf(dest_path, title, sections, period_label=None, company_header=True)
+    return dest_path
