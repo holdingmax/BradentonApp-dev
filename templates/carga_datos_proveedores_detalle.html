@@ -36,6 +36,14 @@
           </label>
           <button type="submit">Guardar</button>
         </form>
+        {% if is_dynamic_supplier %}
+        <hr style="border:none; border-top:1px solid var(--border); margin:16px 0;">
+        <p class="muted" style="font-size:12.5px; margin-bottom:8px;">Este proveedor se agregó desde "+ Proveedor nuevo" -- eliminarlo saca su regla de lectura automática (la hoja del Excel y las facturas ya cargadas no se tocan).</p>
+        <form method="post" action="{{ url_for('proveedores_nuevo_eliminar') }}" onsubmit="return confirm('¿Eliminar este proveedor? Para corregirlo vas a tener que volver a armarlo desde cero.');">
+          <input type="hidden" name="clave" value="{{ supplier_key }}">
+          <button type="submit" class="btn-danger-soft" style="margin-top:0;">Eliminar proveedor</button>
+        </form>
+        {% endif %}
       </div>
     </details>
     {% endif %}
@@ -43,34 +51,34 @@
 </div>
 
 <div class="card">
-  <div style="display:flex; gap:24px; flex-wrap:wrap;">
-    <div>
-      <div class="muted" style="font-size:12px;">Saldo actual</div>
-      <div class="ledger-saldo-headline {{ 'ledger-balance-debe' if saldo_actual > 0.01 or saldo_actual < -0.01 else 'ledger-balance-cero' }}">${{ "{:,.2f}".format(saldo_actual) }}</div>
-      <div class="muted" style="font-size:12.5px;">{{ "Se debe algo de antes" if saldo_actual > 0.01 else ("A favor" if saldo_actual < -0.01 else "Sin saldo pendiente") }}</div>
+  <div class="ledger-stats-grid">
+    <div class="ledger-stat">
+      <div class="ledger-stat-label">Saldo actual</div>
+      <div class="ledger-stat-value ledger-saldo-headline {{ 'ledger-balance-debe' if saldo_actual > 0.01 or saldo_actual < -0.01 else 'ledger-balance-cero' }}">${{ "{:,.2f}".format(saldo_actual) }}</div>
+      <div class="ledger-stat-sub">{{ "Se debe algo de antes" if saldo_actual > 0.01 else ("A favor" if saldo_actual < -0.01 else "Sin saldo pendiente") }}</div>
     </div>
-    <div>
-      <div class="muted" style="font-size:12px;">Facturas cargadas</div>
-      <div style="font-size:20px; font-weight:700;">${{ "{:,.2f}".format(invoice_total) }}</div>
-      <div class="muted" style="font-size:12.5px;">{{ invoice_count }} factura(s)</div>
+    <div class="ledger-stat">
+      <div class="ledger-stat-label">Facturas cargadas</div>
+      <div class="ledger-stat-value">${{ "{:,.2f}".format(invoice_total) }}</div>
+      <div class="ledger-stat-sub">{{ invoice_count }} factura(s)</div>
     </div>
-    <div>
-      <div class="muted" style="font-size:12px;">Pagos vinculados (Chase Bank)</div>
-      <div style="font-size:20px; font-weight:700;">${{ "{:,.2f}".format(payment_total) }}</div>
-      <div class="muted" style="font-size:12.5px;">{{ payment_count }} movimiento(s)</div>
+    <div class="ledger-stat">
+      <div class="ledger-stat-label">Pagos vinculados (Chase Bank)</div>
+      <div class="ledger-stat-value">${{ "{:,.2f}".format(payment_total) }}</div>
+      <div class="ledger-stat-sub">{{ payment_count }} movimiento(s)</div>
     </div>
     {% if manual_payments %}
-    <div>
-      <div class="muted" style="font-size:12px;">Pagos a mano (Caja)</div>
-      <div style="font-size:20px; font-weight:700;">${{ "{:,.2f}".format(manual_payment_total) }}</div>
-      <div class="muted" style="font-size:12.5px;">{{ manual_payments|length }} pago(s)</div>
+    <div class="ledger-stat">
+      <div class="ledger-stat-label">Pagos a mano (Caja)</div>
+      <div class="ledger-stat-value">${{ "{:,.2f}".format(manual_payment_total) }}</div>
+      <div class="ledger-stat-sub">{{ manual_payments|length }} pago(s)</div>
     </div>
     {% endif %}
     {% if credit_memos %}
-    <div>
-      <div class="muted" style="font-size:12px;">Credit memos</div>
-      <div style="font-size:20px; font-weight:700;">${{ "{:,.2f}".format(credit_total) }}</div>
-      <div class="muted" style="font-size:12.5px;">{{ credit_memos|length }} nota(s)</div>
+    <div class="ledger-stat">
+      <div class="ledger-stat-label">Credit memos</div>
+      <div class="ledger-stat-value">${{ "{:,.2f}".format(credit_total) }}</div>
+      <div class="ledger-stat-sub">{{ credit_memos|length }} nota(s)</div>
     </div>
     {% endif %}
   </div>
@@ -219,7 +227,12 @@
   .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
   .historial-col-day { font-weight: 700; white-space: nowrap; }
 
-  .ledger-saldo-headline { font-size: 28px; font-weight: 800; }
+  .ledger-stats-grid { display: flex; gap: 24px; flex-wrap: wrap; }
+  .ledger-stat { display: flex; flex-direction: column; gap: 4px; min-width: 150px; }
+  .ledger-stat-label { color: var(--text-soft); font-size: 12px; font-weight: 600; }
+  .ledger-stat-value { font-size: 20px; font-weight: 700; line-height: 1.2; }
+  .ledger-stat-sub { color: var(--text-soft); font-size: 12.5px; }
+  .ledger-saldo-headline { font-size: 20px; font-weight: 700; }
   .ledger-balance-debe { color: var(--error); }
   .ledger-balance-cero { color: var(--success); }
 

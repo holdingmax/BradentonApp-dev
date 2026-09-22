@@ -6,19 +6,13 @@
 <div class="page-header">
   <span class="eyebrow">Proveedores</span>
   <h1>Agregar Proveedor Nuevo</h1>
-  <p class="page-subtitle">Para facturas simples de leer (texto limpio, sin escritura a mano) — subís una factura de muestra, le indicás dónde está el N° de Factura, la Fecha y el Monto Total, y de ahí en más ese proveedor se carga solo desde "Cargar Facturas". Antes de empezar, creá a mano la hoja del proveedor en el Excel de Proveedores (copiando una pestaña existente y borrando sus datos viejas).</p>
+  <p class="page-subtitle">Para facturas simples de leer (texto limpio, sin escritura a mano) — subís una factura de muestra, le indicás dónde está el N° de Factura, la Fecha y el Monto Total, y de ahí en más ese proveedor se carga solo desde "Cargar Facturas". Antes de empezar, creá a mano la hoja del proveedor en el Excel de Proveedores, con ese mismo nombre (copiando una pestaña existente y borrando sus datos viejas).</p>
 </div>
 
 <div class="card">
   <h2>1. Datos del proveedor y factura de muestra</h2>
-  <label class="muted">Nombre del proveedor</label>
-  <input type="text" id="wiz-label" placeholder="Ej. Nombre del Proveedor SA">
-
-  <label class="muted">Nombre de la hoja en el Excel (ya creada a mano)</label>
-  <input type="text" id="wiz-sheet-name" placeholder="Ej. NOMBREPROV">
-
-  <label class="muted">Etiqueta en RESUMEN COMPRAS (dejalo igual que el nombre de hoja si no sabés)</label>
-  <input type="text" id="wiz-resumen-label" placeholder="Ej. NOMBREPROV">
+  <label class="muted">Nombre del proveedor (tiene que ser igual al nombre de la hoja que ya creaste en el Excel)</label>
+  <input type="text" id="wiz-label" placeholder="Ej. NOMBREPROV">
 
   <label class="muted">Palabra que identifica a este proveedor (aparece en todas sus facturas, y en ninguna de otro proveedor)</label>
   <input type="text" id="wiz-detect-keyword" placeholder="Ej. el nombre del proveedor tal cual aparece en la factura">
@@ -74,43 +68,6 @@
       <button type="submit">Guardar proveedor</button>
     </div>
   </form>
-</div>
-
-<div class="card">
-  <h2>Proveedores agregados desde acá</h2>
-  {% if dynamic_suppliers %}
-  <div style="overflow-x: auto;">
-  <table style="width:100%; border-collapse: collapse; font-size: 13.5px;">
-    <thead>
-      <tr style="text-align:left; border-bottom: 1px solid var(--border);">
-        <th style="padding: 8px 6px;">Proveedor</th>
-        <th style="padding: 8px 6px;">Hoja</th>
-        <th style="padding: 8px 6px;">Se detecta por</th>
-        <th style="padding: 8px 6px;">Agregado por</th>
-        <th style="padding: 8px 6px; width: 90px;"></th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for supplier in dynamic_suppliers %}
-      <tr style="border-bottom: 1px solid var(--border);">
-        <td style="padding: 8px 6px;">{{ supplier.label }}</td>
-        <td style="padding: 8px 6px;">{{ supplier.sheet_name }}</td>
-        <td style="padding: 8px 6px;" class="muted">"{{ supplier.detect_keyword }}"</td>
-        <td style="padding: 8px 6px;" class="muted">{{ supplier.created_by or "—" }}</td>
-        <td style="padding: 8px 6px; text-align:right;">
-          <form method="post" action="{{ url_for('proveedores_nuevo_eliminar') }}" onsubmit="return confirm('¿Eliminar este proveedor? Para corregirlo tenés que volver a armarlo desde cero.');">
-            <input type="hidden" name="clave" value="{{ supplier.clave }}">
-            <button type="submit" class="btn-danger-soft" style="margin-top:0;">Eliminar</button>
-          </form>
-        </td>
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-  </div>
-  {% else %}
-  <p class="muted" style="margin:0;">Todavía no se agregó ningún proveedor desde acá.</p>
-  {% endif %}
 </div>
 
 <script>
@@ -247,9 +204,13 @@
     }
 
     function populateSaveForm() {
-      document.getElementById('wiz-save-label').value = document.getElementById('wiz-label').value.trim();
-      document.getElementById('wiz-save-sheet-name').value = document.getElementById('wiz-sheet-name').value.trim();
-      document.getElementById('wiz-save-resumen-label').value = document.getElementById('wiz-resumen-label').value.trim();
+      var label = document.getElementById('wiz-label').value.trim();
+      document.getElementById('wiz-save-label').value = label;
+      // La hoja del Excel se crea a mano con este mismo nombre -- no hace
+      // falta pedirlo aparte. RESUMEN COMPRAS se deja vacío a propósito:
+      // el backend ya lo completa solo con el mismo nombre de hoja.
+      document.getElementById('wiz-save-sheet-name').value = label;
+      document.getElementById('wiz-save-resumen-label').value = '';
       document.getElementById('wiz-save-detect-keyword').value = document.getElementById('wiz-detect-keyword').value.trim();
       document.getElementById('wiz-save-fields-json').value = JSON.stringify(buildResolvedFieldsPayload());
     }
