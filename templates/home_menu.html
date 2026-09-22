@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block title %}Bradenton App{% endblock %}
+{% block head_extra %}
+<style>
+  .home-menu-wrap { max-width: 760px; margin: 56px auto 40px; padding: 0 16px; }
+  .home-menu-header { text-align: center; margin-bottom: 34px; }
+  .home-menu-header h1 { font-size: 25px; margin: 0 0 8px; color: var(--text); }
+  .home-menu-header p { font-size: 14px; color: var(--text-soft); margin: 0; }
+  .home-menu-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 20px;
+  }
+  .home-menu-card {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+    background: var(--surface);
+    border: 1.5px solid var(--border);
+    border-radius: 16px;
+    padding: 28px 26px;
+    text-decoration: none;
+    box-shadow: var(--shadow-sm);
+    transition: transform 0.14s ease, box-shadow 0.14s ease, border-color 0.14s ease;
+  }
+  .home-menu-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-md); border-color: var(--card-color); }
+  .home-menu-card:active { transform: scale(0.98); }
+  .home-menu-icon {
+    width: 52px; height: 52px; border-radius: 14px;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--card-color-soft); color: var(--card-color);
+  }
+  .home-menu-icon svg { width: 26px; height: 26px; }
+  .home-menu-card-label { font-size: 19px; font-weight: 700; color: var(--text); }
+  .home-menu-card-desc { font-size: 13px; color: var(--text-soft); line-height: 1.5; }
+  .home-menu-card-cta {
+    margin-top: 6px; font-size: 13px; font-weight: 700; color: var(--card-color);
+    display: inline-flex; align-items: center; gap: 4px;
+  }
+  @media (max-width: 640px) {
+    .home-menu-wrap { margin: 28px auto 24px; }
+    .home-menu-card { padding: 22px 20px; }
+  }
+</style>
+{% endblock %}
+{% block content %}
+<div class="home-menu-wrap">
+  <div class="home-menu-header">
+    <h1>¿A qué módulo querés entrar?</h1>
+    <p>Elegí una sección para empezar.</p>
+  </div>
+  <div class="home-menu-grid">
+    <a class="home-menu-card" href="{{ url_for('carga_datos_index') }}" style="--card-color: #0B6FAE; --card-color-soft: #E0F2FB;">
+      <span class="home-menu-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+      </span>
+      <span class="home-menu-card-label">Carga de Datos</span>
+      <span class="home-menu-card-desc">Subí un PDF o un extracto y queda guardado solo, organizado y categorizado -- sin generar ni abrir ningún Excel.</span>
+      <span class="home-menu-card-cta">Entrar →</span>
+    </a>
+    <a class="home-menu-card" href="{{ url_for('carga_datos_reportes') }}" style="--card-color: #7C3AED; --card-color-soft: #F1E8FE;">
+      <span class="home-menu-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+      </span>
+      <span class="home-menu-card-label">Reportes</span>
+      <span class="home-menu-card-desc">PDF y Excel con el resumen del mes de cada módulo -- con el logo y el nombre de la empresa, listos para descargar.</span>
+      <span class="home-menu-card-cta">Entrar →</span>
+    </a>
+    <!-- "Proyecciones" -- pedido explícito del usuario (2026-09-22): el
+         módulo sigue andando tal cual (/carga-datos/proyecciones,
+         proyecciones.py, sin tocar) pero se saca del menú hasta que quede
+         bien -- "no lo borres, solo anulalo en la pagina". No agregar una
+         tercera tarjeta acá sin que el usuario lo pida. -->
+  </div>
+</div>
+{% endblock %}

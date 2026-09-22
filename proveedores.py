@@ -1847,11 +1847,22 @@ def _extract_pepsi_invoices(pdf_path):
     return invoices
 
 
+def _no_automatic_extraction(pdf_path):
+    """
+    Nunca se llama en la práctica (el "detect" de estos proveedores
+    siempre da False) -- existe solo para que la entrada del registro
+    tenga la misma forma que el resto y `extract_invoices_from_pdf` no
+    reviente si algún día alguien la invoca por error.
+    """
+    raise ValueError("Este proveedor no tiene extracción automática de facturas -- cargala a mano.")
+
+
 SUPPLIER_REGISTRY = {
     "ht_hackney": {
         "label": "H.T. Hackney",
         "sheet_name": "HT Hackney",
         "resumen_label": "HT HACKNEY",
+        "logo": "supplier_logos/ht_hackney.png",
         "detect": lambda text: "h.t. hackney" in text.lower(),
         "extract": _extract_ht_hackney_invoice,
     },
@@ -1859,6 +1870,7 @@ SUPPLIER_REGISTRY = {
         "label": "CEC (Chinook Enterprises Corp.)",
         "sheet_name": "Chinook CEC",
         "resumen_label": "CEC",
+        "logo": "supplier_logos/cec.png",
         "detect": lambda text: "cec distributing" in text.lower(),
         "extract": _extract_cec_invoice,
     },
@@ -1866,6 +1878,7 @@ SUPPLIER_REGISTRY = {
         "label": "Colonial Wholesale Dist. LLC",
         "sheet_name": "Colonial",
         "resumen_label": "COLONIAL",
+        "logo": "supplier_logos/colonial.png",
         "detect": lambda text: "colonial wholesale" in text.lower(),
         "extract": _extract_colonial_invoice,
     },
@@ -1873,6 +1886,7 @@ SUPPLIER_REGISTRY = {
         "label": "Gold Coast Eagle",
         "sheet_name": "GOLDCE",
         "resumen_label": "GCE",
+        "logo": "supplier_logos/gce.png",
         "detect": lambda text: "gold coast eagle" in text.lower(),
         "extract": _extract_gce_invoice,
     },
@@ -1880,6 +1894,7 @@ SUPPLIER_REGISTRY = {
         "label": "Frito-Lay",
         "sheet_name": "FRITO-LAY",
         "resumen_label": "FRITO-LAY",
+        "logo": "supplier_logos/frito_lay.png",
         "detect": lambda text: "frito" in text.lower() and "lay" in text.lower(),
         "extract": _extract_frito_lay_invoice,
     },
@@ -1887,6 +1902,7 @@ SUPPLIER_REGISTRY = {
         "label": "King's Wholesale Florists",
         "sheet_name": "KING'S",
         "resumen_label": "KING'S",
+        "logo": "supplier_logos/kings.png",
         "detect": lambda text: "wholesale florists" in text.lower(),
         "extract": _extract_kings_invoice,
     },
@@ -1894,6 +1910,7 @@ SUPPLIER_REGISTRY = {
         "label": "Red Bull Distribution Company",
         "sheet_name": "RED BULL",
         "resumen_label": "RED BULL",
+        "logo": "supplier_logos/red_bull.png",
         "detect": lambda text: "red bull distribution" in text.lower(),
         "extract": _extract_red_bull_invoice,
     },
@@ -1901,6 +1918,7 @@ SUPPLIER_REGISTRY = {
         "label": "Sweetheart Ice Cream",
         "sheet_name": "SWEETHEART-ICE CREAM",
         "resumen_label": "SWT ICE CREAM",
+        "logo": "supplier_logos/sweetheart.webp",
         "detect": lambda text: "sweetheart" in text.lower(),
         "extract": _extract_sweetheart_invoice,
     },
@@ -1908,6 +1926,7 @@ SUPPLIER_REGISTRY = {
         "label": "Bimbo Bakeries USA, Inc.",
         "sheet_name": "BIMBO",
         "resumen_label": "BIMBO",
+        "logo": "supplier_logos/bimbo.png",
         "detect": lambda text: "bimbo bakeries" in text.lower(),
         "extract": _extract_bimbo_invoice,
     },
@@ -1915,6 +1934,7 @@ SUPPLIER_REGISTRY = {
         "label": "Midtown Wholesale LLC",
         "sheet_name": "MIDTOWN",
         "resumen_label": "MIDTOWN",
+        "logo": "supplier_logos/midtown.webp",
         "detect": lambda text: "midtown wholesale" in text.lower(),
         "extract": _extract_midtown_invoice,
     },
@@ -1922,6 +1942,7 @@ SUPPLIER_REGISTRY = {
         "label": "Johnson Brothers of Florida",
         "sheet_name": "JOHNSON",
         "resumen_label": "JOHNSON",
+        "logo": "supplier_logos/johnson.png",
         "detect": lambda text: "johnson brothers" in text.lower(),
         "extract": _extract_johnson_brothers_invoice,
     },
@@ -1929,6 +1950,7 @@ SUPPLIER_REGISTRY = {
         "label": "Flori-Gas",
         "sheet_name": "FLORI-GAS",
         "resumen_label": "FLORI GAS",
+        "logo": "supplier_logos/flori_gas.png",
         "detect": lambda text: "305-637-9262" in text,
         "extract": _extract_flori_gas_invoice,
     },
@@ -1936,6 +1958,12 @@ SUPPLIER_REGISTRY = {
         "label": "Airgas National Carbonation",
         "sheet_name": "AIRGAS",
         "resumen_label": "AIRGAS",
+        "logo": "supplier_logos/airgas.webp",
+        # Pedido explícito del usuario (2026-09-22): Airgas es más un
+        # servicio mensual (CO2 + alquiler de tanque) que mercadería para
+        # reventa -- se muestra separado en la grilla, igual que FPL/
+        # Manatee County, ver "is_service" más abajo.
+        "is_service": True,
         "detect": lambda text: "airgas" in text.lower(),
         "extract": _extract_airgas_invoice,
     },
@@ -1964,6 +1992,7 @@ SUPPLIER_REGISTRY = {
         "label": "Sam's Club",
         "sheet_name": "SAM'S",
         "resumen_label": "SAM'S",
+        "logo": "supplier_logos/sams_club.png",
         "detect": lambda text: re.search(r"sam.?s\s*club", text.lower()) is not None,
         "extract": _extract_sams_club_invoice,
     },
@@ -1999,6 +2028,7 @@ SUPPLIER_REGISTRY = {
         "label": "Signarama (Bradenton Signs)",
         "sheet_name": "SIGNARAMA",
         "resumen_label": "SIGNARAMA",
+        "logo": "supplier_logos/signarama.png",
         "detect": lambda text: "bradentonsigns" in text.lower(),
         "extract": _extract_signarama_invoice,
     },
@@ -2006,6 +2036,7 @@ SUPPLIER_REGISTRY = {
         "label": "SkyHarvest USA LLC",
         "sheet_name": "SKY",
         "resumen_label": "SKY",
+        "logo": "supplier_logos/skyharvest.png",
         "detect": lambda text: "skyharvest" in text.lower(),
         "extract": _extract_skyharvest_invoice,
     },
@@ -2013,6 +2044,7 @@ SUPPLIER_REGISTRY = {
         "label": "Coca-Cola Beverages Florida LLC",
         "sheet_name": "Coca",
         "resumen_label": "COCA",
+        "logo": "supplier_logos/coca.png",
         # "outlet 501565447" es la cuenta fija de Bradenton Gas en
         # Coca-Cola (aparece en TODAS las facturas reales vistas) --
         # respaldo para escaneos tan malos que ni "coca" ni "cola" se
@@ -2025,8 +2057,60 @@ SUPPLIER_REGISTRY = {
         "label": "Pepsi Beverages Company",
         "sheet_name": "PEPSI",
         "resumen_label": "PEPSI",
+        "logo": "supplier_logos/pepsi.png",
         "detect": lambda text: "pepsi" in text.lower(),
         "extract": _extract_pepsi_invoices,
+    },
+    # Los dos siguientes NUNCA se detectan solos en un PDF (detect=False
+    # permanente) -- J.J. Taylor está pausado a pedido explícito del
+    # usuario (ver "Pendiente" más abajo en el archivo) y Slush Puppie
+    # es manuscrito, sin ningún ancla de OCR confiable (ver
+    # "Brandon Liu y Slush Puppies -- confirmado INVIABLES por OCR").
+    # Se agregan igual al registro (2026-09-22, pedido explícito del
+    # usuario junto con su logo) solo para que tengan su propio módulo en
+    # la grilla de "Guardado" y puedan vincularse A MANO desde el popover
+    # de Chase Bank -- nunca van a aparecer solos por una factura subida.
+    "jj_taylor": {
+        "label": "J.J. Taylor Dist. FL, Inc.",
+        "sheet_name": "JJ TAYLOR",
+        "resumen_label": "JJ TAYLOR",
+        "logo": "supplier_logos/jj_taylor.png",
+        "detect": lambda text: False,
+        "extract": _no_automatic_extraction,
+    },
+    "slush_puppie": {
+        "label": "Slush Puppie (Tri-State, Inc.)",
+        "sheet_name": "SLUSH PUPPIE",
+        "resumen_label": "SLUSH PUPPIE",
+        "logo": "supplier_logos/slush_puppie.png",
+        "detect": lambda text: False,
+        "extract": _no_automatic_extraction,
+    },
+    # Los dos siguientes (2026-09-22, pedido explícito del usuario, junto
+    # con sus logos) son servicios mensuales, no proveedores de mercadería
+    # -- "is_service": True los separa en su propia sección de la grilla
+    # (ver carga_datos_proveedores_guardado). Igual que jj_taylor/
+    # slush_puppie, nunca se detectan solos de un PDF -- Manatee County ya
+    # estaba decidido que se sigue cargando a mano (ver "Pendiente /
+    # decisiones abiertas" más abajo en este archivo); FPL es nuevo, sin
+    # ningún extractor pedido todavía.
+    "manatee_county": {
+        "label": "Manatee County Utilities",
+        "sheet_name": "MANATEE COUNTY",
+        "resumen_label": "MANATEE COUNTY",
+        "logo": "supplier_logos/manatee_county.png",
+        "is_service": True,
+        "detect": lambda text: False,
+        "extract": _no_automatic_extraction,
+    },
+    "fpl": {
+        "label": "Florida Power & Light (FPL)",
+        "sheet_name": "FPL",
+        "resumen_label": "FPL",
+        "logo": "supplier_logos/fpl.png",
+        "is_service": True,
+        "detect": lambda text: False,
+        "extract": _no_automatic_extraction,
     },
 }
 
@@ -2073,7 +2157,13 @@ def list_supplier_registry_entries():
     """
     registry = _effective_supplier_registry()
     entries = [
-        {"key": key, "label": config["label"], "sheet_name": config["sheet_name"]}
+        {
+            "key": key,
+            "label": config["label"],
+            "sheet_name": config["sheet_name"],
+            "logo": config.get("logo"),
+            "is_service": config.get("is_service", False),
+        }
         for key, config in registry.items()
     ]
     entries.sort(key=lambda entry: entry["label"])

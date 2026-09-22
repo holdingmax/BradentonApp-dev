@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}{% if request.path.startswith('/carga-datos/reportes') %}Reportes{% elif request.path.startswith('/carga-datos/proyecciones') %}Proyecciones{% elif request.path.startswith('/controles') %}Controles{% else %}Herramientas{% endif %}{% endblock %}</title>
+  <title>{% block title %}{% if request.path.startswith('/carga-datos/reportes') %}Reportes{% elif request.path.startswith('/carga-datos/proyecciones') %}Proyecciones{% elif request.path.startswith('/controles') %}Controles{% else %}Carga de Datos{% endif %}{% endblock %}</title>
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='logo.png') }}">
   <style>
     :root {
@@ -169,7 +169,7 @@
     nav.crumbs {
       display: flex;
       align-items: center;
-      gap: 8px;
+      gap: 16px;
       margin-left: 18px;
       padding-left: 18px;
       border-left: 1px solid var(--border);
@@ -180,27 +180,59 @@
     nav.crumbs a:hover { color: var(--text-on-brand); }
     nav.crumbs .current { color: var(--text-on-brand); font-weight: 600; }
 
+    /* Menú de secciones -- pedido explícito del usuario (2026-09-22,
+       corrección sobre el primer intento): NO tiene que ser un switch
+       directo entre Carga de Datos y Reportes (eso permitía saltar de una
+       sección a la otra sin pasar por el menú real) -- ahora la barra de
+       arriba muestra "Menú" (vuelve siempre a "/", el menú de entrada) y,
+       al lado, a qué sección entraste (una pastilla de solo lectura con el
+       color de esa sección -- no linkea a la otra). Para pasar de Carga de
+       Datos a Reportes hay que volver a "Menú" y entrar de nuevo. */
     nav.section-switch {
       display: flex;
       align-items: center;
-      gap: 2px;
+      gap: 8px;
       margin-left: 18px;
       padding-left: 18px;
       border-left: 1px solid var(--border);
     }
-    .section-switch-item {
+    .section-switch-menu-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
       text-decoration: none;
       font-size: 13px;
-      font-weight: 600;
+      font-weight: 700;
       color: var(--text-muted-on-brand);
-      padding: 6px 12px;
+      padding: 7px 14px;
       border-radius: 999px;
-      display: inline-block;
+      border: 1px solid var(--border);
+      transition: transform 0.08s ease, background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
+    }
+    .section-switch-menu-btn svg { width: 15px; height: 15px; flex-shrink: 0; opacity: 0.75; }
+    .section-switch-menu-btn:hover { background: var(--surface-alt); color: var(--text-on-brand); border-color: var(--text-muted-on-brand); }
+    .section-switch-menu-btn:hover svg { opacity: 1; }
+    .section-switch-menu-btn:active { transform: scale(0.95); }
+    .section-switch-menu-btn.active { background: var(--text-on-brand); color: var(--brand); border-color: var(--text-on-brand); }
+    .section-switch-menu-btn.active svg { opacity: 1; }
+    .section-switch-sep { color: var(--border); font-size: 15px; user-select: none; }
+    .section-switch-current {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 700;
+      color: #fff;
+      padding: 7px 14px;
+      border-radius: 999px;
       transition: transform 0.08s ease;
     }
-    .section-switch-item:hover { color: var(--text-on-brand); }
-    .section-switch-item.active { color: var(--text-on-brand); background: var(--surface-alt); }
-    .section-switch-item:active { transform: scale(0.95); }
+    .section-switch-current svg { width: 15px; height: 15px; flex-shrink: 0; }
+    .section-switch-current:active { transform: scale(0.95); }
+    .section-switch-current-carga { background: #0B6FAE; }
+    .section-switch-current-reportes { background: #7C3AED; }
+    .section-switch-current-proyecciones { background: #6B7280; }
 
     .topbar-left { grid-column: 1; justify-self: start; min-width: 0; margin-left: -14px; display: flex; align-items: center; flex-wrap: wrap; row-gap: 6px; overflow: hidden; }
 
@@ -517,8 +549,8 @@
       overflow: hidden;
     }
     .app-rail-item:hover .app-rail-item-row { background: rgba(255, 255, 255, 0.08); color: #fff; }
-    .app-rail-icon { width: 20px; height: 20px; flex-shrink: 0; }
-    .app-rail-icon svg { width: 20px; height: 20px; display: block; }
+    .app-rail-icon { width: 17px; height: 17px; flex-shrink: 0; }
+    .app-rail-icon svg { width: 17px; height: 17px; display: block; }
     .app-rail-label { font-size: 13px; font-weight: 600; display: none; flex: 1 1 auto; }
     body.rail-pinned .app-rail-label { display: inline; }
     /* Flechita que indica si el panel está abierto -- solo tiene sentido
@@ -703,6 +735,18 @@
       flex-shrink: 0;
     }
     .tool-card-badge svg { width: 23px; height: 23px; }
+    /* Logo real de un proveedor (Proveedores -> Guardado) en vez del
+       badge de color/ícono genérico -- fondo blanco fijo (muchos logos
+       traen su propio fondo de color) + object-fit:contain para que
+       nunca se recorte ni se estire, sin importar el aspect ratio real
+       del archivo subido. */
+    .tool-card-badge-logo {
+      width: 52px; height: 52px; border-radius: 10px;
+      background: #fff; border: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; overflow: hidden; padding: 6px;
+    }
+    .tool-card-badge-logo img { max-width: 100%; max-height: 100%; object-fit: contain; }
     .tool-card-body { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
     .tool-card-label { font-weight: 700; font-size: 16px; color: var(--text); }
     .tool-card-desc { font-size: 12.5px; color: var(--text-soft); line-height: 1.45; }
@@ -1169,8 +1213,9 @@
         <div class="app-rail-panel">
           <div class="app-rail-panel-title">Proveedores</div>
           <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('carga_datos_proveedores') }}">Cargar factura</a>
-          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_proveedores_guardado') }}">Ver guardado</a>
+          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_proveedores_guardado') }}">Planilla</a>
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_documentos', module_key='proveedores') }}">Documentos</a>
+          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_proveedores_reglas') }}">Reglas de pago</a>
         </div>
       </div>
       <div class="app-rail-item" data-rail-key="horas-trabajo">
@@ -1212,9 +1257,36 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
         </button>
         <nav class="section-switch">
-          <a class="section-switch-item{{ ' active' if not (request.path.startswith('/carga-datos/reportes') or request.path.startswith('/carga-datos/proyecciones')) else '' }}" href="{{ url_for('carga_datos_index') }}">Herramientas</a>
-          <a class="section-switch-item{{ ' active' if request.path.startswith('/carga-datos/reportes') else '' }}" href="{{ url_for('carga_datos_reportes') }}">Reportes</a>
-          <a class="section-switch-item{{ ' active' if request.path.startswith('/carga-datos/proyecciones') else '' }}" href="{{ url_for('carga_datos_proyecciones') }}">Proyecciones</a>
+          <a class="section-switch-menu-btn{{ ' active' if request.path == '/' else '' }}" href="{{ url_for('home') }}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
+            Menú
+          </a>
+          {% if request.path != '/' %}
+          <span class="section-switch-sep">/</span>
+          {% if request.path.startswith('/carga-datos/reportes') %}
+          <a class="section-switch-current section-switch-current-reportes" href="{{ url_for('carga_datos_reportes') }}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+            Reportes
+          </a>
+          {% elif request.path.startswith('/carga-datos/proyecciones') %}
+          <a class="section-switch-current section-switch-current-proyecciones" href="{{ url_for('carga_datos_proyecciones') }}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+            Proyecciones
+          </a>
+          {% else %}
+          <a class="section-switch-current section-switch-current-carga" href="{{ url_for('carga_datos_index') }}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+            Carga de Datos
+          </a>
+          {% endif %}
+          <!-- "Proyecciones" -- pedido explícito del usuario (2026-09-22):
+               el módulo sigue andando tal cual (/carga-datos/proyecciones,
+               proyecciones.py, sin tocar) pero se saca del menú de entrada
+               hasta que quede bien -- "no lo borres, solo anulalo en la
+               pagina". Solo se muestra acá arriba (gris, ver el elif de
+               arriba) si alguien ya está adentro por URL directa -- no
+               agregar una tarjeta en home_menu.html sin que lo pida. -->
+          {% endif %}
         </nav>
         {% block crumbs %}{% endblock %}
       </div>

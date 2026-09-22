@@ -1,167 +1,223 @@
 {% extends "base.html" %}
 {% block crumbs %}
-<nav class="crumbs"><a href="{{ url_for('carga_datos_proveedores') }}">Proveedores</a><span class="current">Guardado</span></nav>
+<nav class="crumbs"><a href="{{ url_for('carga_datos_proveedores') }}">Proveedores</a><span class="current">Planilla</span></nav>
+{% endblock %}
+{% block head_extra %}
+<style>
+  /* Tarjeta de proveedor -- envoltorio <div> (no <a>) porque cada una
+     lleva además un botón de ocultar (admin) que no puede ir anidado
+     dentro de un link real. `.supplier-card-link` reusa el mismo look de
+     `a.tool-card` (ver base.html) pero como bloque interno. */
+  .supplier-card { position: relative; }
+  .supplier-card-link {
+    display: flex; align-items: center; gap: 14px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 18px 20px; text-decoration: none; box-shadow: var(--shadow-sm);
+    transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+  }
+  .supplier-card-link:hover { border-color: var(--tool-accent, var(--accent)); box-shadow: var(--shadow-md); transform: translateY(-1px); }
+  .supplier-card-link:active { transform: scale(0.98); }
+  .supplier-card-label { font-weight: 700; font-size: 15.5px; color: var(--text); }
+  /* 2026-09-22: el botón de ocultar ya no vive dentro de un <form> --
+     hide/mostrar pasaron a ser instantáneos por fetch (ver el <script> al
+     pie), así que el botón se posiciona directo sobre la tarjeta. */
+  .supplier-card-hide-btn {
+    position: absolute; top: 8px; right: 8px;
+    width: 24px; height: 24px; padding: 0; margin: 0; border-radius: 6px;
+    background: transparent; border: none; color: var(--text-soft);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .supplier-card-hide-btn:hover { background: var(--surface-alt); color: var(--error); }
+  .supplier-card-hide-btn svg { width: 15px; height: 15px; }
+
+  .supplier-section-title { font-size: 13px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-soft); margin: 28px 0 4px; }
+  .supplier-section-title:first-of-type { margin-top: 8px; }
+
+  .supplier-hidden-panel { margin-top: 26px; }
+  .supplier-hidden-summary { list-style: none; cursor: pointer; user-select: none; font-weight: 700; font-size: 13.5px; color: var(--text-soft); padding: 4px 0; }
+  .supplier-hidden-summary::-webkit-details-marker { display: none; }
+  .supplier-hidden-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--border); font-size: 13.5px; }
+  .supplier-hidden-row:last-child { border-bottom: none; }
+  @media (max-width: 640px) { .supplier-card-link { padding: 14px 16px; } }
+</style>
 {% endblock %}
 {% block content %}
 <div class="page-header">
   <span class="eyebrow">Proveedores</span>
-  <h1>Guardado</h1>
+  <h1>Planilla</h1>
   <p class="page-subtitle">
-    Un cuadro por proveedor -- facturas cargadas y pagos ya vinculados de Chase Bank, sin importar el mes.
-    <a href="{{ url_for('carga_datos_proveedores_historial') }}">Ver por mes</a> ·
-    <a href="{{ url_for('carga_datos_documentos', module_key='proveedores') }}">Ver los PDF originales guardados</a>.
+    Un módulo por proveedor -- entrá a cualquiera para ver su cuadro de cuenta corriente (facturas + pagos de Chase Bank ya vinculados).
   </p>
 </div>
 
-{% if suppliers %}
-<div class="tool-grid">
-  {% for s in suppliers %}
-  <a class="tool-card" href="{{ url_for('carga_datos_proveedores_guardado_detalle', supplier_key=s.key) }}" style="--tool-accent: {{ accent }};">
+{% macro supplier_card(s) %}
+<div class="supplier-card" data-key="{{ s.key }}" data-label="{{ s.label }}" data-logo="{{ s.logo or '' }}" data-service="{{ '1' if s.is_service else '0' }}">
+  <a class="supplier-card-link" href="{{ url_for('carga_datos_proveedores_guardado_detalle', supplier_key=s.key) }}" style="--tool-accent: {{ accent }};">
+    {% if s.logo %}
+    <span class="tool-card-badge-logo"><img src="{{ url_for('static', filename=s.logo) }}" alt="{{ s.label }}"></span>
+    {% else %}
     <span class="tool-card-badge">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="7" width="13" height="10" rx="1"/><path d="M14 10h4l3 3v4h-7z"/><circle cx="6" cy="18.5" r="1.6"/><circle cx="17.5" cy="18.5" r="1.6"/></svg>
     </span>
-    <span class="tool-card-body">
-      <span class="tool-card-label">{{ s.label }}</span>
-      <span class="tool-card-desc">
-        {{ s.invoice_count }} factura(s) — ${{ "{:,.2f}".format(s.invoice_total) }}<br>
-        {{ s.payment_count }} pago(s) de Chase — ${{ "{:,.2f}".format(s.payment_total) }}
-      </span>
-    </span>
+    {% endif %}
+    <span class="supplier-card-label">{{ s.label }}</span>
   </a>
-  {% endfor %}
+  {% if current_user.is_admin %}
+  <button type="button" class="supplier-card-hide-btn" title="Ocultar este proveedor de la grilla" onclick="hideSupplierCard(this)">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.5 18.5 0 0 1 5.06-5.94M9.9 4.24A10.4 10.4 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>
+  </button>
+  {% endif %}
 </div>
-{% else %}
-<div class="card">
-  <p class="muted">Todavía no hay ninguna factura ni ningún pago vinculado a un proveedor.</p>
+{% endmacro %}
+
+<div class="tool-grid" id="merchandise-grid">
+  {% for s in merchandise_suppliers %}{{ supplier_card(s) }}{% endfor %}
 </div>
+
+<div class="supplier-section-title">Servicios</div>
+<div class="tool-grid" id="services-grid">
+  {% for s in service_suppliers %}{{ supplier_card(s) }}{% endfor %}
+</div>
+
+{% if current_user.is_admin %}
+<details class="card supplier-hidden-panel" id="hidden-panel"{% if not hidden_suppliers %} hidden{% endif %}>
+  <summary class="supplier-hidden-summary">Proveedores ocultos (<span id="hidden-count">{{ hidden_suppliers|length }}</span>)</summary>
+  <div id="hidden-list" style="margin-top: 10px;">
+    {% for s in hidden_suppliers %}
+    <div class="supplier-hidden-row" data-key="{{ s.key }}" data-label="{{ s.label }}" data-logo="{{ s.logo or '' }}" data-service="{{ '1' if s.is_service else '0' }}">
+      <span class="supplier-hidden-row-label">{{ s.label }}</span>
+      <button type="button" class="btn-secondary" style="margin-top: 0;" onclick="showSupplierCard(this)">Mostrar</button>
+    </div>
+    {% endfor %}
+  </div>
+</details>
 {% endif %}
 
-<div class="card">
-  <h2>Reglas de pago a proveedores</h2>
-  <p class="muted">
-    Palabra clave (sin importar mayúsculas/acentos) de la Descripción de un movimiento de Chase → proveedor al que se vincula solo, sin resubir el extracto del banco. Si varias reglas matchean, gana la palabra clave más larga.
-    {% if current_user.is_admin %}Podés editar o eliminar cualquier regla.{% else %}Solo un administrador puede crear, editar o eliminar reglas.{% endif %}
-  </p>
+<script>
+  // Ocultar/mostrar proveedores, instantáneo (2026-09-22, pedido
+  // explícito del usuario: "que no te mande una notificacion... sino que
+  // simplemente lo oculte rapido... que si lo quiero desocultar que
+  // tambien sea rapido") -- fetch en segundo plano + mover la tarjeta en
+  // el DOM al toque, sin flash ni recargar la página.
+  (function () {
+    var STATIC_BASE = "{{ url_for('static', filename='') }}";
+    var DETAIL_BASE = "{{ url_for('carga_datos_proveedores_guardado_detalle', supplier_key='__KEY__') }}".replace('__KEY__', '');
 
-  {% if current_user.is_admin %}
-  <form method="post" action="{{ url_for('proveedores_pago_reglas_guardar') }}" id="pago-rule-form" style="display: flex; gap: 10px; align-items: flex-end; flex-wrap: wrap;">
-    <input type="hidden" name="index" id="pago-rule-index" value="">
-    <input type="hidden" name="expected_keyword" id="pago-rule-expected-keyword" value="">
-    <input type="hidden" name="expected_sheet_name" id="pago-rule-expected-sheet-name" value="">
-    <div style="flex: 1; min-width: 160px;">
-      <label class="muted">Palabra clave</label>
-      <input type="text" name="keyword" id="pago-rule-keyword" required>
-    </div>
-    <div style="flex: 1; min-width: 200px;">
-      <label class="muted">Proveedor</label>
-      <select name="sheet_name" id="pago-rule-sheet-name" required>
-        <option value="" disabled selected>-- Elegir --</option>
-        {% for entry in supplier_options %}
-        <option value="{{ entry.sheet_name }}">{{ entry.label }}</option>
-        {% endfor %}
-      </select>
-    </div>
-    <button type="submit" id="pago-rule-submit" style="margin-top: 0;">Crear Regla</button>
-    <button type="button" id="pago-rule-cancel" class="btn-secondary" style="display: none; margin-top: 0;">Cancelar edición</button>
-  </form>
-
-  <div style="display: flex; gap: 10px; margin-top: 14px;">
-    <button type="button" id="pago-rule-edit-btn" class="btn-secondary" style="margin-top: 0;" disabled>Editar seleccionada</button>
-    <form method="post" action="{{ url_for('proveedores_pago_reglas_eliminar') }}" onsubmit="return confirm('¿Eliminar la regla seleccionada?');">
-      <input type="hidden" name="index" id="pago-delete-index" value="">
-      <input type="hidden" name="expected_keyword" id="pago-delete-expected-keyword" value="">
-      <input type="hidden" name="expected_sheet_name" id="pago-delete-expected-sheet-name" value="">
-      <button type="submit" id="pago-rule-delete-btn" class="btn-danger-soft" style="margin-top: 0;" disabled>Eliminar seleccionada</button>
-    </form>
-  </div>
-  {% endif %}
-
-  <table style="width: 100%; border-collapse: collapse; font-size: 13.5px; margin-top: 18px;">
-    <thead>
-      <tr style="text-align: left; border-bottom: 1px solid var(--border);">
-        <th style="padding: 8px 6px;">Palabra Clave</th>
-        <th style="padding: 8px 6px;">Proveedor</th>
-        {% if current_user.is_admin %}<th style="padding: 8px 6px; width: 26px;"></th>{% endif %}
-      </tr>
-    </thead>
-    <tbody>
-      {% for rule in pago_rules %}
-      <tr style="border-bottom: 1px solid var(--border);">
-        <td style="padding: 8px 6px;">{{ rule.keyword }}</td>
-        <td style="padding: 8px 6px;">{{ rule.sheet_name }}</td>
-        {% if current_user.is_admin %}
-        <td style="padding: 8px 6px; text-align: right;">
-          <input type="radio" name="pago_rule_radio" value="{{ rule.index }}" data-keyword="{{ rule.keyword }}" data-sheet-name="{{ rule.sheet_name }}">
-        </td>
-        {% endif %}
-      </tr>
-      {% endfor %}
-    </tbody>
-  </table>
-
-  {% if current_user.is_admin %}
-  <script>
-    // Mismo patrón exacto que "Motor de Reglas Chase" (chase.html) -- un
-    // radio por fila alimenta "Editar seleccionada"/"Eliminar seleccionada".
-    (function () {
-      var radios = document.querySelectorAll('input[name="pago_rule_radio"]');
-      var editBtn = document.getElementById('pago-rule-edit-btn');
-      var deleteBtn = document.getElementById('pago-rule-delete-btn');
-      var deleteIndex = document.getElementById('pago-delete-index');
-      var deleteExpectedKeyword = document.getElementById('pago-delete-expected-keyword');
-      var deleteExpectedSheetName = document.getElementById('pago-delete-expected-sheet-name');
-      var form = document.getElementById('pago-rule-form');
-      var indexField = document.getElementById('pago-rule-index');
-      var expectedKeywordField = document.getElementById('pago-rule-expected-keyword');
-      var expectedSheetNameField = document.getElementById('pago-rule-expected-sheet-name');
-      var keywordField = document.getElementById('pago-rule-keyword');
-      var sheetNameField = document.getElementById('pago-rule-sheet-name');
-      var submitBtn = document.getElementById('pago-rule-submit');
-      var cancelBtn = document.getElementById('pago-rule-cancel');
-
-      function selectedRadio() {
-        for (var i = 0; i < radios.length; i++) {
-          if (radios[i].checked) return radios[i];
-        }
-        return null;
+    function badgeMarkup(logo, label) {
+      if (logo) {
+        var img = document.createElement('img');
+        img.src = STATIC_BASE + logo;
+        img.alt = label;
+        var span = document.createElement('span');
+        span.className = 'tool-card-badge-logo';
+        span.appendChild(img);
+        return span;
       }
+      var span2 = document.createElement('span');
+      span2.className = 'tool-card-badge';
+      span2.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="7" width="13" height="10" rx="1"/><path d="M14 10h4l3 3v4h-7z"/><circle cx="6" cy="18.5" r="1.6"/><circle cx="17.5" cy="18.5" r="1.6"/></svg>';
+      return span2;
+    }
 
-      radios.forEach(function (radio) {
-        radio.addEventListener('change', function () {
-          var selected = selectedRadio();
-          editBtn.disabled = !selected;
-          deleteBtn.disabled = !selected;
-          deleteIndex.value = selected ? selected.value : '';
-          deleteExpectedKeyword.value = selected ? selected.dataset.keyword : '';
-          deleteExpectedSheetName.value = selected ? selected.dataset.sheetName : '';
-        });
-      });
+    function buildCard(key, label, logo) {
+      var card = document.createElement('div');
+      card.className = 'supplier-card';
+      card.dataset.key = key;
+      card.dataset.label = label;
+      card.dataset.logo = logo || '';
 
-      editBtn.addEventListener('click', function () {
-        var selected = selectedRadio();
-        if (!selected) return;
-        indexField.value = selected.value;
-        expectedKeywordField.value = selected.dataset.keyword;
-        expectedSheetNameField.value = selected.dataset.sheetName;
-        keywordField.value = selected.dataset.keyword;
-        sheetNameField.value = selected.dataset.sheetName;
-        submitBtn.textContent = 'Guardar Cambios';
-        cancelBtn.style.display = '';
-        keywordField.focus();
-        form.scrollIntoView({behavior: 'smooth', block: 'center'});
-      });
+      var link = document.createElement('a');
+      link.className = 'supplier-card-link';
+      link.href = DETAIL_BASE + encodeURIComponent(key);
+      link.appendChild(badgeMarkup(logo, label));
+      var labelSpan = document.createElement('span');
+      labelSpan.className = 'supplier-card-label';
+      labelSpan.textContent = label;
+      link.appendChild(labelSpan);
+      card.appendChild(link);
 
-      cancelBtn.addEventListener('click', function () {
-        indexField.value = '';
-        expectedKeywordField.value = '';
-        expectedSheetNameField.value = '';
-        keywordField.value = '';
-        sheetNameField.value = '';
-        submitBtn.textContent = 'Crear Regla';
-        cancelBtn.style.display = 'none';
+      var hideBtn = document.createElement('button');
+      hideBtn.type = 'button';
+      hideBtn.className = 'supplier-card-hide-btn';
+      hideBtn.title = 'Ocultar este proveedor de la grilla';
+      hideBtn.setAttribute('onclick', 'hideSupplierCard(this)');
+      hideBtn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20c-7 0-11-8-11-8a18.5 18.5 0 0 1 5.06-5.94M9.9 4.24A10.4 10.4 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+      card.appendChild(hideBtn);
+      return card;
+    }
+
+    function insertSorted(grid, card, label) {
+      var siblings = grid.querySelectorAll('.supplier-card-label');
+      for (var i = 0; i < siblings.length; i++) {
+        if (label.localeCompare(siblings[i].textContent, 'es') < 0) {
+          grid.insertBefore(card, siblings[i].closest('.supplier-card'));
+          return;
+        }
+      }
+      grid.appendChild(card);
+    }
+
+    function setHiddenCount(delta) {
+      var counter = document.getElementById('hidden-count');
+      if (!counter) return;
+      counter.textContent = String(Math.max(0, parseInt(counter.textContent, 10) + delta));
+      var panel = document.getElementById('hidden-panel');
+      if (panel) panel.hidden = document.getElementById('hidden-list').children.length === 0;
+    }
+
+    window.hideSupplierCard = function (btn) {
+      var card = btn.closest('.supplier-card');
+      var key = card.dataset.key;
+      var label = card.dataset.label;
+      var logo = card.dataset.logo;
+      var isService = card.dataset.service === '1';
+      fetch('/carga-datos/proveedores/guardado/' + encodeURIComponent(key) + '/ocultar', {
+        method: 'POST', headers: {'X-Requested-With': 'fetch'},
+      }).then(function (resp) {
+        if (!resp.ok) throw new Error('failed');
+        card.remove();
+        var row = document.createElement('div');
+        row.className = 'supplier-hidden-row';
+        row.dataset.key = key;
+        row.dataset.label = label;
+        row.dataset.logo = logo;
+        row.dataset.service = isService ? '1' : '0';
+        var span = document.createElement('span');
+        span.className = 'supplier-hidden-row-label';
+        span.textContent = label;
+        row.appendChild(span);
+        var showBtn = document.createElement('button');
+        showBtn.type = 'button';
+        showBtn.className = 'btn-secondary';
+        showBtn.style.marginTop = '0';
+        showBtn.textContent = 'Mostrar';
+        showBtn.setAttribute('onclick', 'showSupplierCard(this)');
+        row.appendChild(showBtn);
+        document.getElementById('hidden-list').appendChild(row);
+        setHiddenCount(1);
+      }).catch(function () {
+        alert('No se pudo ocultar el proveedor -- probá de nuevo.');
       });
-    })();
-  </script>
-  {% endif %}
-</div>
+    };
+
+    window.showSupplierCard = function (btn) {
+      var row = btn.closest('.supplier-hidden-row');
+      var key = row.dataset.key;
+      var label = row.dataset.label;
+      var logo = row.dataset.logo;
+      var isService = row.dataset.service === '1';
+      fetch('/carga-datos/proveedores/guardado/' + encodeURIComponent(key) + '/mostrar', {
+        method: 'POST', headers: {'X-Requested-With': 'fetch'},
+      }).then(function (resp) {
+        if (!resp.ok) throw new Error('failed');
+        row.remove();
+        setHiddenCount(-1);
+        var grid = document.getElementById(isService ? 'services-grid' : 'merchandise-grid');
+        insertSorted(grid, buildCard(key, label, logo), label);
+      }).catch(function () {
+        alert('No se pudo mostrar el proveedor -- probá de nuevo.');
+      });
+    };
+  })();
+</script>
 {% endblock %}

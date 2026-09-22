@@ -94,11 +94,12 @@ def add_expense_item(report_date, amount, detail):
     now = _now()
     conn = _connect()
     try:
-        conn.execute(
+        cur = conn.execute(
             "INSERT INTO caja_expense_items (date, amount, detail, created_at) VALUES (?, ?, ?, ?)",
             (key, amount, (detail or "").strip() or None, now),
         )
         conn.commit()
+        return cur.lastrowid
     finally:
         conn.close()
 

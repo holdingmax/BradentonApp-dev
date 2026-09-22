@@ -3,98 +3,273 @@
 {% block crumbs %}
 <nav class="crumbs">
   <a href="{{ url_for('carga_datos_proveedores') }}">Proveedores</a>
-  <a href="{{ url_for('carga_datos_proveedores_guardado') }}">Guardado</a>
+  <a href="{{ url_for('carga_datos_proveedores_guardado') }}">Planilla</a>
   <span class="current">{{ supplier_label }}</span>
 </nav>
 {% endblock %}
 {% block content %}
+{% from "_pdf_links.html" import pdf_links %}
 <div class="page-header">
-  <span class="eyebrow">Proveedores</span>
-  <h1>{{ supplier_label }}</h1>
-  <p class="page-subtitle">Todas las facturas cargadas y los pagos de Chase Bank ya vinculados a este proveedor, sin importar el mes. <a href="{{ url_for('carga_datos_documentos', module_key='proveedores') }}">Ver los PDF originales guardados</a>.</p>
+  <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:14px;">
+    <div style="display:flex; align-items:center; gap:18px;">
+      {% if supplier_logo %}
+      <span class="tool-card-badge-logo" style="width:96px; height:96px; padding:10px;"><img src="{{ url_for('static', filename=supplier_logo) }}" alt="{{ supplier_label }}"></span>
+      {% endif %}
+      <h1 style="margin:0;">{{ supplier_label }}</h1>
+    </div>
+    {% if current_user.is_admin %}
+    <details class="supplier-config">
+      <summary class="supplier-config-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        Configurar
+      </summary>
+      <div class="supplier-config-panel card">
+        <p class="muted" style="margin-top:0; font-size:12.5px;">Habilitá solo lo que este proveedor realmente usa -- por default ninguno de los dos está activo.</p>
+        <form method="post" action="{{ url_for('carga_datos_proveedores_configuracion', supplier_key=supplier_key) }}">
+          <label class="supplier-config-check">
+            <input type="checkbox" name="allow_manual_payments" {% if supplier_settings.allow_manual_payments %}checked{% endif %}>
+            Acepta pagos a mano (efectivo / Caja)
+          </label>
+          <label class="supplier-config-check">
+            <input type="checkbox" name="allow_credit_memos" {% if supplier_settings.allow_credit_memos %}checked{% endif %}>
+            Recibe credit memos
+          </label>
+          <button type="submit">Guardar</button>
+        </form>
+      </div>
+    </details>
+    {% endif %}
+  </div>
 </div>
 
 <div class="card">
-  <div style="display:flex; gap:24px; flex-wrap:wrap; margin-bottom: 12px;">
+  <div style="display:flex; gap:24px; flex-wrap:wrap;">
+    <div>
+      <div class="muted" style="font-size:12px;">Saldo actual</div>
+      <div class="ledger-saldo-headline {{ 'ledger-balance-debe' if saldo_actual > 0.01 or saldo_actual < -0.01 else 'ledger-balance-cero' }}">${{ "{:,.2f}".format(saldo_actual) }}</div>
+      <div class="muted" style="font-size:12.5px;">{{ "Se debe algo de antes" if saldo_actual > 0.01 else ("A favor" if saldo_actual < -0.01 else "Sin saldo pendiente") }}</div>
+    </div>
     <div>
       <div class="muted" style="font-size:12px;">Facturas cargadas</div>
       <div style="font-size:20px; font-weight:700;">${{ "{:,.2f}".format(invoice_total) }}</div>
-      <div class="muted" style="font-size:12.5px;">{{ invoices|length }} factura(s)</div>
+      <div class="muted" style="font-size:12.5px;">{{ invoice_count }} factura(s)</div>
     </div>
     <div>
       <div class="muted" style="font-size:12px;">Pagos vinculados (Chase Bank)</div>
       <div style="font-size:20px; font-weight:700;">${{ "{:,.2f}".format(payment_total) }}</div>
-      <div class="muted" style="font-size:12.5px;">{{ payments|length }} movimiento(s)</div>
+      <div class="muted" style="font-size:12.5px;">{{ payment_count }} movimiento(s)</div>
+    </div>
+    {% if manual_payments %}
+    <div>
+      <div class="muted" style="font-size:12px;">Pagos a mano (Caja)</div>
+      <div style="font-size:20px; font-weight:700;">${{ "{:,.2f}".format(manual_payment_total) }}</div>
+      <div class="muted" style="font-size:12.5px;">{{ manual_payments|length }} pago(s)</div>
+    </div>
+    {% endif %}
+    {% if credit_memos %}
+    <div>
+      <div class="muted" style="font-size:12px;">Credit memos</div>
+      <div style="font-size:20px; font-weight:700;">${{ "{:,.2f}".format(credit_total) }}</div>
+      <div class="muted" style="font-size:12.5px;">{{ credit_memos|length }} nota(s)</div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{% if supplier_settings.allow_credit_memos %}
+<div class="card" style="margin-top: 18px;">
+  <h2>Credit memos</h2>
+  <p class="muted">Notas de crédito que disminuyen lo que hay que pagar de las facturas -- se suman como Haber en el cuadro de abajo, igual que un pago.</p>
+  <form method="post" action="{{ url_for('carga_datos_proveedores_credit_memo', supplier_key=supplier_key) }}" class="inline-entry-form" data-warn-unsaved>
+    <div>
+      <label class="muted">Fecha</label>
+      <input type="date" name="credit_date" required>
     </div>
     <div>
-      <div class="muted" style="font-size:12px;">Diferencia</div>
-      {% set dif = (invoice_total - payment_total) %}
-      <div style="font-size:20px; font-weight:700;">${{ "{:,.2f}".format(dif) }}</div>
-      <div class="muted" style="font-size:12.5px;">Facturas − pagos vinculados</div>
+      <label class="muted">N° de credit memo</label>
+      <input type="text" name="credit_no" placeholder="Opcional">
     </div>
+    <div>
+      <label class="muted">Monto</label>
+      <input type="number" step="0.01" name="amount" required>
+    </div>
+    <button type="submit">Agregar</button>
+  </form>
+  {% if credit_memos %}
+  <div class="historial-table-wrap" style="margin-top: 16px;">
+    <table class="historial-table">
+      <thead><tr><th>Fecha</th><th>N°</th><th>Monto</th><th></th></tr></thead>
+      <tbody>
+        {% for c in credit_memos %}
+        <tr>
+          <td>{{ c.credit_date[8:10] }}/{{ c.credit_date[5:7] }}/{{ c.credit_date[0:4] }}</td>
+          <td>{{ c.credit_no or "—" }}</td>
+          <td>${{ "{:,.2f}".format(c.amount) }}</td>
+          <td class="historial-col-action">
+            <form method="post" action="{{ url_for('carga_datos_proveedores_credit_memo_eliminar', credit_id=c.id) }}" style="display:inline;">
+              <input type="hidden" name="supplier_key" value="{{ supplier_key }}">
+              <button type="submit" class="btn-secondary">Eliminar</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
   </div>
+  {% endif %}
+</div>
+{% endif %}
 
-  <h2>Facturas</h2>
-  {% if invoices %}
+{% if supplier_settings.allow_manual_payments %}
+<div class="card" style="margin-top: 18px;">
+  <h2>Pago a mano (Caja)</h2>
+  <p class="muted">Este proveedor se paga en efectivo en vez de por Chase Bank -- se suma como Haber acá abajo Y, al mismo tiempo, se refleja como un gasto de ese día en <a href="{{ url_for('carga_datos_caja') }}">Caja</a>.</p>
+  <form method="post" action="{{ url_for('carga_datos_proveedores_pago_manual', supplier_key=supplier_key) }}" class="inline-entry-form" data-warn-unsaved>
+    <div>
+      <label class="muted">Fecha</label>
+      <input type="date" name="payment_date" required>
+    </div>
+    <div>
+      <label class="muted">Monto</label>
+      <input type="number" step="0.01" name="amount" required>
+    </div>
+    <div style="flex: 1 1 200px;">
+      <label class="muted">Nota (opcional)</label>
+      <input type="text" name="note" placeholder="Ej. factura 4821">
+    </div>
+    <button type="submit">Agregar</button>
+  </form>
+  {% if manual_payments %}
+  <div class="historial-table-wrap" style="margin-top: 16px;">
+    <table class="historial-table">
+      <thead><tr><th>Fecha</th><th>Monto</th><th>Nota</th><th></th></tr></thead>
+      <tbody>
+        {% for mp in manual_payments %}
+        <tr>
+          <td>{{ mp.payment_date[8:10] }}/{{ mp.payment_date[5:7] }}/{{ mp.payment_date[0:4] }}</td>
+          <td>${{ "{:,.2f}".format(mp.amount) }}</td>
+          <td>{{ mp.note or "—" }}</td>
+          <td class="historial-col-action">
+            <form method="post" action="{{ url_for('carga_datos_proveedores_pago_manual_eliminar', payment_id=mp.id) }}" style="display:inline;">
+              <input type="hidden" name="supplier_key" value="{{ supplier_key }}">
+              <button type="submit" class="btn-secondary">Eliminar</button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if months %}
+{% for block in months %}
+<details class="ledger-month"{% if loop.index0 == open_index %} open data-ledger-current{% endif %}>
+  <summary class="ledger-month-summary">
+    <span class="ledger-month-title">{{ block.month_name }} {{ block.year }}</span>
+    <span class="ledger-month-balances">
+      Saldo inicial ${{ "{:,.2f}".format(block.saldo_inicial) }}
+      <span class="ledger-arrow">&rarr;</span>
+      Saldo final <strong class="{{ 'ledger-balance-debe' if block.saldo_final > 0.01 or block.saldo_final < -0.01 else 'ledger-balance-cero' }}">${{ "{:,.2f}".format(block.saldo_final) }}</strong>
+    </span>
+    <svg class="ledger-month-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+  </summary>
   <div class="historial-table-wrap">
     <table class="historial-table">
-      <thead><tr><th>Fecha</th><th>N° Factura</th><th>Monto</th></tr></thead>
+      <thead><tr><th>Fecha</th><th>Detalle</th><th>Debe</th><th>Haber</th><th>Saldo</th></tr></thead>
       <tbody>
-        {% for inv in invoices %}
+        {% for e in block.entries %}
         <tr>
-          <td class="historial-col-day">{{ inv.invoice_date }}</td>
+          <td class="historial-col-day">{{ e.date[8:10] }}/{{ e.date[5:7] }}/{{ e.date[0:4] }}</td>
           <td>
-            {% if inv.document %}
-            {% from "_pdf_links.html" import pdf_links %}
-            {{ pdf_links(url_for('carga_datos_documento_descargar', document_id=inv.document.id), inv.invoice_no) }}
+            {% if e.kind == 'invoice' %}
+              {% if e.document %}{{ pdf_links(url_for('carga_datos_documento_descargar', document_id=e.document.id), e.detail) }}{% else %}{{ e.detail }}{% endif %}
+            {% elif e.kind == 'payment' %}
+              {{ e.detail }} <span class="muted" style="font-size:11.5px;">({{ 'a mano' if e.manual else 'regla' }})</span>
+            {% elif e.kind == 'credit' %}
+              {{ e.detail }} <span class="muted" style="font-size:11.5px;">(credit memo)</span>
             {% else %}
-            {{ inv.invoice_no }}
+              {{ e.detail }}
             {% endif %}
           </td>
-          <td>${{ "{:,.2f}".format(inv.amount) }}</td>
+          <td>{% if e.debe %}${{ "{:,.2f}".format(e.debe) }}{% else %}—{% endif %}</td>
+          <td>{% if e.haber %}${{ "{:,.2f}".format(e.haber) }}{% else %}—{% endif %}</td>
+          <td class="{{ 'ledger-balance-debe' if e.balance > 0.01 or e.balance < -0.01 else 'ledger-balance-cero' }}"><strong>${{ "{:,.2f}".format(e.balance) }}</strong></td>
         </tr>
         {% endfor %}
       </tbody>
     </table>
   </div>
-  {% else %}
-  <p class="muted" style="margin-top: 10px;">Todavía no hay ninguna factura cargada de este proveedor.</p>
-  {% endif %}
-</div>
-
+</details>
+{% endfor %}
+{% else %}
 <div class="card">
-  <h2>Pagos vinculados (Chase Bank)</h2>
-  <p class="muted">Movimientos del extracto de Chase ya vinculados a este proveedor -- por una regla de palabra clave, o a mano desde <a href="{{ url_for('chase_historial') }}">el historial de Chase</a>.</p>
-  {% if payments %}
-  <div class="historial-table-wrap">
-    <table class="historial-table">
-      <thead><tr><th>Fecha</th><th>Descripción</th><th>Monto</th><th>Vínculo</th></tr></thead>
-      <tbody>
-        {% for p in payments %}
-        <tr>
-          <td class="historial-col-day">{{ p.posting_date[8:10] }}/{{ p.posting_date[5:7] }}/{{ p.posting_date[0:4] }}</td>
-          <td>{{ p.description }}</td>
-          <td class="{{ 'chase-amount-neg' if p.amount < 0 else 'chase-amount-pos' }}">{{ "{:,.2f}".format(p.amount) }}</td>
-          <td class="muted">{{ 'A mano' if p.supplier_source == 'manual' else 'Regla' }}</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-  {% else %}
-  <p class="muted" style="margin-top: 10px;">Todavía no hay ningún pago de Chase vinculado a este proveedor -- si una descripción del banco lo nombra, se vincula solo; si no (ej. un cheque sin ningún dato), se puede vincular a mano desde <a href="{{ url_for('chase_historial') }}">Chase Bank</a>.</p>
-  {% endif %}
+  <p class="muted" style="margin-top: 0;">Todavía no hay ninguna factura ni ningún pago vinculado a este proveedor -- si una descripción del banco lo nombra, se vincula solo; si no (ej. un cheque sin ningún dato), se puede vincular a mano desde <a href="{{ url_for('chase_historial') }}">Chase Bank</a>.</p>
 </div>
+{% endif %}
 
 <style>
   .historial-table-wrap { overflow-x: auto; margin-top: 10px; border: 1px solid var(--border); border-radius: 10px; }
-  .historial-table { width: 100%; min-width: 420px; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .historial-table { width: 100%; min-width: 520px; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
   .historial-table th, .historial-table td { padding: 8px 14px; text-align: left; }
   .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
   .historial-table tbody tr { border-bottom: 1px solid var(--border); }
   .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
   .historial-col-day { font-weight: 700; white-space: nowrap; }
-  .chase-amount-neg { color: var(--error); }
-  .chase-amount-pos { color: var(--success); }
+
+  .ledger-saldo-headline { font-size: 28px; font-weight: 800; }
+  .ledger-balance-debe { color: var(--error); }
+  .ledger-balance-cero { color: var(--success); }
+
+  .ledger-month { border: 1px solid var(--border); border-radius: 10px; margin-top: 14px; overflow: hidden; }
+  .ledger-month-summary {
+    list-style: none; cursor: pointer; user-select: none;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+    padding: 12px 16px; background: var(--surface-alt); font-weight: 700; font-size: 15px;
+  }
+  .ledger-month-summary::-webkit-details-marker { display: none; }
+  .ledger-month-title { white-space: nowrap; }
+  .ledger-month-balances { font-weight: 500; font-size: 12.5px; color: var(--text-soft); display:flex; align-items:center; gap:6px; }
+  .ledger-arrow { color: var(--text-soft); }
+  .ledger-month-chevron { transition: transform 0.12s ease; color: var(--text-soft); width: 16px; height: 16px; flex-shrink: 0; }
+  .ledger-month[open] .ledger-month-chevron { transform: rotate(90deg); }
+
+  .inline-entry-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; }
+  .inline-entry-form > div { display: flex; flex-direction: column; gap: 4px; }
+  .inline-entry-form input { padding: 6px 8px; }
+  .historial-col-action { text-align: right; white-space: nowrap; }
+  .historial-col-action form button { margin-top: 0; padding: 5px 10px; font-size: 12px; }
+
+  /* Botón "Configurar" (2026-09-22) -- <summary> no puede reusar
+     `button.btn-secondary` (selector calificado por tag, ver el resto de
+     este proyecto para el mismo gotcha), así que se define su propio
+     look de botón acá. */
+  .supplier-config { position: relative; }
+  .supplier-config summary { list-style: none; }
+  .supplier-config summary::-webkit-details-marker { display: none; }
+  .supplier-config-btn {
+    display: inline-flex; align-items: center; gap: 7px;
+    padding: 9px 16px; border-radius: 8px; font-size: 13.5px; font-weight: 600;
+    background: var(--surface-alt); border: 1px solid var(--border); color: var(--text);
+  }
+  .supplier-config-btn:hover { background: var(--border); }
+  .supplier-config-btn svg { width: 15px; height: 15px; flex-shrink: 0; }
+  .supplier-config-panel {
+    position: absolute; right: 0; top: calc(100% + 8px); z-index: 30;
+    width: 280px; box-shadow: var(--shadow-md);
+  }
+  .supplier-config-check { display: flex; align-items: center; gap: 8px; font-size: 13.5px; margin-bottom: 12px; cursor: pointer; }
+  .supplier-config-panel button { margin-top: 0; }
 </style>
+
+<script>
+  (function () {
+    var current = document.querySelector('[data-ledger-current]');
+    if (current) {
+      current.scrollIntoView({behavior: 'auto', block: 'start'});
+    }
+  })();
+</script>
 {% endblock %}

@@ -235,7 +235,7 @@ def _track_app_side():
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if current_user.is_authenticated:
-        return redirect(url_for("carga_datos_index"))
+        return redirect(url_for("home"))
 
     if request.method == "POST":
         username = request.form.get("username", "").strip()
@@ -251,7 +251,7 @@ def login():
             )
             if user.get("must_change_password", False):
                 return redirect(url_for("perfil_password"))
-            return redirect(url_for("carga_datos_index"))
+            return redirect(url_for("home"))
 
     return render_template("login.html")
 
@@ -280,7 +280,7 @@ def perfil_password():
                 auth.set_password(current_user.id, new_password)
                 if forced:
                     flash("Contraseña actualizada. Ya podés usar la app normalmente.", "success")
-                    return redirect(url_for("carga_datos_index"))
+                    return redirect(url_for("home"))
                 flash("Contraseña actualizada correctamente.", "success")
             except ValueError as exc:
                 flash(str(exc), "error")
@@ -686,6 +686,20 @@ REPORTES_TOOLS = [
         "pdf_endpoint": "reportes_caja_pdf",
     },
     {
+        # Pedido explícito del usuario (2026-09-22): "resumen mensual en
+        # reportes, donde se va a mostrar la cantidad de facturas que
+        # llegaron de un proveedor y cual fue el total del mes" -- mismo
+        # espíritu que la vieja hoja "RESUMEN COMPRAS" del Excel Ledger,
+        # ver proveedores_db.build_proveedores_pdf_report.
+        "key": "reportes_proveedores",
+        "icon": _ICON_TRUCK,
+        "label": "Proveedores",
+        "description": "Cuántas facturas llegaron de cada proveedor en el mes y cuál fue el total -- mismo resumen que RESUMEN COMPRAS del Excel real.",
+        "accent": "#7C3AED",
+        "ready": True,
+        "pdf_endpoint": "reportes_proveedores_pdf",
+    },
+    {
         # Pedido explícito del usuario (2026-09-21): reporte de Gettel con
         # el mismo formato/colores del Excel real que mandó de ejemplo --
         # 4 hojas (Pendiente mes anterior / mes actual / Pago Cupones /
@@ -1022,14 +1036,16 @@ def _success_response(temp_path, download_name, notice=None, notice_level="warni
 @app.route("/")
 def home():
     """
-    Ya no hay que elegir un lado al entrar -- pedido explícito del usuario
-    (2026-09-12): "ya solo queda lo de cargar datos en esa pagina no vamos a
-    necesitar los excels, ya estan guardado el proyecto donde estan los
-    excels" (la copia congelada, ver CLAUDE.md). Carga de Datos pasa a ser
-    el destino directo; Excels/Controles siguen andando igual para lo que
-    todavía no se convirtió, alcanzables por búsqueda o por URL directa.
+    Menú real de entrada (2026-09-22, pedido explícito del usuario --
+    revierte el redirect directo de 2026-09-12, ver el docstring viejo en
+    el historial de git): "no deberia tener que elegir solo desde la barra
+    de arriba... la idea es que cuando un usuario abra la pagina tenga que
+    elegir entre esos dos modulos" -- Carga de Datos y Reportes, cada uno
+    con su propia tarjeta grande (Proyecciones sigue sin mostrarse, mismo
+    criterio que el section-switch de `base.html`). `login()` redirige acá
+    en vez de directo a `carga_datos_index`.
     """
-    return redirect(url_for("carga_datos_index"))
+    return render_template("home_menu.html")
 
 
 @app.route("/excels")
@@ -1088,6 +1104,7 @@ def carga_datos_reportes():
             "reportes_diario": reportes_db.get_store_info_years() or [today.year],
             "reportes_lottery": lottery_db.get_available_years() or [today.year],
             "reportes_caja": get_caja_available_years() or [today.year],
+            "reportes_proveedores": proveedores_db.get_available_years() or [today.year],
             "reportes_gettel": gettel_reportes.get_available_years() or [today.year],
         },
         current_year=today.year,
@@ -1215,6 +1232,27 @@ def reportes_caja_pdf():
     workspace_dir = tempfile.mkdtemp(prefix="caja_reporte_")
     dest_path = os.path.join(workspace_dir, f"Caja Reporte {month:02d}-{year}.pdf")
     build_caja_pdf_resumen(report, year, month, dest_path)
+    return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
+
+
+@app.route("/carga-datos/reportes/proveedores/pdf")
+def reportes_proveedores_pdf():
+    """
+    Descarga el PDF de Reportes -> Proveedores -- pedido explícito del
+    usuario (2026-09-22): "un resumen mensual en reportes, donde se va a
+    mostrar la cantidad de facturas que llegaron de un proveedor y cual
+    fue el total del mes" (mismo espíritu que RESUMEN COMPRAS del Excel
+    real). Ver proveedores_db.build_proveedores_pdf_report.
+    """
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    workspace_dir = tempfile.mkdtemp(prefix="proveedores_reporte_")
+    dest_path = os.path.join(workspace_dir, f"Proveedores Reporte {month:02d}-{year}.pdf")
+    proveedores_db.build_proveedores_pdf_report(year, month, dest_path)
     return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
 
 
@@ -5318,50 +5356,212 @@ def carga_datos_proveedores_eliminar(invoice_id):
 # la vista por mes (carga_datos_proveedores_historial, que sigue existiendo
 # tal cual para quien la prefiera) como el link "Ver guardado" de la barra
 # lateral.
+#
+# 2026-09-22, corrección explícita del usuario tras la primera vista de
+# esto: (a) la grilla ya NO se filtra a "solo los que tienen algo cargado"
+# -- muestra SIEMPRE los ~27 proveedores del registro (mismo criterio que
+# la grilla de Herramientas), cada uno con su logo real; (b) el panel de
+# "Reglas de pago a proveedores" se sacó de acá -- pasa a tener su propia
+# página (carga_datos_proveedores_reglas); (c) el detalle de cada
+# proveedor dejó de ser dos tablas sueltas (facturas / pagos) para ser un
+# solo "cuadro de cuenta corriente" cronológico con saldo corrido -- ver
+# _build_supplier_ledger.
 # ---------------------------------------------------------------------------
 
 @app.route("/carga-datos/proveedores/guardado")
 def carga_datos_proveedores_guardado():
+    """
+    2026-09-22, tres pedidos puntuales del usuario tras ver esto por
+    primera vez: (a) separar los proveedores que son en realidad un
+    SERVICIO mensual (FPL, Manatee County, Airgas -- "is_service" en el
+    registro) de los que traen mercadería para revender, en dos secciones
+    de la grilla; (b) poder ocultar/desocultar un proveedor puntual (ver
+    proveedores_db.set_supplier_hidden) sin borrar ningún dato; (c) cada
+    tarjeta muestra SOLO el nombre -- se sacaron los contadores/totales
+    (siguen calculándose para la lógica de "huérfanos" de abajo, pero ya
+    no se muestran en pantalla).
+    """
     registry = list_supplier_registry_entries()
-    registry_by_key = {entry["key"]: entry for entry in registry}
     invoice_counts = {row["supplier_key"]: row for row in proveedores_db.list_suppliers_with_counts()}
     payment_totals = chase_db.get_supplier_payment_totals()
+    hidden_keys = proveedores_db.list_hidden_suppliers()
 
-    # Unión de facturas + pagos vinculados -- un proveedor puede tener
-    # factura(s), pago(s), o los dos; un supplier_key con datos guardados
-    # pero ya sin entrada en el registro (ej. un proveedor dinámico
-    # eliminado después) igual tiene que poder verse, con el label que ya
-    # quedó guardado en su factura como respaldo.
-    all_keys = set(invoice_counts) | set(payment_totals)
+    all_suppliers = []
+    seen_keys = set()
+    for entry in registry:
+        key = entry["key"]
+        seen_keys.add(key)
+        all_suppliers.append({
+            "key": key,
+            "label": entry["label"],
+            "logo": entry.get("logo"),
+            "is_service": entry.get("is_service", False),
+            "hidden": key in hidden_keys,
+        })
 
-    suppliers = []
-    for key in all_keys:
+    # Un supplier_key con datos guardados pero ya sin entrada en el
+    # registro (ej. un proveedor dinámico eliminado después de cargarle
+    # facturas) igual tiene que poder verse, con el label que ya quedó
+    # guardado en su factura como respaldo -- sin esto, esas facturas
+    # quedarían huérfanas, invisibles desde cualquier lado.
+    for key in (set(invoice_counts) | set(payment_totals)) - seen_keys:
         invoices = invoice_counts.get(key)
-        payments = payment_totals.get(key)
-        if not invoices and not payments:
-            continue
-        label = (
-            registry_by_key.get(key, {}).get("label")
-            or (invoices["supplier_label"] if invoices else None)
-            or key
-        )
-        suppliers.append({
+        label = invoices["supplier_label"] if invoices else key
+        all_suppliers.append({
             "key": key,
             "label": label,
-            "invoice_count": invoices["n"] if invoices else 0,
-            "invoice_total": round(invoices["total"], 2) if invoices else 0.0,
-            "payment_count": payments["count"] if payments else 0,
-            "payment_total": round(payments["total"], 2) if payments else 0.0,
+            "logo": None,
+            "is_service": False,
+            "hidden": key in hidden_keys,
         })
-    suppliers.sort(key=lambda s: s["label"])
+    all_suppliers.sort(key=lambda s: s["label"])
+
+    merchandise = [s for s in all_suppliers if not s["hidden"] and not s["is_service"]]
+    services = [s for s in all_suppliers if not s["hidden"] and s["is_service"]]
+    hidden = [s for s in all_suppliers if s["hidden"]]
 
     return render_template(
         "carga_datos_proveedores_guardado.html",
-        suppliers=suppliers,
-        pago_rules=proveedores_pago_rules.list_display_rules(),
-        supplier_options=registry,
+        merchandise_suppliers=merchandise,
+        service_suppliers=services,
+        hidden_suppliers=hidden,
         **THEME_BY_KEY["carga_proveedores"],
     )
+
+
+@app.route("/carga-datos/proveedores/guardado/<supplier_key>/ocultar", methods=["POST"])
+def carga_datos_proveedores_ocultar(supplier_key):
+    """
+    Ocultar/mostrar, instantáneo (2026-09-22, pedido explícito del
+    usuario: "que no te mande una notificacion... sino que simplemente lo
+    oculte rapido"). Ya no hace `flash()`+redirect -- el botón de la
+    grilla llama esto por `fetch` y mueve la tarjeta en el DOM al toque
+    (ver el <script> de carga_datos_proveedores_guardado.html), sin
+    recargar la página ni mostrar ningún aviso.
+    """
+    if not current_user.is_admin:
+        return jsonify({"error": "Solo un administrador puede ocultar/mostrar proveedores."}), 403
+    proveedores_db.set_supplier_hidden(supplier_key, True)
+    return jsonify({"ok": True})
+
+
+@app.route("/carga-datos/proveedores/guardado/<supplier_key>/mostrar", methods=["POST"])
+def carga_datos_proveedores_mostrar(supplier_key):
+    if not current_user.is_admin:
+        return jsonify({"error": "Solo un administrador puede ocultar/mostrar proveedores."}), 403
+    proveedores_db.set_supplier_hidden(supplier_key, False)
+    return jsonify({"ok": True})
+
+
+@app.route("/carga-datos/proveedores/reglas")
+def carga_datos_proveedores_reglas():
+    """
+    Página propia para las reglas de pago a proveedores (keyword de Chase
+    -> proveedor) -- se sacó de la grilla de "Guardado" (2026-09-22,
+    pedido explícito: "ahi solo tendrian que ir modulos... asi como en
+    herramientas"), sin perder la funcionalidad ni el patrón admin-only ya
+    validado.
+    """
+    return render_template(
+        "carga_datos_proveedores_reglas.html",
+        pago_rules=proveedores_pago_rules.list_display_rules(),
+        supplier_options=list_supplier_registry_entries(),
+        **THEME_BY_KEY["carga_proveedores"],
+    )
+
+
+def _build_supplier_ledger(invoices, payments, credit_memos=None, manual_payments=None):
+    """
+    Arma el "cuadro de cuenta corriente" de un proveedor -- pedido
+    explícito del usuario (2026-09-22): "que sea como funcionaba la
+    planilla de excel, en donde te mostraba con formula si se debia algo
+    anteriormente o si estaba en 0". Mezcla facturas (Debe) + pagos de
+    Chase ya vinculados (Haber) + credit memos (Haber, ver
+    proveedores_db.save_credit_memo) + pagos a mano vía Caja (Haber, ver
+    proveedores_db.save_manual_payment) en orden cronológico, con un
+    saldo corrido -- misma fórmula que la columna BALANCE del Excel real
+    (`=+anterior+DEBE-HABER`) -- y los agrupa por mes, en orden
+    ascendente (el más viejo arriba, igual que la planilla real).
+
+    `invoices` y `payments` ya vienen leídos de proveedores_db/chase_db
+    (con `document` ya resuelto en cada factura, si corresponde) -- esta
+    función es pura, solo mezcla/ordena/suma.
+    """
+    entries = []
+    for inv in invoices:
+        entries.append({
+            "date": inv["invoice_date"],
+            "kind": "invoice",
+            "detail": f"Factura {inv['invoice_no']}",
+            "document": inv.get("document"),
+            "debe": inv["amount"],
+            "haber": 0.0,
+        })
+    for p in payments:
+        entries.append({
+            "date": p["posting_date"],
+            "kind": "payment",
+            "detail": p["description"],
+            "document": None,
+            "debe": 0.0,
+            "haber": abs(p["amount"]),
+            "manual": p["supplier_source"] == "manual",
+        })
+    for c in (credit_memos or []):
+        label = f"Credit Memo {c['credit_no']}" if c.get("credit_no") else "Credit Memo"
+        entries.append({
+            "date": c["credit_date"],
+            "kind": "credit",
+            "detail": label,
+            "document": None,
+            "debe": 0.0,
+            "haber": c["amount"],
+        })
+    for mp in (manual_payments or []):
+        label = "Pago a mano (Caja)" + (f" -- {mp['note']}" if mp.get("note") else "")
+        entries.append({
+            "date": mp["payment_date"],
+            "kind": "manual_payment",
+            "detail": label,
+            "document": None,
+            "debe": 0.0,
+            "haber": mp["amount"],
+        })
+    entries.sort(key=lambda e: (e["date"], 0 if e["kind"] == "invoice" else 1))
+
+    months = []
+    by_month = {}
+    running = 0.0
+    for e in entries:
+        running = round(running + e["debe"] - e["haber"], 2)
+        e["balance"] = running
+        month_key = (int(e["date"][0:4]), int(e["date"][5:7]))
+        block = by_month.get(month_key)
+        if block is None:
+            block = {
+                "year": month_key[0],
+                "month": month_key[1],
+                "month_name": _MONTH_NAMES_ES[month_key[1] - 1],
+                "entries": [],
+                "saldo_inicial": months[-1]["saldo_final"] if months else 0.0,
+            }
+            by_month[month_key] = block
+            months.append(block)
+        block["entries"].append(e)
+        block["saldo_final"] = running
+
+    return {
+        "months": months,
+        "saldo_actual": running,
+        "invoice_total": round(sum(inv["amount"] for inv in invoices), 2),
+        "invoice_count": len(invoices),
+        "payment_total": round(sum(abs(p["amount"]) for p in payments), 2),
+        "payment_count": len(payments),
+        "credit_total": round(sum(c["amount"] for c in (credit_memos or [])), 2),
+        "credit_count": len(credit_memos or []),
+        "manual_payment_total": round(sum(mp["amount"] for mp in (manual_payments or [])), 2),
+        "manual_payment_count": len(manual_payments or []),
+    }
 
 
 @app.route("/carga-datos/proveedores/guardado/<supplier_key>")
@@ -5380,18 +5580,140 @@ def carga_datos_proveedores_guardado_detalle(supplier_key):
         or (invoices[0]["supplier_label"] if invoices else None)
         or supplier_key
     )
+    logo = registry_by_key.get(supplier_key, {}).get("logo")
     payments = chase_db.get_supplier_transactions(supplier_key)
+    credit_memos = proveedores_db.get_supplier_credit_memos(supplier_key)
+    manual_payments = proveedores_db.get_supplier_manual_payments(supplier_key)
+    supplier_settings = proveedores_db.get_supplier_settings(supplier_key)
+
+    ledger = _build_supplier_ledger(invoices, payments, credit_memos, manual_payments)
+    today = date.today()
+    open_index = None
+    if ledger["months"]:
+        open_index = next(
+            (i for i, block in enumerate(ledger["months"]) if (block["year"], block["month"]) == (today.year, today.month)),
+            len(ledger["months"]) - 1,
+        )
 
     return render_template(
         "carga_datos_proveedores_detalle.html",
         supplier_key=supplier_key,
         supplier_label=label,
-        invoices=invoices,
-        invoice_total=round(sum(inv["amount"] for inv in invoices), 2),
-        payments=payments,
-        payment_total=round(sum(p["amount"] for p in payments), 2),
+        supplier_logo=logo,
+        months=ledger["months"],
+        open_index=open_index,
+        saldo_actual=ledger["saldo_actual"],
+        invoice_total=ledger["invoice_total"],
+        invoice_count=ledger["invoice_count"],
+        payment_total=ledger["payment_total"],
+        payment_count=ledger["payment_count"],
+        credit_memos=credit_memos,
+        credit_total=ledger["credit_total"],
+        manual_payments=manual_payments,
+        manual_payment_total=ledger["manual_payment_total"],
+        supplier_settings=supplier_settings,
+        today_iso=today.isoformat(),
         **THEME_BY_KEY["carga_proveedores"],
     )
+
+
+@app.route("/carga-datos/proveedores/guardado/<supplier_key>/credit-memo", methods=["POST"])
+def carga_datos_proveedores_credit_memo(supplier_key):
+    """
+    Credit memos (2026-09-22, pedido explícito del usuario -- "en H.T se
+    pueden cargar credits memo que disminuyen lo que hay que pagar de las
+    facturas"). Genérico en el backend (cualquier supplier_key) -- qué
+    proveedor puede cargar credit memos se decide con
+    proveedores_db.get_supplier_settings/set_supplier_settings (botón
+    "Configurar" en el detalle, ver carga_datos_proveedores_configuracion)
+    en vez de estar fijo en el código. El chequeo se repite acá del lado
+    del servidor -- el template ya oculta el form si no está habilitado,
+    pero esto evita que alguien lo cargue posteando directo a la ruta.
+    """
+    if not proveedores_db.get_supplier_settings(supplier_key)["allow_credit_memos"]:
+        flash("Este proveedor no tiene habilitados los credit memos -- activalo desde \"Configurar\".", "error")
+        return redirect(url_for("carga_datos_proveedores_guardado_detalle", supplier_key=supplier_key))
+    registry_by_key = {entry["key"]: entry for entry in list_supplier_registry_entries()}
+    label = registry_by_key.get(supplier_key, {}).get("label") or supplier_key
+    credit_date = request.form.get("credit_date")
+    credit_no = (request.form.get("credit_no") or "").strip() or None
+    amount = request.form.get("amount", type=float)
+    if not credit_date or not amount:
+        flash("Completá la fecha y el monto del credit memo.", "error")
+        return redirect(url_for("carga_datos_proveedores_guardado_detalle", supplier_key=supplier_key))
+    proveedores_db.save_credit_memo(supplier_key, label, credit_date, credit_no, amount)
+    flash("Credit memo guardado -- ya se refleja en el saldo.", "success")
+    return redirect(url_for("carga_datos_proveedores_guardado_detalle", supplier_key=supplier_key))
+
+
+@app.route("/carga-datos/proveedores/credit-memo/<int:credit_id>/eliminar", methods=["POST"])
+def carga_datos_proveedores_credit_memo_eliminar(credit_id):
+    supplier_key = request.form.get("supplier_key")
+    ok = proveedores_db.delete_credit_memo(credit_id)
+    flash("Credit memo eliminado." if ok else "Ese credit memo ya no existe.", "success" if ok else "error")
+    return redirect(url_for("carga_datos_proveedores_guardado_detalle", supplier_key=supplier_key))
+
+
+@app.route("/carga-datos/proveedores/guardado/<supplier_key>/pago-manual", methods=["POST"])
+def carga_datos_proveedores_pago_manual(supplier_key):
+    """
+    Pago a mano vía Caja (2026-09-22, pedido explícito del usuario --
+    "que se puedan hacer cargas manuales de pago para proveedores como
+    Bimbo, Flori gas, Sam's... deben ir conectados a caja y sumarse en la
+    columna de gastos el dia que fueran cargados"). Se guarda como un pago
+    más del cuadro de cuenta corriente (Haber) Y, en el mismo movimiento,
+    como un gasto en efectivo de Caja de esa fecha (caja_db.
+    add_expense_item) -- el id de ese gasto queda guardado junto al pago
+    para poder borrar los dos juntos si hace falta. Qué proveedor puede
+    usar esto se decide con proveedores_db.get_supplier_settings (botón
+    "Configurar" del detalle) -- "los demas se pagan por banco, no hace
+    falta" (pedido explícito del usuario, 2026-09-22) -- chequeado acá
+    también del lado del servidor, no solo ocultando el form.
+    """
+    if not proveedores_db.get_supplier_settings(supplier_key)["allow_manual_payments"]:
+        flash("Este proveedor no tiene habilitados los pagos a mano -- activalo desde \"Configurar\".", "error")
+        return redirect(url_for("carga_datos_proveedores_guardado_detalle", supplier_key=supplier_key))
+    registry_by_key = {entry["key"]: entry for entry in list_supplier_registry_entries()}
+    label = registry_by_key.get(supplier_key, {}).get("label") or supplier_key
+    payment_date = request.form.get("payment_date")
+    amount = request.form.get("amount", type=float)
+    note = (request.form.get("note") or "").strip() or None
+    if not payment_date or not amount:
+        flash("Completá la fecha y el monto del pago.", "error")
+        return redirect(url_for("carga_datos_proveedores_guardado_detalle", supplier_key=supplier_key))
+    expense_detail = f"{label} (pago a proveedor, a mano)" + (f" -- {note}" if note else "")
+    expense_item_id = caja_db.add_expense_item(payment_date, amount, expense_detail)
+    proveedores_db.save_manual_payment(supplier_key, label, payment_date, amount, note=note, caja_expense_item_id=expense_item_id)
+    flash("Pago guardado -- se sumó también a los gastos de Caja de ese día.", "success")
+    return redirect(url_for("carga_datos_proveedores_guardado_detalle", supplier_key=supplier_key))
+
+
+@app.route("/carga-datos/proveedores/pago-manual/<int:payment_id>/eliminar", methods=["POST"])
+def carga_datos_proveedores_pago_manual_eliminar(payment_id):
+    supplier_key = request.form.get("supplier_key")
+    row = proveedores_db.delete_manual_payment(payment_id)
+    if row and row.get("caja_expense_item_id"):
+        caja_db.delete_expense_item(row["caja_expense_item_id"])
+    flash("Pago eliminado (también de los gastos de Caja)." if row else "Ese pago ya no existe.", "success" if row else "error")
+    return redirect(url_for("carga_datos_proveedores_guardado_detalle", supplier_key=supplier_key))
+
+
+@app.route("/carga-datos/proveedores/guardado/<supplier_key>/configuracion", methods=["POST"])
+def carga_datos_proveedores_configuracion(supplier_key):
+    """
+    Configuración individual por proveedor (2026-09-22, pedido explícito
+    del usuario: "cada proveedor tenga un tipo de configuracion
+    individual en la que tocando un boton se pueda agregar de que se le
+    hacen pagos en efectivo o recibe credits memo") -- admin-only, mismo
+    criterio que ocultar/mostrar. Dos checkboxes; sin marcar = apagado.
+    """
+    if not _require_admin("Solo un administrador puede cambiar la configuración de un proveedor."):
+        return redirect(url_for("carga_datos_proveedores_guardado_detalle", supplier_key=supplier_key))
+    allow_manual_payments = request.form.get("allow_manual_payments") == "on"
+    allow_credit_memos = request.form.get("allow_credit_memos") == "on"
+    proveedores_db.set_supplier_settings(supplier_key, allow_manual_payments, allow_credit_memos)
+    flash("Configuración guardada.", "success")
+    return redirect(url_for("carga_datos_proveedores_guardado_detalle", supplier_key=supplier_key))
 
 
 @app.route("/carga-datos/proveedores/reglas/guardar", methods=["POST"])
@@ -5404,7 +5726,7 @@ def proveedores_pago_reglas_guardar():
     apuntar a un proveedor que no existe).
     """
     if not _require_admin("Solo un administrador puede gestionar las reglas de pago a proveedores."):
-        return redirect(url_for("carga_datos_proveedores_guardado"))
+        return redirect(url_for("carga_datos_proveedores_reglas"))
 
     keyword = request.form.get("keyword", "")
     sheet_name = request.form.get("sheet_name", "")
@@ -5424,13 +5746,13 @@ def proveedores_pago_reglas_guardar():
         _recategorize_all_chase_and_flash()
     except ValueError as exc:
         flash(str(exc), "error")
-    return redirect(url_for("carga_datos_proveedores_guardado"))
+    return redirect(url_for("carga_datos_proveedores_reglas"))
 
 
 @app.route("/carga-datos/proveedores/reglas/eliminar", methods=["POST"])
 def proveedores_pago_reglas_eliminar():
     if not _require_admin("Solo un administrador puede gestionar las reglas de pago a proveedores."):
-        return redirect(url_for("carga_datos_proveedores_guardado"))
+        return redirect(url_for("carga_datos_proveedores_reglas"))
 
     index = request.form.get("index", "").strip()
     expected_keyword = request.form.get("expected_keyword") or None
@@ -5442,7 +5764,7 @@ def proveedores_pago_reglas_eliminar():
         _recategorize_all_chase_and_flash()
     except ValueError as exc:
         flash(str(exc), "error")
-    return redirect(url_for("carga_datos_proveedores_guardado"))
+    return redirect(url_for("carga_datos_proveedores_reglas"))
 
 
 @app.route("/proveedores")
