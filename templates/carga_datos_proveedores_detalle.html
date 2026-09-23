@@ -177,15 +177,11 @@
 <details class="ledger-month"{% if loop.index0 == open_index %} open data-ledger-current{% endif %}>
   <summary class="ledger-month-summary">
     <span class="ledger-month-title">{{ block.month_name }} {{ block.year }}</span>
-    <span class="ledger-month-balances">
-      Saldo inicial ${{ "{:,.2f}".format(block.saldo_inicial) }}
-      <span class="ledger-arrow">&rarr;</span>
-      Saldo final <strong class="{{ 'ledger-balance-debe' if block.saldo_final > 0.01 or block.saldo_final < -0.01 else 'ledger-balance-cero' }}">${{ "{:,.2f}".format(block.saldo_final) }}</strong>
-    </span>
     <svg class="ledger-month-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
   </summary>
   <div class="historial-table-wrap">
-    <table class="historial-table">
+    <table class="historial-table ledger-table">
+      <colgroup><col style="width:16%"><col style="width:30%"><col style="width:18%"><col style="width:18%"><col style="width:18%"></colgroup>
       <thead><tr><th>Fecha</th><th>Detalle</th><th>Debe</th><th>Haber</th><th>Saldo</th></tr></thead>
       <tbody>
         {% for e in block.entries %}
@@ -195,7 +191,7 @@
             {% if e.kind == 'invoice' %}
               {% if e.document %}{{ pdf_links(url_for('carga_datos_documento_descargar', document_id=e.document.id), e.detail) }}{% else %}{{ e.detail }}{% endif %}
             {% elif e.kind == 'payment' %}
-              {{ e.detail }} <span class="muted" style="font-size:11.5px;">({{ 'a mano' if e.manual else 'regla' }})</span>
+              <span title="{{ e.bank_description }}">{{ e.detail }}</span>
             {% elif e.kind == 'credit' %}
               {{ e.detail }} <span class="muted" style="font-size:11.5px;">(credit memo)</span>
             {% else %}
@@ -244,8 +240,9 @@
   }
   .ledger-month-summary::-webkit-details-marker { display: none; }
   .ledger-month-title { white-space: nowrap; }
-  .ledger-month-balances { font-weight: 500; font-size: 12.5px; color: var(--text-soft); display:flex; align-items:center; gap:6px; }
-  .ledger-arrow { color: var(--text-soft); }
+  /* Mismo ancho de columnas en todos los meses -- cada mes es su propia
+     tabla y, sin esto, cada una repartía el ancho según su contenido. */
+  .ledger-table { table-layout: fixed; width: 100%; }
   .ledger-month-chevron { transition: transform 0.12s ease; color: var(--text-soft); width: 16px; height: 16px; flex-shrink: 0; }
   .ledger-month[open] .ledger-month-chevron { transform: rotate(90deg); }
 
