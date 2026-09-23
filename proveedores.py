@@ -1349,6 +1349,12 @@ def _extract_signarama_invoice(pdf_path):
         amount_match = re.search(r"([\d,]+\.\d{2})", pytesseract.image_to_string(upscaled))
         if amount_match:
             amount = float(amount_match.group(1).replace(",", ""))
+    if amount is None:
+        # Respaldo: a veces el OCR de página completa sí deja el importe pegado
+        # a su etiqueta ("Grand Total: $67.95") y el recorte de la fila no lo lee.
+        full_match = re.search(r"Grand\s+Total:?\s*\$?\s*([\d,]+\.\d{2})", text, re.IGNORECASE)
+        if full_match:
+            amount = float(full_match.group(1).replace(",", ""))
 
     if not (invoice_match and date_match and amount is not None):
         raise ValueError(
