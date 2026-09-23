@@ -1857,6 +1857,208 @@ def _no_automatic_extraction(pdf_path):
     raise ValueError("Este proveedor no tiene extracción automática de facturas -- cargala a mano.")
 
 
+# --- Proveedores-servicio con factura por PERÍODO (FPL, Manatee County) ---
+# Pedido explícito del usuario (2026-09-22): estas facturas no traen N° de
+# factura (el único número es la cuenta, que es la misma todos los meses) --
+# se identifican por el período facturado ("de qué día a qué día"), y la
+# factura va cargada en el mes en que TERMINA ese período (fecha = último
+# día del período). El monto es lo que efectivamente se debita del banco
+# ("Total amount you owe" / "Total Amount Due"), no el total de cargos
+# nuevos -- así el pago de Chase cancela la factura exacto, sin necesitar
+# un credit memo aparte cuando hay un ajuste (ej. el "Deposit Interest"
+# de -$25.84 de la factura de FPL de junio-2026).
+
+_SERVICE_PERIOD_DATE_FMT = "%d/%m/%Y"
+
+
+def _service_period_invoice(start, end, amount):
+    """
+    Arma la factura de un proveedor-servicio: el N° guardado es el texto
+    del período (sirve además de clave de duplicado -- el mismo período
+    nunca se carga dos veces), y la fecha es el fin del período. El nombre
+    de archivo de estas facturas trae otra fecha (vencimiento/emisión, no
+    el fin del período), así que se marca para saltear el chequeo de
+    fecha-del-nombre-de-archivo de Carga de Datos.
+    """
+    period_text = (
+        f"{start.strftime(_SERVICE_PERIOD_DATE_FMT)} al {end.strftime(_SERVICE_PERIOD_DATE_FMT)}"
+    )
+    return {
+        "invoice_no": period_text,
+        "date": end,
+        "amount": amount,
+        "skip_filename_date_check": True,
+    }
+
+
+def _single_consistent_amount(pdf_path, matches, label, supplier):
+    """Todas las apariciones del total tienen que dar lo mismo -- si no, falla (nunca adivina)."""
+    values = {round(float(m.replace(",", "")), 2) for m in matches}
+    if not values:
+        raise ValueError(
+            f'{os.path.basename(pdf_path)}: no se encontró "{label}" en la factura de {supplier} '
+            "-- cárguela manualmente."
+        )
+    if len(values) > 1:
+        shown = ", ".join(f"${v:,.2f}" for v in sorted(values))
+        raise ValueError(
+            f'{os.path.basename(pdf_path)}: "{label}" aparece con montos distintos ({shown}) en la '
+            f"factura de {supplier} -- revisala y cárguela manualmente."
+        )
+    return values.pop()
+
+
+def _detect_fpl(text):
+    lowered = text.lower()
+    return "electric bill statement" in lowered and ("fpl.com" in lowered or "45746-16308" in lowered)
+
+
+def _extract_fpl_invoice(pdf_path):
+    """
+    FPL (Florida Power & Light) -- "Electric Bill Statement", PDF digital
+    de 2 páginas (resumen + detalle), sin OCR. El período sale de "For:
+    May 22, 2026 to Jun 23, 2026 (32 days)"; el monto de "Total amount you
+    owe $X" (aparece en las dos páginas y en el cupón -- se exige que todas
+    coincidan). Ojo: la página 1 también tiene el encabezado "TOTAL AMOUNT
+    YOU OWE 12,480 kWh" (el eje del gráfico de consumo) -- el regex exige
+    el "$" para no confundirlo.
+    """
+    _ensure_pdfplumber()
+    with pdfplumber.open(pdf_path) as pdf:
+        text = "\n".join(page.extract_text() or "" for page in pdf.pages)
+
+    period_match = re.search(
+        r"For:\s*([A-Za-z]{3,9})\.?\s+(\d{1,2}),\s*(\d{4})\s+to\s+([A-Za-z]{3,9})\.?\s+(\d{1,2}),\s*(\d{4})",
+        text,
+    )
+    if not period_match:
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se encontró el período facturado en la factura de FPL "
+            "-- cárguela manualmente."
+        )
+
+    def _parse(month_text, day, year):
+        try:
+            return datetime.strptime(f"{month_text[:3]} {day} {year}", "%b %d %Y")
+        except ValueError:
+            pass
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: fecha ilegible en el período de la factura de FPL "
+            f'("{month_text} {day}, {year}") -- cárguela manualmente.'
+        )
+
+    start = _parse(*period_match.group(1, 2, 3))
+    end = _parse(*period_match.group(4, 5, 6))
+    amount = _single_consistent_amount(
+        pdf_path,
+        re.findall(r"Total amount you owe\s*\$\s*([\d,]+\.\d{2})", text, flags=re.IGNORECASE),
+        "Total amount you owe",
+        "FPL",
+    )
+    return _service_period_invoice(start, end, amount)
+
+
+def _render_page_for_ocr(page, resolution=300):
+    """
+    Página completa renderizada como imagen (no la imagen incrustada más
+    grande) -- para PDFs cuyo texto está dibujado como trazos vectoriales
+    (sin capa de texto, pero tampoco una foto escaneada): ahí la "imagen
+    más grande" es un logo o un QR, no la factura. Caso real: Manatee
+    County Utilities.
+    """
+    return page.to_image(resolution=resolution).original.convert("RGB")
+
+
+def _page_is_full_scan(page):
+    """True si la imagen más grande de la página cubre al menos la mitad de la hoja (una foto/escaneo real)."""
+    if not page.images:
+        return False
+    page_area = float(page.width * page.height) or 1.0
+    biggest = max(page.images, key=lambda im: (im["x1"] - im["x0"]) * (im["bottom"] - im["top"]))
+    covered = (biggest["x1"] - biggest["x0"]) * (biggest["bottom"] - biggest["top"])
+    return covered / page_area >= 0.5
+
+
+_MANATEE_MONTHS = {
+    "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
+    "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12,
+}
+
+
+def _detect_manatee(text):
+    lowered = text.lower()
+    return "manatee county utilities" in lowered or "100082705" in lowered
+
+
+def _extract_manatee_invoice(pdf_path):
+    """
+    Manatee County Utilities (agua, cloaca y contenedor) -- 1 o 2 páginas,
+    el texto viene dibujado como trazos (sin capa de texto ni foto
+    escaneada), así que se renderiza la página entera y se hace OCR.
+
+    El período sale de "Service Period 04/02 - 05/03 (32 Days)" -- SIN año:
+    el año se toma del "BILLING DATE 11-May-2026" (o, si no se lee, de
+    "Please Pay By"/"Auto-pay is scheduled for", siempre posteriores al
+    período). Si el mes de fin del período es mayor que el de esa fecha de
+    referencia, el período es del año anterior (factura de diciembre
+    emitida en enero). El monto es "Total Amount Due" (resumen + talón,
+    se exige que coincidan). El nombre de archivo trae la fecha de
+    vencimiento o de emisión (no coincide con el período), no se usa.
+    """
+    _ensure_pdfplumber()
+    _ensure_pytesseract()
+    with pdfplumber.open(pdf_path) as pdf:
+        text = "\n".join(
+            pytesseract.image_to_string(_render_page_for_ocr(page)) for page in pdf.pages
+        )
+
+    period_match = re.search(
+        r"Service\s+Period\s+(\d{1,2})/(\d{1,2})\s*-\s*(\d{1,2})/(\d{1,2})", text, flags=re.IGNORECASE
+    )
+    if not period_match:
+        raise ValueError(
+            f'{os.path.basename(pdf_path)}: no se encontró el "Service Period" en la factura de '
+            "Manatee County -- cárguela manualmente."
+        )
+    start_month, start_day, end_month, end_day = (int(g) for g in period_match.groups())
+
+    ref_month = ref_year = None
+    for pattern in (
+        r"BILLING\s+DATE\s+(\d{1,2})-([A-Za-z]{3})-(\d{4})",
+        r"Please\s+Pay\s+By\s+(\d{1,2})-([A-Za-z]{3})-(\d{4})",
+        r"scheduled\s+for\s+(\d{1,2})-([A-Za-z]{3})-(\d{4})",
+    ):
+        ref_match = re.search(pattern, text, flags=re.IGNORECASE)
+        if ref_match and ref_match.group(2).lower() in _MANATEE_MONTHS:
+            ref_month = _MANATEE_MONTHS[ref_match.group(2).lower()]
+            ref_year = int(ref_match.group(3))
+            break
+    if ref_year is None:
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se pudo leer el año de la factura de Manatee County "
+            "(ni la fecha de emisión ni la de vencimiento) -- cárguela manualmente."
+        )
+
+    end_year = ref_year - 1 if end_month > ref_month else ref_year
+    start_year = end_year - 1 if start_month > end_month else end_year
+    try:
+        start = datetime(start_year, start_month, start_day)
+        end = datetime(end_year, end_month, end_day)
+    except ValueError:
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: el período leído de la factura de Manatee County no es "
+            "una fecha válida -- cárguela manualmente."
+        ) from None
+
+    amount = _single_consistent_amount(
+        pdf_path,
+        re.findall(r"Total\s+Amount\s+Due\s*\$?\s*([\d,]+\.\d{2})", text, flags=re.IGNORECASE),
+        "Total Amount Due",
+        "Manatee County",
+    )
+    return _service_period_invoice(start, end, amount)
+
+
 SUPPLIER_REGISTRY = {
     "ht_hackney": {
         "label": "H.T. Hackney",
@@ -2089,19 +2291,17 @@ SUPPLIER_REGISTRY = {
     # Los dos siguientes (2026-09-22, pedido explícito del usuario, junto
     # con sus logos) son servicios mensuales, no proveedores de mercadería
     # -- "is_service": True los separa en su propia sección de la grilla
-    # (ver carga_datos_proveedores_guardado). Igual que jj_taylor/
-    # slush_puppie, nunca se detectan solos de un PDF -- Manatee County ya
-    # estaba decidido que se sigue cargando a mano (ver "Pendiente /
-    # decisiones abiertas" más abajo en este archivo); FPL es nuevo, sin
-    # ningún extractor pedido todavía.
+    # (ver carga_datos_proveedores_guardado). Desde el 2026-09-22 Manatee
+    # County y FPL sí se detectan y extraen solos (factura por período, ver
+    # _extract_fpl_invoice/_extract_manatee_invoice más arriba).
     "manatee_county": {
         "label": "Manatee County Utilities",
         "sheet_name": "MANATEE COUNTY",
         "resumen_label": "MANATEE COUNTY",
         "logo": "supplier_logos/manatee_county.png",
         "is_service": True,
-        "detect": lambda text: False,
-        "extract": _no_automatic_extraction,
+        "detect": _detect_manatee,
+        "extract": _extract_manatee_invoice,
     },
     "fpl": {
         "label": "Florida Power & Light (FPL)",
@@ -2109,8 +2309,8 @@ SUPPLIER_REGISTRY = {
         "resumen_label": "FPL",
         "logo": "supplier_logos/fpl.png",
         "is_service": True,
-        "detect": lambda text: False,
-        "extract": _no_automatic_extraction,
+        "detect": _detect_fpl,
+        "extract": _extract_fpl_invoice,
     },
 }
 
@@ -2206,14 +2406,30 @@ def _detect_supplier(pdf_path):
     with pdfplumber.open(pdf_path) as pdf:
         for page in pdf.pages:
             text = page.extract_text() or ""
-            if not text.strip():
-                image = _extract_page_image(page)
+            has_text_layer = bool(text.strip())
+            if not has_text_layer:
+                try:
+                    image = _extract_page_image(page)
+                except OSError:
+                    # Imagen incrustada que PIL no sabe abrir (ej. el logo
+                    # de Manatee County) -- se deja al respaldo de abajo.
+                    image = None
                 if image is not None:
                     _ensure_pytesseract()
                     text = pytesseract.image_to_string(image)
             for key, config in registry.items():
                 if config["detect"](text):
                     return key
+            # Respaldo: sin capa de texto y sin una foto que cubra la hoja,
+            # el texto está dibujado como trazos (ej. Manatee County) -- la
+            # imagen incrustada más grande era un logo/QR, no la factura.
+            # Solo corre si el camino de siempre no reconoció nada.
+            if not has_text_layer and not _page_is_full_scan(page):
+                _ensure_pytesseract()
+                rendered_text = pytesseract.image_to_string(_render_page_for_ocr(page))
+                for key, config in registry.items():
+                    if config["detect"](rendered_text):
+                        return key
 
     raise ValueError(f"{os.path.basename(pdf_path)}: proveedor no reconocido.")
 
