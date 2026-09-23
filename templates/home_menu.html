@@ -2,13 +2,13 @@
 {% block title %}Bradenton App{% endblock %}
 {% block head_extra %}
 <style>
-  .home-menu-wrap { max-width: 760px; margin: 56px auto 40px; padding: 0 16px; }
+  .home-menu-wrap { max-width: 1040px; margin: 56px auto 40px; padding: 0 16px; }
   .home-menu-header { text-align: center; margin-bottom: 34px; }
   .home-menu-header h1 { font-size: 25px; margin: 0 0 8px; color: var(--text); }
   .home-menu-header p { font-size: 14px; color: var(--text-soft); margin: 0; }
   .home-menu-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
     gap: 20px;
   }
   .home-menu-card {
@@ -67,11 +67,19 @@
       <span class="home-menu-card-desc">PDF y Excel con el resumen del mes de cada módulo -- con el logo y el nombre de la empresa, listos para descargar.</span>
       <span class="home-menu-card-cta">Entrar →</span>
     </a>
+    <a class="home-menu-card" href="{{ url_for('documentos_index') }}" style="--card-color: #B45309; --card-color-soft: #FDF0DC;">
+      <span class="home-menu-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+      </span>
+      <span class="home-menu-card-label">Documentos</span>
+      <span class="home-menu-card-desc">Los PDF y Excel originales de cada módulo, ordenados por mes, para verlos o descargarlos cuando haga falta.</span>
+      <span class="home-menu-card-cta">Entrar →</span>
+    </a>
     <!-- "Proyecciones" -- pedido explícito del usuario (2026-09-22): el
          módulo sigue andando tal cual (/carga-datos/proyecciones,
          proyecciones.py, sin tocar) pero se saca del menú hasta que quede
          bien -- "no lo borres, solo anulalo en la pagina". No agregar una
-         tercera tarjeta acá sin que el usuario lo pida. -->
+         tarjeta de Proyecciones acá sin que el usuario lo pida. -->
   </div>
 </div>
 {% endblock %}

@@ -1,12 +1,12 @@
 {% extends "base.html" %}
 {% block crumbs %}
-<nav class="crumbs"><a href="{{ url_for('carga_datos_lottery_historial') }}">Lottery</a><span class="current">PDFs cargados</span></nav>
+<nav class="crumbs"><a href="{{ url_for('documentos_index') }}">Documentos</a><span class="current">Lottery</span></nav>
 {% endblock %}
 {% block content %}
 {% from "_month_jump.html" import month_jump %}
 {% from "_pdf_links.html" import pdf_links %}
 <div class="page-header">
-  <h1>Lottery — PDFs cargados</h1>
+  <h1>Lottery — Documentos</h1>
   <p class="page-subtitle">Los PDF diarios que alimentan el cuadro semanal (Reporte Diario y Daily Sales Report) — un día puede tener los dos.</p>
 </div>
 
@@ -41,7 +41,7 @@
   {% endif %}
 </div>
 
-<div class="card monthly-pdf-card">
+<div class="card monthly-pdf-card" id="pdf-mensual">
   <h2>PDF mensual de Lottery</h2>
   <p class="muted">El resumen mensual real que manda Florida Lottery — eliminá el que ya está cargado para poder subir otro.</p>
 

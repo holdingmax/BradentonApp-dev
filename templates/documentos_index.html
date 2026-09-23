@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-header">
+  <h1>Documentos</h1>
+  <p class="page-subtitle">Los PDF y Excel originales de cada módulo, guardados tal cual para consultarlos o descargarlos cuando haga falta.</p>
+</div>
+<div class="tool-grid">
+  {% for section in sections %}
+    <a class="tool-card" href="{{ section.url }}" style="--tool-accent: {{ section.accent }};">
+      <span class="tool-card-badge">{{ section.icon|safe }}</span>
+      <span class="tool-card-body">
+        <span class="tool-card-label">{{ section.label }}</span>
+        <span class="tool-card-desc">{{ section.description }}</span>
+      </span>
+    </a>
+  {% endfor %}
+</div>
+{% endblock %}

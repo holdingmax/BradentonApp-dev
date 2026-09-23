@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block crumbs %}
-<nav class="crumbs"><a href="{{ url_for('reporte_historial') }}">Reporte Diario</a><span class="current">Documentos</span></nav>
+<nav class="crumbs"><a href="{{ url_for('documentos_index') }}">Documentos</a><span class="current">Reporte Diario</span></nav>
 {% endblock %}
 {% block content %}
 {% from "_month_jump.html" import month_jump %}
@@ -48,7 +48,7 @@
   </div>
 </div>
 
-<div class="card monthly-pdf-card">
+<div class="card monthly-pdf-card" id="pdf-mensual">
   <h2>PDF de resumen mensual</h2>
   <p class="muted">Se guarda tal cual para consultarlo — eliminá el que ya está cargado para poder subir otro.</p>
 

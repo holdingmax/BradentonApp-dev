@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}{% if request.path.startswith('/carga-datos/reportes') %}Reportes{% elif request.path.startswith('/carga-datos/proyecciones') %}Proyecciones{% elif request.path.startswith('/controles') %}Controles{% else %}Carga de Datos{% endif %}{% endblock %}</title>
+  <title>{% block title %}{% if request.path.startswith('/carga-datos/reportes') %}Reportes{% elif request.path.startswith('/carga-datos/proyecciones') %}Proyecciones{% elif request.path.startswith('/documentos') %}Documentos{% elif request.path.startswith('/controles') %}Controles{% else %}Carga de Datos{% endif %}{% endblock %}</title>
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='logo.png') }}">
   <style>
     :root {
@@ -233,6 +233,7 @@
     .section-switch-current-carga { background: #0B6FAE; }
     .section-switch-current-reportes { background: #7C3AED; }
     .section-switch-current-proyecciones { background: #6B7280; }
+    .section-switch-current-documentos { background: #B45309; }
 
     .topbar-left { grid-column: 1; justify-self: start; min-width: 0; margin-left: -14px; display: flex; align-items: center; flex-wrap: wrap; row-gap: 6px; overflow: hidden; }
 
@@ -1104,7 +1105,7 @@
           <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('carga_datos_reporte_diario') }}">Cargar PDF</a>
           <a class="app-rail-panel-link" href="{{ url_for('reporte_historial') }}">Ventas por Departamento</a>
           <a class="app-rail-panel-link" href="{{ url_for('reporte_store_info_historial') }}">Store Info</a>
-          <a class="app-rail-panel-link" href="{{ url_for('reporte_documentos') }}">Documentos</a>
+          <a class="app-rail-panel-link" href="{{ url_for('reporte_documentos') }}#pdf-mensual">PDF mensual</a>
         </div>
       </div>
       <div class="app-rail-item" data-rail-key="chase">
@@ -1119,7 +1120,7 @@
           <div class="app-rail-panel-title">Chase Bank</div>
           <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('chase') }}">Cargar extracto</a>
           <a class="app-rail-panel-link" href="{{ url_for('chase_historial') }}">Movimientos guardados</a>
-          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_documentos', module_key='chase') }}">Documentos</a>
+          <a class="app-rail-panel-link" href="{{ url_for('chase_cheques') }}">Cheques</a>
         </div>
       </div>
       <div class="app-rail-item" data-rail-key="eft">
@@ -1135,7 +1136,6 @@
           <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('carga_datos_eft') }}">Cargar EFT / Cupones</a>
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_eft_historial') }}">Aplicacion TC y EFT</a>
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_eft_cupones_historial') }}">Cupones (histórico)</a>
-          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_documentos', module_key='eft') }}">Documentos</a>
         </div>
       </div>
       <div class="app-rail-item" data-rail-key="caja">
@@ -1149,7 +1149,6 @@
         <div class="app-rail-panel">
           <div class="app-rail-panel-title">Caja</div>
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_caja') }}">Cuadro del mes</a>
-          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_documentos', module_key='caja') }}">Documentos</a>
         </div>
       </div>
       <div class="app-rail-item" data-rail-key="gettel">
@@ -1165,7 +1164,6 @@
           <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('carga_datos_gettel') }}">Cargar</a>
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_gettel_historial') }}">Cuadro del mes</a>
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_gettel_pagos_cuadro') }}">Cuadro de Pagos</a>
-          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_documentos', module_key='gettel_toyota') }}">Documentos</a>
         </div>
       </div>
       <div class="app-rail-item" data-rail-key="cmv">
@@ -1181,8 +1179,6 @@
           <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('carga_datos_cmv') }}">Cargar</a>
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_cmv_costo_historial') }}">Costo</a>
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_cmv_ventas_historial') }}">Ventas</a>
-          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_documentos', module_key='cmv_costo') }}">Documentos (Costo)</a>
-          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_documentos', module_key='cmv_ventas') }}">Documentos (Ventas)</a>
         </div>
       </div>
       <div class="app-rail-item" data-rail-key="lottery">
@@ -1197,8 +1193,8 @@
           <div class="app-rail-panel-title">Lottery</div>
           <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('carga_datos_lottery') }}">Cargar PDF</a>
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_lottery_historial') }}">Cuadro del mes</a>
-          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_lottery_documentos') }}">PDFs cargados</a>
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_lottery_resumen_mensual') }}">Resumen mensual</a>
+          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_lottery_documentos') }}#pdf-mensual">PDF mensual</a>
         </div>
       </div>
       <div class="app-rail-item" data-rail-key="proveedores">
@@ -1213,7 +1209,6 @@
           <div class="app-rail-panel-title">Proveedores</div>
           <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('carga_datos_proveedores') }}">Cargar factura</a>
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_proveedores_guardado') }}">Planilla</a>
-          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_documentos', module_key='proveedores') }}">Documentos</a>
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_proveedores_reglas') }}">Reglas de pago</a>
           {% if current_user.is_authenticated and current_user.is_admin %}
           <a class="app-rail-panel-link" href="{{ url_for('proveedores_nuevo') }}">+ Proveedor nuevo</a>
@@ -1232,7 +1227,6 @@
           <div class="app-rail-panel-title">Horas de Trabajo</div>
           <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('carga_datos_horas_trabajo') }}">Cargar reporte</a>
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_horas_trabajo_historial') }}">Ver guardado</a>
-          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_documentos', module_key='horas_trabajo') }}">Documentos</a>
         </div>
       </div>
       <div class="app-rail-item" data-rail-key="fisico">
@@ -1247,7 +1241,6 @@
           <div class="app-rail-panel-title">Físico</div>
           <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('carga_datos_combustible') }}">Cargar Facturas</a>
           <a class="app-rail-panel-link" href="{{ url_for('fisico_view') }}">Cuadro del mes</a>
-          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_documentos', module_key='combustible') }}">Documentos</a>
         </div>
       </div>
     </div>
@@ -1270,6 +1263,11 @@
           <a class="section-switch-current section-switch-current-reportes" href="{{ url_for('carga_datos_reportes') }}">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
             Reportes
+          </a>
+          {% elif request.path.startswith('/documentos') %}
+          <a class="section-switch-current section-switch-current-documentos" href="{{ url_for('documentos_index') }}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+            Documentos
           </a>
           {% elif request.path.startswith('/carga-datos/proyecciones') %}
           <a class="section-switch-current section-switch-current-proyecciones" href="{{ url_for('carga_datos_proyecciones') }}">

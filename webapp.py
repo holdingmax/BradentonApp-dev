@@ -31,6 +31,10 @@ from flask_login import (
 
 import auth
 import chase_db
+import cheques_db
+import depositos
+import depositos_db
+from cheques import check_number_from_chase_description, extract_checks_from_pdf
 from chase_rules import (
     add_dynamic_rule as add_chase_rule,
     build_chase_export_workbook,
@@ -695,7 +699,7 @@ REPORTES_TOOLS = [
         "icon": _ICON_TRUCK,
         "label": "Proveedores",
         "description": "Cuántas facturas llegaron de cada proveedor en el mes y cuál fue el total -- mismo resumen que RESUMEN COMPRAS del Excel real.",
-        "accent": "#7C3AED",
+        "accent": "#DB2777",
         "ready": True,
         "pdf_endpoint": "reportes_proveedores_pdf",
     },
@@ -1925,17 +1929,17 @@ def _run_carga_datos_lottery_job(job_id, pdf_paths):
 # del bloque... que te muestren la sumatoria de valores que hacen para
 # llegar a ese número". Mismo orden que lottery_db._SUBTOTAL_SUM_FIELDS.
 _LOTTERY_SUBTOTAL_LABELS = {
-    "online_count": "Count (ONLINE)",
-    "online_net_sales": "Sales $ (ONLINE)",
-    "sales": "Sales (Terminal)",
+    "online_count": "Recuento (ONLINE)",
+    "online_net_sales": "Ventas $ (ONLINE)",
+    "sales": "Ventas (Terminal)",
     "pagos": "Pagos (Terminal)",
     "comis": "Comis (Terminal)",
-    "prize_free_plays": "Prize FP (Terminal)",
+    "prize_free_plays": "Premios FP (Terminal)",
     "total_comm": "Total Comm (Terminal)",
-    "pays_units": "Pays U (SKOFF)",
-    "pays_amount": "Pays $ (SKOFF)",
-    "skoff_sales_amount": "Sales Amt (SKOFF)",
-    "sales_comm": "Sales Comm (SKOFF)",
+    "pays_units": "Pagos U (SKOFF)",
+    "pays_amount": "Pagos $ (SKOFF)",
+    "skoff_sales_amount": "Monto Ventas (SKOFF)",
+    "sales_comm": "Comm Ventas (SKOFF)",
 }
 
 
@@ -1957,30 +1961,30 @@ def _decorate_lottery_blocks_with_breakdowns(blocks):
         debito = block["debito"]
         block["debito_breakdowns"] = {
             "online_net_sales": [  # E =+E-F
-                ("Sales $ (ONLINE, Subtotal)", subtotal.get("online_net_sales")),
-                ("Sales (Terminal, Subtotal) — resta", -subtotal["sales"] if subtotal.get("sales") is not None else None),
+                ("Ventas $ (ONLINE, Subtotal)", subtotal.get("online_net_sales")),
+                ("Ventas (Terminal, Subtotal) — resta", -subtotal["sales"] if subtotal.get("sales") is not None else None),
             ],
             "sales": [  # F =+F+G+I+K+10
-                ("Sales (Terminal, Subtotal)", subtotal.get("sales")),
+                ("Ventas (Terminal, Subtotal)", subtotal.get("sales")),
                 ("Pagos (Terminal, Subtotal)", subtotal.get("pagos")),
                 ("Comis (Terminal, Subtotal)", subtotal.get("comis")),
-                ("Prize FP (Terminal, Subtotal)", subtotal.get("prize_free_plays")),
+                ("Premios FP (Terminal, Subtotal)", subtotal.get("prize_free_plays")),
                 ("Cargo fijo", 10),
             ],
             "pays_amount": [  # Q
-                ("Pays $ (SKOFF, Subtotal)", subtotal.get("pays_amount")),
-                ("Sales Amt (SKOFF, Subtotal)", subtotal.get("skoff_sales_amount")),
-                ("Sales Comm (SKOFF, Subtotal)", subtotal.get("sales_comm")),
+                ("Pagos $ (SKOFF, Subtotal)", subtotal.get("pays_amount")),
+                ("Monto Ventas (SKOFF, Subtotal)", subtotal.get("skoff_sales_amount")),
+                ("Comm Ventas (SKOFF, Subtotal)", subtotal.get("sales_comm")),
             ],
             "net_debit": [  # V =+F+Q (de la fila Debito)
-                ("Sales (F, Debito)", debito.get("sales")),
-                ("Pays $ (Q, Debito)", debito.get("pays_amount")),
+                ("Ventas (F, Debito)", debito.get("sales")),
+                ("Pagos $ (Q, Debito)", debito.get("pays_amount")),
             ],
         }
         for d in block["days"]:
             d["cuenta_final_breakdown"] = [  # X =-G-Q
                 ("Pagos (G), resta", -d["pagos"] if d.get("pagos") is not None else None),
-                ("Pays $ (Q), resta", -d["pays_amount"] if d.get("pays_amount") is not None else None),
+                ("Pagos $ (Q), resta", -d["pays_amount"] if d.get("pays_amount") is not None else None),
             ]
     return blocks
 
@@ -2130,7 +2134,7 @@ def carga_datos_lottery_dia_pdf(report_date, kind):
     return send_file(path, as_attachment=force_download, download_name=os.path.basename(path))
 
 
-@app.route("/carga-datos/lottery/documentos")
+@app.route("/documentos/lottery")
 def carga_datos_lottery_documentos():
     """
     PDFs diarios ya guardados este mes -- ver lottery_db.get_month_pdf_list.
@@ -2167,7 +2171,7 @@ def carga_datos_lottery_documentos():
     )
 
 
-@app.route("/carga-datos/lottery/documentos/mensual/subir", methods=["POST"])
+@app.route("/documentos/lottery/mensual/subir", methods=["POST"])
 def carga_datos_lottery_documentos_mensual_subir():
     """
     Sube el único PDF mensual de Florida Lottery -- solo se guarda, ver
@@ -2757,6 +2761,352 @@ def chase_categorizar():
         # error real (el movimiento ya no está guardado).
         flash("No se encontró ese movimiento -- puede que ya no esté guardado.", "error")
     return redirect(url_for("chase_historial", year=year, month=month))
+
+
+# ---------------------------------------------------------------------------
+# Chase Bank -> Cheques (2026-09-23) -- pedido explícito del usuario: guardar
+# los PDF de los cheques propios (sueltos o adjuntos a la factura del
+# proveedor) y llevar el control en UN solo cuadro, en orden de N° de cheque,
+# igual que su Excel "Cheques for pays suppliers. Control.xls" (N° / Fecha /
+# Monto / Proveedor / Invoice N° / Debitado en Chase).
+#
+# De dónde sale cada dato (lo tipeado a mano siempre gana):
+# - N°: OCR de la esquina del cheque (cheques.py).
+# - Proveedor / Invoice / Fecha / Monto: la factura del proveedor que viene en
+#   el mismo PDF (se lee al subir, mismo motor que Carga de Datos -> Proveedores);
+#   si el cheque vino suelto, el proveedor vinculado al "CHECK n" de Chase o el
+#   nombre del archivo, y la factura se busca entre las ya cargadas de ese
+#   proveedor por el mismo monto.
+# - Debitado en Chase: el movimiento "CHECK n" de chase_db, cruzado en el
+#   momento (una carga nueva del extracto lo actualiza sola).
+# ---------------------------------------------------------------------------
+
+
+def _supplier_from_filename(filename, registry_entries):
+    """'Cheque 1773. Midtown Wholesale.pdf' -> ('midtown', 'Midtown Wholesale LLC'), o (None, None)."""
+    name = re.sub(r"[^a-z0-9]+", " ", (filename or "").lower())
+    words = set(name.split())
+    for entry in registry_entries:
+        first_word = re.sub(r"[^a-z0-9]+", " ", entry["label"].lower()).split()[0]
+        if entry["key"] in words or (len(first_word) >= 3 and first_word in words):
+            return entry["key"], entry["label"]
+    return None, None
+
+
+def _pdf_without_pages(pdf_path, skip_pages):
+    """Copia temporal del PDF sin las páginas del cheque (algunos extractores de proveedor se confunden con él)."""
+    from pypdf import PdfReader, PdfWriter
+    reader = PdfReader(pdf_path)
+    keep = [i for i in range(len(reader.pages)) if i not in skip_pages]
+    if not keep or len(keep) == len(reader.pages):
+        return None
+    writer = PdfWriter()
+    for i in keep:
+        writer.add_page(reader.pages[i])
+    out_path = os.path.join(_new_workspace_dir(), os.path.basename(pdf_path))
+    with open(out_path, "wb") as handle:
+        writer.write(handle)
+    return out_path
+
+
+def _read_check_invoice(pdf_path, filename, check_pages=()):
+    """
+    Datos automáticos del cheque a partir de la factura del proveedor que
+    viene en el mismo PDF (se lee sin las páginas del cheque, que confunden a
+    algunos extractores). Nunca lanza: si se reconoce el proveedor pero no la
+    factura, queda al menos el proveedor; si nada, el proveedor según el
+    nombre del archivo; y si tampoco, vacío.
+    """
+    import proveedores as proveedores_module
+    auto = {}
+    candidates = []
+    trimmed = None
+    try:
+        trimmed = _pdf_without_pages(pdf_path, set(check_pages)) if check_pages else None
+    except Exception as exc:
+        print(f"[cheques] no se pudo separar la factura de {filename}: {exc}")
+    candidates = [path for path in (trimmed, pdf_path) if path]
+    registry = proveedores_module._effective_supplier_registry()
+    for path in candidates:
+        try:
+            supplier_key = proveedores_module._detect_supplier(path)
+        except Exception:
+            continue
+        auto.update(auto_supplier_key=supplier_key, auto_supplier_label=registry[supplier_key]["label"])
+        try:
+            result = registry[supplier_key]["extract"](path)
+        except Exception as exc:
+            print(f"[cheques] proveedor {supplier_key} reconocido pero sin factura legible en {filename}: {exc}")
+            continue
+        invoices = [inv for inv in (result if isinstance(result, list) else [result]) if inv]
+        if invoices:
+            auto["auto_invoice_no"] = " ".join(str(inv["invoice_no"]) for inv in invoices if inv.get("invoice_no")) or None
+            dates = [inv["date"] for inv in invoices if inv.get("date")]
+            if dates:
+                auto["auto_invoice_date"] = max(dates).strftime("%Y-%m-%d")
+            amounts = [inv["amount"] for inv in invoices if inv.get("amount") is not None]
+            if amounts:
+                auto["auto_amount"] = round(sum(amounts), 2)
+        break
+    if not auto.get("auto_supplier_key"):
+        key, label = _supplier_from_filename(filename, list_supplier_registry_entries())
+        if key:
+            auto.update(auto_supplier_key=key, auto_supplier_label=label)
+    return auto
+
+
+def _fmt_ddmmyyyy(iso_text):
+    return f"{iso_text[8:10]}/{iso_text[5:7]}/{iso_text[:4]}" if iso_text and len(iso_text) >= 10 else None
+
+
+def _match_invoice_by_amount(invoices, amount, before_iso):
+    """La factura del proveedor con ese monto exacto (la más reciente anterior al débito), si es única."""
+    if amount is None:
+        return None
+    candidates = [
+        inv for inv in invoices
+        if abs(inv["amount"] - amount) < 0.01 and (not before_iso or inv["invoice_date"] <= before_iso)
+    ]
+    if not candidates:
+        return None
+    candidates.sort(key=lambda inv: inv["invoice_date"], reverse=True)
+    return candidates[0]
+
+
+def _build_cheques_rows():
+    """Una fila por N° de cheque (cargados, cobrados en Chase, y los huecos entre medio), en orden."""
+    records = cheques_db.list_checks()
+    registry = list_supplier_registry_entries()
+    supplier_labels = {entry["key"]: entry["label"] for entry in registry}
+
+    chase_by_number = {}
+    for tx in chase_db.get_check_transactions():
+        number = check_number_from_chase_description(tx["description"])
+        if number is not None:
+            chase_by_number.setdefault(number, tx)
+
+    by_number = {r["check_number"]: r for r in records if r["check_number"] is not None}
+    numbers = set(by_number) | set(chase_by_number)
+    if numbers:
+        numbers |= set(range(min(numbers), max(numbers) + 1))  # huecos: se ven igual que en el Excel
+
+    invoice_cache = {}
+
+    def supplier_invoices(key):
+        if key not in invoice_cache:
+            invoice_cache[key] = proveedores_db.get_supplier_invoices(key) if key else []
+        return invoice_cache[key]
+
+    def build(record, number):
+        record = record or {}
+        tx = chase_by_number.get(number) if number is not None else None
+        chase_amount = round(-tx["amount"], 2) if tx else None
+        supplier_key = record.get("auto_supplier_key") or (tx.get("supplier_key") if tx else None)
+        supplier = (
+            record.get("manual_supplier")
+            or record.get("auto_supplier_label")
+            or supplier_labels.get(supplier_key)
+        )
+        if not supplier and tx:
+            supplier = re.sub(r"^\s*CHE(?:CK|QUE)\s*#?\s*\d+\s*(\d{2}/\d{2}\s*)?", "", tx["description"], flags=re.I).strip() or None
+        if not supplier_key and not record.get("manual_supplier"):
+            supplier_key, _ = _supplier_from_filename(record.get("source_filename"), registry)
+
+        amount = record.get("manual_amount")
+        if amount is None:
+            amount = chase_amount if chase_amount is not None else record.get("auto_amount")
+
+        invoice_no = record.get("manual_invoice") or record.get("auto_invoice_no")
+        invoice_date = record.get("auto_invoice_date")
+        if not invoice_no and supplier_key and amount is not None:
+            match = _match_invoice_by_amount(supplier_invoices(supplier_key), amount, tx["posting_date"] if tx else None)
+            if match:
+                invoice_no, invoice_date = match["invoice_no"], invoice_date or match["invoice_date"]
+
+        debit_iso = record.get("manual_debit_date") or (tx["posting_date"] if tx else None)
+        date_iso = record.get("manual_date") or invoice_date
+        if record.get("voided"):
+            status = "Anulado"
+        elif number is None:
+            status = "Sin N°"
+        elif debit_iso:
+            status = "Cobrado"
+        elif record:
+            status = "Pendiente"
+        else:
+            status = "Sin registro"
+        return {
+            "id": record.get("id"),
+            "number": number,
+            "has_pdf": bool(record.get("check_pdf")),
+            "source_filename": record.get("source_filename"),
+            "date": _fmt_ddmmyyyy(date_iso),
+            "date_iso": date_iso,
+            "amount": amount,
+            "supplier": supplier,
+            "invoice_no": invoice_no,
+            "debit": _fmt_ddmmyyyy(debit_iso),
+            "debit_iso": debit_iso,
+            "status": status,
+            "voided": bool(record.get("voided")),
+            "manual": {k: record.get(k) for k in (
+                "manual_date", "manual_amount", "manual_supplier", "manual_invoice", "manual_debit_date")},
+        }
+
+    rows = [build(by_number.get(n), n) for n in sorted(numbers)]
+    rows += [build(r, None) for r in records if r["check_number"] is None]
+    return rows
+
+
+@app.route("/carga-datos/chase/cheques")
+def chase_cheques():
+    rows = _build_cheques_rows()
+    stats = {
+        "total": sum(1 for r in rows if r["has_pdf"]),
+        "cobrados": sum(1 for r in rows if r["status"] == "Cobrado"),
+        "pendientes": sum(1 for r in rows if r["status"] == "Pendiente"),
+        "sin_pdf": sum(1 for r in rows if r["status"] == "Cobrado" and not r["has_pdf"]),
+    }
+    _active_job = jobs.get_active_job("cheques")
+    return render_template(
+        "chase_cheques.html",
+        rows=rows,
+        stats=stats,
+        supplier_names=sorted({e["label"] for e in list_supplier_registry_entries()}
+                              | {r["supplier"] for r in rows if r["supplier"]}),
+        resume_job_id=(_active_job["id"] if _active_job else None),
+        **THEME_BY_KEY["carga_chase"],
+    )
+
+
+@app.route("/carga-datos/chase/cheques/subir", methods=["POST"])
+def chase_cheques_subir():
+    pdf_uploads = request.files.getlist("pdf_files")
+    if not pdf_uploads or not any(u.filename for u in pdf_uploads):
+        return _error_response("Seleccioná uno o más PDF con cheques.")
+    pdf_paths = _save_uploads_to_workspace(pdf_uploads)
+    job_id = jobs.create_job(len(pdf_paths), kind="cheques")
+    threading.Thread(target=_run_chase_cheques_job, args=(job_id, pdf_paths), daemon=True).start()
+    return jsonify({"job_id": job_id, "total": len(pdf_paths)})
+
+
+def _run_chase_cheques_job(job_id, pdf_paths):
+    """Mismo patrón que _run_carga_datos_lottery_job: aislado por PDF, avisos cortos sin nombres de archivo."""
+    try:
+        saved = unreadable_number = duplicates = no_check = failed = 0
+        for index, pdf_path in enumerate(pdf_paths, start=1):
+            filename = os.path.basename(pdf_path)
+            try:
+                found = extract_checks_from_pdf(pdf_path)
+                if not found:
+                    no_check += 1
+                original_rel = None
+                auto = None
+                for item in found:
+                    number = item["number"]
+                    existing = cheques_db.find_by_number(number) if number is not None else None
+                    if existing and existing["check_pdf"]:
+                        duplicates += 1
+                        continue
+                    if original_rel is None:
+                        original_rel = cheques_db.store_original(pdf_path, filename)
+                        # Un PDF con varios cheques comparte la misma factura -- se lee una vez.
+                        auto = _read_check_invoice(pdf_path, filename, [c["page"] for c in found]) if len(found) == 1 else {}
+                    cheques_db.add_check(number, item["image"], original_rel, filename, item["page"], auto=auto)
+                    saved += 1
+                    if number is None:
+                        unreadable_number += 1
+            except Exception as exc:
+                print(f"[carga-datos/chase/cheques] {pdf_path}: {exc}")
+                failed += 1
+            jobs.update_job(job_id, done=index, total=len(pdf_paths))
+
+        parts = []
+        if saved:
+            parts.append(f"{saved} cheque(s) guardado(s).")
+        if unreadable_number:
+            parts.append(f"{unreadable_number} sin N° legible — completalo a mano en el cuadro.")
+        if duplicates:
+            parts.append(f"{duplicates} ya estaban cargados y se omitieron.")
+        if no_check:
+            parts.append(f"{no_check} archivo(s) sin ningún cheque adentro.")
+        if failed:
+            parts.append(f"{failed} archivo(s) no se pudieron leer.")
+        if saved:
+            level = "warning" if (unreadable_number or no_check or failed) else "success"
+        else:
+            level = "warning" if duplicates and not (no_check or failed) else "error"
+        jobs.update_job(
+            job_id, status="done", done=len(pdf_paths), total=len(pdf_paths),
+            notice=" ".join(parts) or "No se encontró ningún cheque.", notice_level=level,
+            redirect_url="/carga-datos/chase/cheques",
+        )
+    except Exception as exc:
+        jobs.update_job(job_id, status="error", error=f"Error: {exc}")
+
+
+@app.route("/carga-datos/chase/cheques/<int:check_id>/pdf")
+def chase_cheque_pdf(check_id):
+    """El cheque recortado y derecho; ?original=1 sirve el PDF completo subido, ?descargar=1 lo baja."""
+    check = cheques_db.get_check(check_id)
+    original = request.args.get("original") == "1"
+    relpath = (check or {}).get("original_pdf" if original else "check_pdf")
+    path = cheques_db.absolute_path(relpath) if relpath else None
+    if not path or not os.path.isfile(path):
+        flash("No se encontró el archivo guardado de ese cheque.", "error")
+        return redirect(url_for("chase_cheques"))
+    if original:
+        name = check["source_filename"] or "original.pdf"
+    elif check["check_number"]:
+        name = f"Cheque {check['check_number']}.pdf"
+    else:
+        name = f"Cheque sin numero {check_id}.pdf"
+    return send_file(path, mimetype="application/pdf",
+                     as_attachment=request.args.get("descargar") == "1", download_name=name)
+
+
+def _parse_money_field(raw):
+    raw = (raw or "").replace("$", "").replace(",", "").strip()
+    if not raw:
+        return None
+    return round(float(raw), 2)
+
+
+@app.route("/carga-datos/chase/cheques/guardar", methods=["POST"])
+def chase_cheque_guardar():
+    """Alta o corrección a mano de una fila del cuadro (un campo vacío vuelve a lo automático)."""
+    form = request.form
+    check_id = form.get("check_id", type=int)
+    raw_number = (form.get("check_number") or "").strip()
+    try:
+        if raw_number and not raw_number.isdigit():
+            raise ValueError("El N° de cheque tiene que ser un número.")
+        number = int(raw_number) if raw_number else None
+        if check_id is None and number is None:
+            raise ValueError("Poné el N° de cheque.")
+        try:
+            amount = _parse_money_field(form.get("manual_amount"))
+        except ValueError:
+            raise ValueError("El monto no es un número válido.")
+        fields = {
+            "manual_date": form.get("manual_date") or None,
+            "manual_amount": amount,
+            "manual_supplier": (form.get("manual_supplier") or "").strip() or None,
+            "manual_invoice": (form.get("manual_invoice") or "").strip() or None,
+            "manual_debit_date": form.get("manual_debit_date") or None,
+            "voided": 1 if form.get("voided") else 0,
+        }
+        cheques_db.save_manual(check_id, number, fields)
+    except ValueError as exc:
+        flash(str(exc), "error")
+    return redirect(url_for("chase_cheques") + (f"#cheque-{raw_number}" if raw_number else ""))
+
+
+@app.route("/carga-datos/chase/cheques/<int:check_id>/eliminar", methods=["POST"])
+def chase_cheque_eliminar(check_id):
+    if not cheques_db.delete_check(check_id):
+        flash("Ese cheque ya no existe.", "error")
+    return redirect(url_for("chase_cheques"))
 
 
 @app.route("/cmv")
@@ -3622,7 +3972,7 @@ def _parse_report_date(report_date):
     return datetime.strptime(report_date, "%Y-%m-%d").date()
 
 
-@app.route("/reporte/documentos")
+@app.route("/documentos/reporte-diario")
 def reporte_documentos():
     """
     PDFs de cierre diario ya guardados este mes -- ver CLAUDE.md, barra
@@ -3661,7 +4011,7 @@ def reporte_documentos():
     )
 
 
-@app.route("/reporte/documentos/mensual/subir", methods=["POST"])
+@app.route("/documentos/reporte-diario/mensual/subir", methods=["POST"])
 def reporte_documentos_mensual_subir():
     """
     Sube el único PDF de resumen mensual -- solo se guarda, ver arriba. Un
@@ -5135,6 +5485,282 @@ def carga_datos_cmv_ventas_historial():
     )
 
 
+# Sección "Documentos" -- tercera opción del Menú (pedido explícito del
+# usuario, 2026-09-23): "dentro de el varios modulos en los que solo se
+# contengan los documentos fisicos tipo Pdf o excel". Cada tarjeta abre la
+# lista de archivos originales de un módulo -- los mismos que ya se guardaban
+# al cargar (documents_db, y los PDF diarios de Reporte Diario/Lottery en sus
+# propias bases), ahora juntos en un solo lugar en vez de repartidos por la
+# barra lateral. Orden = el de la barra lateral.
+DOCUMENTOS_SECTIONS = [
+    {"label": "Reporte Diario", "endpoint": "reporte_documentos", "theme": "reporte", "icon": _ICON_CALENDAR,
+     "description": "PDF de cierre diario, uno por día, y el resumen mensual."},
+    {"label": "Chase Bank", "module": "chase", "theme": "carga_chase", "icon": _ICON_BANK,
+     "description": "Extractos y comprobantes del banco."},
+    {"label": "EFT y Cupones", "module": "eft", "theme": "carga_eft", "icon": _ICON_EXCHANGE,
+     "description": "PDF de cada EFT, reportes de Cupones y facturas de J.H. Williams."},
+    {"label": "Caja", "module": "caja", "theme": "carga_caja", "icon": _ICON_REGISTER,
+     "description": "Comprobantes de depósito y planillas de gastos en efectivo."},
+    {"label": "Gettel / Toyota", "module": "gettel_toyota", "theme": "carga_gettel", "icon": _ICON_CAR,
+     "description": "Excel y PDF de cupones de combustible de los vendedores."},
+    {"label": "CMV — Costo", "module": "cmv_costo", "theme": "carga_cmv", "icon": _ICON_COINS,
+     "description": "Archivos de costo por departamento."},
+    {"label": "CMV — Ventas", "module": "cmv_ventas", "theme": "carga_cmv", "icon": _ICON_COINS,
+     "description": "Archivos de ventas mensuales por departamento."},
+    {"label": "Lottery", "endpoint": "carga_datos_lottery_documentos", "theme": "lottery", "icon": _ICON_TICKET,
+     "description": "PDF diarios (Department y Daily Sales Report) y el resumen mensual."},
+    {"label": "Proveedores", "module": "proveedores", "theme": "carga_proveedores", "icon": _ICON_TRUCK,
+     "description": "Facturas de proveedores, en una carpeta por proveedor."},
+    {"label": "Horas de Trabajo", "module": "horas_trabajo", "theme": "carga_horas", "icon": _ICON_CLOCK,
+     "description": "Reportes semanales de horas y comprobantes de pago."},
+    {"label": "Combustible", "module": "combustible", "theme": "fisico", "icon": _ICON_FUEL,
+     "description": "Facturas de combustible."},
+    {"label": "Depósitos", "endpoint": "documentos_depositos", "theme": "carga_chase",
+     "icon": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/></svg>',
+     "description": "Recibos de depósito del banco, uno por fila con su fecha, monto y descripción."},
+]
+
+
+@app.route("/documentos")
+def documentos_index():
+    sections = []
+    for item in DOCUMENTOS_SECTIONS:
+        if "module" in item:
+            url = url_for("carga_datos_documentos", module_key=item["module"])
+        else:
+            url = url_for(item["endpoint"])
+        sections.append({**item, **THEME_BY_KEY[item["theme"]], "url": url})
+    return render_template("documentos_index.html", sections=sections)
+
+
+# ---------------------------------------------------------------------------
+# Documentos -> Depósitos (pedido explícito del usuario, 2026-09-23): cada
+# recibo de depósito es una fila propia (un PDF con varios recibos se divide
+# en una fila por página, cada una con su PDF), con fecha, monto y
+# descripción leídos por OCR y editables. Ver depositos.py/depositos_db.py.
+# ---------------------------------------------------------------------------
+
+_CHASE_DEPOSIT_KINDS = {"FOOD TRUCK": depositos.FOOD_TRUCK, "DEPOSITO VENTA ICE": depositos.ICE_MACHINE}
+
+
+def _chase_deposits(year, month):
+    """Depósitos (monto positivo, descripción DEPOSIT) de Chase en ese mes."""
+    return [
+        r for r in chase_db.get_month_transactions(year, month)
+        if (r.get("amount") or 0) > 0 and "DEPOSIT" in (r.get("description") or "").upper()
+    ]
+
+
+def _chase_kind_for(deposit_date, amount):
+    """Food Truck / Ice Machine según cómo quedó categorizado ese depósito en Chase (si ya está cargado)."""
+    if deposit_date is None or amount is None:
+        return None
+    for r in _chase_deposits(deposit_date.year, deposit_date.month):
+        if r["posting_date"] == deposit_date.isoformat() and abs(r["amount"] - amount) < 0.005:
+            kind = _CHASE_DEPOSIT_KINDS.get((r.get("detalle") or "").upper())
+            if kind:
+                return kind
+    return None
+
+
+@app.route("/documentos/depositos")
+def documentos_depositos():
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+
+    rows = depositos_db.list_month(year, month)
+    # Marca "En Chase": mismo día y mismo monto, cada movimiento de Chase se usa una sola vez.
+    chase_rows = _chase_deposits(year, month)
+    pending_chase = {}
+    for r in chase_rows:
+        key = (r["posting_date"], round(r["amount"], 2))
+        pending_chase[key] = pending_chase.get(key, 0) + 1
+    for row in rows:
+        key = (row["deposit_date"], round(row["amount"], 2)) if row["amount"] is not None else None
+        row["in_chase"] = bool(key and pending_chase.get(key))
+        if row["in_chase"]:
+            pending_chase[key] -= 1
+        row["date_display"] = (
+            f"{row['deposit_date'][8:10]}/{row['deposit_date'][5:7]}/{row['deposit_date'][:4]}"
+            if row["deposit_date"] else None
+        )
+    total = sum(r["amount"] or 0 for r in rows)
+
+    # Control contra Caja (pedido explícito del usuario, 2026-09-23): la suma
+    # de los depósitos normales tiene que dar igual que la columna Depósitos
+    # de Caja. Un depósito con aclaración (Food Truck, Ice Machine, Vaccumms)
+    # no es un depósito normal -- en Caja va aparte o no va.
+    docs_by_day = {}
+    for row in rows:
+        row["is_special"] = bool(row.get("kind"))
+        if not row["is_special"] and row["deposit_date"]:
+            docs_by_day[row["deposit_date"]] = docs_by_day.get(row["deposit_date"], 0) + (row["amount"] or 0)
+    caja_control = None
+    try:
+        caja_report = build_caja_month_report(year, month)
+        caja_by_day = {r["date"]: (r.get("deposit") or 0) for r in caja_report["rows"]}
+        docs_normal = round(sum(docs_by_day.values()), 2)
+        caja_total = round(caja_report["totals"].get("deposit") or 0, 2)
+        diff_days = []
+        for day in sorted(set(caja_by_day) | set(docs_by_day)):
+            docs_amount, caja_amount = docs_by_day.get(day, 0), caja_by_day.get(day, 0) or 0
+            if abs(docs_amount - caja_amount) > 0.005:
+                diff_days.append({
+                    "date": f"{day[8:10]}/{day[5:7]}/{day[:4]}",
+                    "docs": docs_amount, "caja": caja_amount, "diff": round(docs_amount - caja_amount, 2),
+                })
+        caja_control = {
+            "docs": docs_normal, "caja": caja_total, "diff": round(docs_normal - caja_total, 2),
+            "ok": abs(docs_normal - caja_total) < 0.005, "days": diff_days,
+        }
+    except Exception as exc:
+        print(f"[documentos/depositos] control contra Caja: {exc}")
+
+    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+    _active_job = jobs.get_active_job("depositos")
+    return render_template(
+        "documentos_depositos.html",
+        rows=rows,
+        total=total,
+        caja_control=caja_control,
+        chase_loaded=bool(chase_rows),
+        year=year,
+        month=month,
+        month_name=_MONTH_NAMES_ES[month - 1],
+        prev_year=prev_year,
+        prev_month=prev_month,
+        next_year=next_year,
+        next_month=next_month,
+        resume_job_id=(_active_job["id"] if _active_job else None),
+        **THEME_BY_KEY["carga_chase"],
+    )
+
+
+@app.route("/documentos/depositos/subir", methods=["POST"])
+def documentos_depositos_subir():
+    uploads = [u for u in request.files.getlist("pdf_files") if u and u.filename]
+    if not uploads:
+        return _error_response("Seleccioná uno o más PDF de depósitos.")
+    pdf_paths = _save_uploads_to_workspace(uploads)
+    fallback = (request.form.get("year", type=int) or date.today().year,
+                request.form.get("month", type=int) or date.today().month)
+    job_id = jobs.create_job(len(pdf_paths), kind="depositos")
+    threading.Thread(target=_run_depositos_job, args=(job_id, pdf_paths, fallback), daemon=True).start()
+    return jsonify({"job_id": job_id, "total": len(pdf_paths)})
+
+
+def import_deposit_pdf(pdf_path, filename, fallback_period):
+    """Divide un PDF en depósitos y los guarda. Devuelve (guardados, incompletos, duplicados, primer_período)."""
+    saved = incomplete = duplicates = 0
+    first_period = None
+    for item in depositos.extract_deposits_from_pdf(pdf_path, filename):
+        deposit_date = item["date"]
+        iso = deposit_date.isoformat() if deposit_date else None
+        if depositos_db.find_duplicate(item["tx_number"], iso, item["amount"]):
+            duplicates += 1
+            continue
+        kind = item["kind"] or _chase_kind_for(deposit_date, item["amount"])
+        year, month = (deposit_date.year, deposit_date.month) if deposit_date else fallback_period
+        rel = depositos_db.new_pdf_relpath(year, month)
+        depositos.write_single_page_pdf(pdf_path, item["page"], depositos_db.absolute_path(rel))
+        depositos_db.add_deposit(
+            year, month, iso, item["amount"],
+            depositos.default_description(item["tx_number"], kind),
+            item["tx_number"], kind, rel, filename, item["page"],
+        )
+        saved += 1
+        first_period = first_period or (year, month)
+        if item["amount"] is None or deposit_date is None or item["tx_number"] is None:
+            incomplete += 1
+    return saved, incomplete, duplicates, first_period
+
+
+def _run_depositos_job(job_id, pdf_paths, fallback_period):
+    """Aislado por PDF; cada página del PDF es un depósito."""
+    try:
+        saved = incomplete = duplicates = failed = 0
+        first_period = None
+        for index, pdf_path in enumerate(pdf_paths, start=1):
+            try:
+                s, i, d, period = import_deposit_pdf(pdf_path, os.path.basename(pdf_path), fallback_period)
+                saved, incomplete, duplicates = saved + s, incomplete + i, duplicates + d
+                first_period = first_period or period
+            except Exception as exc:
+                print(f"[documentos/depositos] {pdf_path}: {exc}")
+                failed += 1
+            jobs.update_job(job_id, done=index, total=len(pdf_paths))
+
+        parts = []
+        if saved:
+            parts.append(f"{saved} depósito(s) guardado(s).")
+        if incomplete:
+            parts.append(f"{incomplete} con algún dato sin leer — completalo a mano en el cuadro.")
+        if duplicates:
+            parts.append(f"{duplicates} ya estaban cargados y se omitieron.")
+        if failed:
+            parts.append(f"{failed} archivo(s) no se pudieron leer.")
+        if saved:
+            level = "warning" if (incomplete or failed) else "success"
+        else:
+            level = "warning" if duplicates and not failed else "error"
+        year, month = first_period or fallback_period
+        jobs.update_job(
+            job_id, status="done", done=len(pdf_paths), total=len(pdf_paths),
+            notice=" ".join(parts) or "No se encontró ningún depósito.", notice_level=level,
+            redirect_url=f"/documentos/depositos?year={year}&month={month}",
+        )
+    except Exception as exc:
+        jobs.update_job(job_id, status="error", error=f"Error: {exc}")
+
+
+@app.route("/documentos/depositos/<int:deposit_id>/guardar", methods=["POST"])
+def documentos_deposito_guardar(deposit_id):
+    deposit = depositos_db.get_deposit(deposit_id)
+    if deposit is None:
+        flash("Ese depósito ya no existe.", "error")
+        return redirect(url_for("documentos_depositos"))
+    raw_date = (request.form.get("deposit_date") or "").strip() or None
+    try:
+        if raw_date:
+            datetime.strptime(raw_date, "%Y-%m-%d")
+        amount = _parse_money_field(request.form.get("amount"))
+    except ValueError:
+        flash("La fecha o el monto no son válidos.", "error")
+        return redirect(url_for("documentos_depositos", year=deposit["year"], month=deposit["month"]))
+    description = (request.form.get("description") or "").strip() or None
+    depositos_db.update_deposit(deposit_id, raw_date, amount, description)
+    updated = depositos_db.get_deposit(deposit_id)
+    return redirect(url_for("documentos_depositos", year=updated["year"], month=updated["month"]) + f"#deposito-{deposit_id}")
+
+
+@app.route("/documentos/depositos/<int:deposit_id>/eliminar", methods=["POST"])
+def documentos_deposito_eliminar(deposit_id):
+    deposit = depositos_db.delete_deposit(deposit_id)
+    if deposit is None:
+        flash("Ese depósito ya no existe.", "error")
+        return redirect(url_for("documentos_depositos"))
+    flash("Depósito eliminado.", "success")
+    return redirect(url_for("documentos_depositos", year=deposit["year"], month=deposit["month"]))
+
+
+@app.route("/documentos/depositos/<int:deposit_id>/pdf")
+def documentos_deposito_pdf(deposit_id):
+    deposit = depositos_db.get_deposit(deposit_id)
+    if deposit is None:
+        flash("Ese depósito ya no existe.", "error")
+        return redirect(url_for("documentos_depositos"))
+    name = (deposit.get("description") or "Deposito").replace("#", "N").replace("/", "-") + ".pdf"
+    return send_file(
+        depositos_db.absolute_path(deposit["pdf_path"]),
+        as_attachment=request.args.get("mode") == "download",
+        download_name=name,
+    )
+
+
 # Módulos que guardan sus archivos originales vía documents_db (ver ese
 # módulo) -- cada entrada define el título/tema/link "volver" que usa la
 # página genérica de abajo. EFT junta dos módulos lógicos (PDF de EFT +
@@ -5153,8 +5779,7 @@ _DOCUMENTS_MODULES = {
     "combustible": {"title": "Combustible", "theme": "fisico", "back_endpoint": "fisico_view"},
 }
 
-
-@app.route("/carga-datos/documentos/<module_key>")
+@app.route("/documentos/<module_key>")
 def carga_datos_documentos(module_key):
     """
     Lista genérica de los archivos originales ya subidos para un módulo --
@@ -5165,7 +5790,7 @@ def carga_datos_documentos(module_key):
     info = _DOCUMENTS_MODULES.get(module_key)
     if info is None:
         flash("Módulo de documentos desconocido.", "error")
-        return redirect(url_for("carga_datos_index"))
+        return redirect(url_for("documentos_index"))
 
     today = date.today()
     year = request.args.get("year", type=int) or today.year
@@ -5211,7 +5836,7 @@ def carga_datos_documentos(module_key):
     )
 
 
-@app.route("/carga-datos/documentos/<module_key>/subir", methods=["POST"])
+@app.route("/documentos/<module_key>/subir", methods=["POST"])
 def carga_datos_documentos_subir(module_key):
     """
     Subida manual de un documento cualquiera a este módulo -- pedido
@@ -5225,7 +5850,7 @@ def carga_datos_documentos_subir(module_key):
     info = _DOCUMENTS_MODULES.get(module_key)
     if info is None:
         flash("Módulo de documentos desconocido.", "error")
-        return redirect(url_for("carga_datos_index"))
+        return redirect(url_for("documentos_index"))
 
     year = request.form.get("year", type=int) or date.today().year
     month = request.form.get("month", type=int) or date.today().month
@@ -5251,12 +5876,12 @@ def carga_datos_documentos_subir(module_key):
     return redirect(url_for("carga_datos_documentos", module_key=module_key, year=year, month=month))
 
 
-@app.route("/carga-datos/documentos/<int:document_id>/descargar")
+@app.route("/documentos/archivo/<int:document_id>/descargar")
 def carga_datos_documento_descargar(document_id):
     doc = documents_db.get_document(document_id)
     if doc is None:
         flash("Ese documento ya no existe.", "error")
-        return redirect(url_for("carga_datos_index"))
+        return redirect(url_for("documentos_index"))
     # Vista previa por default (inline), descarga forzada solo con
     # ?mode=download -- pedido explícito del usuario (2026-09-19), ver
     # templates/_pdf_links.html. Antes esta ruta siempre forzaba la
@@ -5266,12 +5891,12 @@ def carga_datos_documento_descargar(document_id):
     return send_file(doc["stored_path"], as_attachment=force_download, download_name=doc["filename"])
 
 
-@app.route("/carga-datos/documentos/<int:document_id>/eliminar", methods=["POST"])
+@app.route("/documentos/archivo/<int:document_id>/eliminar", methods=["POST"])
 def carga_datos_documento_eliminar(document_id):
     doc = documents_db.get_document(document_id)
     if doc is None:
         flash("Ese documento ya no existe.", "error")
-        return redirect(url_for("carga_datos_index"))
+        return redirect(url_for("documentos_index"))
     documents_db.delete_document(document_id)
     flash("Documento eliminado.", "success")
     return redirect(url_for("carga_datos_documentos", module_key=doc["module"], year=doc["year"], month=doc["month"]))
@@ -5581,6 +6206,13 @@ def carga_datos_proveedores_reglas():
     )
 
 
+def _supplier_payment_label(description):
+    """ "OP" para un pago de Chase a proveedor, "OP Cheque N° 1770" si fue con cheque."""
+    from proveedores import _check_number_from_description
+    check_no = _check_number_from_description(description or "")
+    return f"OP Cheque N° {check_no}" if check_no else "OP"
+
+
 def _build_supplier_ledger(invoices, payments, credit_memos=None, manual_payments=None):
     """
     Arma el "cuadro de cuenta corriente" de un proveedor -- pedido
@@ -5612,7 +6244,11 @@ def _build_supplier_ledger(invoices, payments, credit_memos=None, manual_payment
         entries.append({
             "date": p["posting_date"],
             "kind": "payment",
-            "detail": p["description"],
+            # Solo "OP" (+ N° de cheque si fue con cheque) -- pedido
+            # explícito del usuario (2026-09-23): la descripción completa
+            # del banco no se muestra en la planilla, queda solo de tooltip.
+            "detail": _supplier_payment_label(p["description"]),
+            "bank_description": p["description"],
             "document": None,
             "debe": 0.0,
             "haber": abs(p["amount"]),
