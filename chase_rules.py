@@ -403,13 +403,45 @@ def _is_deposit_id_number(desc):
     )
 
 
-def categorize_chase_description(description):
+# Depósitos chicos (2026-09-22, regla de negocio dada por el usuario): un
+# depósito que no supera los $1,030 no es un depósito normal de ventas.
+# Solo el monto clavado de Food Truck ($1,030 hasta jul-2026, $1,000 desde
+# ago-2026) se categoriza solo; cualquier otro monto chico queda "Sin
+# categorizar" para que el usuario le ponga a mano "DEPOSITO VENTA ICE"
+# (corregido por el usuario el mismo día: no adivinar los de hielo).
+# Mismos Detalle que ya usa Caja (caja.py: CHASE_DETALLE_FOOD_TRUCK/_ICE).
+SMALL_DEPOSIT_MAX = 1030.0
+FOOD_TRUCK_FIXED_AMOUNTS = (1000.0, 1030.0)
+DETALLE_DEPOSITO = "DEPOSITO"
+DETALLE_FOOD_TRUCK = "FOOD TRUCK"
+DETALLE_DEPOSITO_ICE = "DEPOSITO VENTA ICE"
+
+
+def _split_small_deposit(detail, amount):
+    """Un "DEPOSITO" chico pasa a FOOD TRUCK si es un monto clavado, si no queda sin categorizar."""
+    if detail != DETALLE_DEPOSITO or amount is None:
+        return detail
+    try:
+        value = round(float(amount), 2)
+    except (TypeError, ValueError):
+        return detail
+    if not 0 < value <= SMALL_DEPOSIT_MAX:
+        return detail
+    if value in FOOD_TRUCK_FIXED_AMOUNTS:
+        return DETALLE_FOOD_TRUCK
+    return None
+
+
+def categorize_chase_description(description, amount=None):
     """
     Map Chase Description text to Detalle category: a single match across
     Maestra (chase_master_rules.json) and Personalizada (chase_rules.json)
     rules together (see _match_rules for the compound-first/longest-wins
     precedence), with one last-resort fallback for a DEPOSIT ID NUMBER
     variant too fuzzy to express as a rule.
+
+    `amount` (optional): a "DEPOSITO" of $1,030 or less becomes FOOD TRUCK
+    (exact fixed amount) or stays uncategorized -- see _split_small_deposit.
 
     Returns category string or None when no rule matches.
     """
@@ -419,10 +451,10 @@ def categorize_chase_description(description):
 
     matched_detail = _match_rules(desc, load_master_rules() + load_dynamic_rules())
     if matched_detail:
-        return matched_detail
+        return _split_small_deposit(matched_detail, amount)
 
     if _is_deposit_id_number(desc):
-        return "DEPOSITO"
+        return _split_small_deposit(DETALLE_DEPOSITO, amount)
 
     return None
 
@@ -587,7 +619,7 @@ def extract_chase_transactions(file_path):
                 "description": description,
                 "amount": amount,
                 "balance": balance,
-                "detalle": categorize_chase_description(description),
+                "detalle": categorize_chase_description(description, amount),
                 "type": str(row.get(type_col, "") or "").strip() if type_col is not None else None,
             }
         )

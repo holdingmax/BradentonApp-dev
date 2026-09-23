@@ -1,0 +1,45 @@
+{# Piezas de _table_filters.html que tienen que estar en el HTML del
+   servidor (no armadas por JS al pie de la página), para que se vean apenas
+   carga: los estilos (en head_extra) y el botón "Filtros". Tiene que quedar
+   igual a lo que arma el JS de _table_filters.html si no encuentra el botón. #}
+{% macro filter_styles() %}
+<style>
+  .tf-config-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+  button.tf-config-btn.popover-trigger {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 7px 12px; border: 1px solid var(--border); border-radius: 8px;
+    background: var(--surface); font-size: 12.5px; font-weight: 600;
+  }
+  button.tf-config-btn.popover-trigger:hover { border-color: var(--accent); color: var(--accent); }
+  .tf-config-btn svg, .tf-col-btn svg { width: 14px; height: 14px; }
+  .tf-panel { min-width: 200px; max-width: 320px; }
+  .tf-panel-title { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-soft); margin-bottom: 6px; }
+  .tf-panel label { display: flex; align-items: center; gap: 8px; padding: 3px 0; font-weight: 400; cursor: default; }
+  .tf-panel input[type=checkbox] { margin: 0; width: auto; }
+  .tf-values { max-height: 260px; overflow-y: auto; margin-top: 6px; padding-right: 4px; }
+  .tf-values label span.tf-val-text { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tf-values label span.tf-val-count { color: var(--text-soft); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .tf-search { width: 100%; padding: 5px 8px; font-size: 12.5px; box-sizing: border-box; }
+  .tf-actions { display: flex; justify-content: space-between; gap: 8px; margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border); }
+  .tf-actions button { margin: 0; padding: 0; background: none; border: none; color: var(--accent); font-size: 12px; font-weight: 600; }
+  .tf-actions button:hover { text-decoration: underline; }
+  th .tf-th-inner { display: inline-flex; align-items: center; gap: 6px; }
+  button.tf-col-btn.popover-trigger {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 22px; height: 22px; border-radius: 6px; color: var(--text-soft);
+  }
+  button.tf-col-btn.popover-trigger:hover { background: var(--surface); color: var(--accent); }
+  button.tf-col-btn.tf-active.popover-trigger { background: var(--accent); color: #fff; }
+  .tf-status { font-size: 12.5px; color: var(--text-soft); }
+  .tf-status button { margin: 0 0 0 6px; padding: 0; background: none; border: none; color: var(--accent); font-size: 12.5px; font-weight: 600; }
+  .tf-status button:hover { text-decoration: underline; }
+  /* La cebra por :nth-child se rompe al esconder filas -- con un filtro
+     puesto, la alternancia la marca el JS sobre las filas visibles. */
+  table.tf-filtering tbody tr:nth-child(even) { background: transparent; }
+  table.tf-filtering tbody tr.tf-alt { background: var(--surface-alt); }
+</style>
+{% endmacro %}
+
+{% macro filter_config_button(table_id) %}
+<div data-filter-config-for="{{ table_id }}" class="tf-config-bar"><button type="button" class="popover-trigger tf-config-btn" data-popover-target="tf-config-{{ table_id }}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>Filtros</button><span class="tf-status" data-filter-status-for="{{ table_id }}"></span></div>
+{% endmacro %}

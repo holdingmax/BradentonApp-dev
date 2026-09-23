@@ -270,7 +270,9 @@ def recategorize_all(categorize_fn, resolve_supplier_fn):
     supplier_source = "manual") -- los dos se recalculan de forma
     INDEPENDIENTE uno del otro, igual que en upsert_transactions.
 
-    `categorize_fn`/`resolve_supplier_fn` reciben la Descripción cruda y
+    `categorize_fn` recibe (Descripción cruda, monto) -- el monto separa los
+    depósitos chicos de Food Truck (monto clavado); `resolve_supplier_fn`
+    recibe solo la Descripción. Los dos
     devuelven el Detalle / la supplier_key nuevos (o None) -- se inyectan
     desde afuera (chase_rules.categorize_chase_description /
     proveedores.match_supplier_for_chase_description) para que este módulo
@@ -287,7 +289,7 @@ def recategorize_all(categorize_fn, resolve_supplier_fn):
         for row in rows:
             updates = {}
             if row["detalle_source"] != "manual":
-                new_detalle = categorize_fn(row["description"])
+                new_detalle = categorize_fn(row["description"], row["amount"])
                 if new_detalle != row["detalle"]:
                     updates["detalle"] = new_detalle
                     updates["detalle_source"] = "rule" if new_detalle else None

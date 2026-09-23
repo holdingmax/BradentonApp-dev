@@ -1,0 +1,210 @@
+{#
+  Filtros por columna, reusable en cualquier tabla (2026-09-22, pedido
+  explícito del usuario sobre Chase Bank): un botón "Filtros" de
+  configuración elige QUÉ columnas llevan filtro; cada columna activada
+  suma un embudo en su encabezado con la lista de valores distintos, y se
+  pueden tildar varios a la vez -- la tabla muestra solo las filas que
+  coinciden con TODOS los filtros puestos (AND entre columnas, OR dentro de
+  una misma columna). Todo del lado del navegador, sin tocar el servidor.
+
+  Uso:
+    {% from "_table_filters_macros.html" import filter_styles, filter_config_button %}
+    en {% block head_extra %}: {{ filter_styles() }}   (estilos en <head>, antes de pintar)
+    {{ filter_config_button("ID_DE_LA_TABLA") }}         (dónde va el botón -- ya viene
+        en el HTML del servidor, así aparece apenas carga la página y no
+        recién cuando el navegador llega a este script al pie de una tabla
+        de 200 filas; pedido del usuario 2026-09-22, tardaba ~1s en aparecer)
+    <table id="ID_DE_LA_TABLA" data-filter-table>
+      <th data-filter-col="clave">Nombre</th> ...
+      <td data-filter-value="texto a comparar">...</td>    (opcional; si no, el texto de la celda)
+  e incluir este archivo una vez: {% include "_table_filters.html" %}
+
+  Qué columnas tienen filtro se recuerda por navegador (localStorage, solo
+  una comodidad -- si no está disponible, arranca sin filtros); los valores
+  tildados no, porque cambian mes a mes.
+#}
+<script>
+(function () {
+  var FUNNEL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5h18l-7 8v6l-4 2v-8z"/></svg>';
+  var GEAR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>';
+
+  function esc(text) {
+    return String(text).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; });
+  }
+  function storageGet(key) { try { return window.localStorage.getItem(key); } catch (e) { return null; } }
+  function storageSet(key, value) { try { window.localStorage.setItem(key, value); } catch (e) { /* sin storage: sin recordar */ } }
+  function asNumber(text) {
+    var cleaned = String(text).replace(/[$,\s]/g, '');
+    return /^-?\d+(\.\d+)?$/.test(cleaned) ? parseFloat(cleaned) : null;
+  }
+
+  function setupTable(table) {
+    var tableId = table.id;
+    var headers = Array.prototype.slice.call(table.querySelectorAll('thead th[data-filter-col]'));
+    if (!headers.length) return;
+    var rows = Array.prototype.slice.call(table.querySelectorAll('tbody tr'));
+    var columns = headers.map(function (th) {
+      var index = Array.prototype.indexOf.call(th.parentNode.children, th);
+      return { key: th.getAttribute('data-filter-col'), label: th.textContent.trim(), th: th, index: index };
+    });
+    var storageKey = 'tableFilters:' + tableId + ':cols';
+    var enabled = {};
+    (storageGet(storageKey) || '').split(',').forEach(function (key) { if (key) enabled[key] = true; });
+    var selected = {};  // key -> {valor: true}
+
+    function cellValue(row, column) {
+      var cell = row.children[column.index];
+      if (!cell) return '';
+      var attr = cell.getAttribute('data-filter-value');
+      return (attr !== null ? attr : cell.textContent).trim() || '(vacío)';
+    }
+
+    function applyFilters() {
+      var activeKeys = Object.keys(selected).filter(function (k) { return enabled[k] && Object.keys(selected[k]).length; });
+      var visible = 0;
+      rows.forEach(function (row) {
+        var show = activeKeys.every(function (key) {
+          var column = columns.filter(function (c) { return c.key === key; })[0];
+          return selected[key][cellValue(row, column)];
+        });
+        row.style.display = show ? '' : 'none';
+        row.classList.remove('tf-alt');
+        if (show) { visible += 1; if (visible % 2 === 0) row.classList.add('tf-alt'); }
+      });
+      table.classList.toggle('tf-filtering', activeKeys.length > 0);
+      columns.forEach(function (column) {
+        var btn = column.th.querySelector('.tf-col-btn');
+        if (btn) btn.classList.toggle('tf-active', activeKeys.indexOf(column.key) !== -1);
+      });
+      var status = document.querySelector('[data-filter-status-for="' + tableId + '"]');
+      if (status) {
+        status.innerHTML = activeKeys.length
+          ? 'Mostrando ' + visible + ' de ' + rows.length + '<button type="button" data-tf-clear-all>Quitar filtros</button>'
+          : '';
+      }
+    }
+
+    function buildValuePanel(column) {
+      var panelId = 'tf-panel-' + tableId + '-' + column.key;
+      var old = document.getElementById(panelId);
+      if (old) old.remove();
+      var counts = {};
+      rows.forEach(function (row) { var v = cellValue(row, column); counts[v] = (counts[v] || 0) + 1; });
+      var values = Object.keys(counts);
+      var numeric = values.every(function (v) { return asNumber(v) !== null || v === '(vacío)'; });
+      values.sort(function (a, b) {
+        if (numeric) return (asNumber(a) || 0) - (asNumber(b) || 0);
+        return a.localeCompare(b, 'es', { numeric: true });
+      });
+      var chosen = selected[column.key] || {};
+      var panel = document.createElement('div');
+      panel.className = 'popover-panel tf-panel';
+      panel.id = panelId;
+      panel.innerHTML =
+        '<div class="tf-panel-title">Filtrar ' + esc(column.label) + '</div>' +
+        '<input type="text" class="tf-search" placeholder="Buscar...">' +
+        '<div class="tf-values">' +
+        values.map(function (v) {
+          return '<label title="' + esc(v) + '"><input type="checkbox" value="' + esc(v) + '"' + (chosen[v] ? ' checked' : '') + '>' +
+            '<span class="tf-val-text">' + esc(v) + '</span><span class="tf-val-count">' + counts[v] + '</span></label>';
+        }).join('') +
+        '</div>' +
+        '<div class="tf-actions"><button type="button" data-tf-all>Seleccionar visibles</button><button type="button" data-tf-none>Limpiar</button></div>';
+      document.body.appendChild(panel);
+
+      function readChecks() {
+        var set = {};
+        panel.querySelectorAll('.tf-values input:checked').forEach(function (cb) { set[cb.value] = true; });
+        selected[column.key] = set;
+        applyFilters();
+      }
+      panel.addEventListener('change', function (e) { if (e.target.type === 'checkbox') readChecks(); });
+      panel.querySelector('.tf-search').addEventListener('input', function (e) {
+        var term = e.target.value.toLowerCase();
+        panel.querySelectorAll('.tf-values label').forEach(function (label) {
+          label.style.display = label.getAttribute('title').toLowerCase().indexOf(term) !== -1 ? '' : 'none';
+        });
+      });
+      panel.querySelector('[data-tf-all]').addEventListener('click', function () {
+        panel.querySelectorAll('.tf-values label').forEach(function (label) {
+          if (label.style.display !== 'none') label.querySelector('input').checked = true;
+        });
+        readChecks();
+      });
+      panel.querySelector('[data-tf-none]').addEventListener('click', function () {
+        panel.querySelectorAll('.tf-values input').forEach(function (cb) { cb.checked = false; });
+        readChecks();
+      });
+      return panelId;
+    }
+
+    function renderHeaderButtons() {
+      columns.forEach(function (column) {
+        var existing = column.th.querySelector('.tf-th-inner');
+        if (!existing) {
+          var text = column.th.innerHTML;
+          column.th.innerHTML = '<span class="tf-th-inner"><span>' + text + '</span></span>';
+        }
+        var inner = column.th.querySelector('.tf-th-inner');
+        var btn = inner.querySelector('.tf-col-btn');
+        if (enabled[column.key]) {
+          if (!btn) {
+            var panelId = buildValuePanel(column);
+            btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'popover-trigger tf-col-btn';
+            btn.setAttribute('data-popover-target', panelId);
+            btn.title = 'Filtrar ' + column.label;
+            btn.innerHTML = FUNNEL;
+            inner.appendChild(btn);
+          }
+        } else {
+          if (btn) btn.remove();
+          var panel = document.getElementById('tf-panel-' + tableId + '-' + column.key);
+          if (panel) panel.remove();
+          delete selected[column.key];
+        }
+      });
+      applyFilters();
+    }
+
+    var configHost = document.querySelector('[data-filter-config-for="' + tableId + '"]');
+    if (configHost) {
+      var configPanelId = 'tf-config-' + tableId;
+      configHost.classList.add('tf-config-bar');
+      // Si el botón ya vino armado del servidor (filter_config_button), se
+      // reusa tal cual; si no, se arma acá.
+      if (!configHost.querySelector('.tf-config-btn')) configHost.innerHTML =
+        '<button type="button" class="popover-trigger tf-config-btn" data-popover-target="' + configPanelId + '">' + GEAR + 'Filtros</button>' +
+        '<span class="tf-status" data-filter-status-for="' + tableId + '"></span>';
+      var configPanel = document.createElement('div');
+      configPanel.className = 'popover-panel tf-panel';
+      configPanel.id = configPanelId;
+      configPanel.innerHTML =
+        '<div class="tf-panel-title">Columnas con filtro</div>' +
+        columns.map(function (column) {
+          return '<label><input type="checkbox" value="' + esc(column.key) + '"' + (enabled[column.key] ? ' checked' : '') + '>' + esc(column.label) + '</label>';
+        }).join('');
+      document.body.appendChild(configPanel);
+      configPanel.addEventListener('change', function (e) {
+        if (e.target.type !== 'checkbox') return;
+        if (e.target.checked) enabled[e.target.value] = true; else delete enabled[e.target.value];
+        storageSet(storageKey, Object.keys(enabled).join(','));
+        renderHeaderButtons();
+      });
+      configHost.addEventListener('click', function (e) {
+        if (!e.target.closest('[data-tf-clear-all]')) return;
+        selected = {};
+        columns.forEach(function (column) {
+          var panel = document.getElementById('tf-panel-' + tableId + '-' + column.key);
+          if (panel) panel.querySelectorAll('.tf-values input').forEach(function (cb) { cb.checked = false; });
+        });
+        applyFilters();
+      });
+    }
+    renderHeaderButtons();
+  }
+
+  document.querySelectorAll('table[data-filter-table]').forEach(setupTable);
+})();
+</script>

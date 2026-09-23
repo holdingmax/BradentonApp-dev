@@ -2646,7 +2646,10 @@ def chase_historial():
         prev_month=prev_month,
         next_year=next_year,
         next_month=next_month,
-        known_details=chase_db.list_known_details(),
+        # "DEPOSITO VENTA ICE" siempre disponible para elegir a mano -- esos
+        # depósitos chicos ya no se categorizan solos (ver
+        # chase_rules._split_small_deposit), así que puede no estar usado todavía.
+        known_details=sorted(set(chase_db.list_known_details()) | {"DEPOSITO VENTA ICE"}),
         supplier_options=supplier_options,
         supplier_labels=supplier_labels,
         **THEME_BY_KEY["carga_chase"],
@@ -5341,7 +5344,12 @@ def _run_carga_datos_proveedores_job(job_id, paths):
             # toca -- nada que cruzar.
             valid_invoices = []
             for invoice in invoices:
-                if _filename_date_mismatch(filename, invoice["date"]):
+                # FPL/Manatee (factura por período): el nombre de archivo
+                # trae la fecha de vencimiento/emisión, nunca el fin del
+                # período -- el extractor lo marca para no rechazarla.
+                if not invoice.get("skip_filename_date_check") and _filename_date_mismatch(
+                    filename, invoice["date"]
+                ):
                     date_mismatches.append({"filename": filename, "supplier": supplier_label})
                     continue
                 valid_invoices.append(invoice)

@@ -3,6 +3,8 @@
 {% block crumbs %}
 <nav class="crumbs"><a href="{{ url_for('chase') }}">Chase Bank</a><span class="current">Movimientos guardados</span></nav>
 {% endblock %}
+{% from "_table_filters_macros.html" import filter_styles, filter_config_button %}
+{% block head_extra %}{{ filter_styles() }}{% endblock %}
 {% block content %}
 {% from "_month_jump.html" import month_jump %}
 <style>
@@ -50,6 +52,16 @@
   .historial-badge-error { background: var(--error-soft); color: var(--error); }
   .chase-amount-neg { color: var(--error); }
   .chase-amount-pos { color: var(--success); }
+  /* Montos alineados -- pedido explícito del usuario (2026-09-22): con
+     dígitos de ancho proporcional y texto a la izquierda, cada monto
+     quedaba corrido según su largo ("efecto de movimiento"). Dígitos de
+     ancho fijo (tabular-nums) + alineado a la derecha: comas y decimales
+     quedan uno exactamente debajo del otro en todas las filas. */
+  .historial-table th.chase-num, .historial-table td.chase-num {
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
 
   /* Cada asiento tiene un Detalle de largo distinto -- sin esto, "corregir"
      quedaba flotando pegado al badge, corriéndose de lugar fila a fila.
@@ -119,21 +131,22 @@
   </div>
 
   {% if transactions %}
-  <div style="margin-top: 12px; text-align: right;">
+  <div style="margin-top: 12px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;">
+    {{ filter_config_button("chase-tx-table") }}
     <a href="{{ url_for('chase_exportar', year=year, month=month) }}" class="btn-accent">Exportar Excel del mes</a>
   </div>
   {% endif %}
 
   {% if transactions %}
   <div class="historial-table-wrap">
-    <table class="historial-table">
+    <table class="historial-table" id="chase-tx-table" data-filter-table>
       <thead>
         <tr>
-          <th>Fecha</th>
-          <th>Descripción</th>
-          <th>Monto</th>
-          <th>Balance</th>
-          <th>Detalle</th>
+          <th data-filter-col="fecha">Fecha</th>
+          <th data-filter-col="descripcion">Descripción</th>
+          <th data-filter-col="monto" class="chase-num">Monto</th>
+          <th data-filter-col="balance" class="chase-num">Balance</th>
+          <th data-filter-col="detalle">Detalle</th>
         </tr>
       </thead>
       <tbody>
@@ -141,11 +154,11 @@
         <tr>
           <td class="historial-col-day">{{ tx.posting_date[8:10] }}/{{ tx.posting_date[5:7] }}</td>
           <td>{{ tx.description }}</td>
-          <td class="{{ 'chase-amount-neg' if tx.amount < 0 else 'chase-amount-pos' }}">{{ "{:,.2f}".format(tx.amount) }}</td>
-          <td>{{ "{:,.2f}".format(tx.balance) if tx.balance is not none else '—' }}</td>
-          <td class="chase-detalle-cell">
+          <td class="chase-num {{ 'chase-amount-neg' if tx.amount < 0 else 'chase-amount-pos' }}">{{ "{:,.2f}".format(tx.amount) }}</td>
+          <td class="chase-num">{{ "{:,.2f}".format(tx.balance) if tx.balance is not none else '—' }}</td>
+          {% set badge_text = tx.detalle if tx.detalle else 'Sin categorizar' %}
+          <td class="chase-detalle-cell" data-filter-value="{{ badge_text }}">
             {% set is_proveedores = tx.detalle == 'PROVEEDORES' %}
-            {% set badge_text = tx.detalle if tx.detalle else 'Sin categorizar' %}
             {% set badge_class = 'historial-badge-ocr' if tx.detalle else 'historial-badge-error' %}
             <div class="chase-detalle-row">
               {% if is_proveedores or tx.supplier_key %}
@@ -196,4 +209,5 @@
   <p class="muted" style="margin-top: 18px;">Todavía no hay ningún movimiento guardado este mes.</p>
   {% endif %}
 </div>
+{% include "_table_filters.html" %}
 {% endblock %}
