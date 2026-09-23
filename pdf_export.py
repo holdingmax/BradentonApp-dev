@@ -93,6 +93,7 @@ def build_simple_table_pdf(
     company_header=False,
     period_label=None,
     footer_note=None,
+    data_fill_by_row=None,
 ):
     """
     `headers`: una fila de encabezado (texto), en negrita.
@@ -133,6 +134,10 @@ def build_simple_table_pdf(
     avisar algo que la tabla sola no puede explicar (ej. "N bloques sin
     fecha de Chase Bank confirmada, el total no los incluye" en el resumen
     de Lottery) -- nunca reemplaza la tabla, solo la complementa.
+
+    `data_fill_by_row` -- opcional, default `None`. Dict {índice de fila de
+    datos (0-based, sin contar el encabezado): color hex} que pinta la fila
+    entera -- ej. los pagos de Chase Bank del resumen de Lottery.
     """
     doc = SimpleDocTemplate(
         dest_path,
@@ -176,6 +181,8 @@ def build_simple_table_pdf(
     for col, hex_color in (data_fill_by_col or {}).items():
         if last_row >= 1:
             style_commands.append(("BACKGROUND", (col, 1), (col, last_row), colors.HexColor(hex_color)))
+    for row_idx, hex_color in (data_fill_by_row or {}).items():
+        style_commands.append(("BACKGROUND", (0, row_idx + 1), (-1, row_idx + 1), colors.HexColor(hex_color)))
     if bold_last_row and last_row >= 1:
         style_commands.append(("FONTNAME", (0, last_row), (-1, last_row), "Helvetica-Bold"))
     table.setStyle(TableStyle(style_commands))

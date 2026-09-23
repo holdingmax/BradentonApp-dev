@@ -20,29 +20,29 @@
   <form method="post" action="{{ url_for('carga_datos_lottery_dia_guardar', report_date=report_date.isoformat()) }}" data-warn-unsaved>
     <h3 class="lottery-dia-group">ONLINE</h3>
     <div class="dia-grid">
-      <div><label class="muted">Count</label><input type="number" step="1" name="online_count" value="{{ day.online_count if day.online_count is not none else '' }}"></div>
+      <div><label class="muted">Recuento</label><input type="number" step="1" name="online_count" value="{{ day.online_count if day.online_count is not none else '' }}"></div>
       <div><label class="muted">Net Sales $</label><input type="number" step="0.01" name="online_net_sales" value="{{ day.online_net_sales if day.online_net_sales is not none else '' }}"></div>
     </div>
 
     <h3 class="lottery-dia-group">Terminal (juegos online)</h3>
     <div class="dia-grid">
-      <div><label class="muted">Sales</label><input type="number" step="0.01" name="sales" value="{{ day.sales if day.sales is not none else '' }}"></div>
+      <div><label class="muted">Ventas</label><input type="number" step="0.01" name="sales" value="{{ day.sales if day.sales is not none else '' }}"></div>
       <div><label class="muted">Pagos</label><input type="number" step="0.01" name="pagos" value="{{ day.pagos if day.pagos is not none else '' }}"></div>
       <div><label class="muted">Cash Balance</label><input type="number" step="0.01" name="cash_balance" value="{{ day.cash_balance if day.cash_balance is not none else '' }}"></div>
       <div><label class="muted">Comis</label><input type="number" step="0.01" name="comis" value="{{ day.comis if day.comis is not none else '' }}"></div>
-      <div><label class="muted">Prize Free Plays</label><input type="number" step="0.01" name="prize_free_plays" value="{{ day.prize_free_plays if day.prize_free_plays is not none else '' }}"></div>
+      <div><label class="muted">Premios Free Plays</label><input type="number" step="0.01" name="prize_free_plays" value="{{ day.prize_free_plays if day.prize_free_plays is not none else '' }}"></div>
       <div><label class="muted">Total Comm (calculado)</label><input type="text" value="{{ '%.2f'|format(day.total_comm) if day.total_comm is not none else '—' }}" readonly class="dia-input-readonly"></div>
     </div>
 
     <h3 class="lottery-dia-group">SKOFF (raspaditas)</h3>
     <div class="dia-grid">
-      <div><label class="muted">Count</label><input type="number" step="1" name="skoff_count" value="{{ day.skoff_count if day.skoff_count is not none else '' }}"></div>
+      <div><label class="muted">Recuento</label><input type="number" step="1" name="skoff_count" value="{{ day.skoff_count if day.skoff_count is not none else '' }}"></div>
       <div><label class="muted">Net Sales $</label><input type="number" step="0.01" name="skoff_net_sales" value="{{ day.skoff_net_sales if day.skoff_net_sales is not none else '' }}"></div>
       <div><label class="muted">Pays (unidades)</label><input type="number" step="1" name="pays_units" value="{{ day.pays_units if day.pays_units is not none else '' }}"></div>
-      <div><label class="muted">Pays $</label><input type="number" step="0.01" name="pays_amount" value="{{ day.pays_amount if day.pays_amount is not none else '' }}"></div>
+      <div><label class="muted">Pagos $</label><input type="number" step="0.01" name="pays_amount" value="{{ day.pays_amount if day.pays_amount is not none else '' }}"></div>
       <div><label class="muted">Instant Sales Amount</label><input type="number" step="0.01" name="skoff_sales_amount" value="{{ day.skoff_sales_amount if day.skoff_sales_amount is not none else '' }}"></div>
-      <div><label class="muted">Sales Comm</label><input type="number" step="0.01" name="sales_comm" value="{{ day.sales_comm if day.sales_comm is not none else '' }}"></div>
-      <div><label class="muted">Net Total (calculado)</label><input type="text" value="{{ '%.2f'|format(day.net_total) if day.net_total is not none else '—' }}" readonly class="dia-input-readonly"></div>
+      <div><label class="muted">Comm Ventas</label><input type="number" step="0.01" name="sales_comm" value="{{ day.sales_comm if day.sales_comm is not none else '' }}"></div>
+      <div><label class="muted">Total Neto (calculado)</label><input type="text" value="{{ '%.2f'|format(day.net_total) if day.net_total is not none else '—' }}" readonly class="dia-input-readonly"></div>
     </div>
 
     <p class="muted">Cuenta Final (calculado, =-Pagos-Pays$): <strong>{{ '%.2f'|format(day.cuenta_final) if day.cuenta_final is not none else '—' }}</strong></p>

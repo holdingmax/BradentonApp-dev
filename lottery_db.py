@@ -617,6 +617,29 @@ def monthly_debit_total(year, month):
     return round(total, 2) if any_value else None
 
 
+def monthly_chase_lottery_payments(year, month):
+    """
+    Pagos reales a Florida Lottery del mes, sacados de los movimientos ya
+    guardados de Chase Bank (Detalle "LOTTERY"). En Chase siempre salen como
+    débito (monto negativo) -- se devuelven en positivo, que es lo que se
+    pagó. A diferencia de monthly_debit_total, no depende de que la fecha
+    de Chase Bank de cada bloque esté confirmada a mano: es el hecho
+    bancario real, ya registrado. Devuelve [(fecha_iso, monto), ...].
+    """
+    import chase_db
+
+    payments = []
+    for row in chase_db.get_month_transactions(year, month):
+        if (row.get("detalle") or "").strip().upper() != "LOTTERY":
+            continue
+        amount = row.get("amount")
+        if amount is None or amount >= 0:
+            continue
+        payments.append((row["posting_date"], round(-amount, 2)))
+    payments.sort()
+    return payments
+
+
 # ---------------------------------------------------------------------------
 # Export a Excel/PDF -- pedido explícito del usuario (2026-09-19, misma
 # tanda que Store Info/Caja): "empezemos a trabajar en lo mismo de exportar
@@ -1141,9 +1164,9 @@ def build_lottery_export_pdf(year, month, dest_path, company_header=False):
 
     GRAY, YELLOW, ORANGE, GREEN = "#D9D9D9", "#FFFF00", "#FFC000", "#92D050"
     headers = [
-        "Día", "Count\n(Online)", "Sales $\n(Online)", "Sales\n(Terminal)", "Pagos\n(Terminal)",
-        "Cash Bal.", "Comis", "Prize FP", "Total Comm",
-        "Count\n(Skoff)", "Sales\n(Skoff)", "Pays U", "Pays $", "Sales\nAmt", "Sales\nComm", "Net\nTotal",
+        "Día", "Recuento\n(Online)", "Ventas $\n(Online)", "Ventas\n(Terminal)", "Pagos\n(Terminal)",
+        "Cash Bal.", "Comis", "Premios\nFP", "Total\nComm",
+        "Recuento\n(Skoff)", "Ventas\n(Skoff)", "Pagos\nU", "Pagos\n$", "Monto\nVentas", "Comm\nVentas", "Total\nNeto",
         "Chase Bank", "Total Pagos",
     ]
     header_fill_by_col = {
@@ -1279,55 +1302,48 @@ def build_lottery_pdf_resumen(year, month, dest_path):
     cash_balance_days = [d for d in days if d.get("cash_balance") is not None]
     ending_cash_balance = cash_balance_days[-1]["cash_balance"] if cash_balance_days else None
 
-    debito_total = monthly_debit_total(year, month)
-
-    # Aviso de bloques sin fecha de Chase Bank confirmada -- investigado a
-    # pedido explícito del usuario (2026-09-22): "pone un monto pequeno en
-    # agosto cuando hay varios pagos hechos en el chase pero no lo suma
-    # bien". Confirmado con datos reales que la suma en sí está bien -- el
-    # monto chico no es un bug de cálculo, es que `monthly_debit_total`
-    # (a propósito, ver su docstring) solo cuenta bloques con la fecha de
-    # Chase Bank YA CONFIRMADA a mano -- de los 6 bloques que tocan agosto
-    # sólo 1 tenía la fecha cargada, mientras el resto (con pagos reales ya
-    # visibles en Chase Bank, Detalle "LOTTERY") seguía con la fecha
-    # SUGERIDA sin confirmar. En vez de arriesgar sumar una fecha no
-    # confirmada (violaría "nunca inventar un hecho bancario todavía no
-    # registrado"), el PDF avisa cuántos bloques con datos reales todavía
-    # no tienen su fecha confirmada, para que quede claro que el total no
-    # es la deuda de Chase de todo el mes -- es solo lo ya confirmado.
-    month_blocks = build_month_blocks(year, month)
-    unconfirmed_blocks = [
-        b for b in month_blocks
-        if b["has_data"] and not b["chase_bank_date"] and (b["debito"]["net_debit"] or 0) > 10
-    ]
-    if unconfirmed_blocks:
-        chase_note = (
-            f"Atención: {len(unconfirmed_blocks)} bloque(s) semanal(es) de este período "
-            "todavía no tienen la fecha de Chase Bank confirmada (Lottery → Cuadro del "
-            "mes) -- el total de arriba NO los incluye, aunque ya tengan datos cargados."
-        )
-    else:
-        chase_note = None
+    # Pagos reales a Lottery vía Chase Bank -- corregido a pedido del usuario
+    # (2026-09-23): antes salía de monthly_debit_total (solo bloques con la
+    # fecha de Chase confirmada a mano), así que en agosto-2026 mostraba
+    # $2.015,90 cuando Chase tenía 4 débitos reales de LOTTERY. Ahora se
+    # toman directo los movimientos de Chase del mes (siempre son débitos).
+    chase_payments = monthly_chase_lottery_payments(year, month)
+    debito_total = round(sum(a for _, a in chase_payments), 2) if chase_payments else None
+    chase_note = None if chase_payments else (
+        "No hay pagos de Lottery (Detalle \"LOTTERY\") en los movimientos de "
+        "Chase Bank guardados para este mes."
+    )
 
     def money(field):
         return _fmt_money_pdf(totals.get(field))
 
     table_rows = [
-        ["Count (Online)", _fmt_int_pdf(totals.get("online_count"))],
-        ["Sales $ (Online)", money("online_net_sales")],
-        ["Sales (Terminal)", money("sales")],
+        ["Recuento (Online)", _fmt_int_pdf(totals.get("online_count"))],
+        ["Ventas $ (Online)", money("online_net_sales")],
+        ["Ventas (Terminal)", money("sales")],
         ["Pagos (Terminal)", money("pagos")],
         ["Comis", money("comis")],
-        ["Prize Free Plays", money("prize_free_plays")],
+        ["Premios Free Plays", money("prize_free_plays")],
         ["Total Comm (Comis + Prize)", money("total_comm")],
-        ["Pays Units (Skoff)", _fmt_int_pdf(totals.get("pays_units"))],
-        ["Pays $ (Skoff)", money("pays_amount")],
-        ["Sales Amt (Skoff)", money("skoff_sales_amount")],
-        ["Sales Comm (Skoff)", money("sales_comm")],
-        ["Net Total (Pays + Sales Amt + Sales Comm)", _fmt_money_pdf(net_total)],
+        ["Pagos U (Skoff)", _fmt_int_pdf(totals.get("pays_units"))],
+        ["Pagos $ (Skoff)", money("pays_amount")],
+        ["Monto Ventas (Skoff)", money("skoff_sales_amount")],
+        ["Comm Ventas (Skoff)", money("sales_comm")],
+        ["Total Neto (Pagos $ + Monto Ventas + Comm Ventas)", _fmt_money_pdf(net_total)],
         ["Cash Balance (último día cargado, no es una suma)", _fmt_money_pdf(ending_cash_balance)],
-        ["Total pagado vía Chase Bank", _fmt_money_pdf(debito_total)],
     ]
+    # Pagos de Chase + su total pintados de un mismo color claro -- pedido
+    # explícito del usuario (2026-09-23), para separarlos a simple vista del
+    # resto de los totales de Lottery.
+    first_chase_row = len(table_rows)
+    for pay_date, pay_amount in chase_payments:
+        d = datetime.strptime(pay_date, "%Y-%m-%d")
+        table_rows.append([f"Pago Chase Bank {d.strftime('%d/%m/%Y')}", _fmt_money_pdf(pay_amount)])
+    table_rows.append([
+        f"Total pagado vía Chase Bank ({len(chase_payments)} pago(s))",
+        _fmt_money_pdf(debito_total),
+    ])
+    chase_fill = {i: "#E3F0FB" for i in range(first_chase_row, len(table_rows))}
 
     return build_simple_table_pdf(
         dest_path,
@@ -1336,9 +1352,11 @@ def build_lottery_pdf_resumen(year, month, dest_path):
         table_rows,
         col_widths_mm=[140, 80],
         bold_last_row=True,
+        cell_padding=3,
         company_header=True,
         period_label=period_label,
         footer_note=chase_note,
+        data_fill_by_row=chase_fill,
     )
 
 
