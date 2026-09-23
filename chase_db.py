@@ -389,3 +389,19 @@ def get_uncategorized_count(year, month):
     """Cuántos movimientos del mes quedaron sin ninguna regla que matcheara -- útil para avisar."""
     rows = get_month_transactions(year, month)
     return sum(1 for row in rows if not row["detalle"])
+
+
+def get_check_transactions():
+    """Todos los movimientos de cheque ("CHECK {n}...") guardados, de cualquier mes -- ver cheques_db.py."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            """
+            SELECT posting_date, description, amount, supplier_key FROM chase_transactions
+            WHERE UPPER(description) LIKE 'CHECK%' OR UPPER(description) LIKE 'CHEQUE%'
+            ORDER BY posting_date
+            """
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
