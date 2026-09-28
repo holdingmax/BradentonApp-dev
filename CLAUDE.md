@@ -8,7 +8,7 @@ El usuario es bookkeeper de una gasolinera/tienda de conveniencia (Bradenton Gas
 
 Working directory: `C:\BradentonApp`.
 
-**Estado (2026-09-28, segunda sesión -- 17 hallazgos de la auditoría ARREGLADOS, SIN COMMITEAR, y 3 validaciones de OCR que quedaron corriendo sin resultado). Si arrancás una sesión nueva: primero lo pendiente de abajo, después seguir con `AUDITORIA_2026-09.md` (los arreglados ya están marcados `[x]`).**
+**Estado (2026-09-28, segunda sesión -- 17 hallazgos de la auditoría ARREGLADOS y COMMITEADOS (sin pushear), y 3 validaciones de OCR que quedaron corriendo sin resultado). Si arrancás una sesión nueva: primero lo pendiente de abajo, después seguir con `AUDITORIA_2026-09.md` (los arreglados ya están marcados `[x]`).**
 
 Arreglado y validado con datos reales (archivos tocados: `proveedores.py`, `proveedores_dynamic_extractors.py`, `reporte_diario.py`, `webapp.py`, `eft_db.py`, `caja.py`, `fisico.py`, `gettel_pagos.py`, `lottery_db.py`, `chase_db.py`, `chase_rules.py`, `templates/carga_datos_caja_historial.html`):
 1. **PDF corrupto/truncado no tumba el lote** -- `PdfminerException`/`MalformedPDFException` sumadas a `_PDF_EXTRACTION_EXCEPTIONS` (proveedores.py) y a `PDF_READ_EXCEPTIONS` (proveedores_dynamic_extractors.py). Probado con un archivo basura y uno truncado.
@@ -22,7 +22,7 @@ Arreglado y validado con datos reales (archivos tocados: `proveedores.py`, `prov
 
 **Pendiente inmediato:**
 - **3 validaciones de OCR sin resultado** (quedaron corriendo al cerrar el chat): (a) **Coca-Cola** -- cambios: acepta `[OQ0]UTLET`, una página con INV# de 11 dígitos antes del primer grupo abre su propio grupo, y si vio una factura real y todo quedó como devolución lanza ValueError en vez de `[]`. Correr `_extract_coca_invoices` sobre los PDFs 2024-2026 de la carpeta Coca del Drive y cruzar N°/monto contra la hoja COCA del Ledger de prueba (`C:\Alfonso\Bradenton. Cta Cte Proveedores (testeo).xlsx`); casos clave: 50914138024, 43826991024, 47097090067, 42360594027. (b) **Midtown** -- ahora falla limpio si más de una página tiene "Subtotal" (varios recibos en un PDF); confirmar que ningún PDF que antes cargaba bien caiga en ese error. (c) **Store Info** -- re-extraer todos los PDFs de `reportes_data/pdfs/` y confirmar que ninguno falle por el ValueError nuevo ni dé `total_sales_mismatch`.
-- **Nada commiteado**: ni esto ni los 6 arreglos de la sesión anterior ni la tanda del 23/09 pusheada. Commitear por tema cuando el usuario confirme.
+- **Todo COMMITEADO** (8 commits por tema, `73ec8f1`..`7423855`, incluidos los 6 arreglos de Depósitos/Cheques de la sesión anterior) pero **sin pushear**: `main` va 14 commits adelante de `origin` (la tanda del 23/09 tampoco se pusheó). Los cambios de Coca-Cola y Midtown se commitearon sin la validación completa de arriba.
 - **Decisión del usuario**: Cash Balance del PDF de Lottery (ver punto 3 del bloque siguiente).
 - **Sigue sin tocar de la auditoría**: los dos de Herramientas/Excel (NONTAX de CMV Ventas, fórmulas `E=+Dn` del Ledger al insertar en medio) -- baja prioridad, el usuario casi no usa Herramientas -- y todos los media/baja sin marcar `[x]`.
 
