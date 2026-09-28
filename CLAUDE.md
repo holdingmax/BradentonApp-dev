@@ -8,7 +8,7 @@ Este archivo se carga solo en cada chat: tiene únicamente lo necesario para tra
 - Working directory: `C:\BradentonApp`. Windows 11. Debe correr también en Linux (Render/Docker).
 
 ## Estado actual (2026-09-28)
-- **Validación de Coca-Cola en curso**: tras el arreglo de `73ec8f1`, sobre 79 PDFs reales 2024-2026: 26 OK, 39 fallan con error, 10 devuelven `[]`. Falta comparar contra la versión anterior (`git show 73ec8f1^:proveedores.py`) sobre los mismos PDFs: si la vieja cargaba más, revertir la parte de Coca-Cola. El extractor de Coca-Cola necesita una revisión a fondo aparte.
+- **Coca-Cola necesita una revisión a fondo (problema viejo, no regresión)**: sobre 79 PDFs reales 2024-2026 solo 26 cargan bien, 39 fallan con error y 10 devuelven `[]`. Comparado contra la versión previa a `73ec8f1`, el arreglo no rompió nada: +1 OK (44371558036) y 50914138024 ahora lee $858.17 (antes `[]`). Los fallos principales son "no se encontró ningún encabezado (OUTLET/INV#)", "no se pudo leer AMOUNT DUE" y "no se pudo leer el N°".
 - **Sin pushear**: `main` va ~17 commits adelante de `origin`. El usuario pushea él mismo (`git push origin main`).
 - **Decisión pendiente del usuario**: el PDF resumen de Lottery muestra Cash Balance como "último día"; los datos reales indican que es un neto diario (la suma de agosto, $6,436, coincide con el Monthly Sales Report del portal). ¿Pasarlo a suma del mes?
 - **Auditoría**: 17 hallazgos arreglados y todos los graves de Carga de Datos resueltos. Quedan sin tocar los dos graves de Herramientas/Excel (NONTAX en CMV Ventas, fórmulas `E=+Dn` al insertar en medio del Ledger; baja prioridad), los media/baja sin `[x]` y 30 sin verificar.
