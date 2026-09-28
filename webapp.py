@@ -1695,6 +1695,7 @@ def _run_carga_datos_reporte_diario_job(job_id, pdf_paths):
         days_complete = set()
         days_partial = set()
         days_subtotal_mismatch = set()
+        days_total_sales_mismatch = {}
         files_unreadable = 0
         date_mismatches = 0
         first_date = None
@@ -1742,6 +1743,8 @@ def _run_carga_datos_reporte_diario_job(job_id, pdf_paths):
                         candidate_date, pdf_path, _reporte_pdf_canonical_filename(candidate_date)
                     )
                     reportes_db.upsert_store_info(candidate_date, result["fields"], source="ocr", pdf_filename=pdf_relpath)
+                    if result["fields"].get("total_sales_mismatch"):
+                        days_total_sales_mismatch[candidate_date] = result["fields"]["total_sales_mismatch"]
                     day_date = candidate_date
                     got_store_info = True
                 except Exception as exc:
@@ -1798,12 +1801,20 @@ def _run_carga_datos_reporte_diario_job(job_id, pdf_paths):
                 f"impreso en el PDF ({dates_txt}) — es señal de que el OCR se salteó alguna fila (ej. un "
                 "departamento esporádico como GIFT CARD), revisá Ventas por Departamento y completalo a mano si falta algo."
             )
+        if days_total_sales_mismatch:
+            dates_txt = ", ".join(
+                f"{d.isoformat()} (${v:+,.2f})" for d, v in sorted(days_total_sales_mismatch.items())
+            )
+            parts.append(
+                f"{len(days_total_sales_mismatch)} día(s) donde Store Info no cierra contra el Total Sales "
+                f"impreso ({dates_txt}) — algún monto se leyó mal, revisalo a mano en el día."
+            )
 
         if not parts:
             notice, level = "No se pudo guardar nada de este lote.", "error"
         else:
             notice = " ".join(parts)
-            level = "warning" if (days_partial or files_unreadable or days_subtotal_mismatch) else "success"
+            level = "warning" if (days_partial or files_unreadable or days_subtotal_mismatch or days_total_sales_mismatch) else "success"
 
         redirect_url = (
             f"/reporte/historial?year={first_date.year}&month={first_date.month}"
@@ -2784,11 +2795,20 @@ def chase_categorizar():
 
 def _supplier_from_filename(filename, registry_entries):
     """'Cheque 1773. Midtown Wholesale.pdf' -> ('midtown', 'Midtown Wholesale LLC'), o (None, None)."""
+    # Antes alcanzaba con la primera palabra del proveedor: "Florida Audit
+    # Service" se leía como FPL ("Florida Power & Light"). Ahora tiene que
+    # aparecer la clave del proveedor, o TODAS las palabras significativas de
+    # su nombre (auditoría 2026-09, cheques 1749/1761).
+    generic = {"inc", "llc", "co", "corp", "company", "the", "of", "and", "usa", "dist", "fl"}
     name = re.sub(r"[^a-z0-9]+", " ", (filename or "").lower())
     words = set(name.split())
     for entry in registry_entries:
-        first_word = re.sub(r"[^a-z0-9]+", " ", entry["label"].lower()).split()[0]
-        if entry["key"] in words or (len(first_word) >= 3 and first_word in words):
+        label_words = [w for w in re.sub(r"[^a-z0-9]+", " ", entry["label"].lower()).split() if w not in generic]
+        key_words = entry["key"].split("_")
+        joined_key = entry["key"].replace("_", "")
+        if (all(w in words for w in key_words)
+                or (len(joined_key) >= 6 and joined_key in name.replace(" ", ""))  # "Sky Harvest" -> skyharvest
+                or (label_words and all(w in words for w in label_words))):
             return entry["key"], entry["label"]
     return None, None
 
@@ -2873,6 +2893,9 @@ def _match_invoice_by_amount(invoices, amount, before_iso):
     return candidates[0]
 
 
+_MAX_CHECK_GAP = 50
+
+
 def _build_cheques_rows():
     """Una fila por N° de cheque (cargados, cobrados en Chase, y los huecos entre medio), en orden."""
     records = cheques_db.list_checks()
@@ -2887,8 +2910,13 @@ def _build_cheques_rows():
 
     by_number = {r["check_number"]: r for r in records if r["check_number"] is not None}
     numbers = set(by_number) | set(chase_by_number)
-    if numbers:
-        numbers |= set(range(min(numbers), max(numbers) + 1))  # huecos: se ven igual que en el Excel
+    # Huecos: se ven igual que en el Excel. Solo entre números cercanos -- un
+    # N° mal leído por el OCR (ej. 775 en vez de 1775) no tiene que llenar el
+    # cuadro con cientos de filas vacías.
+    known = sorted(numbers)
+    for low, high in zip(known, known[1:]):
+        if high - low <= _MAX_CHECK_GAP:
+            numbers |= set(range(low + 1, high))
 
     invoice_cache = {}
 
@@ -2902,6 +2930,8 @@ def _build_cheques_rows():
         tx = chase_by_number.get(number) if number is not None else None
         chase_amount = round(-tx["amount"], 2) if tx else None
         supplier_key = record.get("auto_supplier_key") or (tx.get("supplier_key") if tx else None)
+        if not supplier_key and not record.get("manual_supplier"):
+            supplier_key, _ = _supplier_from_filename(record.get("source_filename"), registry)
         supplier = (
             record.get("manual_supplier")
             or record.get("auto_supplier_label")
@@ -2909,8 +2939,6 @@ def _build_cheques_rows():
         )
         if not supplier and tx:
             supplier = re.sub(r"^\s*CHE(?:CK|QUE)\s*#?\s*\d+\s*(\d{2}/\d{2}\s*)?", "", tx["description"], flags=re.I).strip() or None
-        if not supplier_key and not record.get("manual_supplier"):
-            supplier_key, _ = _supplier_from_filename(record.get("source_filename"), registry)
 
         amount = record.get("manual_amount")
         if amount is None:
@@ -5660,7 +5688,9 @@ def import_deposit_pdf(pdf_path, filename, fallback_period):
     for item in depositos.extract_deposits_from_pdf(pdf_path, filename):
         deposit_date = item["date"]
         iso = deposit_date.isoformat() if deposit_date else None
-        if depositos_db.find_duplicate(item["tx_number"], iso, item["amount"]):
+        complete = item["amount"] is not None and deposit_date is not None and item["tx_number"] is not None
+        if (depositos_db.find_duplicate(item["tx_number"], iso, item["amount"]) if complete
+                else depositos_db.find_by_source_page(filename, item["page"])):
             duplicates += 1
             continue
         kind = item["kind"] or _chase_kind_for(deposit_date, item["amount"])
@@ -5674,7 +5704,7 @@ def import_deposit_pdf(pdf_path, filename, fallback_period):
         )
         saved += 1
         first_period = first_period or (year, month)
-        if item["amount"] is None or deposit_date is None or item["tx_number"] is None:
+        if not complete:
             incomplete += 1
     return saved, incomplete, duplicates, first_period
 
@@ -5732,7 +5762,10 @@ def documentos_deposito_guardar(deposit_id):
         flash("La fecha o el monto no son válidos.", "error")
         return redirect(url_for("documentos_depositos", year=deposit["year"], month=deposit["month"]))
     description = (request.form.get("description") or "").strip() or None
-    depositos_db.update_deposit(deposit_id, raw_date, amount, description)
+    # La aclaración se edita en la propia descripción: "(Food Truck)" al final
+    # lo saca del control contra Caja, borrarla lo vuelve un depósito normal.
+    depositos_db.update_deposit(deposit_id, raw_date, amount, description,
+                                depositos.kind_from_description(description))
     updated = depositos_db.get_deposit(deposit_id)
     return redirect(url_for("documentos_depositos", year=updated["year"], month=updated["month"]) + f"#deposito-{deposit_id}")
 
@@ -5754,6 +5787,9 @@ def documentos_deposito_pdf(deposit_id):
         flash("Ese depósito ya no existe.", "error")
         return redirect(url_for("documentos_depositos"))
     name = (deposit.get("description") or "Deposito").replace("#", "N").replace("/", "-") + ".pdf"
+    if not os.path.isfile(depositos_db.absolute_path(deposit["pdf_path"])):
+        flash("No se encontró el PDF guardado de ese depósito.", "error")
+        return redirect(url_for("documentos_depositos", year=deposit["year"], month=deposit["month"]))
     return send_file(
         depositos_db.absolute_path(deposit["pdf_path"]),
         as_attachment=request.args.get("mode") == "download",

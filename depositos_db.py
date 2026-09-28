@@ -94,9 +94,27 @@ def add_deposit(year, month, deposit_date, amount, description, tx_number, kind,
         conn.close()
 
 
-def update_deposit(deposit_id, deposit_date, amount, description):
-    """Corrección a mano. Si cambia la fecha, el depósito pasa al mes de la fecha nueva."""
-    fields = {"deposit_date": deposit_date, "amount": amount, "description": description, "edited": 1}
+def find_by_source_page(source_filename, page_index):
+    """Mismo PDF y misma página ya cargados (para recibos con algún dato sin leer, donde find_duplicate no alcanza)."""
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT id FROM deposits WHERE source_filename = ? AND page_index = ?",
+            (source_filename, page_index),
+        ).fetchone()
+        return row["id"] if row else None
+    finally:
+        conn.close()
+
+
+def update_deposit(deposit_id, deposit_date, amount, description, kind):
+    """
+    Corrección a mano. Si cambia la fecha, el depósito pasa al mes de la
+    fecha nueva. `kind` (Food Truck/Ice Machine/otra aclaración, o None =
+    depósito normal) es lo que decide si cuenta en el control contra Caja.
+    """
+    fields = {"deposit_date": deposit_date, "amount": amount, "description": description,
+              "kind": kind, "edited": 1}
     if deposit_date:
         fields["year"], fields["month"] = int(deposit_date[:4]), int(deposit_date[5:7])
     conn = _connect()

@@ -57,11 +57,18 @@ def filename_date(filename):
 
 def normalize_kind(text):
     lowered = (text or "").lower()
-    if "food" in lowered or "truck" in lowered:
+    if re.search(r"\b(food|truck)\b", lowered):
         return FOOD_TRUCK
-    if "ice" in lowered or "hielo" in lowered:
+    # Palabra entera: "Service"/"Invoice" también contienen "ice".
+    if re.search(r"\b(ice|hielo)\b", lowered):
         return ICE_MACHINE
     return (text or "").strip() or None
+
+
+def kind_from_description(description):
+    """La aclaración entre paréntesis al final de la descripción ("Transacción #133 (Ice Machine)"), o None."""
+    match = re.search(r"\(\s*([^)]+?)\s*\)\s*$", description or "")
+    return normalize_kind(match.group(1)) if match else None
 
 
 def filename_annotations(filename):

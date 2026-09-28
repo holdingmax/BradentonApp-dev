@@ -135,7 +135,7 @@
                 <form method="post" action="{{ url_for('documentos_deposito_guardar', deposit_id=r.id) }}" class="dep-edit-form">
                   <label>Fecha<input type="date" name="deposit_date" value="{{ r.deposit_date or '' }}"></label>
                   <label>Monto<input type="text" name="amount" inputmode="decimal" value="{{ '%.2f'|format(r.amount) if r.amount is not none else '' }}"></label>
-                  <label class="full">Descripción<input type="text" name="description" value="{{ r.description or '' }}"></label>
+                  <label class="full">Descripción<input type="text" name="description" value="{{ r.description or '' }}" title="Una aclaración entre paréntesis al final — ej. (Food Truck) o (Ice Machine) — lo saca del control contra Caja."></label>
                   <div class="full"><button type="submit">Guardar</button></div>
                 </form>
               </div>
