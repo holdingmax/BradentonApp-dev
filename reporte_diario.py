@@ -2582,9 +2582,23 @@ def _split_label_and_values(line):
 def _sanitize_store_info_float(raw_value):
     """Like _sanitize_sales_float, but also treats a leading '~' as a minus sign (OCR glyph noise)."""
     text = _strip_cell(raw_value)
-    if text.startswith("~"):
-        text = "-" + text[1:]
-    return _sanitize_sales_float(text)
+    # El OCR ensucia el signo: "--$92.82", "—$65.24", "~$5.00", "($92.82)".
+    # Todo eso es un solo negativo. Antes cualquier token así caía en 0.00
+    # sin avisar (auditoría 2026-09, caso real Desc. Comb del 12/09).
+    text = text.replace("—", "-").replace("–", "-").replace("−", "-")
+    negative = False
+    stripped = text.lstrip("-~ ")
+    if stripped != text:
+        negative = True
+        text = stripped
+    if text.startswith("(") or text.startswith("$("):
+        negative = True
+    text = text.replace("(", "").replace(")", "").replace("$", "").replace(",", "").strip()
+    try:
+        value = float(text)
+    except ValueError:
+        raise ValueError(f'Monto ilegible en Store Info: "{raw_value}".')
+    return -abs(value) if negative else value
 
 
 def _find_label_values(lines, *target_labels):
@@ -2761,7 +2775,17 @@ def _extract_store_info_fields(lines):
         raise ValueError('No se encontró "Total Revenue".')
     total_revenue = _force_positive(_sanitize_store_info_float(total_revenue_values[-1]))
 
+    # Cruce contra el "Total Sales" impreso: en todos los días reales cargados
+    # se cumple exacto. Si no cierra, algún componente se leyó mal (o una
+    # etiqueta opcional como "Fuel Discounts" no se reconoció y quedó en 0)
+    # -- se guarda igual pero se avisa con la diferencia.
+    components = sales_fuel + desc_comb + non_fuel_total + desc_otros + tax_collect
+    total_sales_mismatch = round(components - total_sales, 2)
+    if abs(total_sales_mismatch) <= 0.02:
+        total_sales_mismatch = None
+
     return {
+        "total_sales_mismatch": total_sales_mismatch,
         "from_date": period["from_date"],
         "from_time": period["from_time"],
         "to_date": period["to_date"],
