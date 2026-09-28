@@ -715,6 +715,40 @@ def _fmt_date_ddmmyyyy(value):
     return f"{day}/{month}/{year}"
 
 
+def _month_opening_closing(rows):
+    """
+    (saldo inicial, saldo final) del mes a partir del `balance` que trae
+    cada movimiento. No se puede confiar en el orden de `rows` (dentro de un
+    día viene alfabético, no en el orden del banco -- auditoría 2026-09), así
+    que se reconstruye la cadena: la apertura es el movimiento del primer día
+    cuyo saldo previo (balance - amount) no es el balance de ningún otro de
+    ese día; el cierre, el del último día cuyo balance no es el saldo previo
+    de ningún otro. Si queda ambiguo o no cierra (SI + movimientos != SF),
+    devuelve None para mostrar "—" en vez de un saldo inventado.
+    """
+    dated = [r for r in rows if r.get("posting_date") and r.get("balance") is not None]
+    if not dated:
+        return None, None
+    first_day = min(r["posting_date"] for r in dated)
+    last_day = max(r["posting_date"] for r in dated)
+
+    def prev_balance(r):
+        return round(r["balance"] - (r.get("amount") or 0.0), 2)
+
+    first = [r for r in dated if r["posting_date"] == first_day]
+    openings = [r for r in first if prev_balance(r) not in {round(o["balance"], 2) for o in first if o is not r}]
+    last = [r for r in dated if r["posting_date"] == last_day]
+    closings = [r for r in last if round(r["balance"], 2) not in {prev_balance(o) for o in last if o is not r}]
+    if len(openings) != 1 or len(closings) != 1:
+        return None, None
+    saldo_inicial = prev_balance(openings[0])
+    saldo_final = round(closings[0]["balance"], 2)
+    movimientos = sum((r.get("amount") or 0.0) for r in rows)
+    if abs(saldo_inicial + movimientos - saldo_final) > 0.01:
+        return None, None
+    return saldo_inicial, saldo_final
+
+
 def build_chase_pdf_report(rows, year, month, dest_path):
     """
     PDF del módulo nuevo "Reportes" (pedido explícito del usuario,
@@ -776,14 +810,7 @@ def build_chase_pdf_report(rows, year, month, dest_path):
     else:
         period_label = f"Período: sin movimientos cargados todavía en {month:02d}/{year}"
 
-    first_row = rows[0] if rows else None
-    last_row = rows[-1] if rows else None
-    saldo_inicial = None
-    if first_row is not None and first_row.get("balance") is not None:
-        saldo_inicial = first_row["balance"] - (first_row.get("amount") or 0.0)
-    saldo_final = None
-    if last_row is not None and last_row.get("balance") is not None:
-        saldo_final = last_row["balance"]
+    saldo_inicial, saldo_final = _month_opening_closing(rows)
 
     table_rows = [["SALDO INICIAL", _fmt_money_pdf(saldo_inicial)]]
     for label in sorted(totals_by_detalle.keys()):

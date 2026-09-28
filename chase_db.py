@@ -44,12 +44,55 @@ def _ensure_schema(conn):
             type TEXT,
             source_filename TEXT,
             updated_at TEXT,
-            PRIMARY KEY (posting_date, description, amount)
+            detalle_source TEXT,
+            supplier_key TEXT,
+            supplier_source TEXT,
+            occurrence INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (posting_date, description, amount, occurrence)
         )
         """
     )
     _ensure_columns(conn)
+    _migrate_occurrence_pk(conn)
     conn.commit()
+
+
+def _migrate_occurrence_pk(conn):
+    """
+    La clave era (fecha, descripción, monto): dos movimientos reales
+    idénticos del mismo día (dos MVNT de $2.50, dos UBER iguales) se
+    fusionaban y se perdía uno (auditoría 2026-09, 3 perdidos en agosto).
+    Ahora la clave suma `occurrence` (0, 1, ... según el orden dentro del
+    extracto) -- recargar el mismo extracto sigue siendo idempotente. Se
+    reconstruye la tabla una sola vez; las filas ya guardadas quedan con 0.
+    """
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(chase_transactions)")}
+    if "occurrence" in existing:
+        return
+    cols = ("posting_date, description, amount, balance, detalle, type, source_filename, "
+            "updated_at, detalle_source, supplier_key, supplier_source")
+    conn.execute("ALTER TABLE chase_transactions RENAME TO chase_transactions_old")
+    conn.execute(
+        """
+        CREATE TABLE chase_transactions (
+            posting_date TEXT NOT NULL,
+            description TEXT NOT NULL,
+            amount REAL NOT NULL,
+            balance REAL,
+            detalle TEXT,
+            type TEXT,
+            source_filename TEXT,
+            updated_at TEXT,
+            detalle_source TEXT,
+            supplier_key TEXT,
+            supplier_source TEXT,
+            occurrence INTEGER NOT NULL DEFAULT 0,
+            PRIMARY KEY (posting_date, description, amount, occurrence)
+        )
+        """
+    )
+    conn.execute(f"INSERT INTO chase_transactions ({cols}) SELECT {cols} FROM chase_transactions_old")
+    conn.execute("DROP TABLE chase_transactions_old")
 
 
 def _ensure_columns(conn):
@@ -119,21 +162,25 @@ def upsert_transactions(rows, source_filename=None):
         inserted = 0
         updated = 0
         now = datetime.utcnow().isoformat()
+        seen = {}
         for row in rows:
             posting_date = row["posting_date"]
             if isinstance(posting_date, (date, datetime)):
                 posting_date = posting_date.isoformat() if isinstance(posting_date, date) else posting_date.date().isoformat()
+            key = (posting_date, row["description"], row["amount"])
+            occurrence = seen.get(key, 0)
+            seen[key] = occurrence + 1
             cur = conn.execute(
-                "SELECT 1 FROM chase_transactions WHERE posting_date = ? AND description = ? AND amount = ?",
-                (posting_date, row["description"], row["amount"]),
+                "SELECT 1 FROM chase_transactions WHERE posting_date = ? AND description = ? AND amount = ? AND occurrence = ?",
+                (posting_date, row["description"], row["amount"], occurrence),
             )
             exists = cur.fetchone() is not None
             conn.execute(
                 """
                 INSERT INTO chase_transactions
-                    (posting_date, description, amount, balance, detalle, type, source_filename, updated_at, detalle_source, supplier_key, supplier_source)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(posting_date, description, amount) DO UPDATE SET
+                    (posting_date, description, amount, balance, detalle, type, source_filename, updated_at, detalle_source, supplier_key, supplier_source, occurrence)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(posting_date, description, amount, occurrence) DO UPDATE SET
                     balance = excluded.balance,
                     type = excluded.type,
                     source_filename = excluded.source_filename,
@@ -153,6 +200,7 @@ def upsert_transactions(rows, source_filename=None):
                     "rule" if row.get("detalle") else None,
                     row.get("supplier_key"),
                     "rule" if row.get("supplier_key") else None,
+                    occurrence,
                 ),
             )
             if exists:
