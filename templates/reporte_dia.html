@@ -17,7 +17,7 @@
     Corregí lo que haga falta y guardá — el cambio queda solo acá adentro, no toca el Excel real de este mes.
     {% endif %}
   </p>
-  {% if pdf_filename %}
+  {% if guardar_documentos and pdf_filename %}
   <p style="margin-top: 8px;">{{ pdf_links(url_for('reporte_dia_pdf', report_date=report_date.isoformat()), 'Ver el PDF original guardado de este día') }}</p>
   {% endif %}
 </div>

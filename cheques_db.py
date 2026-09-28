@@ -19,6 +19,8 @@ import sqlite3
 import uuid
 from datetime import datetime
 
+import documents_db
+
 _BASE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reportes_data")
 _DB_PATH = os.path.join(_BASE_DIR, "cheques.db")
 _FILES_DIR = os.path.join(_BASE_DIR, "cheques")
@@ -84,6 +86,10 @@ def absolute_path(relpath):
 
 def store_original(source_path, original_filename):
     """Copia el PDF subido una sola vez; devuelve su ruta relativa (para varios cheques del mismo PDF)."""
+    # Guardado de documentos apagado (documents_db.GUARDAR_DOCUMENTOS): '' es
+    # el mismo valor que ya usa una fila cargada a mano sin PDF.
+    if not documents_db.GUARDAR_DOCUMENTOS:
+        return ""
     folder = uuid.uuid4().hex[:12]
     rel = os.path.join("originales", folder, os.path.basename(original_filename))
     dest = absolute_path(rel)
@@ -103,6 +109,8 @@ def find_by_number(check_number):
 
 
 def _save_check_image(image):
+    if not documents_db.GUARDAR_DOCUMENTOS:
+        return ""
     rel = os.path.join("cheques", f"{uuid.uuid4().hex[:12]}.pdf")
     dest = absolute_path(rel)
     os.makedirs(os.path.dirname(dest), exist_ok=True)

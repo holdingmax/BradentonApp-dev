@@ -234,6 +234,7 @@
     .section-switch-current-reportes { background: #7C3AED; }
     .section-switch-current-proyecciones { background: #6B7280; }
     .section-switch-current-documentos { background: #B45309; }
+    .section-switch-current-controles { background: #B45309; }
 
     .topbar-left { grid-column: 1; justify-self: start; min-width: 0; margin-left: -14px; display: flex; align-items: center; flex-wrap: wrap; row-gap: 6px; overflow: hidden; }
 
@@ -1105,7 +1106,7 @@
           <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('carga_datos_reporte_diario') }}">Cargar PDF</a>
           <a class="app-rail-panel-link" href="{{ url_for('reporte_historial') }}">Ventas por Departamento</a>
           <a class="app-rail-panel-link" href="{{ url_for('reporte_store_info_historial') }}">Store Info</a>
-          <a class="app-rail-panel-link" href="{{ url_for('reporte_documentos') }}#pdf-mensual">PDF mensual</a>
+          {% if guardar_documentos %}<a class="app-rail-panel-link" href="{{ url_for('reporte_documentos') }}#pdf-mensual">PDF mensual</a>{% endif %}
         </div>
       </div>
       <div class="app-rail-item" data-rail-key="chase">
@@ -1194,7 +1195,7 @@
           <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('carga_datos_lottery') }}">Cargar PDF</a>
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_lottery_historial') }}">Cuadro del mes</a>
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_lottery_resumen_mensual') }}">Resumen mensual</a>
-          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_lottery_documentos') }}#pdf-mensual">PDF mensual</a>
+          {% if guardar_documentos %}<a class="app-rail-panel-link" href="{{ url_for('carga_datos_lottery_documentos') }}#pdf-mensual">PDF mensual</a>{% endif %}
         </div>
       </div>
       <div class="app-rail-item" data-rail-key="proveedores">
@@ -1263,6 +1264,11 @@
           <a class="section-switch-current section-switch-current-reportes" href="{{ url_for('carga_datos_reportes') }}">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
             Reportes
+          </a>
+          {% elif request.path.startswith('/controles') %}
+          <a class="section-switch-current section-switch-current-controles" href="{{ url_for('controles') }}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+            Controles
           </a>
           {% elif request.path.startswith('/documentos') %}
           <a class="section-switch-current section-switch-current-documentos" href="{{ url_for('documentos_index') }}">

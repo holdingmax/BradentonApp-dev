@@ -33,6 +33,8 @@ import shutil
 import sqlite3
 from datetime import date, datetime, timedelta
 
+import documents_db
+
 _BASE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reportes_data")
 _DB_PATH = os.path.join(_BASE_DIR, "lottery.db")
 _PDF_DIR = os.path.join(_BASE_DIR, "lottery_pdfs")
@@ -256,6 +258,10 @@ def get_day(report_date):
 
 
 def store_pdf_copy(report_date, source_path, original_filename):
+    # Guardado de documentos apagado (ver documents_db.GUARDAR_DOCUMENTOS):
+    # no se copia nada y el día queda sin PDF asociado.
+    if not documents_db.GUARDAR_DOCUMENTOS:
+        return None
     d = _parse_date(report_date)
     dest_dir = os.path.join(_PDF_DIR, f"{d.year:04d}", f"{d.month:02d}")
     os.makedirs(dest_dir, exist_ok=True)

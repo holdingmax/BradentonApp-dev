@@ -16,6 +16,8 @@ import shutil
 import sqlite3
 from datetime import date, datetime
 
+import documents_db
+
 _BASE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reportes_data")
 _DB_PATH = os.path.join(_BASE_DIR, "reportes_diarios.db")
 _PDF_DIR = os.path.join(_BASE_DIR, "pdfs")
@@ -580,8 +582,12 @@ def store_pdf_copy(report_date, source_path, original_filename):
     Copia el PDF ya subido (nunca el original del usuario -- source_path ya
     es una copia en el workspace temporal de la request) a
     reportes_data/pdfs/{año}/{mes}/. Devuelve la ruta relativa a
-    reportes_data/, para guardar en daily_reports.pdf_filename.
+    reportes_data/, para guardar en daily_reports.pdf_filename. Con el
+    guardado de documentos apagado (documents_db.GUARDAR_DOCUMENTOS) no
+    copia nada y devuelve None.
     """
+    if not documents_db.GUARDAR_DOCUMENTOS:
+        return None
     if isinstance(report_date, (date, datetime)):
         d = report_date
     else:

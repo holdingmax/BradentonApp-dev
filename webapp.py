@@ -236,6 +236,37 @@ def _track_app_side():
     session["app_side"] = "carga_datos" if request.path.startswith("/carga-datos") else "excels"
 
 
+# Rutas que solo sirven para ver, subir o listar archivos originales -- con
+# el guardado de documentos apagado (documents_db.GUARDAR_DOCUMENTOS, pedido
+# explícito del usuario 2026-09-28: "que la página solo sirva para extraer
+# los datos... para que no haga falta el documento") quedan fuera de
+# servicio y mandan al Menú. El código de cada ruta sigue intacto, para
+# reactivarlo con solo volver el interruptor a True.
+_DOCUMENT_ENDPOINTS = {
+    "documentos_index",
+    "carga_datos_documentos",
+    "carga_datos_documentos_subir",
+    "carga_datos_documento_descargar",
+    "carga_datos_documento_eliminar",
+    "reporte_documentos",
+    "reporte_documentos_mensual_subir",
+    "carga_datos_lottery_documentos",
+    "carga_datos_lottery_documentos_mensual_subir",
+    "reporte_dia_pdf",
+    "carga_datos_lottery_dia_pdf",
+    "chase_cheque_pdf",
+    "controles_deposito_pdf",
+}
+
+
+@app.before_request
+def _block_document_routes():
+    if documents_db.GUARDAR_DOCUMENTOS or request.endpoint not in _DOCUMENT_ENDPOINTS:
+        return None
+    flash("Los documentos originales ya no se guardan: los datos quedan cargados en cada módulo.", "warning")
+    return redirect(url_for("home"))
+
+
 @app.route("/login", methods=["GET", "POST"])
 def login():
     if current_user.is_authenticated:
@@ -489,6 +520,28 @@ CONTROLS = [
         "description": "Cruza depósitos Ice Machine/Food Truck y columna K, y gastos en efectivo (columna M), contra los Mayores de Chase y de Caja.",
         "accent": "#EA580C",
         "accent_soft": "#FCE3D2",
+    },
+]
+
+# Nueva sección "Controles" del Menú -- pedido explícito del usuario
+# (2026-09-28), reemplaza a la tarjeta Documentos: controles del mes completo
+# hechos con los datos YA cargados en Carga de Datos, sin Excel de por
+# medio. Arranca vacía salvo Depósitos (que vivía en Documentos) y se va
+# llenando de a uno. Los 6 controles viejos de arriba (CONTROLS, basados en
+# Excel) quedan ocultos: siguen andando por URL directa, pero no se listan
+# ni aparecen en la búsqueda.
+_ICON_DEPOSIT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/></svg>'
+
+CONTROLES_SECTIONS = [
+    {
+        "key": "control_depositos",
+        "code": "DP",
+        "icon": _ICON_DEPOSIT,
+        "label": "Depósitos",
+        "url": "/controles/depositos",
+        "description": "Recibos de depósito del banco, cruzados contra Chase y contra la columna Depósitos de Caja.",
+        "accent": "#16A34A",
+        "accent_soft": "#DCF3E3",
     },
 ]
 
@@ -748,7 +801,14 @@ def inject_search_index():
     # 'mes actual'" en vez del link "Ir al mes actual" -- se necesita en
     # las ~13 páginas con navegación de mes, así que se inyecta acá en vez
     # de agregarlo a mano en cada ruta.
-    return {"SEARCH_INDEX": CONTROLS + CARGA_DATOS_TOOLS, "today": date.today()}
+    # `guardar_documentos` -- ver documents_db.GUARDAR_DOCUMENTOS: los
+    # templates lo usan para ocultar los links "Ver PDF" de archivos que ya
+    # estaban guardados de antes.
+    return {
+        "SEARCH_INDEX": CONTROLES_SECTIONS + CARGA_DATOS_TOOLS,
+        "today": date.today(),
+        "guardar_documentos": documents_db.GUARDAR_DOCUMENTOS,
+    }
 
 
 @app.route("/buscar/documentos")
@@ -765,7 +825,7 @@ def buscar_documentos():
     cada página dejaría de ser viable.
     """
     query = (request.args.get("q") or "").strip()
-    if len(query) < 2:
+    if len(query) < 2 or not documents_db.GUARDAR_DOCUMENTOS:
         return jsonify([])
 
     results = []
@@ -2253,7 +2313,7 @@ def carga_datos_lottery_resumen_mensual():
 
 @app.route("/controles")
 def controles():
-    return render_template("controles_index.html", controls=CONTROLS)
+    return render_template("controles_index.html", controls=CONTROLES_SECTIONS)
 
 
 @app.route("/controles/cierre-mensual", methods=["GET", "POST"])
@@ -2966,7 +3026,7 @@ def _build_cheques_rows():
         return {
             "id": record.get("id"),
             "number": number,
-            "has_pdf": bool(record.get("check_pdf")),
+            "has_pdf": documents_db.GUARDAR_DOCUMENTOS and bool(record.get("check_pdf")),
             "source_filename": record.get("source_filename"),
             "date": _fmt_ddmmyyyy(date_iso),
             "date_iso": date_iso,
@@ -3033,7 +3093,10 @@ def _run_chase_cheques_job(job_id, pdf_paths):
                 for item in found:
                     number = item["number"]
                     existing = cheques_db.find_by_number(number) if number is not None else None
-                    if existing and existing["check_pdf"]:
+                    # Sin guardado de documentos un cheque leído por OCR
+                    # queda con check_pdf vacío, igual que uno cargado a
+                    # mano -- number_source es lo que los distingue.
+                    if existing and (existing["check_pdf"] or existing["number_source"] == "ocr"):
                         duplicates += 1
                         continue
                     if original_rel is None:
@@ -5543,9 +5606,6 @@ DOCUMENTOS_SECTIONS = [
      "description": "Reportes semanales de horas y comprobantes de pago."},
     {"label": "Combustible", "module": "combustible", "theme": "fisico", "icon": _ICON_FUEL,
      "description": "Facturas de combustible."},
-    {"label": "Depósitos", "endpoint": "documentos_depositos", "theme": "carga_chase",
-     "icon": '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/></svg>',
-     "description": "Recibos de depósito del banco, uno por fila con su fecha, monto y descripción."},
 ]
 
 
@@ -5591,8 +5651,8 @@ def _chase_kind_for(deposit_date, amount):
     return None
 
 
-@app.route("/documentos/depositos")
-def documentos_depositos():
+@app.route("/controles/depositos")
+def controles_depositos():
     today = date.today()
     year = request.args.get("year", type=int) or today.year
     month = request.args.get("month", type=int) or today.month
@@ -5645,13 +5705,13 @@ def documentos_depositos():
             "ok": abs(docs_normal - caja_total) < 0.005, "days": diff_days,
         }
     except Exception as exc:
-        print(f"[documentos/depositos] control contra Caja: {exc}")
+        print(f"[controles/depositos] control contra Caja: {exc}")
 
     prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
     next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
     _active_job = jobs.get_active_job("depositos")
     return render_template(
-        "documentos_depositos.html",
+        "controles_depositos.html",
         rows=rows,
         total=total,
         caja_control=caja_control,
@@ -5668,8 +5728,8 @@ def documentos_depositos():
     )
 
 
-@app.route("/documentos/depositos/subir", methods=["POST"])
-def documentos_depositos_subir():
+@app.route("/controles/depositos/subir", methods=["POST"])
+def controles_depositos_subir():
     uploads = [u for u in request.files.getlist("pdf_files") if u and u.filename]
     if not uploads:
         return _error_response("Seleccioná uno o más PDF de depósitos.")
@@ -5695,8 +5755,11 @@ def import_deposit_pdf(pdf_path, filename, fallback_period):
             continue
         kind = item["kind"] or _chase_kind_for(deposit_date, item["amount"])
         year, month = (deposit_date.year, deposit_date.month) if deposit_date else fallback_period
-        rel = depositos_db.new_pdf_relpath(year, month)
-        depositos.write_single_page_pdf(pdf_path, item["page"], depositos_db.absolute_path(rel))
+        # pdf_path es NOT NULL en la base: sin guardado de documentos queda ''.
+        rel = ""
+        if documents_db.GUARDAR_DOCUMENTOS:
+            rel = depositos_db.new_pdf_relpath(year, month)
+            depositos.write_single_page_pdf(pdf_path, item["page"], depositos_db.absolute_path(rel))
         depositos_db.add_deposit(
             year, month, iso, item["amount"],
             depositos.default_description(item["tx_number"], kind),
@@ -5720,7 +5783,7 @@ def _run_depositos_job(job_id, pdf_paths, fallback_period):
                 saved, incomplete, duplicates = saved + s, incomplete + i, duplicates + d
                 first_period = first_period or period
             except Exception as exc:
-                print(f"[documentos/depositos] {pdf_path}: {exc}")
+                print(f"[controles/depositos] {pdf_path}: {exc}")
                 failed += 1
             jobs.update_job(job_id, done=index, total=len(pdf_paths))
 
@@ -5741,18 +5804,18 @@ def _run_depositos_job(job_id, pdf_paths, fallback_period):
         jobs.update_job(
             job_id, status="done", done=len(pdf_paths), total=len(pdf_paths),
             notice=" ".join(parts) or "No se encontró ningún depósito.", notice_level=level,
-            redirect_url=f"/documentos/depositos?year={year}&month={month}",
+            redirect_url=f"/controles/depositos?year={year}&month={month}",
         )
     except Exception as exc:
         jobs.update_job(job_id, status="error", error=f"Error: {exc}")
 
 
-@app.route("/documentos/depositos/<int:deposit_id>/guardar", methods=["POST"])
-def documentos_deposito_guardar(deposit_id):
+@app.route("/controles/depositos/<int:deposit_id>/guardar", methods=["POST"])
+def controles_deposito_guardar(deposit_id):
     deposit = depositos_db.get_deposit(deposit_id)
     if deposit is None:
         flash("Ese depósito ya no existe.", "error")
-        return redirect(url_for("documentos_depositos"))
+        return redirect(url_for("controles_depositos"))
     raw_date = (request.form.get("deposit_date") or "").strip() or None
     try:
         if raw_date:
@@ -5760,36 +5823,36 @@ def documentos_deposito_guardar(deposit_id):
         amount = _parse_money_field(request.form.get("amount"))
     except ValueError:
         flash("La fecha o el monto no son válidos.", "error")
-        return redirect(url_for("documentos_depositos", year=deposit["year"], month=deposit["month"]))
+        return redirect(url_for("controles_depositos", year=deposit["year"], month=deposit["month"]))
     description = (request.form.get("description") or "").strip() or None
     # La aclaración se edita en la propia descripción: "(Food Truck)" al final
     # lo saca del control contra Caja, borrarla lo vuelve un depósito normal.
     depositos_db.update_deposit(deposit_id, raw_date, amount, description,
                                 depositos.kind_from_description(description))
     updated = depositos_db.get_deposit(deposit_id)
-    return redirect(url_for("documentos_depositos", year=updated["year"], month=updated["month"]) + f"#deposito-{deposit_id}")
+    return redirect(url_for("controles_depositos", year=updated["year"], month=updated["month"]) + f"#deposito-{deposit_id}")
 
 
-@app.route("/documentos/depositos/<int:deposit_id>/eliminar", methods=["POST"])
-def documentos_deposito_eliminar(deposit_id):
+@app.route("/controles/depositos/<int:deposit_id>/eliminar", methods=["POST"])
+def controles_deposito_eliminar(deposit_id):
     deposit = depositos_db.delete_deposit(deposit_id)
     if deposit is None:
         flash("Ese depósito ya no existe.", "error")
-        return redirect(url_for("documentos_depositos"))
+        return redirect(url_for("controles_depositos"))
     flash("Depósito eliminado.", "success")
-    return redirect(url_for("documentos_depositos", year=deposit["year"], month=deposit["month"]))
+    return redirect(url_for("controles_depositos", year=deposit["year"], month=deposit["month"]))
 
 
-@app.route("/documentos/depositos/<int:deposit_id>/pdf")
-def documentos_deposito_pdf(deposit_id):
+@app.route("/controles/depositos/<int:deposit_id>/pdf")
+def controles_deposito_pdf(deposit_id):
     deposit = depositos_db.get_deposit(deposit_id)
     if deposit is None:
         flash("Ese depósito ya no existe.", "error")
-        return redirect(url_for("documentos_depositos"))
+        return redirect(url_for("controles_depositos"))
     name = (deposit.get("description") or "Deposito").replace("#", "N").replace("/", "-") + ".pdf"
     if not os.path.isfile(depositos_db.absolute_path(deposit["pdf_path"])):
         flash("No se encontró el PDF guardado de ese depósito.", "error")
-        return redirect(url_for("documentos_depositos", year=deposit["year"], month=deposit["month"]))
+        return redirect(url_for("controles_depositos", year=deposit["year"], month=deposit["month"]))
     return send_file(
         depositos_db.absolute_path(deposit["pdf_path"]),
         as_attachment=request.args.get("mode") == "download",

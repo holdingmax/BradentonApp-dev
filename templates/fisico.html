@@ -11,8 +11,8 @@
   <p class="page-subtitle">
     Reconciliación mensual: lo que <strong>debería</strong> quedar en los tanques según compras y ventas
     (Inventario Teórico), mes a mes. Las facturas de compra se cargan (solo por PDF) en
-    <a href="{{ url_for('carga_datos_combustible') }}">Combustible</a> ·
-    <a href="{{ url_for('carga_datos_documentos', module_key='combustible') }}">Ver los PDF originales guardados</a>.
+    <a href="{{ url_for('carga_datos_combustible') }}">Combustible</a>{% if guardar_documentos %} ·
+    <a href="{{ url_for('carga_datos_documentos', module_key='combustible') }}">Ver los PDF originales guardados</a>{% endif %}.
   </p>
 </div>
 

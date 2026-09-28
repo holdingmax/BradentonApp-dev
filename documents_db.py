@@ -35,6 +35,17 @@ _BASE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reportes_d
 _DB_PATH = os.path.join(_BASE_DIR, "documents.db")
 _FILES_DIR = os.path.join(_BASE_DIR, "documents")
 
+# Interruptor único del guardado de archivos originales -- pedido explícito
+# del usuario (2026-09-28), tras la reunión con el jefe: la página tiene que
+# extraer los datos de los PDF/Excel y guardar solo esos datos; el archivo
+# físico no hace falta. En False no se copia ningún archivo (acá ni en
+# reportes_db, lottery_db, cheques_db y Depósitos, que leen esta misma
+# constante), las listas de documentos vuelven vacías (así desaparecen solos
+# los links "Ver PDF") y la sección Documentos queda oculta. Los archivos ya
+# guardados en reportes_data/ quedan en el disco, sin tocar. Volver a True
+# reactiva todo tal cual estaba.
+GUARDAR_DOCUMENTOS = False
+
 
 def _connect():
     os.makedirs(_BASE_DIR, exist_ok=True)
@@ -84,6 +95,8 @@ def store_document(module, source_path, original_filename, year, month, label=No
     caller la envuelve en su propio try/except, igual que el resto de los
     guardados-espejo del proyecto.
     """
+    if not GUARDAR_DOCUMENTOS:
+        return None
     dest_dir = os.path.join(_FILES_DIR, module, f"{year:04d}", f"{month:02d}")
     file_dir = os.path.join(dest_dir, datetime.now().strftime("%Y%m%d%H%M%S%f"))
     os.makedirs(file_dir, exist_ok=True)
@@ -108,6 +121,8 @@ def store_document(module, source_path, original_filename, year, month, label=No
 
 
 def list_documents(module, year, month):
+    if not GUARDAR_DOCUMENTOS:
+        return []
     conn = _connect()
     try:
         rows = conn.execute(
@@ -126,6 +141,8 @@ def list_all_documents(module):
     la factura de J.H. Williams puede haberse subido en un mes distinto al
     del EFT que la paga.
     """
+    if not GUARDAR_DOCUMENTOS:
+        return []
     conn = _connect()
     try:
         rows = conn.execute(
@@ -145,6 +162,8 @@ def search_documents(query, limit=20):
     encontrar un archivo sin tener que saber de antemano dónde quedó
     guardado.
     """
+    if not GUARDAR_DOCUMENTOS:
+        return []
     like = f"%{query}%"
     conn = _connect()
     try:
@@ -159,6 +178,8 @@ def search_documents(query, limit=20):
 
 
 def get_document(document_id):
+    if not GUARDAR_DOCUMENTOS:
+        return None
     conn = _connect()
     try:
         row = conn.execute("SELECT * FROM documents WHERE id = ?", (document_id,)).fetchone()

@@ -12,7 +12,7 @@
 <div class="page-header">
   <span class="eyebrow">Horas de Trabajo</span>
   <h1>Reportes guardados</h1>
-  <p class="page-subtitle">Una semana por bloque (Clock In/Out) — horas, tarifa y descuento quedan editables por empleado. <a href="{{ url_for('carga_datos_documentos', module_key='horas_trabajo') }}">Documentos</a> guarda tanto el reporte subido como los comprobantes de pago.</p>
+  <p class="page-subtitle">Una semana por bloque (Clock In/Out) — horas, tarifa y descuento quedan editables por empleado.{% if guardar_documentos %} <a href="{{ url_for('carga_datos_documentos', module_key='horas_trabajo') }}">Documentos</a> guarda tanto el reporte subido como los comprobantes de pago.{% endif %}</p>
 </div>
 
 <div class="card">
@@ -112,6 +112,9 @@
   {% endif %}
 </div>
 
+{# Comprobantes de pago: solo guarda un archivo, sin datos -- oculto con el
+   guardado de documentos apagado (documents_db.GUARDAR_DOCUMENTOS). #}
+{% if guardar_documentos %}
 <div class="card" style="margin-top: 18px;">
   <h2>Comprobantes de pago</h2>
   <p class="muted">Guardá acá el PDF del pago que se le hace a cada empleado — queda separado del reporte semanal en <a href="{{ url_for('carga_datos_documentos', module_key='horas_trabajo') }}">Documentos</a>.</p>
@@ -123,6 +126,7 @@
     <button type="submit" class="btn-secondary">Guardar comprobante</button>
   </form>
 </div>
+{% endif %}
 
 <style>
   .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }

@@ -67,6 +67,19 @@
       <span class="home-menu-card-desc">PDF y Excel con el resumen del mes de cada módulo -- con el logo y el nombre de la empresa, listos para descargar.</span>
       <span class="home-menu-card-cta">Entrar →</span>
     </a>
+    <!-- "Controles" reemplaza a "Documentos" -- pedido explícito del usuario
+         (2026-09-28): controles del mes completo con los datos ya cargados.
+         Documentos solo vuelve si se reactiva el guardado de archivos
+         (documents_db.GUARDAR_DOCUMENTOS). -->
+    <a class="home-menu-card" href="{{ url_for('controles') }}" style="--card-color: #B45309; --card-color-soft: #FDF0DC;">
+      <span class="home-menu-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+      </span>
+      <span class="home-menu-card-label">Controles</span>
+      <span class="home-menu-card-desc">Cruces del mes completo hechos con los datos ya cargados, para verificar que todo cierre.</span>
+      <span class="home-menu-card-cta">Entrar →</span>
+    </a>
+    {% if guardar_documentos %}
     <a class="home-menu-card" href="{{ url_for('documentos_index') }}" style="--card-color: #B45309; --card-color-soft: #FDF0DC;">
       <span class="home-menu-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
@@ -75,6 +88,7 @@
       <span class="home-menu-card-desc">Los PDF y Excel originales de cada módulo, ordenados por mes, para verlos o descargarlos cuando haga falta.</span>
       <span class="home-menu-card-cta">Entrar →</span>
     </a>
+    {% endif %}
     <!-- "Proyecciones" -- pedido explícito del usuario (2026-09-22): el
          módulo sigue andando tal cual (/carga-datos/proyecciones,
          proyecciones.py, sin tocar) pero se saca del menú hasta que quede
