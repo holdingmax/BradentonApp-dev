@@ -352,11 +352,18 @@ def backfill_grouped_cupones_from_eft():
         ).fetchall()
         filled = 0
         for row in candidates:
+            # Un mismo DDC suele pagarse en 2-4 líneas del EFT (una por
+            # factura SI-): hay que sumarlas todas, no tomar la primera
+            # (auditoría 2026-09, faltaban $68k de Net).
             match = conn.execute(
-                "SELECT gross_amount, fees_amount, paid_amount FROM eft_coupons WHERE coupon = ? LIMIT 1",
+                """
+                SELECT COUNT(*) AS n, SUM(gross_amount) AS gross_amount,
+                       SUM(fees_amount) AS fees_amount, SUM(paid_amount) AS paid_amount
+                FROM eft_coupons WHERE coupon = ?
+                """,
                 (row["coupon_id"],),
             ).fetchone()
-            if match is None:
+            if not match["n"]:
                 continue
             conn.execute(
                 "UPDATE cupones SET gross = ?, fees = ?, net = ? WHERE coupon_id = ?",
@@ -404,14 +411,18 @@ def get_cupones_with_status(limit=None):
         for row in cupones:
             match = conn.execute(
                 """
-                SELECT ec.*, ed.rcv_number, ed.eft_date
+                SELECT MAX(ec.id) AS id, ed.rcv_number, ed.eft_date,
+                       SUM(ec.gross_amount) AS gross_amount, SUM(ec.fees_amount) AS fees_amount,
+                       SUM(ec.paid_amount) AS paid_amount, COUNT(*) AS lines
                 FROM eft_coupons ec JOIN eft_deposits ed ON ed.id = ec.deposit_id
-                WHERE ec.coupon = ? LIMIT 1
+                WHERE ec.coupon = ?
                 """,
                 (row["coupon_id"],),
             ).fetchone()
             entry = dict(row)
-            entry["match"] = dict(match) if match else None
+            # Suma de todas las líneas del DDC; RCV/fecha de la última línea
+            # (SQLite toma las columnas sueltas de la fila con MAX(id)).
+            entry["match"] = dict(match) if match and match["lines"] else None
             if entry["match"] is not None and entry["match"].get("paid_amount") is not None:
                 entry["diff"] = round((entry.get("net") or 0) - entry["match"]["paid_amount"], 2)
             else:
