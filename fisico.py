@@ -58,7 +58,10 @@ def _month_volume_actual(year, month):
     return sum(row.get("volume") or 0.0 for row in rows if row.get("volume") is not None)
 
 
-def _resolve_initial(year, month, _chain=True):
+_MAX_CHAIN_MONTHS = 60  # tope de meses hacia atrás al encadenar (evita recursión sin fin)
+
+
+def _resolve_initial(year, month, _depth=0):
     """
     (gallons, amount, source) del Inventario Inicial Teórico -- mismo
     patrón que caja._resolve_opening_balance: un override manual de ESTE
@@ -69,11 +72,14 @@ def _resolve_initial(year, month, _chain=True):
     settings = fisico_db.get_month_settings(year, month)
     if settings and settings.get("initial_gallons_override") is not None:
         return settings["initial_gallons_override"], settings.get("initial_amount_override") or 0.0, "manual"
-    if not _chain:
+    # Se encadena de verdad hacia atrás hasta un override o un mes sin
+    # datos -- antes el mes anterior se recalculaba arrancando de 0, y desde
+    # el 3er mes sin override el inicial quedaba mal (auditoría 2026-09).
+    if _depth >= _MAX_CHAIN_MONTHS:
         return 0.0, 0.0, "default"
 
     prev_year, prev_month = (year - 1, 12) if month == 1 else (year, month - 1)
-    prev_report = build_month_report(prev_year, prev_month, _chain=False)
+    prev_report = build_month_report(prev_year, prev_month, _depth=_depth + 1)
     if prev_report["has_any_data"]:
         return (
             prev_report["final_teorico_gallons"],
@@ -83,11 +89,11 @@ def _resolve_initial(year, month, _chain=True):
     return 0.0, 0.0, "default"
 
 
-def build_month_report(year, month, _chain=True):
+def build_month_report(year, month, _depth=0):
     invoices = fisico_db.get_month_invoices(year, month)
     settings = fisico_db.get_month_settings(year, month)
 
-    initial_gallons, initial_amount, initial_source = _resolve_initial(year, month, _chain=_chain)
+    initial_gallons, initial_amount, initial_source = _resolve_initial(year, month, _depth=_depth)
 
     invoices_gallons = round(sum(inv["gallons"] or 0.0 for inv in invoices), 2)
     invoices_amount = round(sum(inv["amount"] or 0.0 for inv in invoices), 2)

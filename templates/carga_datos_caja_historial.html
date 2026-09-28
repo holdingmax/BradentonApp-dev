@@ -41,7 +41,7 @@
       <input type="hidden" name="month" value="{{ month }}">
       <div>
         <label class="muted">Saldo Inicial</label>
-        <input type="number" step="0.01" name="opening_balance" value="{{ report.opening_balance }}">
+        <input type="number" step="0.01" name="opening_balance" value="{{ report.opening_balance if report.opening_source == 'manual' else '' }}" placeholder="{{ fmt(report.opening_balance) }}">
       </div>
       <div>
         <label class="muted">Saldo Final</label>

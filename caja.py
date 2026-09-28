@@ -133,7 +133,10 @@ def _collect_chase_amounts_from_db(year, month):
     return deposits_by_date, food_ice_by_date, food_ice_labels_by_date, gettel_dates
 
 
-def _resolve_opening_balance(year, month, _chain=True):
+_MAX_CHAIN_MONTHS = 60  # tope de meses hacia atrás al encadenar (evita recursión sin fin)
+
+
+def _resolve_opening_balance(year, month, _depth=0):
     """
     El Saldo Inicial de un mes es, por default, el Saldo Final del mes
     anterior -- pedido explícito del usuario (2026-09-12): "el saldo
@@ -146,16 +149,19 @@ def _resolve_opening_balance(year, month, _chain=True):
 
     Si no hay override para este mes, y `_chain` es True, se encadena del
     mes anterior: su propio ajuste manual de Saldo Final si lo tiene, o si
-    no, su Saldo corrido calculado -- recorriendo su propio reporte una
-    sola vez con `_chain=False` (nunca se recursa un tercer mes hacia
-    atrás; alcanza con un solo salto). Si el mes anterior tampoco tiene
+    no, su Saldo corrido calculado (con su propio Saldo Inicial también
+    encadenado, hasta _MAX_CHAIN_MONTHS). Si el mes anterior tampoco tiene
     ningún dato, default 0.0 -- queda flaggeado (opening_source="default")
     para que la pantalla pueda pedirle al usuario que lo cargue a mano.
     """
     settings = caja_db.get_month_settings(year, month)
     if settings and settings.get("opening_balance") is not None:
         return settings["opening_balance"], "manual"
-    if not _chain:
+    # Encadenado real: el mes anterior se calcula con SU propio Saldo Inicial
+    # encadenado, hasta un override manual o un mes sin datos. Antes se
+    # recalculaba desde 0 y desde el 2do mes sin override el Saldo Inicial
+    # quedaba corrido (auditoría 2026-09).
+    if _depth >= _MAX_CHAIN_MONTHS:
         return 0.0, "default"
 
     prev_year, prev_month = (year - 1, 12) if month == 1 else (year, month - 1)
@@ -163,8 +169,9 @@ def _resolve_opening_balance(year, month, _chain=True):
     if prev_settings and prev_settings.get("closing_balance_override") is not None:
         return prev_settings["closing_balance_override"], "prev_month_override"
 
-    prev_report = build_month_report_from_db(prev_year, prev_month, _recursion_guard=False)
-    if prev_report["rows"]:
+    prev_report = build_month_report_from_db(prev_year, prev_month, _depth=_depth + 1)
+    prev_has_data = prev_report["opening_source"] != "default" or any(prev_report["totals"].values())
+    if prev_has_data:
         return prev_report["computed_closing_balance"], "prev_month_computed"
     return 0.0, "default"
 
@@ -206,7 +213,7 @@ def _empty_future_month_report(year, month):
     }
 
 
-def build_month_report_from_db(year, month, _recursion_guard=True):
+def build_month_report_from_db(year, month, _depth=0):
     """
     Un renglón por día del mes, mismas columnas que la hoja CAJA real (ver
     el bloque de comentarios de arriba) -- calculado en el momento contra
@@ -227,7 +234,7 @@ def build_month_report_from_db(year, month, _recursion_guard=True):
 
     days_in_month = calendar.monthrange(year, month)[1]
 
-    opening_balance, opening_source = _resolve_opening_balance(year, month, _chain=_recursion_guard)
+    opening_balance, opening_source = _resolve_opening_balance(year, month, _depth=_depth)
     running_saldo = opening_balance
 
     rows = []
