@@ -78,6 +78,15 @@ from ocr_utils import (
 # un AttributeError que taparía la excepción real (auditoría 2026-09-06,
 # antes solo se atrapaba ValueError/TypeError/AttributeError/RuntimeError).
 _PDF_EXTRACTION_EXCEPTIONS = (ValueError, TypeError, AttributeError, RuntimeError, OSError)
+# Un PDF genuinamente corrupto o truncado (o un archivo que no es PDF) hace
+# que pdfplumber tire PdfminerException/MalformedPDFException, que heredan
+# directo de Exception -- sin esto un solo archivo roto tumbaba el lote
+# entero (auditoría 2026-09).
+try:
+    from pdfplumber.utils.exceptions import MalformedPDFException, PdfminerException
+    _PDF_EXTRACTION_EXCEPTIONS = _PDF_EXTRACTION_EXCEPTIONS + (MalformedPDFException, PdfminerException)
+except ImportError:
+    pass
 if cv2 is not None:
     _PDF_EXTRACTION_EXCEPTIONS = _PDF_EXTRACTION_EXCEPTIONS + (cv2.error,)
 
@@ -693,6 +702,15 @@ def _extract_midtown_invoice(pdf_path):
     total_match = re.search(r"\bTotal\D{0,5}\$?\s*([\d,]+\.\d{2})", totals_text)
 
     if invoice_match and date_match and total_match:
+        # Cada Sales Order tiene un solo "Subtotal": si hay más de una página
+        # con él, el PDF trae varios recibos y el N°/fecha (de cualquier
+        # página) no se puede emparejar con seguridad con un total (caso real
+        # 104182: N° de un recibo con el total de otro, auditoría 2026-09).
+        if sum("subtotal" in t.lower() for t in pages_text) > 1:
+            raise ValueError(
+                f"{os.path.basename(pdf_path)}: el PDF de Midtown trae más de un recibo -- "
+                "cargarlo a mano."
+            )
         invoice_no = int(invoice_match.group(1))
         month, day, year = date_match.groups()
         invoice_date = datetime(int(year), int(month), int(day))
@@ -996,11 +1014,21 @@ def _extract_kooler_ice_invoice(pdf_path):
 
     invoice_match = re.search(r"(?:INV|SO)\s*(\d{3,7})", text, re.IGNORECASE)
     date_match = re.search(r"(\d{1,2}/\d{1,2}/\d{4})", text)
-    amount_match = re.search(r"Applied Deposit\D{0,6}\$?\s*([\d,]+\.\d{2})", text, re.IGNORECASE)
-    if not amount_match:
-        amount_match = re.search(r"\bTotal\D{0,6}\$?\s*([\d,]+\.\d{2})", text, re.IGNORECASE)
+    # El importe real es el "Total" de la tabla resumen -- nunca "Tax Total"
+    # ni "Sub Total" (el lookbehind descarta una palabra pegada antes); se
+    # toma el último, que es el total general. "Applied Deposit" solo cuando
+    # ese Total quedó en $0.00 (suscripción ya pagada con depósito) -- en las
+    # INV actuales Applied Deposit es $0.00 y en las SO ni existe (auditoría
+    # 2026-09: antes cargaba $0.00 o el impuesto).
+    total_matches = re.findall(
+        r"(?<![A-Za-z] )\bTotal\b\D{0,6}\$?\s*([\d,]+\.\d{2})", text, re.IGNORECASE
+    )
+    deposit_match = re.search(r"Applied Deposit\D{0,6}\$?\s*([\d,]+\.\d{2})", text, re.IGNORECASE)
+    amount_text = total_matches[-1] if total_matches else None
+    if deposit_match and (amount_text is None or float(amount_text.replace(",", "")) == 0):
+        amount_text = deposit_match.group(1)
 
-    if not (invoice_match and date_match and amount_match):
+    if not (invoice_match and date_match and amount_text):
         raise ValueError(
             f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total del PDF de "
             "Kooler Ice."
@@ -1008,7 +1036,7 @@ def _extract_kooler_ice_invoice(pdf_path):
 
     invoice_no = int(invoice_match.group(1))
     invoice_date = datetime.strptime(date_match.group(1), "%m/%d/%Y")
-    amount = float(amount_match.group(1).replace(",", ""))
+    amount = float(amount_text.replace(",", ""))
     return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
 
 
@@ -1597,6 +1625,10 @@ def _extract_coca_invoices(pdf_path):
 
     groups = []
     current = None
+    # Si se vio una factura real (INV# de 11 dígitos en una página que no es
+    # devolución) y al final no queda ninguna, se falla en vez de devolver []
+    # en silencio (auditoría 2026-09: 10 de 79 PDFs reales se perdían así).
+    saw_real_invoice = False
     with pdfplumber.open(pdf_path) as pdf:
         for page in pdf.pages:
             image = _extract_page_image(page)
@@ -1605,7 +1637,16 @@ def _extract_coca_invoices(pdf_path):
             text = pytesseract.image_to_string(image)
             text_upper = text.upper()
             is_returns_page = "RETURNS" in text_upper or "THIS IS NOT AN INVOICE" in text_upper
-            if "OUTLET" in text_upper or is_returns_page:
+            has_inv_number = re.search(r"INV[#A]?\s*\d{11}", text_upper) is not None
+            if has_inv_number and not is_returns_page:
+                saw_real_invoice = True
+            # "OUTLET" a veces sale "QUTLET"/"0UTLET" en el OCR; y una página
+            # con INV# antes del primer encabezado reconocido abre su propio
+            # grupo en vez de descartarse.
+            is_header_page = re.search(r"[OQ0]UTLET", text_upper) is not None or (
+                current is None and has_inv_number
+            )
+            if is_header_page or is_returns_page:
                 # Un anexo de devolución a veces viene como página aparte
                 # DENTRO del mismo PDF de la factura principal, sin su
                 # propio "OUTLET" -- si no se tratara como límite de grupo
@@ -1654,6 +1695,12 @@ def _extract_coca_invoices(pdf_path):
         raise ValueError(
             f"{os.path.basename(pdf_path)}: no se encontró ningún encabezado de "
             "factura de Coca-Cola (OUTLET/INV#) en el PDF."
+        )
+
+    if saw_real_invoice and all(group["returns"] for group in groups):
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: se vio una factura de Coca-Cola pero todas "
+            "las páginas quedaron como devolución -- cargarla a mano."
         )
 
     invoices = []

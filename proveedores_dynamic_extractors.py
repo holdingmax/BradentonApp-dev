@@ -52,6 +52,11 @@ FIELD_LABELS = {
 # archivo genuinamente corrupto/ilegible -- mismo criterio de aislamiento
 # que _PDF_EXTRACTION_EXCEPTIONS en proveedores.py.
 PDF_READ_EXCEPTIONS = (ValueError, TypeError, AttributeError, RuntimeError, OSError)
+try:
+    from pdfplumber.utils.exceptions import MalformedPDFException, PdfminerException
+    PDF_READ_EXCEPTIONS = PDF_READ_EXCEPTIONS + (MalformedPDFException, PdfminerException)
+except ImportError:
+    pass
 
 
 # ---- Persistencia (mismo patrón atómico que chase_rules.py) ----
