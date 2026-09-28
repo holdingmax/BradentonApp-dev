@@ -597,6 +597,36 @@ def build_month_blocks(year, month):
     return blocks
 
 
+def _block_payment_date(block):
+    """Fecha de pago a Chase del bloque: la confirmada, o la sugerida."""
+    return _parse_date(block["chase_bank_date"] or block["suggested_chase_date"])
+
+
+def _blocks_paid_in_month(year, month, confirmed_only=False):
+    """
+    Bloques cuyo pago a Chase cae en (year, month) -- igual que el TOTAL DEL
+    MES del Excel real: cada bloque cuenta UNA sola vez, en el mes en que se
+    paga. Se miran también los bloques del mes anterior, porque el último
+    bloque de un mes (ej. 24-30/08) se paga en el siguiente sin tocarlo
+    (auditoría 2026-09: antes se sumaban todas las semanas que tocan el mes,
+    y el bloque que cruza de mes entraba en los dos).
+    """
+    prev_year, prev_month = (year - 1, 12) if month == 1 else (year, month - 1)
+    seen = set()
+    result = []
+    for block in build_month_blocks(prev_year, prev_month) + build_month_blocks(year, month):
+        key = (block["iso_year"], block["iso_week"])
+        if key in seen:
+            continue
+        seen.add(key)
+        if confirmed_only and not block["chase_bank_date"]:
+            continue
+        paid = _block_payment_date(block)
+        if paid.year == year and paid.month == month:
+            result.append(block)
+    return result
+
+
 def monthly_debit_total(year, month):
     """
     Suma de V (Debito) de cada bloque cuya fecha de Chase Bank -- la real,
@@ -607,11 +637,8 @@ def monthly_debit_total(year, month):
     """
     total = 0.0
     any_value = False
-    for block in build_month_blocks(year, month):
-        if not block["chase_bank_date"]:
-            continue
-        d = _parse_date(block["chase_bank_date"])
-        if d.year == year and d.month == month and block["debito"]["net_debit"] is not None:
+    for block in _blocks_paid_in_month(year, month, confirmed_only=True):
+        if block["debito"]["net_debit"] is not None:
             total += block["debito"]["net_debit"]
             any_value = True
     return round(total, 2) if any_value else None
@@ -1415,7 +1442,9 @@ def compute_month_closing(year, month):
     Arma en el momento las dos tablas de cierre de mes -- ver el comentario
     de arriba para el mapeo completo. Nunca lee ni escribe ningún Excel.
     """
-    blocks = build_month_blocks(year, month)
+    # Solo los bloques que se pagan este mes, y sin bloques vacíos (su '+10'
+    # fijo de la fórmula F no es un pago real).
+    blocks = [b for b in _blocks_paid_in_month(year, month) if b["has_data"]]
     days = [d for block in blocks for d in block["days"]]
     has_data = any(_has_any_data(d) for d in days)
 
