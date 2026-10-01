@@ -120,9 +120,17 @@ def replace_costs_for_departments(records):
     """
     `records`: lista de dicts {upc, upc_mod, name, cost, price, dept_id,
     dept_name} (ya limpios -- salida de cmv_costo._consolidate_department_
-    files, una fila por df.to_dict('records')). Agrupa por dept_name,
-    borra lo que ya había de CADA departamento presente, e inserta lo
-    nuevo -- los departamentos NO incluidos en esta carga quedan intactos.
+    files, una fila por df.to_dict('records')). Guarda por UPC (actualiza o
+    agrega) y los departamentos NO incluidos en esta carga quedan intactos.
+
+    Borrar productos que ya no están (auditoría 2026-09, cmv_db.py:114): el
+    export real del POS (PluData) viene en páginas de ~1000 filas que
+    mezclan 20-25 departamentos, así que "reemplazar cada departamento que
+    aparece" borraba miles de productos si se subían solo algunas páginas.
+    Ahora un producto guardado que no vino en la carga se borra solo cuando
+    la carga es el export completo: trae al menos el 80% de los productos ya
+    guardados. Si no, es una carga parcial: no se borra nada y se avisa
+    (`partial` en el resultado).
     """
     by_dept = {}
     for row in records:
@@ -136,16 +144,24 @@ def replace_costs_for_departments(records):
 
     now = _now()
     price_changes = 0
+    removed = 0
+    loaded_upcs = {
+        str(row.get("upc") or row.get("UPC") or "").strip() for rows in by_dept.values() for row in rows
+    } - {""}
     conn = _connect()
     try:
         existing_prices = {
             row["upc"]: row["price"]
             for row in conn.execute("SELECT upc, price FROM cmv_costs").fetchall()
         }
+        stored_upcs = set(existing_prices)
+        coverage = len(stored_upcs & loaded_upcs) / len(stored_upcs) if stored_upcs else 1.0
+        partial = coverage < 0.8
+        if not partial:
+            for upc in stored_upcs - loaded_upcs:
+                conn.execute("DELETE FROM cmv_costs WHERE upc = ?", (upc,))
+                removed += 1
         for dept, rows in by_dept.items():
-            conn.execute(
-                "DELETE FROM cmv_costs WHERE dept_name = ? COLLATE NOCASE", (dept,)
-            )
             for row in rows:
                 upc = str(row.get("upc") or row.get("UPC") or "").strip()
                 if not upc:
@@ -193,6 +209,9 @@ def replace_costs_for_departments(records):
         "departments": len(by_dept),
         "rows": sum(len(rows) for rows in by_dept.values()),
         "price_changes": price_changes,
+        "removed": removed,
+        "partial": partial,
+        "stored_before": len(stored_upcs),
     }
 
 
@@ -328,24 +347,32 @@ def replace_month_department_sales(year, month, dept_name, rows):
     """
     `rows`: lista de dicts {upc, name, count, amount}. Reemplaza TODO lo
     que había para (year, month, dept_name) -- mismo criterio que la hoja
-    real, nunca acumula ni hace merge por UPC.
+    real. Si un UPC viene más de una vez (dos departamentos crudos del POS
+    que van a la misma hoja) se suman Count y Amount: antes el INSERT
+    chocaba con la clave y la carga terminaba en un error 500 a medias
+    (auditoría 2026-09).
     """
+    by_upc = {}
+    for row in rows:
+        upc = str(row.get("upc") or "").strip()
+        if not upc:
+            continue
+        entry = by_upc.setdefault(upc, {"name": row.get("name"), "count": 0, "amount": 0.0})
+        entry["count"] += row.get("count") or 0
+        entry["amount"] += row.get("amount") or 0.0
     conn = _connect()
     try:
         conn.execute(
             "DELETE FROM cmv_monthly_sales WHERE year = ? AND month = ? AND dept_name = ? COLLATE NOCASE",
             (year, month, dept_name),
         )
-        for row in rows:
-            upc = str(row.get("upc") or "").strip()
-            if not upc:
-                continue
+        for upc, entry in by_upc.items():
             conn.execute(
                 """
                 INSERT INTO cmv_monthly_sales (year, month, dept_name, upc, name, count, amount)
                 VALUES (?, ?, ?, ?, ?, ?, ?)
                 """,
-                (year, month, dept_name, upc, row.get("name"), row.get("count") or 0, row.get("amount") or 0.0),
+                (year, month, dept_name, upc, entry["name"], entry["count"], round(entry["amount"], 2)),
             )
         conn.commit()
     finally:

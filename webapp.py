@@ -5649,6 +5649,11 @@ def carga_datos_cmv_costo_subir():
     parts = [f"{summary['departments']} departamento(s), {summary['rows']} producto(s) guardados."]
     if summary["price_changes"]:
         parts.append(f"{summary['price_changes']} cambio(s) de precio detectado(s).")
+    if summary["partial"]:
+        parts.append(
+            f"Parece una carga parcial (trae menos del 80% de los {summary['stored_before']} productos ya "
+            "guardados): se actualizaron estos productos y no se borró ninguno. Para el CMV completo, subí todas las páginas juntas."
+        )
     if failed_files:
         parts.append(f"{failed_files} archivo(s) no se pudieron leer.")
     if previous:
@@ -5660,7 +5665,7 @@ def carga_datos_cmv_costo_subir():
             f"{diff['price_changes']} de precio, {len(diff['added'])} producto(s) nuevo(s) y "
             f"{len(diff['removed'])} que ya no están."
         )
-    flash(" ".join(parts), "warning" if failed_files else "success")
+    flash(" ".join(parts), "warning" if (failed_files or summary["partial"]) else "success")
     if previous:
         return redirect(url_for("carga_datos_cmv_costo_comparar", fecha=cmv_date.isoformat(), contra=previous["loaded_on"]))
     return redirect(url_for("carga_datos_cmv_costo_historial"))
@@ -5722,10 +5727,14 @@ def carga_datos_cmv_ventas_subir():
 
     paths = _save_uploads_to_workspace(uploads)
 
-    rows_by_dept = {}
+    # Un mismo departamento crudo del POS que llega en dos archivos del lote
+    # (el mismo export subido dos veces, "... (2).csv") se toma una sola
+    # vez: queda el último archivo y se avisa (auditoría 2026-09).
+    rows_by_raw_dept = {}
+    repeated_departments = set()
     unmapped_departments = set()
     files_failed = 0
-    for path in paths:
+    for file_index, path in enumerate(paths):
         try:
             frame = parse_monthly_sales_file(path)
         except Exception as exc:
@@ -5736,12 +5745,14 @@ def carga_datos_cmv_ventas_subir():
             documents_db.store_document("cmv_ventas", path, os.path.basename(path), year, month)
         except Exception as exc:
             print(f"[documents_db] no se pudo guardar el documento de CMV Ventas {path}: {exc}")
+        file_rows = {}
         for record in frame.to_dict("records"):
+            raw_dept = (record.get("Dept Name") or "").strip()
             dept_name = _resolve_sheet_name(record.get("Dept Name"))
             if dept_name is None:
-                unmapped_departments.add((record.get("Dept Name") or "").strip() or "(sin nombre)")
+                unmapped_departments.add(raw_dept or "(sin nombre)")
                 continue
-            rows_by_dept.setdefault(dept_name, []).append(
+            file_rows.setdefault(raw_dept.upper(), (dept_name, []))[1].append(
                 {
                     "upc": record.get("UPC"),
                     "name": record.get("Name"),
@@ -5749,9 +5760,21 @@ def carga_datos_cmv_ventas_subir():
                     "amount": record.get("Retail/Amount"),
                 }
             )
+        for raw_key, value in file_rows.items():
+            if raw_key in rows_by_raw_dept:
+                repeated_departments.add(raw_key)
+            rows_by_raw_dept[raw_key] = value
+
+    rows_by_dept = {}
+    for dept_name, rows in rows_by_raw_dept.values():
+        rows_by_dept.setdefault(dept_name, []).extend(rows)
 
     for dept_name, rows in rows_by_dept.items():
-        cmv_db.replace_month_department_sales(year, month, dept_name, rows)
+        try:
+            cmv_db.replace_month_department_sales(year, month, dept_name, rows)
+        except sqlite3.Error as exc:
+            print(f"[carga-datos/cmv/ventas] {dept_name}: {exc}")
+            files_failed += 1
 
     parts = []
     if rows_by_dept:
@@ -5761,12 +5784,16 @@ def carga_datos_cmv_ventas_subir():
         )
     if unmapped_departments:
         parts.append(f"{len(unmapped_departments)} departamento(s) sin hoja conocida, no se guardaron.")
+    if repeated_departments:
+        parts.append(
+            f"{len(repeated_departments)} departamento(s) venían en más de un archivo: se tomó solo el último."
+        )
     if files_failed:
         parts.append(f"{files_failed} archivo(s) no se pudieron leer.")
     if not parts:
         flash("No se pudo guardar nada de este lote.", "error")
     else:
-        flash(" ".join(parts), "warning" if (unmapped_departments or files_failed) else "success")
+        flash(" ".join(parts), "warning" if (unmapped_departments or files_failed or repeated_departments) else "success")
 
     return redirect(url_for("carga_datos_cmv_ventas_historial", year=year, month=month))
 

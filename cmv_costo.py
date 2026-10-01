@@ -290,7 +290,10 @@ def _consolidate_department_files(department_paths):
     for department_path in ordered_paths:
         try:
             dept_df = read_elistars_department_file(department_path)
-        except (ValueError, TypeError, KeyError) as exc:
+        except Exception:
+            # Cualquier archivo malo (un .xlsx truncado da BadZipFile, un .xls
+            # sin xlrd da ImportError) se cuenta y se sigue con el resto:
+            # antes tiraba un 500 y se perdía todo el lote.
             failed_files += 1
             continue
         label = infer_department_label(dept_df, department_path)
