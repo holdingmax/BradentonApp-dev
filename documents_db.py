@@ -28,6 +28,7 @@ sin que listar "los documentos de este módulo este mes" se vuelva lento
 """
 
 import os
+import re
 import sqlite3
 from datetime import datetime
 
@@ -112,7 +113,7 @@ def store_document(module, source_path, original_filename, year, month, label=No
             INSERT INTO documents (module, year, month, label, filename, stored_path, uploaded_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
             """,
-            (module, year, month, label, os.path.basename(original_filename), dest_path, now),
+            (module, year, month, label, os.path.basename(original_filename), _portable_relpath(dest_path), now),
         )
         conn.commit()
         return cur.lastrowid
@@ -177,6 +178,30 @@ def search_documents(query, limit=20):
     return [dict(row) for row in rows]
 
 
+def _portable_relpath(path):
+    """Ruta relativa a _FILES_DIR con "/", para que la base sirva igual en Windows y en Linux."""
+    return os.path.relpath(path, _FILES_DIR).replace(os.sep, "/")
+
+
+def resolve_stored_path(stored):
+    """
+    Ruta real de un documento guardado. Las filas viejas tienen la ruta
+    absoluta de Windows (C:/BradentonApp/reportes_data/documents/... con barras invertidas): se toma lo que
+    viene después de la carpeta de documentos y se resuelve contra la de esta
+    máquina, así sigue andando si la carpeta se mueve o en Linux/Docker
+    (auditoría 2026-09, webapp.py:5907).
+    """
+    if not stored:
+        return stored
+    if os.path.isfile(stored):
+        return stored
+    parts = [part for part in re.split(r"[\\/]", stored) if part]
+    marker = os.path.basename(_FILES_DIR)
+    if marker in parts:
+        parts = parts[len(parts) - parts[::-1].index(marker):]
+    return os.path.join(_FILES_DIR, *parts)
+
+
 def get_document(document_id):
     if not GUARDAR_DOCUMENTOS:
         return None
@@ -185,7 +210,11 @@ def get_document(document_id):
         row = conn.execute("SELECT * FROM documents WHERE id = ?", (document_id,)).fetchone()
     finally:
         conn.close()
-    return dict(row) if row else None
+    if row is None:
+        return None
+    doc = dict(row)
+    doc["stored_path"] = resolve_stored_path(doc["stored_path"])
+    return doc
 
 
 def delete_document(document_id):

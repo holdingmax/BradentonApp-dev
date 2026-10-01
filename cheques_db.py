@@ -15,6 +15,7 @@ como cobrado sin tocar nada de esta base.
 """
 
 import os
+import re
 import sqlite3
 import uuid
 from datetime import datetime
@@ -81,7 +82,9 @@ def _now():
 
 
 def absolute_path(relpath):
-    return os.path.join(_FILES_DIR, relpath)
+    # Las filas guardadas desde Windows traen "\": se parte por los dos
+    # separadores para que también se resuelvan en Linux (auditoría 2026-09).
+    return os.path.join(_FILES_DIR, *[part for part in re.split(r"[\\/]", relpath or "") if part])
 
 
 def store_original(source_path, original_filename):
@@ -91,7 +94,7 @@ def store_original(source_path, original_filename):
     if not documents_db.GUARDAR_DOCUMENTOS:
         return ""
     folder = uuid.uuid4().hex[:12]
-    rel = os.path.join("originales", folder, os.path.basename(original_filename))
+    rel = f"originales/{folder}/{os.path.basename(original_filename)}"
     dest = absolute_path(rel)
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     with open(source_path, "rb") as src, open(dest, "wb") as dst:

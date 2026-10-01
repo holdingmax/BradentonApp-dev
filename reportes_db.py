@@ -12,6 +12,7 @@ reportes_data/pdfs/{año}/{mes}/ guarda una copia de cada PDF ya subido.
 import calendar
 import json
 import os
+import re
 import shutil
 import sqlite3
 from datetime import date, datetime
@@ -596,11 +597,14 @@ def store_pdf_copy(report_date, source_path, original_filename):
     os.makedirs(dest_dir, exist_ok=True)
     dest_path = os.path.join(dest_dir, original_filename)
     shutil.copyfile(source_path, dest_path)
-    return os.path.relpath(dest_path, _BASE_DIR)
+    # Con "/" para que la base sirva igual en Windows y en Linux.
+    return os.path.relpath(dest_path, _BASE_DIR).replace(os.sep, "/")
 
 
 def absolute_pdf_path(relative_path):
-    return os.path.join(_BASE_DIR, relative_path)
+    # Las filas guardadas desde Windows traen "\": se parte por los dos
+    # separadores para que también se resuelvan en Linux (auditoría 2026-09).
+    return os.path.join(_BASE_DIR, *[part for part in re.split(r"[\\/]", relative_path) if part])
 
 
 def get_month_pdf_list(year, month):

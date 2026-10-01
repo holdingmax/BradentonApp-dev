@@ -10,14 +10,18 @@ Un módulo por vez: hoy solo está Chase Bank. El resto se va sumando
 igual que el desktop, probando cada uno antes de seguir con el próximo.
 """
 
+import calendar
 import json
 import os
 import re
+import sqlite3
+import shutil
 import tempfile
 import threading
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, session, url_for
 from flask_login import (
@@ -142,8 +146,69 @@ def _load_or_create_secret_key():
     return key
 
 
+# Archivos temporales (auditoría 2026-09, webapp.py:808/1142/826): cada
+# subida y cada export crean su carpeta temporal y ningún camino la borraba
+# (en esta PC ya había ~430 carpetas, 265 MB de copias de PDFs y Excel
+# contables). Todo lo temporal del proceso va a una carpeta propia
+# (tempfile.tempdir) y un hilo borra lo que tenga más de 2 días -- ningún
+# job ni descarga dura tanto. También limpia las carpetas viejas que quedaron
+# sueltas en el temporal del sistema antes de este cambio.
+_SYSTEM_TEMP_DIR = tempfile.gettempdir()
+_APP_TEMP_DIR = os.path.join(_SYSTEM_TEMP_DIR, "bradenton_app")
+os.makedirs(_APP_TEMP_DIR, exist_ok=True)
+tempfile.tempdir = _APP_TEMP_DIR
+_TEMP_MAX_AGE_SECONDS = 2 * 24 * 3600
+_LEGACY_TEMP_PREFIXES = (
+    "bradenton_web_", "caja_export_", "caja_reporte_", "chase_export_", "chase_reporte_",
+    "eft_reporte_", "fisico_export_", "gettel_pagos_export_", "gettel_reporte_", "lottery_export_",
+    "lottery_reporte_", "proveedores_reporte_", "reporte_diario_reporte_", "storeinfo_export_",
+)
+
+
+def _remove_old_entries(folder, max_age, prefixes=None):
+    now = time.time()
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return
+    for name in names:
+        if prefixes is not None and not name.startswith(prefixes):
+            continue
+        path = os.path.join(folder, name)
+        try:
+            if now - os.path.getmtime(path) < max_age:
+                continue
+            if os.path.isdir(path):
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                os.remove(path)
+        except OSError:
+            continue
+
+
+def _temp_cleanup_loop():
+    while True:
+        _remove_old_entries(_APP_TEMP_DIR, _TEMP_MAX_AGE_SECONDS)
+        _remove_old_entries(_SYSTEM_TEMP_DIR, _TEMP_MAX_AGE_SECONDS, _LEGACY_TEMP_PREFIXES)
+        time.sleep(6 * 3600)
+
+
+threading.Thread(target=_temp_cleanup_loop, daemon=True, name="temp-cleanup").start()
+
 app = Flask(__name__)
 app.secret_key = _load_or_create_secret_key()
+# Protección CSRF (auditoría 2026-09, webapp.py:145/302): las cookies de
+# sesión no viajan en un POST que arranca en otro sitio (SameSite=Lax), y
+# además _reject_cross_site_posts (abajo) rechaza todo POST cuyo Origin o
+# Referer sea de otro host. En Render (HTTPS) las cookies van además Secure.
+app.config.update(
+    SESSION_COOKIE_SAMESITE="Lax",
+    REMEMBER_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_HTTPONLY=True,
+    REMEMBER_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SECURE=bool(os.environ.get("RENDER")),
+    REMEMBER_COOKIE_SECURE=bool(os.environ.get("RENDER")),
+)
 
 login_manager = LoginManager(app)
 login_manager.login_view = "login"
@@ -168,6 +233,27 @@ def load_user(username):
         user.get("is_admin", False),
         user.get("must_change_password", False),
     )
+
+
+@app.before_request
+def _reject_cross_site_posts():
+    """
+    Defensa CSRF sin tokens: un POST/PUT/PATCH/DELETE solo se acepta si el
+    navegador dice que viene de esta misma app (Origin, o Referer si no hay
+    Origin). Los navegadores siempre mandan Origin en un POST; un pedido sin
+    ninguno de los dos (un script, el test client) se deja pasar porque no
+    es un ataque desde otra página abierta en el navegador del usuario.
+    """
+    if request.method in ("GET", "HEAD", "OPTIONS"):
+        return None
+    source = request.headers.get("Origin") or request.headers.get("Referer")
+    if source == "null":
+        return ("Pedido rechazado: origen no válido.", 403)
+    if not source:
+        return None
+    if urlsplit(source).netloc.lower() != request.host.lower():
+        return ("Pedido rechazado: viene de otro sitio.", 403)
+    return None
 
 
 @app.before_request
@@ -292,7 +378,9 @@ def login():
     return render_template("login.html")
 
 
-@app.route("/logout")
+# POST: con GET cualquier página externa podía cerrar la sesión con un link
+# o una imagen (auditoría 2026-09).
+@app.route("/logout", methods=["POST"])
 @login_required
 def logout():
     logout_user()
@@ -6049,6 +6137,9 @@ def carga_datos_documento_descargar(document_id):
     # descarga (as_attachment=True) -- ahora es la misma ruta para las dos
     # cosas, el link "Ver" simplemente no manda el parámetro.
     force_download = request.args.get("mode") == "download"
+    if not os.path.isfile(doc["stored_path"]):
+        flash("El archivo de ese documento ya no está en la carpeta de datos.", "error")
+        return redirect(url_for("documentos_index"))
     return send_file(doc["stored_path"], as_attachment=force_download, download_name=doc["filename"])
 
 
@@ -6060,6 +6151,13 @@ def carga_datos_documento_eliminar(document_id):
         return redirect(url_for("documentos_index"))
     documents_db.delete_document(document_id)
     flash("Documento eliminado.", "success")
+    # Esta ruta también se usa desde Reporte Diario y Lottery, cuyos módulos
+    # no están en _DOCUMENTS_MODULES: se vuelve a la página de donde vino.
+    referrer = request.referrer or ""
+    if referrer.startswith(request.host_url):
+        return redirect(referrer)
+    if doc["module"] not in _DOCUMENTS_MODULES:
+        return redirect(url_for("documentos_index"))
     return redirect(url_for("carga_datos_documentos", module_key=doc["module"], year=doc["year"], month=doc["month"]))
 
 

@@ -395,8 +395,9 @@
       color: var(--text-soft);
       transition: transform 0.08s ease;
     }
-    a.account-dropdown-item:hover { background: var(--surface-alt); color: var(--text); }
-    a.account-dropdown-item:active { transform: scale(0.97); }
+    a.account-dropdown-item:hover, .account-dropdown-button:hover { background: var(--surface-alt); color: var(--text); }
+    a.account-dropdown-item:active, .account-dropdown-button:active { transform: scale(0.97); }
+    .account-dropdown-button { width: 100%; background: none; border: none; font: inherit; font-size: 13px; text-align: left; cursor: default; }
 
     /* ---------- Layout ---------- */
     /* Todo lo que no es la barra lateral (.app-rail, más abajo) vive
@@ -1324,7 +1325,9 @@
             <a class="account-dropdown-item" href="{{ url_for('admin_users') }}" style="text-decoration: none;">Gestionar usuarios</a>
             {% endif %}
             <a class="account-dropdown-item" href="{{ url_for('perfil_password') }}" style="text-decoration: none;">Cambiar contraseña</a>
-            <a class="account-dropdown-item" href="{{ url_for('logout') }}" style="text-decoration: none;">Cerrar sesión</a>
+            <form method="post" action="{{ url_for('logout') }}" style="margin: 0;">
+              <button type="submit" class="account-dropdown-item account-dropdown-button">Cerrar sesión</button>
+            </form>
           </div>
         </div>
       </div>

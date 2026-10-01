@@ -11,6 +11,7 @@ reportes_data/depositos.db + reportes_data/depositos/{año}/{mes}/*.pdf
 """
 
 import os
+import re
 import sqlite3
 import uuid
 from datetime import datetime
@@ -54,11 +55,12 @@ def _now():
 
 
 def absolute_path(relpath):
-    return os.path.join(_FILES_DIR, relpath)
+    # Mismo criterio que cheques_db.absolute_path: "\" o "/" da lo mismo.
+    return os.path.join(_FILES_DIR, *[part for part in re.split(r"[\\/]", relpath or "") if part])
 
 
 def new_pdf_relpath(year, month):
-    return os.path.join(f"{year:04d}", f"{month:02d}", f"{uuid.uuid4().hex[:12]}.pdf")
+    return f"{year:04d}/{month:02d}/{uuid.uuid4().hex[:12]}.pdf"
 
 
 def find_duplicate(tx_number, deposit_date, amount):

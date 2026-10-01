@@ -93,9 +93,15 @@ def correct_image_orientation(image):
     correr el OCR real. Usa Image.transpose (remapeo exacto en múltiplos de
     90°) en vez de Image.rotate -- .rotate() resamplea cada pixel incluso en
     giros de ángulo recto, lo que difumina texto (sobre todo el "/" de
-    fechas) lo suficiente como para romper la lectura. Nunca lanza -- una
+    fechas) lo suficiente como para romper la lectura. Nunca lanza por OCR -- una
     página que Tesseract no puede leer con confianza queda como está.
+
+    ensure_pytesseract() va primero y fuera del try: sin él, en una PC donde
+    Tesseract no está en el PATH, el primer OCR del proceso fallaba en
+    silencio y la imagen volvía sin rotar (auditoría 2026-09). Si Tesseract
+    no está instalado, ese error sí se propaga.
     """
+    ensure_pytesseract()
     try:
         osd = pytesseract.image_to_osd(image, output_type=pytesseract.Output.DICT)
         rotate = int(osd.get("rotate", 0) or 0)
