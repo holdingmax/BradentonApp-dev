@@ -1785,6 +1785,12 @@ def fisico_ajustar_inicial():
     gallons_raw = (request.form.get("initial_gallons") or "").strip()
     amount_raw = (request.form.get("initial_amount") or "").strip()
 
+    # Galones y monto van juntos (los dos para guardar, los dos vacíos para
+    # borrar): con uno solo el Inicial quedaba a medias sin aviso.
+    if bool(gallons_raw) != bool(amount_raw):
+        flash("Cargá los galones y el monto juntos (o dejá los dos vacíos para borrar el ajuste).", "error")
+        return redirect(url_for("fisico_view", year=year, month=month))
+
     try:
         gallons_value = float(gallons_raw) if gallons_raw else None
         amount_value = float(amount_raw) if amount_raw else None
@@ -6039,8 +6045,13 @@ def import_deposit_pdf(pdf_path, filename, fallback_period):
         deposit_date = item["date"]
         iso = deposit_date.isoformat() if deposit_date else None
         complete = item["amount"] is not None and deposit_date is not None and item["tx_number"] is not None
-        if (depositos_db.find_duplicate(item["tx_number"], iso, item["amount"]) if complete
-                else depositos_db.find_by_source_page(filename, item["page"])):
+        # También por archivo y página cuando el recibo está completo: si el
+        # usuario ya corrigió a mano el monto o la fecha, find_duplicate no
+        # lo encuentra con lo que vuelve a leer el OCR y se duplicaba.
+        if (
+            (complete and depositos_db.find_duplicate(item["tx_number"], iso, item["amount"]))
+            or depositos_db.find_by_source_page(filename, item["page"], item["tx_number"])
+        ):
             duplicates += 1
             continue
         kind = item["kind"] or _chase_kind_for(deposit_date, item["amount"])

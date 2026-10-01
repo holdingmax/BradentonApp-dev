@@ -96,14 +96,21 @@ def add_deposit(year, month, deposit_date, amount, description, tx_number, kind,
         conn.close()
 
 
-def find_by_source_page(source_filename, page_index):
-    """Mismo PDF y misma página ya cargados (para recibos con algún dato sin leer, donde find_duplicate no alcanza)."""
+def find_by_source_page(source_filename, page_index, tx_number=None):
+    """
+    Mismo PDF y misma página ya cargados (para recibos con algún dato sin
+    leer, o ya corregidos a mano, donde find_duplicate no alcanza). Con
+    `tx_number`, además tiene que coincidir el N° de transacción, para no
+    tomar como repetida la misma página de otro PDF con el mismo nombre.
+    """
     conn = _connect()
     try:
-        row = conn.execute(
-            "SELECT id FROM deposits WHERE source_filename = ? AND page_index = ?",
-            (source_filename, page_index),
-        ).fetchone()
+        sql = "SELECT id FROM deposits WHERE source_filename = ? AND page_index = ?"
+        params = (source_filename, page_index)
+        if tx_number is not None:
+            sql += " AND tx_number = ?"
+            params += (tx_number,)
+        row = conn.execute(sql, params).fetchone()
         return row["id"] if row else None
     finally:
         conn.close()
