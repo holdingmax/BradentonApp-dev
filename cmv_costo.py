@@ -762,3 +762,59 @@ def update_master_costo_todos_bulk(master_path, department_paths):
     )
 
 
+
+
+def compare_cost_snapshots(old_items, new_items):
+    """
+    Compara dos fotos del CMV (cmv_db.get_snapshot_items) producto por
+    producto, por UPC -- pedido explícito del usuario (2026-09-28): ver qué
+    tanto cambió el CMV entre una carga y la anterior. Devuelve los que
+    cambiaron de costo y/o de precio, los nuevos y los que ya no están.
+    """
+    def key(item):
+        return str(item.get("upc") or "").strip().lstrip("0")
+
+    def money(value):
+        return round(float(value), 2) if value is not None else None
+
+    old_by_upc = {key(item): item for item in old_items if key(item)}
+    new_by_upc = {key(item): item for item in new_items if key(item)}
+
+    changed = []
+    for upc, new in new_by_upc.items():
+        old = old_by_upc.get(upc)
+        if old is None:
+            continue
+        old_cost, new_cost = money(old.get("cost")), money(new.get("cost"))
+        old_price, new_price = money(old.get("price")), money(new.get("price"))
+        cost_changed = old_cost != new_cost
+        price_changed = old_price != new_price
+        if not (cost_changed or price_changed):
+            continue
+        cost_diff = round(new_cost - old_cost, 2) if cost_changed and None not in (old_cost, new_cost) else None
+        price_diff = round(new_price - old_price, 2) if price_changed and None not in (old_price, new_price) else None
+        changed.append({
+            "upc": new.get("upc"),
+            "name": new.get("name"),
+            "dept_name": new.get("dept_name"),
+            "old_cost": old_cost, "new_cost": new_cost, "cost_diff": cost_diff,
+            "cost_pct": round(cost_diff / old_cost * 100, 1) if cost_diff is not None and old_cost else None,
+            "old_price": old_price, "new_price": new_price, "price_diff": price_diff,
+            "price_pct": round(price_diff / old_price * 100, 1) if price_diff is not None and old_price else None,
+            "cost_changed": cost_changed,
+            "price_changed": price_changed,
+        })
+    changed.sort(key=lambda row: ((row["dept_name"] or ""), (row["name"] or "")))
+
+    def plain(items):
+        return sorted(items, key=lambda item: ((item.get("dept_name") or ""), (item.get("name") or "")))
+
+    added = plain([item for upc, item in new_by_upc.items() if upc not in old_by_upc])
+    removed = plain([item for upc, item in old_by_upc.items() if upc not in new_by_upc])
+    return {
+        "changed": changed,
+        "added": added,
+        "removed": removed,
+        "cost_changes": sum(1 for row in changed if row["cost_changed"]),
+        "price_changes": sum(1 for row in changed if row["price_changed"]),
+    }

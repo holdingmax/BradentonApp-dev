@@ -10,8 +10,10 @@
 
 <div class="card">
   <h2>Costo por producto</h2>
-  <p class="muted">Uno o más archivos de departamento (mismo formato Elistars de siempre) — un departamento nuevo se agrega, uno ya cargado se reemplaza entero, los demás quedan intactos. <a href="{{ url_for('carga_datos_cmv_costo_historial') }}">Ver lo ya guardado</a>.</p>
+  <p class="muted">Uno o más archivos de departamento (mismo formato Elistars de siempre) — un departamento nuevo se agrega, uno ya cargado se reemplaza entero, los demás quedan intactos. Cada carga queda guardada con la fecha del CMV, para compararla contra la anterior. <a href="{{ url_for('carga_datos_cmv_costo_historial') }}">Ver lo ya guardado</a> · <a href="{{ url_for('carga_datos_cmv_costo_comparar') }}">Comparar cargas</a>.</p>
   <form method="post" action="{{ url_for('carga_datos_cmv_costo_subir') }}" enctype="multipart/form-data">
+    <label class="muted" for="cmv-costo-date">Fecha del CMV</label>
+    <input type="date" name="cmv_date" id="cmv-costo-date" value="{{ today.isoformat() }}" max="{{ today.isoformat() }}" required style="max-width: 200px;">
     <label class="muted">Archivo(s) de costo por departamento</label>
     <input type="file" name="costo_files" id="cmv-costo-input" multiple class="accumulate-files" required>
     <div class="form-actions">

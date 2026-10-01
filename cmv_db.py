@@ -18,6 +18,13 @@ El margen se calcula en el momento contra cmv_costs (por UPC, con
 fallback por nombre -- mismo criterio que la fórmula real de la columna
 G, `_cost_lookup_formula_with_name_fallback` en monthly_sales.py), nunca
 guardado como valor fijo.
+
+Fotos del CMV por fecha (cmv_snapshots + cmv_snapshot_items, 2026-09-28,
+pedido explícito del usuario: "el día que se carga el CMV es importante, ya
+que solo así podemos ver qué tanto cambió con los días... para hacer una
+comparación con el último CMV cargado"): después de cada carga de Costo se
+copia el catálogo COMPLETO de cmv_costs con la fecha del CMV. Una foto por
+fecha -- volver a cargar el mismo día reemplaza la foto de ese día.
 """
 
 import os
@@ -74,6 +81,31 @@ def _connect():
             count INTEGER,
             amount REAL,
             PRIMARY KEY (year, month, dept_name, upc)
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cmv_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            loaded_on TEXT NOT NULL UNIQUE,
+            products INTEGER NOT NULL,
+            created_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cmv_snapshot_items (
+            snapshot_id INTEGER NOT NULL,
+            upc TEXT NOT NULL,
+            upc_mod TEXT,
+            name TEXT,
+            dept_name TEXT,
+            dept_id TEXT,
+            cost REAL,
+            price REAL,
+            PRIMARY KEY (snapshot_id, upc)
         )
         """
     )
@@ -181,6 +213,63 @@ def get_costs_by_department(dept_name):
         rows = conn.execute(
             "SELECT * FROM cmv_costs WHERE dept_name = ? COLLATE NOCASE ORDER BY name",
             (dept_name,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(row) for row in rows]
+
+
+def save_snapshot(loaded_on):
+    """
+    Foto del catálogo completo (cmv_costs) con fecha `loaded_on` (date o
+    'YYYY-MM-DD'). Si ya había una foto de esa fecha se reemplaza entera.
+    Devuelve la cantidad de productos guardados.
+    """
+    key = loaded_on.isoformat() if hasattr(loaded_on, "isoformat") else str(loaded_on)
+    conn = _connect()
+    try:
+        with conn:
+            old = conn.execute("SELECT id FROM cmv_snapshots WHERE loaded_on = ?", (key,)).fetchone()
+            if old:
+                conn.execute("DELETE FROM cmv_snapshot_items WHERE snapshot_id = ?", (old["id"],))
+                conn.execute("DELETE FROM cmv_snapshots WHERE id = ?", (old["id"],))
+            count = conn.execute("SELECT COUNT(*) FROM cmv_costs").fetchone()[0]
+            cur = conn.execute(
+                "INSERT INTO cmv_snapshots (loaded_on, products, created_at) VALUES (?, ?, ?)",
+                (key, count, _now()),
+            )
+            conn.execute(
+                """
+                INSERT INTO cmv_snapshot_items (snapshot_id, upc, upc_mod, name, dept_name, dept_id, cost, price)
+                SELECT ?, upc, upc_mod, name, dept_name, dept_id, cost, price FROM cmv_costs
+                """,
+                (cur.lastrowid,),
+            )
+        return count
+    finally:
+        conn.close()
+
+
+def list_snapshots():
+    """Fotos guardadas, de la más nueva a la más vieja."""
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT * FROM cmv_snapshots ORDER BY loaded_on DESC").fetchall()
+    finally:
+        conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_snapshot_items(loaded_on):
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            """
+            SELECT i.* FROM cmv_snapshot_items i
+            JOIN cmv_snapshots s ON s.id = i.snapshot_id
+            WHERE s.loaded_on = ?
+            """,
+            (loaded_on,),
         ).fetchall()
     finally:
         conn.close()

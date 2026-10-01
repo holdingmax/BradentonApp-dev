@@ -1,0 +1,123 @@
+{% extends "base.html" %}
+{% block main_class %}main-full{% endblock %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ url_for('carga_datos_cmv') }}">CMV</a><a href="{{ url_for('carga_datos_cmv_costo_historial') }}">Costo</a><span class="current">Comparar cargas</span></nav>
+{% endblock %}
+{% from "_table_filters_macros.html" import filter_styles, filter_config_button %}
+{% block head_extra %}
+{{ filter_styles() }}
+{% endblock %}
+{% macro money(value) %}{% if value is not none %}${{ "{:,.2f}".format(value) }}{% else %}—{% endif %}{% endmacro %}
+{# good_up: una suba es buena (precio) -- en verde; para el costo, una suba va en rojo. #}
+{% macro diff_cell(diff, pct, good_up=False) %}{% if diff is none %}<span class="muted">—</span>{% else %}<span class="{{ 'cmp-up' if (diff > 0) != good_up else 'cmp-down' }}">{{ '+' if diff > 0 else '−' }}${{ "{:,.2f}".format(diff|abs) }}{% if pct is not none %} ({{ '+' if pct > 0 else '' }}{{ pct }}%){% endif %}</span>{% endif %}{% endmacro %}
+{% block content %}
+<div class="page-header">
+  <span class="eyebrow">CMV — Costo</span>
+  <h1>Comparar cargas</h1>
+  <p class="page-subtitle">Cada carga de Costo queda guardada con la fecha del CMV. Acá se ve qué cambió entre dos fechas: costo, precio, productos nuevos y productos que ya no están.</p>
+</div>
+
+<div class="card">
+  {% if snapshots|length < 2 %}
+  <p class="muted">
+    {% if snapshots %}Hay una sola carga guardada ({{ fmt_date(snapshots[0].loaded_on) }}, {{ snapshots[0].products }} productos). La comparación aparece cuando cargues el próximo CMV.
+    {% else %}Todavía no hay ninguna carga de CMV guardada con fecha. Cargá los archivos de costo en <a href="{{ url_for('carga_datos_cmv') }}">CMV</a>.{% endif %}
+  </p>
+  {% else %}
+  <form method="get" class="cmp-form">
+    <label class="muted">CMV del
+      <select name="fecha" onchange="this.form.contra.value=''; this.form.submit()">
+        {% for s in snapshots %}<option value="{{ s.loaded_on }}" {{ 'selected' if s.loaded_on == fecha else '' }}>{{ fmt_date(s.loaded_on) }} ({{ s.products }} productos)</option>{% endfor %}
+      </select>
+    </label>
+    <label class="muted">contra el del
+      <select name="contra" onchange="this.form.submit()">
+        {% for d in older %}<option value="{{ d }}" {{ 'selected' if d == contra else '' }}>{{ fmt_date(d) }}</option>{% endfor %}
+      </select>
+    </label>
+  </form>
+
+  {% if diff %}
+  <div class="cmp-stats">
+    <div class="cmp-stat"><span class="cmp-stat-value">{{ diff.cost_changes }}</span><span class="cmp-stat-label">cambios de costo</span></div>
+    <div class="cmp-stat"><span class="cmp-stat-value">{{ diff.price_changes }}</span><span class="cmp-stat-label">cambios de precio</span></div>
+    <div class="cmp-stat"><span class="cmp-stat-value">{{ diff.added|length }}</span><span class="cmp-stat-label">productos nuevos</span></div>
+    <div class="cmp-stat"><span class="cmp-stat-value">{{ diff.removed|length }}</span><span class="cmp-stat-label">ya no están</span></div>
+  </div>
+
+  <h2>Cambios de costo o precio</h2>
+  {% if diff.changed %}
+  <div class="cmp-toolbar">{{ filter_config_button("cmp-changed") }}</div>
+  <div class="historial-table-wrap">
+    <table class="historial-table cmp-table" id="cmp-changed" data-filter-table>
+      <thead>
+        <tr>
+          <th>UPC</th><th>Producto</th><th data-filter-col="depto">Departamento</th>
+          <th class="num">Costo antes</th><th class="num">Costo ahora</th><th class="num" data-filter-col="costo">Cambio costo</th>
+          <th class="num">Precio antes</th><th class="num">Precio ahora</th><th class="num" data-filter-col="precio">Cambio precio</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in diff.changed %}
+        <tr>
+          <td class="nowrap">{{ r.upc }}</td>
+          <td>{{ r.name }}</td>
+          <td>{{ r.dept_name }}</td>
+          <td class="num">{{ money(r.old_cost) }}</td>
+          <td class="num">{{ money(r.new_cost) }}</td>
+          <td class="num" data-filter-value="{{ 'Subió' if (r.cost_diff or 0) > 0 else ('Bajó' if (r.cost_diff or 0) < 0 else 'Sin cambio') }}">{{ diff_cell(r.cost_diff, r.cost_pct) }}</td>
+          <td class="num">{{ money(r.old_price) }}</td>
+          <td class="num">{{ money(r.new_price) }}</td>
+          <td class="num" data-filter-value="{{ 'Subió' if (r.price_diff or 0) > 0 else ('Bajó' if (r.price_diff or 0) < 0 else 'Sin cambio') }}">{{ diff_cell(r.price_diff, r.price_pct, good_up=True) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">Ningún producto cambió de costo ni de precio.</p>
+  {% endif %}
+
+  {% for title, items in [('Productos nuevos', diff.added), ('Ya no están', diff.removed)] %}
+  {% if items %}
+  <h2 class="cmp-section">{{ title }} ({{ items|length }})</h2>
+  <div class="historial-table-wrap">
+    <table class="historial-table cmp-table">
+      <thead><tr><th>UPC</th><th>Producto</th><th>Departamento</th><th class="num">Costo</th><th class="num">Precio</th></tr></thead>
+      <tbody>
+        {% for item in items %}
+        <tr><td class="nowrap">{{ item.upc }}</td><td>{{ item.name }}</td><td>{{ item.dept_name }}</td><td class="num">{{ money(item.cost) }}</td><td class="num">{{ money(item.price) }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+  {% endfor %}
+  {% endif %}
+  {% endif %}
+</div>
+
+{% if diff and diff.changed %}{% include "_table_filters.html" %}{% endif %}
+
+<style>
+  .historial-table-wrap { overflow-x: auto; margin-top: 10px; border: 1px solid var(--border); border-radius: 10px; }
+  .historial-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .historial-table th, .historial-table td { padding: 8px 14px; text-align: left; }
+  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
+  .cmp-table { min-width: 720px; }
+  .cmp-table th.num, .cmp-table td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .cmp-table .nowrap { white-space: nowrap; }
+  .cmp-form { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 16px; }
+  .cmp-form label { display: flex; flex-direction: column; gap: 4px; }
+  .cmp-form select { margin: 0; }
+  .cmp-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .cmp-stat { border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; display: flex; flex-direction: column; gap: 2px; background: var(--surface-alt); }
+  .cmp-stat-value { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .cmp-stat-label { font-size: 12.5px; color: var(--text-soft); }
+  .cmp-toolbar { display: flex; justify-content: flex-end; }
+  .cmp-section { margin-top: 24px; }
+  .cmp-up { color: var(--error); font-weight: 600; }
+  .cmp-down { color: var(--success); font-weight: 600; }
+</style>
+{% endblock %}

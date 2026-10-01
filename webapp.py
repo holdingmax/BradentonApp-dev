@@ -55,7 +55,7 @@ from caja import (
     build_caja_pdf_resumen,
     get_available_years as get_caja_available_years,
 )
-from cmv_costo import _consolidate_department_files, update_master_costo_todos_bulk
+from cmv_costo import _consolidate_department_files, compare_cost_snapshots, update_master_costo_todos_bulk
 import eft_db
 from eft_cta_cte import EFT_DUPLICATE_ALERT, extract_eft_data
 from cupones_append import expand_monthly_records_for_storage, read_monthly_coupon_rows
@@ -5447,6 +5447,12 @@ def carga_datos_cmv_costo_subir():
     if not uploads or not any(u.filename for u in uploads):
         flash("Seleccioná uno o más archivos de costo por departamento.", "error")
         return redirect(url_for("carga_datos_cmv"))
+    # Fecha del CMV (default hoy): cada carga queda como una foto con esa
+    # fecha, para compararla contra la anterior -- ver cmv_db.save_snapshot.
+    try:
+        cmv_date = datetime.strptime(request.form.get("cmv_date") or "", "%Y-%m-%d").date()
+    except ValueError:
+        cmv_date = date.today()
 
     paths = _save_uploads_to_workspace(uploads)
     try:
@@ -5456,6 +5462,8 @@ def carga_datos_cmv_costo_subir():
         return redirect(url_for("carga_datos_cmv"))
 
     summary = cmv_db.replace_costs_for_departments(combined.to_dict("records"))
+    cmv_db.save_snapshot(cmv_date)
+    previous = next((s for s in cmv_db.list_snapshots() if s["loaded_on"] < cmv_date.isoformat()), None)
 
     today = date.today()
     for path in paths:
@@ -5469,8 +5477,46 @@ def carga_datos_cmv_costo_subir():
         parts.append(f"{summary['price_changes']} cambio(s) de precio detectado(s).")
     if failed_files:
         parts.append(f"{failed_files} archivo(s) no se pudieron leer.")
+    if previous:
+        diff = compare_cost_snapshots(
+            cmv_db.get_snapshot_items(previous["loaded_on"]), cmv_db.get_snapshot_items(cmv_date.isoformat())
+        )
+        parts.append(
+            f"Contra el CMV del {_fmt_ddmmyyyy(previous['loaded_on'])}: {diff['cost_changes']} cambio(s) de costo, "
+            f"{diff['price_changes']} de precio, {len(diff['added'])} producto(s) nuevo(s) y "
+            f"{len(diff['removed'])} que ya no están."
+        )
     flash(" ".join(parts), "warning" if failed_files else "success")
+    if previous:
+        return redirect(url_for("carga_datos_cmv_costo_comparar", fecha=cmv_date.isoformat(), contra=previous["loaded_on"]))
     return redirect(url_for("carga_datos_cmv_costo_historial"))
+
+
+@app.route("/carga-datos/cmv/costo/comparar")
+def carga_datos_cmv_costo_comparar():
+    """
+    Compara dos fotos del CMV por fecha (default: la última contra la
+    anterior) -- pedido explícito del usuario (2026-09-28): "ver qué tanto
+    cambió con los días cada vez que se quiera subir un CMV".
+    """
+    snapshots = cmv_db.list_snapshots()
+    dates = [s["loaded_on"] for s in snapshots]
+    fecha = request.args.get("fecha") if request.args.get("fecha") in dates else (dates[0] if dates else None)
+    older = [d for d in dates if fecha and d < fecha]
+    contra = request.args.get("contra") if request.args.get("contra") in older else (older[0] if older else None)
+    diff = None
+    if fecha and contra:
+        diff = compare_cost_snapshots(cmv_db.get_snapshot_items(contra), cmv_db.get_snapshot_items(fecha))
+    return render_template(
+        "carga_datos_cmv_costo_comparar.html",
+        snapshots=snapshots,
+        fecha=fecha,
+        contra=contra,
+        older=older,
+        diff=diff,
+        fmt_date=_fmt_ddmmyyyy,
+        **THEME_BY_KEY["carga_cmv"],
+    )
 
 
 @app.route("/carga-datos/cmv/costo/historial")
