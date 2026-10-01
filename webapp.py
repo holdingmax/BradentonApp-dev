@@ -125,6 +125,7 @@ import documents_db
 import proveedores_db
 import proveedores_productos
 import horas_trabajo_db
+import horas_trabajo
 from horas_trabajo import extract_hours_report
 import jobs
 from balance_mensual import replace_mayor_sheets
@@ -5474,9 +5475,16 @@ def _run_carga_datos_horas_trabajo_job(job_id, paths):
         parts = []
         if weeks_saved:
             parts.append(f"{weeks_saved} semana(s) guardada(s).")
-        if unresolved_total:
+        open_shifts = [name for name in unresolved_total if "turno abierto" in name]
+        no_total = len(unresolved_total) - len(open_shifts)
+        if no_total:
             parts.append(
-                f"{len(unresolved_total)} empleado(s) sin su Total legible -- agregalos a mano desde el cuadro de esa semana."
+                f"{no_total} empleado(s) sin su Total legible -- agregalos a mano desde el cuadro de esa semana."
+            )
+        if open_shifts:
+            parts.append(
+                f"{len(open_shifts)} empleado(s) con el turno abierto (no marcaron la salida): no se pagan solos, "
+                "cargá sus horas reales a mano."
             )
         if files_failed:
             parts.append(f"{files_failed} archivo(s) no se pudieron leer.")
@@ -5514,7 +5522,24 @@ def carga_datos_horas_trabajo_historial():
         week_total = 0.0
         for emp in item["employees"]:
             total_pay = round((emp["hours"] or 0.0) * (emp["rate"] or 0.0) - (emp["deduct"] or 0.0), 2)
-            employees.append({**emp, "total_pay": total_pay})
+            # HH:MM que se muestra al lado de las horas, y aviso si no coincide
+            # con las horas que se pagan (filas viejas corregidas a mano en
+            # formato H.MM, ej. 39:12 guardado como 39.12).
+            label = emp.get("hours_label")
+            label_mismatch = False
+            if label:
+                try:
+                    label_hours, _ = horas_trabajo.parse_hours_input(label)
+                    label_mismatch = abs(label_hours - (emp["hours"] or 0.0)) > 0.005
+                except ValueError:
+                    label = None
+            employees.append({
+                **emp,
+                "total_pay": total_pay,
+                "hours_display": horas_trabajo.hours_to_label(emp["hours"]),
+                "report_label": label,
+                "label_mismatch": label_mismatch,
+            })
             week_total += total_pay
         document = documents_db.get_document(week["document_id"]) if week.get("document_id") else None
         entries.append({"week": week, "employees": employees, "week_total": round(week_total, 2), "document": document})
@@ -5542,14 +5567,16 @@ def carga_datos_horas_trabajo_empleado_editar(employee_id):
     month = request.form.get("month", type=int)
     name = (request.form.get("employee_name") or "").strip()
     try:
-        hours = float((request.form.get("hours") or "0").strip())
+        hours, hours_label = horas_trabajo.parse_hours_input(request.form.get("hours") or "0")
         rate = float((request.form.get("rate") or "0").strip())
         deduct = float((request.form.get("deduct") or "0").strip())
     except ValueError:
-        flash("No se pudo guardar: revisá que horas/tarifa/descuento sean números válidos.", "error")
+        flash("No se pudo guardar: las horas van como 26:48 (o 26.8) y tarifa/descuento como números.", "error")
         return redirect(url_for("carga_datos_horas_trabajo_historial", year=year, month=month))
 
-    horas_trabajo_db.update_employee(employee_id, employee_name=name or None, hours=hours, rate=rate, deduct=deduct)
+    horas_trabajo_db.update_employee(
+        employee_id, employee_name=name or None, hours=hours, rate=rate, deduct=deduct, hours_label=hours_label
+    )
     flash("Empleado actualizado.", "success")
     return redirect(url_for("carga_datos_horas_trabajo_historial", year=year, month=month))
 
@@ -5564,15 +5591,15 @@ def carga_datos_horas_trabajo_empleado_agregar(week_id):
         return redirect(url_for("carga_datos_horas_trabajo_historial", year=year, month=month))
 
     try:
-        hours = float((request.form.get("hours") or "0").strip())
+        hours, hours_label = horas_trabajo.parse_hours_input(request.form.get("hours") or "0")
         rate_raw = (request.form.get("rate") or "").strip()
         rate = float(rate_raw) if rate_raw else horas_trabajo_db.DEFAULT_HOURLY_RATE
         deduct = float((request.form.get("deduct") or "0").strip())
     except ValueError:
-        flash("No se pudo agregar: revisá que horas/tarifa/descuento sean números válidos.", "error")
+        flash("No se pudo agregar: las horas van como 26:48 (o 26.8) y tarifa/descuento como números.", "error")
         return redirect(url_for("carga_datos_horas_trabajo_historial", year=year, month=month))
 
-    horas_trabajo_db.add_employee(week_id, name, hours=hours, rate=rate, deduct=deduct)
+    horas_trabajo_db.add_employee(week_id, name, hours=hours, rate=rate, deduct=deduct, hours_label=hours_label)
     flash("Empleado agregado.", "success")
     return redirect(url_for("carga_datos_horas_trabajo_historial", year=year, month=month))
 

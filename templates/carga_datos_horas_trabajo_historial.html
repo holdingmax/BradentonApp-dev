@@ -56,7 +56,10 @@
           {% for emp in entry.employees %}
           <tr id="horas-view-{{ emp.id }}">
             <td>{{ emp.employee_name }}</td>
-            <td>{{ fmt(emp.hours) }}</td>
+            <td>
+              {{ emp.hours_display }} <span class="muted">({{ fmt(emp.hours) }} h)</span>
+              {% if emp.label_mismatch %}<br><span class="muted" title="El reporte dice {{ emp.report_label }}; se paga con {{ emp.hours_display }}. Si es un error, corregilo poniendo {{ emp.report_label }}.">⚠ el reporte dice {{ emp.report_label }}</span>{% endif %}
+            </td>
             <td>${{ fmt(emp.rate) }}</td>
             <td>${{ fmt(emp.deduct) }}</td>
             <td><strong>${{ fmt(emp.total_pay) }}</strong></td>
@@ -70,7 +73,7 @@
                 <input type="hidden" name="year" value="{{ year }}">
                 <input type="hidden" name="month" value="{{ month }}">
                 <label class="muted">Empleado<input type="text" name="employee_name" value="{{ emp.employee_name }}"></label>
-                <label class="muted">Horas<input type="number" step="0.01" name="hours" value="{{ emp.hours }}"></label>
+                <label class="muted">Horas (HH:MM)<input type="text" name="hours" value="{{ emp.hours_display }}" pattern="\d{1,3}:[0-5]\d|\d+([.,]\d+)?" title="Como el reporte, 26:48 (o en decimal, 26.8)"></label>
                 <label class="muted">Tarifa/hora<input type="number" step="0.01" name="rate" value="{{ emp.rate }}"></label>
                 <label class="muted">Deduct<input type="number" step="0.01" name="deduct" value="{{ emp.deduct }}"></label>
                 <div class="horas-edit-actions">
@@ -100,7 +103,7 @@
       <input type="hidden" name="year" value="{{ year }}">
       <input type="hidden" name="month" value="{{ month }}">
       <input type="text" name="employee_name" placeholder="Nombre del empleado" required>
-      <input type="number" step="0.01" name="hours" placeholder="Horas" required>
+      <input type="text" name="hours" placeholder="Horas (26:48)" pattern="\d{1,3}:[0-5]\d|\d+([.,]\d+)?" title="Como el reporte, 26:48 (o en decimal, 26.8)" required>
       <input type="number" step="0.01" name="rate" placeholder="Tarifa/hora (15 por default)">
       <input type="number" step="0.01" name="deduct" placeholder="Deduct">
       <button type="submit" class="btn-secondary">+ Agregar empleado</button>

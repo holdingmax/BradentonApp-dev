@@ -129,13 +129,13 @@ def set_week_document(week_id, document_id):
         conn.close()
 
 
-def add_employee(week_id, employee_name, hours=0.0, rate=DEFAULT_HOURLY_RATE, deduct=0.0):
+def add_employee(week_id, employee_name, hours=0.0, rate=DEFAULT_HOURLY_RATE, deduct=0.0, hours_label=None):
     conn = _connect()
     try:
         cur = conn.execute(
             "INSERT INTO horas_trabajo_employees (week_id, employee_name, hours_label, hours, rate, deduct) "
-            "VALUES (?, ?, NULL, ?, ?, ?)",
-            (week_id, employee_name.strip(), float(hours or 0.0), float(rate or 0.0), float(deduct or 0.0)),
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (week_id, employee_name.strip(), hours_label, float(hours or 0.0), float(rate or 0.0), float(deduct or 0.0)),
         )
         conn.commit()
         return cur.lastrowid
@@ -143,7 +143,7 @@ def add_employee(week_id, employee_name, hours=0.0, rate=DEFAULT_HOURLY_RATE, de
         conn.close()
 
 
-def update_employee(employee_id, employee_name=None, hours=None, rate=None, deduct=None):
+def update_employee(employee_id, employee_name=None, hours=None, rate=None, deduct=None, hours_label=None):
     fields, values = [], []
     if employee_name is not None:
         fields.append("employee_name = ?")
@@ -151,6 +151,11 @@ def update_employee(employee_id, employee_name=None, hours=None, rate=None, dedu
     if hours is not None:
         fields.append("hours = ?")
         values.append(float(hours))
+        # La etiqueta HH:MM acompaña a las horas: si se editan, se actualiza
+        # también, para que nunca muestren dos cosas distintas.
+        if hours_label is not None:
+            fields.append("hours_label = ?")
+            values.append(hours_label)
     if rate is not None:
         fields.append("rate = ?")
         values.append(float(rate))

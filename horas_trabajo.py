@@ -65,6 +65,29 @@ _CAPS_WORD_RE = re.compile(r"^[A-Z][A-Z.'\-]*$")
 # más que un valor H:MM (1-3 dígitos de horas, sin límite real de 24hs
 # porque es una suma semanal).
 _TOTAL_LINE_RE = re.compile(r"^\s*(\d{1,3}):(\d{2})\s*$")
+_HOURS_LABEL_RE = re.compile(r"^\s*(\d{1,3}):([0-5]\d)\s*$")
+
+
+def hours_to_label(hours):
+    """26.8 -> "26:48" (minutos redondeados)."""
+    total_minutes = int(round((hours or 0.0) * 60))
+    return f"{total_minutes // 60}:{total_minutes % 60:02d}"
+
+
+def parse_hours_input(text):
+    """
+    Horas tipeadas a mano: "26:48" (HH:MM, como el reporte) o "26.8"
+    (horas decimales). Regla de pago confirmada por el usuario (2026-10-01):
+    se paga el tiempo real, 26:48 = 26.8 h -- nunca 26.48. Devuelve
+    (horas, etiqueta HH:MM). ValueError si no se entiende.
+    """
+    cleaned = (text or "").strip()
+    match = _HOURS_LABEL_RE.match(cleaned)
+    if match:
+        hours = int(match.group(1)) + int(match.group(2)) / 60.0
+        return hours, f"{int(match.group(1))}:{match.group(2)}"
+    hours = float(cleaned.replace(",", "."))
+    return hours, hours_to_label(hours)
 
 
 def _extract_employee_name(line):
@@ -217,19 +240,36 @@ def extract_hours_report(pdf_path):
                         if current is not None and "hours_label" not in current:
                             unresolved.append(current["employee_name"])
                         current = {"employee_name": employee_name}
+                    # La misma línea del empleado puede traer el turno
+                    # ("1 RICK LEAL 08/02/26 9:57:00 AM CLOCKED IN 20:48").
+                    if "CLOCKED IN" in line.upper():
+                        current["open_shift"] = True
                     continue
+
+                if current is not None and "CLOCKED IN" in line.upper():
+                    current["open_shift"] = True
 
                 m_total = _TOTAL_LINE_RE.match(line)
                 if m_total and current is not None and "hours_label" not in current:
+                    if current.get("open_shift"):
+                        # Turno abierto (no marcó la salida): el Total es el
+                        # tiempo hasta que se imprimió el reporte, no horas
+                        # trabajadas. No se paga solo: va a cargar a mano
+                        # (auditoría 2026-09: Rick Leal 20:48 se pagaba $312).
+                        unresolved.append(f"{current['employee_name']} (turno abierto, sin salida marcada)")
+                        current = None
+                        continue
                     hours_label = f"{int(m_total.group(1))}:{m_total.group(2)}"
+                    # Sin redondear: el pago se calcula con el tiempo exacto
+                    # (26:20 = 26.333 h -> $395.00, no 26.33 -> $394.95).
                     hours = int(m_total.group(1)) + int(m_total.group(2)) / 60.0
                     current["hours_label"] = hours_label
-                    current["hours"] = round(hours, 2)
+                    current["hours"] = hours
                     employees.append(
                         {
                             "employee_name": current["employee_name"],
                             "hours_label": hours_label,
-                            "hours": round(hours, 2),
+                            "hours": hours,
                         }
                     )
                     current = None
