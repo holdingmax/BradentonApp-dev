@@ -29,6 +29,7 @@ fórmula real de la que sale, confirmada contra un Excel de Lottery real).
 import calendar
 import json
 import os
+import re
 import shutil
 import sqlite3
 from datetime import date, datetime, timedelta
@@ -181,10 +182,17 @@ def upsert_sales_report_fields(report_date, fields, source, pdf_filename=None):
                  sales_report_source, sales_report_pdf_filename, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(date) DO UPDATE SET
-                sales = excluded.sales, pagos = excluded.pagos, cash_balance = excluded.cash_balance,
-                comis = excluded.comis, prize_free_plays = excluded.prize_free_plays,
-                pays_units = excluded.pays_units, pays_amount = excluded.pays_amount,
-                skoff_sales_amount = excluded.skoff_sales_amount, sales_comm = excluded.sales_comm,
+                -- COALESCE: un campo que el OCR no pudo leer (None) no borra un
+                -- valor bueno ya guardado de ese día (auditoría 2026-09).
+                sales = COALESCE(excluded.sales, lottery_days.sales),
+                pagos = COALESCE(excluded.pagos, lottery_days.pagos),
+                cash_balance = COALESCE(excluded.cash_balance, lottery_days.cash_balance),
+                comis = COALESCE(excluded.comis, lottery_days.comis),
+                prize_free_plays = COALESCE(excluded.prize_free_plays, lottery_days.prize_free_plays),
+                pays_units = COALESCE(excluded.pays_units, lottery_days.pays_units),
+                pays_amount = COALESCE(excluded.pays_amount, lottery_days.pays_amount),
+                skoff_sales_amount = COALESCE(excluded.skoff_sales_amount, lottery_days.skoff_sales_amount),
+                sales_comm = COALESCE(excluded.sales_comm, lottery_days.sales_comm),
                 sales_report_source = excluded.sales_report_source,
                 sales_report_pdf_filename = COALESCE(excluded.sales_report_pdf_filename, lottery_days.sales_report_pdf_filename),
                 updated_at = excluded.updated_at
@@ -265,13 +273,18 @@ def store_pdf_copy(report_date, source_path, original_filename):
     d = _parse_date(report_date)
     dest_dir = os.path.join(_PDF_DIR, f"{d.year:04d}", f"{d.month:02d}")
     os.makedirs(dest_dir, exist_ok=True)
-    dest_path = os.path.join(dest_dir, original_filename)
+    # La fecha adelante del nombre: dos días del mismo mes subidos con el
+    # mismo nombre genérico ("doc.pdf") ya no se pisan (auditoría 2026-09).
+    dest_path = os.path.join(dest_dir, f"{d.isoformat()} {os.path.basename(original_filename)}")
     shutil.copyfile(source_path, dest_path)
-    return os.path.relpath(dest_path, _BASE_DIR)
+    # Con "/" para que la base sirva igual en Windows y en Linux.
+    return os.path.relpath(dest_path, _BASE_DIR).replace(os.sep, "/")
 
 
 def absolute_pdf_path(relative_path):
-    return os.path.join(_BASE_DIR, relative_path)
+    # Las filas guardadas desde Windows traen "\": se parte por los dos
+    # separadores para que también se resuelvan en Linux (auditoría 2026-09).
+    return os.path.join(_BASE_DIR, *[part for part in re.split(r"[\\/]", relative_path) if part])
 
 
 def get_month_pdf_list(year, month):
@@ -1039,7 +1052,9 @@ def _lottery_write_closing_section(sheet, last_debito_row, styles):
 
     # --- TOTAL DEL MES (dos filas justo después del último bloque) ---
     total1 = {
-        "C": f"=SUM(C{first_day_row}:C{last_debito_row})",
+        # C también por los Subtotal: la fila Subtotal ya suma C, y un SUM del
+        # rango completo contaba cada día dos veces (auditoría 2026-09).
+        "C": joined("C"),
         "D": joined("D"), "E": joined("E"), "F": joined("F"), "L": joined("L"),
         "N": f"=SUM(N{first_day_row}:N{last_debito_row})",
         "P": joined("P"), "Q": joined("Q"), "R": joined("R"),

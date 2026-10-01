@@ -46,7 +46,7 @@
         <tbody>
           <tr class="closing-row-debe">
             <td>Caja-On Line</td>
-            <td>{{ pop('t1-a-' ~ uidp, 'Caja-On Line = suma de "Sales" (Daily Sales Report, ONLINE) de todos los días del mes', closing.caja_online, [('Sales sumado del mes', closing.total_sales), ('Días con datos', closing.days_with_data)]) }}</td>
+            <td>{{ pop('t1-a-' ~ uidp, 'Caja-On Line = suma de "Sales" (Daily Sales Report, ONLINE) de todos los días del mes (' ~ closing.days_with_data ~ ' días con datos)', closing.caja_online, [('Sales sumado del mes', closing.total_sales)]) }}</td>
             <td></td>
           </tr>
           <tr class="closing-row-debe">

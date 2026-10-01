@@ -2043,10 +2043,16 @@ def _run_carga_datos_lottery_job(job_id, pdf_paths):
         saved_dates = []
         failed = 0
         date_mismatches = 0
+        incomplete = 0
         for index, pdf_path in enumerate(pdf_paths, start=1):
             filename = os.path.basename(pdf_path)
             try:
                 fields = extract_lottery_receipt_fields_from_sales_report(pdf_path)
+                # Un campo que no se pudo leer queda en None con un warning:
+                # se guarda lo demás (el None no pisa lo ya guardado, ver
+                # upsert_sales_report_fields) y se avisa para completarlo.
+                if fields.get("warning"):
+                    incomplete += 1
                 if _filename_date_mismatch(filename, fields["report_date"]):
                     date_mismatches += 1
                     raise ValueError("la fecha leída no coincide con la del nombre de archivo")
@@ -2068,10 +2074,12 @@ def _run_carga_datos_lottery_job(job_id, pdf_paths):
             )
         if failed - date_mismatches:
             parts.append(f"{failed - date_mismatches} archivo(s) no se pudieron leer.")
+        if incomplete:
+            parts.append(f"{incomplete} día(s) con algún campo que no se pudo leer: completalo a mano.")
         if not parts:
             notice, level = "No se pudo guardar nada de este lote.", "error"
         else:
-            notice, level = " ".join(parts), ("warning" if failed else "success")
+            notice, level = " ".join(parts), ("warning" if (failed or incomplete) else "success")
 
         if saved_dates:
             first = min(saved_dates)
