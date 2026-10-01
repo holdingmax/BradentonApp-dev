@@ -172,6 +172,7 @@ def resolve_month(year, month, _chain=True, _depth=0):
         # También ancla la cadena acá (no sigue mirando más atrás).
         pendiente_anterior_days = []
         pendiente_anterior_total = float(override)
+        pendiente_anterior_lump = pendiente_anterior_total
         pendiente_anterior_source = "manual"
     elif _chain and _depth < _MAX_CHAIN_MONTHS:
         prev_year, prev_month = (year - 1, 12) if month == 1 else (year, month - 1)
@@ -179,14 +180,20 @@ def resolve_month(year, month, _chain=True, _depth=0):
         if prev["has_any_data"]:
             pendiente_anterior_days = prev["pendiente_siguiente_days"]
             pendiente_anterior_total = prev["pendiente_siguiente_total"]
+            # La parte sin desglose por día que el mes anterior no llegó a
+            # cubrir también pasa: antes se perdía al mes siguiente
+            # (auditoría 2026-09, gettel_reportes.py:207).
+            pendiente_anterior_lump = prev["pendiente_no_desglosable"]
             pendiente_anterior_source = "prev_month_computed"
         else:
             pendiente_anterior_days = []
             pendiente_anterior_total = 0.0
+            pendiente_anterior_lump = 0.0
             pendiente_anterior_source = "default"
     else:
         pendiente_anterior_days = []
         pendiente_anterior_total = 0.0
+        pendiente_anterior_lump = 0.0
         pendiente_anterior_source = "default"
 
     mes_days = _month_days(year, month)
@@ -204,21 +211,25 @@ def resolve_month(year, month, _chain=True, _depth=0):
     remaining_budget = cobrado
     pendiente_no_desglosable = 0.0
 
-    if pendiente_anterior_days:
+    # Primero el monto sin desglose por día (un override manual o lo que de
+    # eso viene arrastrado): es lo más viejo. Si el pago no lo cubre entero,
+    # lo que falta queda como un monto suelto, sin días propios que mostrar
+    # (ver el note en el sheet builder), y ningún día se considera cubierto.
+    if pendiente_anterior_lump:
+        if remaining_budget >= pendiente_anterior_lump - 0.005:
+            remaining_budget -= pendiente_anterior_lump
+        else:
+            pendiente_no_desglosable = pendiente_anterior_lump - remaining_budget
+            remaining_budget = 0.0
+
+    if pendiente_no_desglosable:
+        uncovered_prev_days = list(pendiente_anterior_days)
+    elif pendiente_anterior_days:
         covered_prev, covered_prev_total = _covered_prefix(pendiente_anterior_days, remaining_budget)
         remaining_budget -= covered_prev_total
         uncovered_prev_days = pendiente_anterior_days[covered_prev:]
     else:
         uncovered_prev_days = []
-        if remaining_budget >= pendiente_anterior_total:
-            remaining_budget -= pendiente_anterior_total
-        else:
-            # Pendiente Mes Anterior ingresado a mano (sin desglose por
-            # día) y el pago del mes no llegó a cubrirlo entero -- lo que
-            # falta queda como un monto suelto, sin días propios que
-            # mostrar (ver el note en el sheet builder).
-            pendiente_no_desglosable = pendiente_anterior_total - remaining_budget
-            remaining_budget = 0.0
 
     if uncovered_prev_days or pendiente_no_desglosable:
         # No alcanzó a cubrirse todo el mes anterior -- nada del mes

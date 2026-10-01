@@ -5025,6 +5025,7 @@ def _run_carga_datos_gettel_job(job_id, paths):
         days_gettel = set()
         days_toyota = set()
         files_failed = 0
+        files_to_review = 0
         first_date = None
 
         for index, path in enumerate(paths, start=1):
@@ -5044,9 +5045,17 @@ def _run_carga_datos_gettel_job(job_id, paths):
                     vendor = detect_vendor_from_ocr_text(path)
                     if vendor is None:
                         raise ValueError("No se pudo determinar si el PDF es de Gettel o Toyota.")
-                    totals_by_date, _diagnostics = summarize_pdf_report(path)
+                    totals_by_date, diagnostics = summarize_pdf_report(path)
                     if not totals_by_date:
                         raise ValueError("No se pudo leer ninguna fila del reporte.")
+                    # Mismo control que /gettel/cupones: lo leído contra el
+                    # subtotal impreso, más las filas sin Monto legible (que
+                    # se suman como $0). Se guarda igual, pero con aviso.
+                    subtotal_mismatch = diagnostics.get("printed_subtotal_found") and not (
+                        diagnostics.get("amount_matches_subtotal") and diagnostics.get("gallons_matches_subtotal")
+                    )
+                    if subtotal_mismatch or diagnostics.get("rows_without_amount"):
+                        files_to_review += 1
                     key = "gettel" if vendor == VENDOR_GETTEL[0] else "toyota"
                     gettel_db.upsert_vendor_totals(key, totals_by_date, source="pdf")
                     (days_gettel if key == "gettel" else days_toyota).update(totals_by_date)
@@ -5078,11 +5087,15 @@ def _run_carga_datos_gettel_job(job_id, paths):
             parts.append(f"Toyota: {len(days_toyota)} día(s) guardado(s).")
         if files_failed:
             parts.append(f"{files_failed} archivo(s) no se pudieron leer.")
+        if files_to_review:
+            parts.append(
+                f"{files_to_review} reporte(s) no cierran contra el subtotal impreso o tienen filas sin monto legible: revisalos a mano."
+            )
 
         if not parts:
             notice, level = "No se pudo guardar nada de este lote.", "error"
         else:
-            notice, level = " ".join(parts), ("warning" if files_failed else "success")
+            notice, level = " ".join(parts), ("warning" if (files_failed or files_to_review) else "success")
 
         if first_date:
             redirect_url = f"/carga-datos/gettel/historial?year={first_date.year}&month={first_date.month}"

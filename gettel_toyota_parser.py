@@ -747,7 +747,9 @@ def _ocr_words(image, config=_OCR_TESSERACT_CONFIGS[0]):
     raw = pytesseract.image_to_data(
         image, output_type=pytesseract.Output.DATAFRAME, config=config
     )
-    words = raw[raw.text.notna() & (raw.text.str.strip() != "")]
+    # astype(str): en una página en blanco la columna text queda toda NaN
+    # (float) y .str tiraba AttributeError, tumbando el PDF entero.
+    words = raw[raw.text.notna() & (raw.text.astype(str).str.strip() != "")]
     words = words[words.conf > _OCR_MIN_WORD_CONFIDENCE]
     return words
 
@@ -804,8 +806,12 @@ def _detect_block_count(rows):
 def _kmeans_1d(values, k, iterations=50):
     """Minimal 1-D k-means — no external dependency needed for this."""
     values = sorted(values)
-    if k <= 1 or len(values) <= k:
+    if k <= 1 or not values:
         return [sum(values) / len(values)] if values else []
+    if len(values) <= k:
+        # Una sola fila (k palabras o menos): cada palabra es su propia
+        # columna. Antes devolvía un único centro y la fila se descartaba.
+        return values
     lo, hi = values[0], values[-1]
     centers = [lo + (hi - lo) * i / (k - 1) for i in range(k)]
     for _ in range(iterations):
@@ -823,6 +829,23 @@ def _kmeans_1d(values, k, iterations=50):
     return sorted(centers)
 
 
+def _page_block_count(data_rows, block_count):
+    """
+    Bloques que esta página tiene de verdad: el máximo de fechas en una misma
+    fila (cada bloque lleva su fecha), con tope en block_count. Una última
+    página con solo el bloque izquierdo lleno tiene 4 columnas reales, no 8:
+    forzar k=8 metía el Monto en el balde de Galones (auditoría 2026-09).
+    """
+    most = 0
+    for row in data_rows:
+        dates = sum(
+            1 for w in row
+            if DATE_PATTERN.fullmatch(str(w.text).strip()) or re.fullmatch(r"\d{1,2}/\d{1,2}/\d{2,4}", str(w.text).strip())
+        )
+        most = max(most, dates)
+    return max(1, min(block_count, most)) if most else block_count
+
+
 def _detect_ocr_column_boundaries(data_rows, block_count):
     """
     Cluster every data-row word's x-position into exactly
@@ -835,7 +858,7 @@ def _detect_ocr_column_boundaries(data_rows, block_count):
     lefts = [word.left for row in data_rows for word in row]
     if not lefts:
         return []
-    k = block_count * _OCR_COLUMNS_PER_BLOCK
+    k = _page_block_count(data_rows, block_count) * _OCR_COLUMNS_PER_BLOCK
     centers = _kmeans_1d(lefts, k)
     return [
         (a + b) / 2 for a, b in zip(centers, centers[1:])
@@ -906,7 +929,7 @@ def _extract_page_transactions(image, block_count, config):
 
     data_rows = [row for row in rows if _row_date_token(row) is not None]
     if not data_rows:
-        return []
+        return [], 0
 
     boundaries = _detect_ocr_column_boundaries(data_rows, block_count)
 
@@ -1088,6 +1111,9 @@ def summarize_pdf_report(pdf_path):
         "printed_subtotal_amount": printed_subtotal["amount"] if found_subtotal else None,
         "printed_subtotal_gallons": printed_subtotal["gallons"] if found_subtotal else None,
         "ocr_configs_used": page_configs_used,
+        # Filas con fecha pero sin Monto legible: se suman como $0, así que
+        # quien llama tiene que avisar (auditoría 2026-09, webapp.py:4810).
+        "rows_without_amount": sum(1 for _d, amount, _g in all_transactions if amount is None),
     }
     if found_subtotal:
         diagnostics["amount_matches_subtotal"] = (
