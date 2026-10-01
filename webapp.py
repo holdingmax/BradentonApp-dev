@@ -538,9 +538,9 @@ CONTROLES_SECTIONS = [
         "key": "control_depositos",
         "code": "DP",
         "icon": _ICON_DEPOSIT,
-        "label": "Depósitos",
+        "label": "Caja",
         "url": "/controles/depositos",
-        "description": "Recibos de depósito del banco, cruzados contra Chase y contra la columna Depósitos de Caja.",
+        "description": "Los depósitos de Caja (los que salen de Chase) contra los recibos de depósito en PDF, hasta el último día cargado de Chase.",
         "accent": "#16A34A",
         "accent_soft": "#DCF3E3",
     },
@@ -5707,6 +5707,15 @@ def controles_depositos():
         month = today.month
 
     rows = depositos_db.list_month(year, month)
+    # Corte por Chase (pedido explícito del usuario, 2026-09-28): "si el
+    # chase está hasta el día 10... se analizará hasta ese día los depósitos
+    # que tengan fecha hasta ese día" -- un depósito posterior al último día
+    # cargado de Chase todavía no puede aparecer ahí, así que queda fuera del
+    # cruce contra Chase y contra Caja (no es un faltante).
+    chase_month = chase_db.get_month_transactions(year, month)
+    chase_cutoff = max((r["posting_date"] for r in chase_month if r.get("posting_date")), default=None)
+    for row in rows:
+        row["after_cutoff"] = bool(chase_cutoff and row["deposit_date"] and row["deposit_date"] > chase_cutoff)
     # Marca "En Chase": mismo día y mismo monto, cada movimiento de Chase se usa una sola vez.
     chase_rows = _chase_deposits(year, month)
     pending_chase = {}
@@ -5731,14 +5740,18 @@ def controles_depositos():
     docs_by_day = {}
     for row in rows:
         row["is_special"] = bool(row.get("kind"))
-        if not row["is_special"] and row["deposit_date"]:
+        if not row["is_special"] and row["deposit_date"] and not row["after_cutoff"]:
             docs_by_day[row["deposit_date"]] = docs_by_day.get(row["deposit_date"], 0) + (row["amount"] or 0)
     caja_control = None
     try:
         caja_report = build_caja_month_report(year, month)
-        caja_by_day = {r["date"]: (r.get("deposit") or 0) for r in caja_report["rows"]}
+        # La columna Depósitos de Caja sale de Chase: solo hasta el corte.
+        caja_by_day = {
+            r["date"]: (r.get("deposit") or 0) for r in caja_report["rows"]
+            if chase_cutoff and r["date"] <= chase_cutoff
+        }
         docs_normal = round(sum(docs_by_day.values()), 2)
-        caja_total = round(caja_report["totals"].get("deposit") or 0, 2)
+        caja_total = round(sum(caja_by_day.values()), 2)
         diff_days = []
         for day in sorted(set(caja_by_day) | set(docs_by_day)):
             docs_amount, caja_amount = docs_by_day.get(day, 0), caja_by_day.get(day, 0) or 0
@@ -5761,7 +5774,9 @@ def controles_depositos():
         "controles_depositos.html",
         rows=rows,
         total=total,
-        caja_control=caja_control,
+        caja_control=caja_control if chase_cutoff else None,
+        chase_cutoff=_fmt_ddmmyyyy(chase_cutoff) if chase_cutoff else None,
+        after_cutoff_count=sum(1 for r in rows if r["after_cutoff"]),
         chase_loaded=bool(chase_rows),
         year=year,
         month=month,

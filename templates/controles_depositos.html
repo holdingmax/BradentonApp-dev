@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block crumbs %}
-<nav class="crumbs"><a href="{{ url_for('controles') }}">Controles</a><span class="current">Depósitos</span></nav>
+<nav class="crumbs"><a href="{{ url_for('controles') }}">Controles</a><span class="current">Caja</span></nav>
 {% endblock %}
 {% block head_extra %}
 <style>
@@ -31,6 +31,8 @@
   .dep-badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
   .dep-badge-ok { background: #DCFCE7; color: #166534; }
   .dep-badge-pending { background: #FEF3C7; color: #92400E; }
+  .dep-badge-later { background: var(--surface-alt); color: var(--text-soft); border: 1px solid var(--border); }
+  .dep-cutoff { margin: 14px 0 0; font-size: 13px; color: var(--text-soft); }
   .dep-actions { display: inline-flex; gap: 4px; align-items: center; }
   .dep-actions > form { margin: 0; display: inline-flex; }
   .dep-icon-btn, a.dep-icon-btn, button.dep-icon-btn.popover-trigger {
@@ -52,8 +54,9 @@
 {% block content %}
 {% from "_month_jump.html" import month_jump %}
 <div class="page-header">
-  <h1>Depósitos</h1>
-  <p class="page-subtitle">Subí los PDF de depósitos del banco: cada recibo queda como una fila propia, con su fecha, monto y descripción leídos solos (los podés corregir con el lápiz){% if guardar_documentos %} y su propio PDF{% endif %}.</p>
+  <span class="eyebrow">Control de depósitos</span>
+  <h1>Caja</h1>
+  <p class="page-subtitle">Los depósitos de Caja (los que salen de Chase) contra los recibos de depósito en PDF. Subí los PDF de depósitos del banco: cada recibo queda como una fila propia, con su fecha, monto y descripción leídos solos (los podés corregir con el lápiz){% if guardar_documentos %} y su propio PDF{% endif %}.</p>
 </div>
 
 <div class="card">
@@ -81,6 +84,12 @@
     </div>
   </form>
 
+  {% if rows %}
+  <p class="dep-cutoff">
+    {% if chase_cutoff %}Chase está cargado hasta el <strong>{{ chase_cutoff }}</strong>: se controlan los depósitos hasta ese día.{% if after_cutoff_count %} {{ after_cutoff_count }} depósito(s) con fecha posterior quedan fuera del control hasta que se cargue Chase.{% endif %}
+    {% else %}Chase todavía no tiene movimientos cargados este mes: el control contra Chase y Caja aparece cuando se cargue el extracto.{% endif %}
+  </p>
+  {% endif %}
   {% if caja_control and rows %}
   <div class="dep-control {{ 'ok' if caja_control.ok else 'bad' }}">
     <div class="dep-control-title">{% if caja_control.ok %}✓ Coincide con Caja{% else %}No coincide con Caja{% endif %}</div>
@@ -109,7 +118,7 @@
           <th>Descripción</th>
           <th>Monto</th>
           <th>Chase</th>
-          <th>PDF</th>
+          <th>{% if guardar_documentos %}PDF{% endif %}</th>
         </tr>
       </thead>
       <tbody>
@@ -123,6 +132,7 @@
           <td class="num">{% if r.amount is not none %}${{ '{:,.2f}'.format(r.amount) }}{% else %}<span class="dep-missing">Sin monto</span>{% endif %}</td>
           <td>
             {% if r.in_chase %}<span class="dep-badge dep-badge-ok">En Chase</span>
+            {% elif r.after_cutoff %}<span class="dep-badge dep-badge-later" title="Chase está cargado hasta el {{ chase_cutoff }}">Después del Chase</span>
             {% elif chase_loaded %}<span class="dep-badge dep-badge-pending">No aparece</span>
             {% else %}<span class="muted">—</span>{% endif %}
           </td>
