@@ -4851,6 +4851,7 @@ def carga_datos_caja():
         next_year=next_year,
         next_month=next_month,
         today_iso=today.isoformat(),
+        month_last_day_iso=date(year, month, calendar.monthrange(year, month)[1]).isoformat(),
         **THEME_BY_KEY["carga_caja"],
     )
 
@@ -4917,6 +4918,17 @@ def carga_datos_caja_gastos_agregar():
         flash("El monto tiene que ser un número válido.", "error")
         return redirect(url_for("carga_datos_caja", year=year, month=month))
 
+    # La fecha tiene que caer en el mes que se está viendo: si no, el gasto
+    # se iba a otro mes sin aviso y parecía no haberse guardado.
+    try:
+        parsed_date = datetime.strptime(report_date or "", "%Y-%m-%d").date()
+    except ValueError:
+        flash("La fecha del gasto no es válida.", "error")
+        return redirect(url_for("carga_datos_caja", year=year, month=month))
+    if year and month and (parsed_date.year, parsed_date.month) != (year, month):
+        flash(f"La fecha del gasto ({parsed_date:%d/%m/%Y}) no es de {month:02d}/{year}.", "error")
+        return redirect(url_for("carga_datos_caja", year=year, month=month))
+
     caja_db.add_expense_item(report_date, amount, detail)
     flash("Gasto agregado.", "success")
     return redirect(url_for("carga_datos_caja", year=year, month=month))
@@ -4925,7 +4937,14 @@ def carga_datos_caja_gastos_agregar():
 @app.route("/carga-datos/caja/gastos/<int:item_id>/eliminar", methods=["POST"])
 def carga_datos_caja_gastos_eliminar(item_id):
     caja_db.delete_expense_item(item_id)
-    flash("Gasto eliminado.", "success")
+    linked = proveedores_db.delete_manual_payment_by_caja_item(item_id)
+    if linked:
+        flash(
+            f"Gasto eliminado. Era un pago a mano a {linked['supplier_label']}: también se borró de su cuenta corriente.",
+            "success",
+        )
+    else:
+        flash("Gasto eliminado.", "success")
     year = request.form.get("year", type=int)
     month = request.form.get("month", type=int)
     return redirect(url_for("carga_datos_caja", year=year, month=month))

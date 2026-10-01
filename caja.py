@@ -22,6 +22,7 @@ import caja_db
 import chase_db
 import lottery_db
 import reportes_db
+from reporte_diario import real_store_info_total_sales
 
 CAJA_SHEET_NAME = "CAJA"
 CAJA_DATA_START_ROW = 4
@@ -230,6 +231,9 @@ def build_month_report_from_db(year, month, _depth=0):
         year, month
     )
     store_info_by_date = {row["date"]: row for row in reportes_db.get_month_store_info(year, month)}
+    department_detail_by_date = {
+        d["date"]: d["department_detail"] for d in reportes_db.get_month_overview(year, month)
+    }
     expenses_by_date = caja_db.get_month_expenses(year, month)
 
     days_in_month = calendar.monthrange(year, month)[1]
@@ -257,7 +261,13 @@ def build_month_report_from_db(year, month, _depth=0):
             any_lottery = True
 
         info = store_info_by_date.get(key) or {}
+        # Mismo Total Sales que Store Info (resta VS/Gettel); el impreso en
+        # el PDF queda solo de respaldo si falta algún componente.
         total_sales = info.get("total_sales")
+        if info:
+            real_total_sales, _gettel = real_store_info_total_sales(info, department_detail_by_date.get(key, []))
+            if real_total_sales is not None:
+                total_sales = real_total_sales
         cash = info.get("cash")
         tc = round(sum(info.get("credit_terms") or []), 2) if info else None
         other_amount = info.get("other_amount")

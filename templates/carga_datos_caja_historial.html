@@ -139,7 +139,7 @@
     <input type="hidden" name="month" value="{{ month }}">
     <div>
       <label class="muted">Fecha</label>
-      <input type="date" name="date" min="{{ '%04d-%02d-01'|format(year, month) }}" required>
+      <input type="date" name="date" min="{{ '%04d-%02d-01'|format(year, month) }}" max="{{ month_last_day_iso }}" required>
     </div>
     <div>
       <label class="muted">Monto</label>

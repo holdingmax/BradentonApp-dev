@@ -503,6 +503,27 @@ def delete_manual_payment(payment_id):
         conn.close()
 
 
+def delete_manual_payment_by_caja_item(caja_expense_item_id):
+    """
+    El otro sentido de delete_manual_payment: borrar desde Caja el gasto de
+    un "Pago a mano" borra también el pago del proveedor, para que la cuenta
+    corriente y Caja no queden descuadradas (auditoría 2026-09). Devuelve la
+    fila borrada o None si ese gasto no venía de un pago a mano.
+    """
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT * FROM supplier_manual_payments WHERE caja_expense_item_id = ?", (caja_expense_item_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        conn.execute("DELETE FROM supplier_manual_payments WHERE id = ?", (row["id"],))
+        conn.commit()
+        return dict(row)
+    finally:
+        conn.close()
+
+
 def _fmt_money_pdf(value):
     """Mismo criterio de signo que chase_rules._fmt_money_pdf -- "$" adelante, negativo con "-" antes del "$"."""
     if value is None:
