@@ -6295,6 +6295,7 @@ def _run_carga_datos_proveedores_job(job_id, paths):
         date_mismatches = []
         lines_saved = 0
         lines_failed = []
+        without_invoice = []
 
         for index, path in enumerate(paths, start=1):
             filename = os.path.basename(path)
@@ -6304,6 +6305,11 @@ def _run_carga_datos_proveedores_job(job_id, paths):
                 failed.append({"filename": filename, "error": str(exc), "supplier": None})
                 jobs.update_job(job_id, done=index, total=len(paths))
                 continue
+            if not invoices:
+                # Un PDF sin ninguna factura (por ejemplo, solo una devolución
+                # de Coca-Cola) no es un error, pero tampoco puede desaparecer
+                # del lote sin que se note (auditoría 2026-09).
+                without_invoice.append({"filename": filename, "supplier": supplier_label})
 
             # Chequeo de fecha del nombre de archivo (2026-09-15, pedido
             # explícito del usuario -- "al igual que con las facturas de
@@ -6326,6 +6332,7 @@ def _run_carga_datos_proveedores_job(job_id, paths):
                     continue
                 valid_invoices.append(invoice)
 
+            saved_before = len(saved)
             for invoice in valid_invoices:
                 ok = proveedores_db.save_invoice(
                     supplier_key, supplier_label, invoice["date"], invoice["invoice_no"],
@@ -6358,7 +6365,9 @@ def _run_carga_datos_proveedores_job(job_id, paths):
                     print(f"[carga-datos/proveedores] detalle de productos de {filename}: {exc}")
                     lines_failed.append({"filename": filename, "supplier": supplier_label})
 
-            if valid_invoices:
+            # Solo si se guardó alguna factura de este PDF: volver a subir uno
+            # ya cargado no archiva otra copia (auditoría 2026-09).
+            if len(saved) > saved_before:
                 try:
                     doc_when = valid_invoices[0]["date"]
                     documents_db.store_document(
@@ -6379,6 +6388,10 @@ def _run_carga_datos_proveedores_job(job_id, paths):
             ))
         if failed:
             parts.append(_group_by_supplier_message("No se pudieron cargar", failed, "factura(s)"))
+        if without_invoice:
+            parts.append(_group_by_supplier_message(
+                "Sin ninguna factura para guardar (por ejemplo, solo devolución)", without_invoice, "PDF(s)"
+            ))
         if lines_saved:
             parts.append(f"Detalle de productos guardado en {lines_saved} factura(s).")
         if lines_failed:
@@ -6388,7 +6401,7 @@ def _run_carga_datos_proveedores_job(job_id, paths):
         if not parts:
             parts.append("No se guardó ninguna factura de este lote.")
         level = (
-            "success" if (saved and not duplicates and not failed and not date_mismatches and not lines_failed)
+            "success" if (saved and not duplicates and not failed and not date_mismatches and not lines_failed and not without_invoice)
             else ("error" if not saved and not lines_saved else "warning")
         )
 
@@ -6671,7 +6684,10 @@ def _build_supplier_ledger(invoices, payments, credit_memos=None, manual_payment
             "bank_description": p["description"],
             "document": None,
             "debe": 0.0,
-            "haber": abs(p["amount"]),
+            # Con el signo real: un débito (negativo) es un pago; un ingreso
+            # vinculado (reintegro, reversa) vuelve a sumar deuda en vez de
+            # restarla como otro pago (auditoría 2026-09).
+            "haber": -p["amount"],
             "manual": p["supplier_source"] == "manual",
         })
     for c in (credit_memos or []):
@@ -6722,7 +6738,7 @@ def _build_supplier_ledger(invoices, payments, credit_memos=None, manual_payment
         "saldo_actual": running,
         "invoice_total": round(sum(inv["amount"] for inv in invoices), 2),
         "invoice_count": len(invoices),
-        "payment_total": round(sum(abs(p["amount"]) for p in payments), 2),
+        "payment_total": round(sum(-p["amount"] for p in payments), 2),
         "payment_count": len(payments),
         "credit_total": round(sum(c["amount"] for c in (credit_memos or [])), 2),
         "credit_count": len(credit_memos or []),

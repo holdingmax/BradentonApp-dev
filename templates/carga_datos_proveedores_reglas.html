@@ -118,7 +118,14 @@
         expectedKeywordField.value = selected.dataset.keyword;
         expectedSheetNameField.value = selected.dataset.sheetName;
         keywordField.value = selected.dataset.keyword;
-        sheetNameField.value = selected.dataset.sheetName;
+        // Sin mayúsculas ni espacios de más: la regla puede tener 'EXPRESS' o
+        // 'JJ Taylor' y la opción 'EXPRESS ' o 'JJ TAYLOR' (el backend ya
+        // compara así); con value exacto el select quedaba vacío.
+        var wanted = (selected.dataset.sheetName || '').trim().toLowerCase();
+        sheetNameField.value = '';
+        Array.prototype.forEach.call(sheetNameField.options, function (option) {
+          if (option.value.trim().toLowerCase() === wanted) sheetNameField.value = option.value;
+        });
         submitBtn.textContent = 'Guardar Cambios';
         cancelBtn.style.display = '';
         keywordField.focus();

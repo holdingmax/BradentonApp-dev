@@ -134,7 +134,11 @@ def add_dynamic_supplier(entry, created_by=None):
         raise ValueError("Falta la palabra de detección del proveedor.")
 
     suppliers = _load_dynamic_suppliers_file()
-    clave = _unique_slug(label, suppliers.keys())
+    # También contra los hardcodeados: una clave dinámica igual a 'pepsi' o
+    # 'airgas' pisaba al extractor ya validado (auditoría 2026-09). Import
+    # local porque proveedores.py importa este módulo.
+    from proveedores import SUPPLIER_REGISTRY
+    clave = _unique_slug(label, set(suppliers) | set(SUPPLIER_REGISTRY))
     suppliers[clave] = {
         "label": label,
         "sheet_name": sheet_name,
@@ -278,10 +282,21 @@ def _extract_full_text(pdf_path):
     return "\n".join(pages_text)
 
 
+# Un token con forma de dato (N°, fecha, monto) dentro del prefijo del ancla.
+_ANCHOR_VALUE_TOKEN_RE = re.compile(r"\$?\d[\d,./\-]*")
+
+
 def _derive_anchor(full_text, start_index, window=40):
     prefix = full_text[max(0, start_index - window):start_index]
     if "\n" in prefix:
         prefix = prefix.rsplit("\n", 1)[1]
+    # Si en la misma línea hay otros datos antes de la etiqueta ("Invoice
+    # Date: 08/15/2026   Invoice #:"), el ancla se queda solo con lo que
+    # viene después del último dato: con la fecha de la muestra adentro,
+    # ninguna otra factura la contenía (auditoría 2026-09).
+    value_tokens = list(_ANCHOR_VALUE_TOKEN_RE.finditer(prefix))
+    if value_tokens:
+        prefix = prefix[value_tokens[-1].end():]
     # Solo se recorta ruido de PRINCIPIO (espacios, separadores de columna
     # sueltos) y espacio en blanco al final -- nunca puntuación final como
     # ":" o "|", que suele ser justo lo que separa la etiqueta del valor y
@@ -312,6 +327,7 @@ def find_value_occurrences(full_text, target_value, field):
         context_end = min(len(full_text), match.end() + 20)
         occurrences.append({
             "anchor": anchor,
+            "raw": match.group(0),
             "position": match.start(),
             "context": full_text[context_start:context_end].replace("\n", " ").strip(),
         })
@@ -414,7 +430,11 @@ def analyze_sample(pdf_path, sample_values, chosen_occurrence_index=None):
             "context": chosen["context"],
         }
         if field == "date":
-            _, fmt = parse_date_text(raw_input)
+            # El formato sale del texto del documento, no de cómo lo tipeó
+            # el usuario: tipear '15/08/2026' para una factura que dice
+            # '08/15/2026' guardaba %d/%m y daba vuelta día y mes en todas
+            # las facturas siguientes (auditoría 2026-09).
+            _, fmt = parse_date_text(chosen["raw"])
             result["date_format"] = fmt
         fields[field] = result
 

@@ -313,6 +313,30 @@ def _extract_gce_invoice(pdf_path):
     return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
 
 
+def _parse_frito_lay_text_date(text):
+    """
+    "25 Mar 2026" -> datetime. El OCR suele confundir la primera letra del
+    mes entre H, M y N ("25 Har 2026", "26 Hov 2025"): antes eso tiraba un
+    ValueError crudo y el PDF entero fallaba (auditoría 2026-09). Se prueba
+    con M y con N y se acepta solo si da un único mes válido. Devuelve None
+    si no se puede.
+    """
+    try:
+        return datetime.strptime(text, "%d %b %Y")
+    except ValueError:
+        pass
+    parts = text.split()
+    if len(parts) != 3 or len(parts[1]) != 3 or parts[1][0] not in "HMNhmn":
+        return None
+    found = []
+    for letter in "MN":
+        try:
+            found.append(datetime.strptime(f"{parts[0]} {letter}{parts[1][1:]} {parts[2]}", "%d %b %Y"))
+        except ValueError:
+            continue
+    return found[0] if len(found) == 1 else None
+
+
 def _extract_frito_lay_invoice(pdf_path):
     """
     Frito-Lay -- escaneo; puede traer una foto del cheque en una página
@@ -348,14 +372,21 @@ def _extract_frito_lay_invoice(pdf_path):
         invoice_match = re.search(r"Document\s*#\s*:?\s*(\d+)", text, re.IGNORECASE)
     total_match = re.search(r"TOTAL DUE\s*[:=]\s*\$?\s*([\d,]+\.\d{2})", text, re.IGNORECASE)
 
+    invoice_date = None
     date_match = re.search(r"DATE:\s*(\d{1,2}\s+\w{3}\s+\d{4})", text, re.IGNORECASE)
     if date_match:
-        invoice_date = datetime.strptime(date_match.group(1), "%d %b %Y")
-    else:
+        invoice_date = _parse_frito_lay_text_date(date_match.group(1))
+    if invoice_date is None:
+        # Respaldo: la fecha suelta MM/DD/YY (plantilla CHARGE SALES), también
+        # cuando el mes de "DATE:" vino mal leído ("25 Har 2026").
         date_match = re.search(r"\b(\d{1,2}/\d{1,2}/\d{2})\b", text)
-        invoice_date = datetime.strptime(date_match.group(1), "%m/%d/%y") if date_match else None
+        if date_match:
+            try:
+                invoice_date = datetime.strptime(date_match.group(1), "%m/%d/%y")
+            except ValueError:
+                date_match = None
 
-    if not (invoice_match and date_match and total_match):
+    if not (invoice_match and invoice_date and total_match):
         raise ValueError(
             f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total del PDF de Frito-Lay."
         )
@@ -392,15 +423,29 @@ def _kings_find_amount(totals_crop):
         for i, word in enumerate(data["text"]):
             if alpha_re.sub("", word).lower() != "total":
                 continue
-            prev_word = data["text"][i - 1] if i > 0 else ""
-            if alpha_re.sub("", prev_word).lower() == "sub":
+            # Cualquier palabra antes de "Total" en la misma línea ("Sub",
+            # o una variante OCR como "Snb") es el Sub Total, no el Total
+            # final (auditoría 2026-09: leía 449.50 en vez de 469.00).
+            same_line_prev = i > 0 and all(
+                data[k][i - 1] == data[k][i] for k in ("block_num", "par_num", "line_num")
+            )
+            prev_word = data["text"][i - 1] if same_line_prev else ""
+            if len(alpha_re.sub("", prev_word)) >= 2:
                 continue
             top, height, left = data["top"][i], data["height"][i], data["left"][i]
             strip = variant.crop((left, max(0, top - 10), variant.width, top + height + 15))
-            strip = strip.resize((strip.width * 3, strip.height * 3), Image.LANCZOS)
-            match = re.search(r"([\d,]+\.\d{2})", pytesseract.image_to_string(strip, config="--psm 7"))
-            if match:
-                return float(match.group(1).replace(",", ""))
+            # Se amplía solo si el texto es chico: la versión sin grilla ya
+            # viene agrandada y ampliarla otra vez dejaba a Tesseract sin leer
+            # nada (caso real 188052). Si una escala no lee, se prueba la otra.
+            scales = (3, 1) if height < 60 else (1, 3)
+            for scale in scales:
+                candidate = strip if scale == 1 else strip.resize((strip.width * scale, strip.height * scale), Image.LANCZOS)
+                # El último monto de la franja: el recorte puede alcanzar la
+                # fila de arriba (Sales Tax 0.00). Un Total en 0.00 no es
+                # creíble: se sigue buscando.
+                amounts = re.findall(r"([\d,]+\.\d{2})", pytesseract.image_to_string(candidate, config="--psm 7"))
+                if amounts and float(amounts[-1].replace(",", "")) > 0:
+                    return float(amounts[-1].replace(",", ""))
 
     data = pytesseract.image_to_data(_remove_grid_lines(totals_crop), output_type=pytesseract.Output.DICT)
     candidates = []
@@ -410,11 +455,12 @@ def _kings_find_amount(totals_crop):
             candidates.append((data["top"][i], cleaned))
     if candidates:
         candidates.sort()
-        return float(candidates[-1][1].replace(",", ""))
+        value = float(candidates[-1][1].replace(",", ""))
+        return value if value > 0 else None
     return None
 
 
-def _kings_find_invoice_and_date(info_crop):
+def _kings_find_invoice_and_date(info_crop, filename_numbers=()):
     """
     La tabla de arriba (Terms/PO-REF/Ship Via/Salesperson/Invoice Date/
     Invoice #) también tiene grilla, y la fila de datos puede aparecer
@@ -434,11 +480,18 @@ def _kings_find_invoice_and_date(info_crop):
     data = pytesseract.image_to_data(info_crop, output_type=pytesseract.Output.DICT)
     invoice_idx = date_idx = None
     invoice_no = invoice_date = None
+    # La columna Invoice # es la última de la fila: entre varios tokens de 6
+    # dígitos gana el de más a la derecha. Una fecha que perdió las barras
+    # ("2/7/2026" -> "272026") también tiene 6 dígitos y cae antes, en
+    # Invoice Date (auditoría 2026-09). Si alguno coincide con el N° del
+    # nombre de archivo, ese manda.
+    six_digit = [(data["left"][i], i) for i, w in enumerate(data["text"]) if invoice_exact_re.match(w.strip())]
+    if six_digit:
+        by_name = [item for item in six_digit if int(data["text"][item[1]].strip()) in filename_numbers]
+        invoice_idx = max(by_name or six_digit)[1]
+        invoice_no = int(data["text"][invoice_idx].strip())
     for i, word in enumerate(data["text"]):
         cleaned = word.strip()
-        if invoice_idx is None and invoice_exact_re.match(cleaned):
-            invoice_idx = i
-            invoice_no = int(cleaned)
         if date_idx is None:
             match = date_full_re.match(cleaned)
             if match:
@@ -502,7 +555,8 @@ def _extract_kings_invoice(pdf_path):
     info_crop = _crop_relative(image, 0.0, 0.27, 1.0, 0.40)
     totals_crop = _crop_relative(image, 0.55, 0.70, 1.0, 1.0)
 
-    invoice_no, invoice_date = _kings_find_invoice_and_date(info_crop)
+    filename_numbers = {int(n) for n in re.findall(r"(?<!\d)(\d{6})(?!\d)", os.path.basename(pdf_path))}
+    invoice_no, invoice_date = _kings_find_invoice_and_date(info_crop, filename_numbers)
     amount = _kings_find_amount(totals_crop)
 
     if invoice_no is None or invoice_date is None or amount is None:
@@ -549,8 +603,10 @@ def _extract_sweetheart_invoice(pdf_path):
     """
     Sweetheart Ice Cream -- escaneo de una sola página con la info que hace
     falta; puede traer una foto del cheque en una segunda página (se
-    ignora). "BALANCE DUE" a veces sale con un dígito mal leído -- se usa
-    "TOTAL SALES", que es el mismo importe y lee mejor.
+    ignora). "TOTAL SALES" y "BALANCE DUE" son el mismo importe: se leen
+    los dos y, si los dos se leyeron y no coinciden, se rechaza para
+    cargarla a mano en vez de elegir uno a ciegas (auditoría 2026-09: un
+    OCR leyó 236.15 contra 238.15). Si solo uno es legible, se usa ese.
     """
     _ensure_pdfplumber()
     _ensure_pytesseract()
@@ -565,16 +621,23 @@ def _extract_sweetheart_invoice(pdf_path):
     invoice_match = re.search(r"INVOICE.{0,4}?(\d{8,})", text, re.IGNORECASE)
     date_match = re.search(r"Date:\s*(\d{1,2}/\d{1,2}/\d{4})", text)
     total_match = re.search(r"TOTAL SALES:\s*\$?\s*([\d,]+\.\d{2})", text, re.IGNORECASE)
+    balance_match = re.search(r"BALANCE DUE:?\s*\$?\s*([\d,]+\.\d{2})", text, re.IGNORECASE)
 
-    if not (invoice_match and date_match and total_match):
+    if not (invoice_match and date_match and (total_match or balance_match)):
         raise ValueError(
             f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total del PDF de Sweetheart."
         )
 
+    amounts = [float(m.group(1).replace(",", "")) for m in (total_match, balance_match) if m]
+    if len(amounts) == 2 and abs(amounts[0] - amounts[1]) > 0.005:
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: TOTAL SALES (${amounts[0]:,.2f}) y BALANCE DUE "
+            f"(${amounts[1]:,.2f}) no coinciden -- cargala a mano."
+        )
+
     invoice_no = int(invoice_match.group(1))
     invoice_date = datetime.strptime(date_match.group(1), "%m/%d/%Y")
-    amount = float(total_match.group(1).replace(",", ""))
-    return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
+    return {"invoice_no": invoice_no, "date": invoice_date, "amount": amounts[0]}
 
 
 def _extract_bimbo_invoice(pdf_path):
@@ -1582,6 +1645,64 @@ def _reject_duplicate_invoice_numbers(pdf_path, invoices):
         )
 
 
+_COCA_PAGE_MARKER_RE = re.compile(r"[OQ0]UTLET|INV[#A]?\s*\d{11}|AMOUNT|RETURNS|INVOICE")
+_COCA_INV_RE = re.compile(r"INV[#A]?\s*(\d{11})")
+
+
+def _coca_page_text(image):
+    """
+    OCR de una página de Coca-Cola, girándola si hace falta. Hay escaneos
+    que el detector de orientación de Tesseract deja dados vuelta (180°):
+    el texto sale ilegible ("S6°2Lb and .NnOWy" = "AMOUNT DUE 467.95" al
+    revés), no aparece ni OUTLET ni INV# y la factura principal se perdía
+    (auditoría 2026-09, 5 de los PDFs reales que devolvían []). Si la página
+    no trae ninguna marca reconocible se prueban las otras 3 orientaciones y
+    se queda con la que más marcas y montos legibles da (no la primera que
+    trae alguna: una rotación casi buena puede leer "AMOUNT" con los números
+    ilegibles). Devuelve (texto, imagen ya orientada).
+    """
+    text = pytesseract.image_to_string(image)
+    if _COCA_PAGE_MARKER_RE.search(text.upper()):
+        return text, image
+
+    def score(candidate):
+        return 5 * len(_COCA_PAGE_MARKER_RE.findall(candidate.upper())) + len(_CURRENCY_RE.findall(candidate))
+
+    best_text, best_image, best_score = text, image, score(text)
+    for rotation in (Image.ROTATE_180, Image.ROTATE_90, Image.ROTATE_270):
+        rotated = image.transpose(rotation)
+        candidate = pytesseract.image_to_string(rotated)
+        candidate_score = score(candidate)
+        if candidate_score > best_score:
+            best_text, best_image, best_score = candidate, rotated, candidate_score
+    return best_text, best_image
+
+
+def _coca_page_segments(text):
+    """
+    Una misma página puede traer dos facturas distintas (caso real
+    42360594027: arriba la devolución 028 y abajo el encabezado de la 027).
+    Se parte el texto en cada INV# de 11 dígitos con un N° distinto al
+    anterior (un INV# repetido, del mismo encabezado, no parte nada); cada
+    pedazo se trata como su propia página.
+    """
+    upper = text.upper()
+    cuts = []
+    previous = None
+    for match in _COCA_INV_RE.finditer(upper):
+        if match.group(1) == previous:
+            continue
+        start = match.start()
+        outlet = upper.rfind("UTLET", max(0, start - 60), start)
+        if outlet != -1:
+            start = max(0, outlet - 1)
+        if previous is not None:
+            cuts.append(start)
+        previous = match.group(1)
+    bounds = [0] + cuts + [len(text)]
+    return [text[a:b] for a, b in zip(bounds, bounds[1:])]
+
+
 def _extract_coca_invoices(pdf_path):
     """
     Cada factura de Coca-Cola arranca en una página con el encabezado
@@ -1629,14 +1750,25 @@ def _extract_coca_invoices(pdf_path):
     # devolución) y al final no queda ninguna, se falla en vez de devolver []
     # en silencio (auditoría 2026-09: 10 de 79 PDFs reales se perdían así).
     saw_real_invoice = False
+    # Todos los INV# vistos, también los de devolución: el nombre de archivo a
+    # veces trae el N° de la devolución que viene en el mismo PDF.
+    seen_inv_numbers = set()
     with pdfplumber.open(pdf_path) as pdf:
+        page_texts = []
         for page in pdf.pages:
             image = _extract_page_image(page)
             if image is None:
                 continue
-            text = pytesseract.image_to_string(image)
+            page_text, image = _coca_page_text(image)
+            for segment in _coca_page_segments(page_text):
+                page_texts.append((segment, image))
+        for text, image in page_texts:
             text_upper = text.upper()
-            is_returns_page = "RETURNS" in text_upper or "THIS IS NOT AN INVOICE" in text_upper
+            # Devolución = la palabra RETURNS en ese pedazo. La frase "THIS IS
+            # NOT AN INVOICE" sola no alcanza: aparece al pie de páginas de
+            # totales de facturas reales (caso real 43826991024, $1,257.00).
+            is_returns_page = "RETURNS" in text_upper
+            seen_inv_numbers.update(int(n) for n in re.findall(r"INV[#A]?\s*(\d{11})", text_upper))
             has_inv_number = re.search(r"INV[#A]?\s*\d{11}", text_upper) is not None
             if has_inv_number and not is_returns_page:
                 saw_real_invoice = True
@@ -1680,6 +1812,11 @@ def _extract_coca_invoices(pdf_path):
                 continue
             if "AMOUNT" in text_upper:
                 resolved = _extract_due_paid(text)
+                if resolved is None:
+                    # "AMOUNT" legible pero los montos no: se prueban las
+                    # otras orientaciones, como con una página sin AMOUNT.
+                    best_text = _best_amount_text(image)
+                    resolved = _extract_due_paid(best_text) if best_text is not None else None
                 if resolved is not None:
                     current["due"], current["paid"] = resolved
                 continue
@@ -1733,6 +1870,10 @@ def _extract_coca_invoices(pdf_path):
                 f"factura {invoice_no} de Coca-Cola."
             )
         amount = amount_paid if amount_paid != 0 else amount_due
+        if amount == 0:
+            # Una factura en $0.00 (DUE y PAID en 0, ej. 50511242048 que viene
+            # en el mismo PDF que la 049) no deja deuda: no genera fila.
+            continue
         if amount < 0:
             raise ValueError(
                 f"{os.path.basename(pdf_path)}: la factura {invoice_no} de Coca-Cola "
@@ -1772,7 +1913,9 @@ def _extract_coca_invoices(pdf_path):
     # rechazaría facturas correctamente leídas del documento.
     filename_numbers = _filename_invoice_numbers(pdf_path)
     if len(invoices) == 1 and len(filename_numbers) == 1:
-        if invoices[0]["invoice_no"] != filename_numbers[0]:
+        # Un N° del nombre que es el de la devolución del mismo PDF no es un
+        # error: la factura real se leyó bien (auditoría 2026-09).
+        if invoices[0]["invoice_no"] != filename_numbers[0] and filename_numbers[0] not in seen_inv_numbers:
             raise ValueError(
                 f"{os.path.basename(pdf_path)}: el N° leído del documento "
                 f"({invoices[0]['invoice_no']}) no coincide con el del nombre de "
@@ -1792,6 +1935,8 @@ _PEPSI_MARKER_RE = re.compile(r"for this Invo\S{0,3}:", re.IGNORECASE)
 _PEPSI_TOTAL_RE = re.compile(r"for this Invo\S{0,3}:\s*\$?\s*([\d,]+\.\d{2})", re.IGNORECASE)
 _PEPSI_HEADER_NO_RE = re.compile(r"INVOICE\D{0,15}?#\s*(\d{5,10})", re.IGNORECASE | re.DOTALL)
 _PEPSI_DATE_RE = re.compile(r"(\d{1,2}/\d{1,2}/\d{4})")
+# El "Amount Due $X" del cuadro SALES SUMMARY (no el "for this Invoice").
+_PEPSI_SUMMARY_DUE_RE = re.compile(r"Amount Due\b(?!\s*for)\s*:?\s*\$?\s*([\d,]+\.\d{2})", re.IGNORECASE)
 
 
 def _pepsi_group_texts(pdf_path):
@@ -1850,6 +1995,15 @@ def _extract_pepsi_invoices(pdf_path):
                 "Invoice\" en una de las facturas del PDF de Pepsi."
             )
         amount = float(total_match.group(1).replace(",", ""))
+        # Cruce contra el mismo importe del SALES SUMMARY: si se leyó y no
+        # coincide, un dígito está mal leído en alguno de los dos y no se
+        # adivina cuál (auditoría 2026-09: 631.40 contra 831.40).
+        summary_values = [float(m.group(1).replace(",", "")) for m in _PEPSI_SUMMARY_DUE_RE.finditer(text)]
+        if summary_values and all(abs(value - amount) > 0.005 for value in summary_values):
+            raise ValueError(
+                f"{os.path.basename(pdf_path)}: el total de una factura de Pepsi (${amount:,.2f}) no "
+                f"coincide con el Amount Due del SALES SUMMARY (${summary_values[0]:,.2f}) -- cargala a mano."
+            )
 
         # El nombre de archivo va primero -- mismo criterio ya validado
         # para Coca-Cola (2026-09-04): el documento puede leer un dígito
@@ -2391,13 +2545,19 @@ def _dynamic_supplier_entries():
 def _effective_supplier_registry():
     """
     SUPPLIER_REGISTRY (proveedores hardcodeados) + los agregados desde la
-    web -- los hardcodeados se revisan primero (están más probados), los
+    web -- los hardcodeados se revisan primero (están más probados) y ganan ante la misma clave, los
     dinámicos son el fallback. Se recalcula en cada llamada, sin caching,
     para que un proveedor recién agregado/borrado por un admin tenga
     efecto inmediato -- mismo criterio que ya usa el motor de reglas de
     Chase con sus propias reglas.
     """
-    return {**SUPPLIER_REGISTRY, **_dynamic_supplier_entries()}
+    # Los hardcodeados van primero en el orden de detección y ganan ante la
+    # misma clave: una entrada dinámica con clave repetida no puede pisar a
+    # un extractor validado (auditoría 2026-09).
+    merged = dict(SUPPLIER_REGISTRY)
+    for key, entry in _dynamic_supplier_entries().items():
+        merged.setdefault(key, entry)
+    return merged
 
 
 def list_supplier_registry_entries():

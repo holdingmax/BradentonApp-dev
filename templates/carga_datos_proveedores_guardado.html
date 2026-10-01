@@ -119,15 +119,19 @@
       return span2;
     }
 
-    function buildCard(key, label, logo) {
+    function buildCard(key, label, logo, isService) {
       var card = document.createElement('div');
       card.className = 'supplier-card';
       card.dataset.key = key;
       card.dataset.label = label;
       card.dataset.logo = logo || '';
+      // Igual que la tarjeta del servidor: sin esto, un proveedor de servicio
+      // que se mostraba y se volvía a ocultar quedaba como de mercadería.
+      card.dataset.service = isService ? '1' : '0';
 
       var link = document.createElement('a');
       link.className = 'supplier-card-link';
+      link.style.setProperty('--tool-accent', {{ accent|tojson }});
       link.href = DETAIL_BASE + encodeURIComponent(key);
       link.appendChild(badgeMarkup(logo, label));
       var labelSpan = document.createElement('span');
@@ -213,7 +217,7 @@
         row.remove();
         setHiddenCount(-1);
         var grid = document.getElementById(isService ? 'services-grid' : 'merchandise-grid');
-        insertSorted(grid, buildCard(key, label, logo), label);
+        insertSorted(grid, buildCard(key, label, logo, isService), label);
       }).catch(function () {
         alert('No se pudo mostrar el proveedor -- probá de nuevo.');
       });
