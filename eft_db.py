@@ -256,8 +256,18 @@ def get_month_deposits(year, month):
             paid = conn.execute(
                 "SELECT * FROM eft_paid_invoices WHERE deposit_id = ? ORDER BY id", (dep["id"],)
             ).fetchall()
+            deposit = dict(dep)
+            # Los totales que se muestran salen de las líneas, no de lo
+            # guardado al extraer: así una corrección a mano de una línea se
+            # ve en el encabezado y en el PDF (auditoría 2026-09). Lo guardado
+            # queda intacto porque find_existing_deposit compara contra el
+            # neto original del PDF para no cargar dos veces el mismo EFT.
+            if coupons:
+                deposit["gross_total"] = round(sum(c["gross_amount"] or 0.0 for c in coupons), 2)
+                deposit["fees_total"] = round(sum(c["fees_amount"] or 0.0 for c in coupons), 2)
+                deposit["net_total"] = round(sum(c["paid_amount"] or 0.0 for c in coupons), 2)
             result.append({
-                "deposit": dict(dep),
+                "deposit": deposit,
                 "coupons": [dict(c) for c in coupons],
                 "paid_invoices": [dict(p) for p in paid],
             })
@@ -585,17 +595,38 @@ def upsert_cupones(records, source_filename=None):
     "fees", "net", "reported_group_text", "reported_group_total"}.
 
     Un DDC ya guardado se actualiza (mismo criterio que Chase: la última
-    carga del reporte mensual manda) -- devuelve (inserted, updated).
+    carga del reporte mensual manda) -- devuelve (inserted, updated,
+    repeated), donde `repeated` son los DDC que el propio reporte trae más
+    de una vez (auditoría 2026-09, webapp.py:4391): antes la última fila
+    pisaba a la primera sin aviso. Si una de las repetidas es la fila de un
+    batch (montos en 0) y otra trae montos reales, gana la de montos reales.
+
+    Al final corre backfill_grouped_cupones_from_eft: el reporte es
+    acumulativo y cada resubida vuelve a poner en 0 a los miembros de un
+    batch, que así recuperan enseguida el monto que trae su EFT.
     """
+    unique = {}
+    repeated = []
+    for rec in records:
+        coupon_id = (rec.get("coupon") or "").strip().upper()
+        if not coupon_id:
+            continue
+        previous = unique.get(coupon_id)
+        if previous is None:
+            unique[coupon_id] = rec
+            continue
+        if coupon_id not in repeated:
+            repeated.append(coupon_id)
+        previous_is_zero = not any((previous.get(k) or 0.0) for k in ("gross", "fees", "net"))
+        if previous_is_zero:
+            unique[coupon_id] = rec
+
     conn = _connect()
     try:
         inserted = 0
         updated = 0
         now = datetime.utcnow().isoformat()
-        for rec in records:
-            coupon_id = (rec.get("coupon") or "").strip().upper()
-            if not coupon_id:
-                continue
+        for coupon_id, rec in unique.items():
             exists = conn.execute(
                 "SELECT 1 FROM cupones WHERE coupon_id = ?", (coupon_id,)
             ).fetchone() is not None
@@ -623,9 +654,10 @@ def upsert_cupones(records, source_filename=None):
             else:
                 inserted += 1
         conn.commit()
-        return inserted, updated
     finally:
         conn.close()
+    backfill_grouped_cupones_from_eft()
+    return inserted, updated, repeated
 
 
 def _fmt_money_pdf(value):
@@ -660,6 +692,7 @@ def build_eft_pdf_report(year, month, dest_path):
     """
     from pdf_export import build_multi_section_pdf
 
+    backfill_grouped_cupones_from_eft()
     deposits = get_month_deposits(year, month)
     eft_rows = []
     total_gross = total_fees = total_net = 0.0
@@ -736,6 +769,7 @@ def build_eft_pdf_report(year, month, dest_path):
 
     pending_rows = []
     total_pending = 0.0
+    counted_groups = set()
     for c in cupones:
         if c.get("match"):
             continue
@@ -743,6 +777,17 @@ def build_eft_pdf_report(year, month, dest_path):
         if not cupon_parsed or cupon_parsed.year != year or cupon_parsed.month != month:
             continue
         net = c.get("net") or 0.0
+        # Un miembro de batch sin resolver tiene net 0: lo que falta cobrar
+        # es el saldo del batch (group_remaining), contado una sola vez.
+        group_text = c.get("reported_group_text")
+        net_cell = _fmt_money_pdf(net)
+        if not net and c.get("group_remaining") is not None:
+            if group_text not in counted_groups:
+                counted_groups.add(group_text)
+                total_pending += c["group_remaining"]
+                net_cell = f"{_fmt_money_pdf(c['group_remaining'])} (saldo del batch)"
+            else:
+                net_cell = "en el mismo batch"
         total_pending += net
         pending_rows.append(
             [
@@ -750,7 +795,7 @@ def build_eft_pdf_report(year, month, dest_path):
                 cupon_parsed.strftime("%d/%m/%Y"),
                 _fmt_money_pdf(c.get("gross")),
                 _fmt_money_pdf(c.get("fees")),
-                _fmt_money_pdf(net),
+                net_cell,
             ]
         )
     pending_rows.sort(key=lambda row: row[1])

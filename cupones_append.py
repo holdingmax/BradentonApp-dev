@@ -304,6 +304,27 @@ def _read_monthly_coupon_rows_csv(monthly_path):
     return _read_monthly_coupon_rows_from_table(header_cells, data_rows)
 
 
+def _read_monthly_coupon_rows_xls(monthly_path):
+    raw = pd.read_excel(monthly_path, header=None, dtype=object)
+    if len(raw) < MONTHLY_DATA_START_ROW:
+        return []
+
+    def _clean(value):
+        if value is None or (isinstance(value, float) and pd.isna(value)):
+            return None
+        if isinstance(value, pd.Timestamp):
+            return value.to_pydatetime()
+        return value
+
+    header_cells = [_clean(value) for value in raw.iloc[MONTHLY_HEADER_ROW - 1].tolist()]
+    data_rows = []
+    for _, row in raw.iloc[MONTHLY_DATA_START_ROW - 1 :].iterrows():
+        row_values = [_clean(value) for value in row.tolist()]
+        if any(isinstance(item, (datetime, int, float)) or _strip_cell(item) for item in row_values):
+            data_rows.append(row_values)
+    return _read_monthly_coupon_rows_from_table(header_cells, data_rows)
+
+
 def _read_monthly_coupon_rows(monthly_path):
     """
     Parse J.H. Williams monthly coupon export.
@@ -314,8 +335,11 @@ def _read_monthly_coupon_rows(monthly_path):
     extension = os.path.splitext(monthly_path)[1].lower()
     if extension == ".csv":
         return _read_monthly_coupon_rows_csv(monthly_path)
-    if extension in {".xlsx", ".xlsm", ".xls"}:
+    if extension in {".xlsx", ".xlsm"}:
         return _read_monthly_coupon_rows_excel(monthly_path)
+    if extension == ".xls":
+        # openpyxl no abre el .xls viejo: pandas lo lee con xlrd.
+        return _read_monthly_coupon_rows_xls(monthly_path)
     raise ValueError(
         f"Tipo de reporte mensual no soportado '{extension}'. Use CSV o Excel."
     )

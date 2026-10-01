@@ -4476,6 +4476,11 @@ def _run_carga_datos_eft_job(job_id, pdf_paths):
                     parsed = datetime.strptime(eft_date, "%m/%d/%Y") if eft_date else None
                 except ValueError:
                     parsed = None
+                # Sin fecha válida el EFT no aparecería en ningún mes (no se
+                # vería ni se podría borrar) y cada resubida lo duplicaría:
+                # se rechaza (auditoría 2026-09, webapp.py:4312).
+                if parsed is None:
+                    raise ValueError("no se pudo leer la fecha del EFT (MM/DD/YYYY)")
                 # Mismo chequeo que Reporte Diario/Lottery (2026-09-15): estos
                 # PDF suelen traer su propia fecha en el nombre (ej. "EFT
                 # Nº21062 03.08.2026.pdf") -- si no coincide con la fecha real
@@ -4571,13 +4576,19 @@ def carga_datos_eft_cupones_subir():
         flash(f"Error: {exc}", "error")
         return redirect(url_for("carga_datos_eft"))
 
-    inserted, updated = eft_db.upsert_cupones(records, source_filename=filename)
+    inserted, updated, repeated = eft_db.upsert_cupones(records, source_filename=filename)
     try:
         today = date.today()
         documents_db.store_document("eft", monthly_path, filename, today.year, today.month, label="Reporte mensual de Cupones")
     except Exception as exc:
         print(f"[documents_db] no se pudo guardar el reporte mensual de Cupones {filename}: {exc}")
-    flash(f"{len(records)} cupón(es) guardado(s) ({inserted} nuevo(s), {updated} actualizado(s)).", "success")
+    flash(f"{inserted + updated} cupón(es) guardado(s) ({inserted} nuevo(s), {updated} actualizado(s)).", "success")
+    if repeated:
+        shown = ", ".join(repeated[:5]) + ("…" if len(repeated) > 5 else "")
+        flash(
+            f"El reporte trae {len(repeated)} DDC repetido(s) ({shown}): quedó guardado uno solo de cada uno, revisalos.",
+            "warning",
+        )
     return redirect(url_for("carga_datos_eft_historial"))
 
 
