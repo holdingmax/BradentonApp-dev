@@ -111,10 +111,23 @@ def find_by_number(check_number):
         conn.close()
 
 
+def find_by_source(source_filename, page_index):
+    """Fila ya cargada desde la misma página del mismo PDF (para un cheque sin N° legible)."""
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT * FROM cheques WHERE source_filename = ? AND page_index = ?",
+            (source_filename, page_index),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
 def _save_check_image(image):
     if not documents_db.GUARDAR_DOCUMENTOS:
         return ""
-    rel = os.path.join("cheques", f"{uuid.uuid4().hex[:12]}.pdf")
+    rel = f"cheques/{uuid.uuid4().hex[:12]}.pdf"
     dest = absolute_path(rel)
     os.makedirs(os.path.dirname(dest), exist_ok=True)
     image.convert("RGB").save(dest, "PDF", resolution=200)
@@ -181,7 +194,7 @@ def save_manual(check_id, check_number, fields):
     """
     Carga/corrección a mano de una fila del cuadro. `check_id` None = cheque
     que todavía no tiene fila propia (nuevo, o que hasta ahora solo existía en
-    Chase) -- si ya hay una fila con ese N°, se edita esa. Un valor None en
+    Chase) -- si ya hay una fila con ese N°, ValueError. Un valor None en
     `fields` vuelve ese dato a lo automático. Devuelve el id.
     """
     values = tuple(fields.get(k) for k in _MANUAL_FIELDS)
@@ -192,9 +205,15 @@ def save_manual(check_id, check_number, fields):
                 "SELECT id FROM cheques WHERE check_number = ? AND id != ?",
                 (check_number, check_id if check_id is not None else -1),
             ).fetchone()
+            # Alta (check_id None) con un N° que ya tiene fila: se rechaza en
+            # vez de editar esa fila, porque el form de alta llega con los
+            # demás campos vacíos y pisaría con None lo cargado a mano (y
+            # desanularía el cheque). Auditoría 2026-09, cheques_db.py:184.
             if other and check_id is None:
-                check_id = other["id"]
-            elif other:
+                raise ValueError(
+                    f"El cheque N° {check_number} ya está en el cuadro: editalo desde su fila."
+                )
+            if other:
                 raise ValueError(f"El cheque N° {check_number} ya está cargado.")
         if check_id is None:
             cur = conn.execute(

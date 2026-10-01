@@ -5,6 +5,7 @@ Chase bank activity engine: keyword-to-Detalle categorization rules
 
 import json
 import os
+import warnings
 import re
 import unicodedata
 from datetime import datetime
@@ -488,7 +489,13 @@ def read_chase_activity_file(file_path):
     """Read Chase bank activity from CSV or Excel."""
     extension = os.path.splitext(file_path)[1].lower()
     if extension == ".csv":
-        return pd.read_csv(file_path, dtype=str, keep_default_na=False)
+        # index_col=False: el CSV crudo de Chase termina cada fila de datos con
+        # una coma de más (8 campos contra 7 encabezados) y sin esto pandas
+        # toma la primera columna como índice y corre todas un lugar.
+        # El ParserWarning que tira por esa columna vacía final es esperado.
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", pd.errors.ParserWarning)
+            return pd.read_csv(file_path, dtype=str, keep_default_na=False, index_col=False)
     if extension in {".xlsx", ".xlsm", ".xls"}:
         return pd.read_excel(file_path, dtype=str, keep_default_na=False)
     raise ValueError(
@@ -549,12 +556,15 @@ def parse_posting_date_value(value):
     if not text:
         return None
 
+    # Chase es un banco de EE.UU.: el texto viene MM/DD/YYYY, así que ese
+    # orden va primero (un 03/10 es 10 de marzo, no 3 de octubre). Los
+    # Excel reales traen la fecha como datetime y no pasan por acá.
     for fmt in (
-        "%d/%m/%Y",
         "%m/%d/%Y",
+        "%d/%m/%Y",
         "%Y-%m-%d",
-        "%d-%m-%Y",
         "%m-%d-%Y",
+        "%d-%m-%Y",
         "%Y/%m/%d",
     ):
         try:

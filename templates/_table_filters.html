@@ -45,7 +45,8 @@
     var rows = Array.prototype.slice.call(table.querySelectorAll('tbody tr'));
     var columns = headers.map(function (th) {
       var index = Array.prototype.indexOf.call(th.parentNode.children, th);
-      return { key: th.getAttribute('data-filter-col'), label: th.textContent.trim(), th: th, index: index };
+      // Sin valor en data-filter-col, la clave es el índice: dos columnas nunca comparten clave.
+      return { key: th.getAttribute('data-filter-col') || ('col' + index), label: th.textContent.trim(), th: th, index: index };
     });
     var storageKey = 'tableFilters:' + tableId + ':cols';
     var enabled = {};

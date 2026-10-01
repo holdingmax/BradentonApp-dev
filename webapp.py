@@ -2903,16 +2903,18 @@ def chase_categorizar():
     ):
         detalle = ""
 
-    # set_manual_supplier corre siempre (es la señal de "el movimiento
-    # existe") -- set_manual_detalle solo se llama si el texto de verdad
-    # cambió, para no marcar como "manual" (y por lo tanto congelar contra
-    # futuras reglas) un Detalle que el usuario dejó tal cual estaba solo
-    # porque abrió el popover para vincular un proveedor.
-    ok_supplier = chase_db.set_manual_supplier(posting_date, description, amount, supplier_key)
+    # Cada campo se marca "manual" solo si de verdad cambió: guardar el
+    # popover tal cual (por ejemplo para tocar solo el Detalle) no debe
+    # congelar contra futuras reglas un Detalle ni un proveedor que venían
+    # de una regla (auditoría 2026-09, webapp.py:2751). El rowcount de lo
+    # que sí se guarda es la señal de "el movimiento existe".
+    found = True
+    if supplier_key != current_supplier_key:
+        found = chase_db.set_manual_supplier(posting_date, description, amount, supplier_key)
     if detalle != current_detalle:
-        chase_db.set_manual_detalle(posting_date, description, amount, detalle)
+        found = chase_db.set_manual_detalle(posting_date, description, amount, detalle) and found
 
-    if not ok_supplier:
+    if not found:
         # Sin aviso de éxito -- pedido explícito del usuario (2026-09-22):
         # "esta notificacion quiero que la quites, no hace falta" -- el
         # badge de Detalle (y el popover del proveedor vinculado, ver
@@ -3029,17 +3031,18 @@ def _fmt_ddmmyyyy(iso_text):
 
 
 def _match_invoice_by_amount(invoices, amount, before_iso):
-    """La factura del proveedor con ese monto exacto (la más reciente anterior al débito), si es única."""
+    """
+    La factura del proveedor con ese monto exacto (anterior al débito), solo
+    si es única: con dos o más candidatas no se adivina (auditoría 2026-09,
+    elegir "la más reciente" asignaba la misma factura a varios cheques).
+    """
     if amount is None:
         return None
     candidates = [
         inv for inv in invoices
         if abs(inv["amount"] - amount) < 0.01 and (not before_iso or inv["invoice_date"] <= before_iso)
     ]
-    if not candidates:
-        return None
-    candidates.sort(key=lambda inv: inv["invoice_date"], reverse=True)
-    return candidates[0]
+    return candidates[0] if len(candidates) == 1 else None
 
 
 _MAX_CHECK_GAP = 50
@@ -3181,7 +3184,15 @@ def _run_chase_cheques_job(job_id, pdf_paths):
                 auto = None
                 for item in found:
                     number = item["number"]
-                    existing = cheques_db.find_by_number(number) if number is not None else None
+                    if number is not None:
+                        existing = cheques_db.find_by_number(number)
+                    else:
+                        # Sin N° legible el duplicado se reconoce por archivo y
+                        # página: si no, cada resubida crea otra fila "Sin N°".
+                        existing = cheques_db.find_by_source(filename, item["page"])
+                        if existing:
+                            duplicates += 1
+                            continue
                     # Sin guardado de documentos un cheque leído por OCR
                     # queda con check_pdf vacío, igual que uno cargado a
                     # mano -- number_source es lo que los distingue.
