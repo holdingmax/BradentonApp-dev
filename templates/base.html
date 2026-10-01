@@ -1670,7 +1670,12 @@
           section.appendChild(a);
         });
         resultsBox.appendChild(section);
-        resultsBox.classList.add('open');
+        // La respuesta puede llegar después de salir de la barra: en ese caso
+        // no se vuelve a abrir solo (auditoría 2026-09, base.html:1671).
+        const container = document.getElementById('topbar-search');
+        if (container && container.contains(document.activeElement) && input.value.trim()) {
+          resultsBox.classList.add('open');
+        }
       }
 
       let docSearchDebounce = null;
@@ -1704,6 +1709,9 @@
       searchContainer.addEventListener('focusout', function () {
         setTimeout(function () {
           if (!searchContainer.contains(document.activeElement)) {
+            // Cancela la búsqueda de documentos pendiente o en curso.
+            clearTimeout(docSearchDebounce);
+            docFetchToken++;
             resultsBox.classList.remove('open');
             input.value = '';
           }
@@ -2093,6 +2101,18 @@
                 // de Flask real para usar flash()) y se muestra apenas
                 // carga la página de destino, ver el chequeo al pie de
                 // este mismo <script>.
+                // Si mientras corría el job el usuario empezó a editar algo en
+                // esta misma página (Cheques, Depósitos), recargar le borraría
+                // lo tipeado: se avisa y no se navega (auditoría 2026-09).
+                if (window.__hasUnsavedEdits && window.__hasUnsavedEdits()) {
+                  showNotice(
+                    (data.notice ? data.notice + ' ' : '') +
+                    'No se recargó la página porque tenés cambios sin guardar: guardalos y recargá para ver el resultado.',
+                    data.notice_level || 'warning'
+                  );
+                  ack(jobId);
+                  return;
+                }
                 if (data.notice) {
                   try {
                     sessionStorage.setItem('pendingNotice', JSON.stringify({ text: data.notice, level: data.notice_level || 'warning' }));
@@ -2328,6 +2348,28 @@
     // forma permanente. Guardar (submit) de ESE form lo vuelve a marcar
     // limpio -- nunca se guarda nada por las dudas, el submit real sigue
     // siendo el único que persiste el cambio.
+    // Formularios con algo tipeado y sin guardar, en cualquier form de la
+    // página que no sea de subir archivos -- lo usa el sondeo de jobs para no
+    // recargar la página encima de una edición a mano.
+    (function () {
+      var edited = new Set();
+      function trackedForm(target) {
+        var form = target && target.closest ? target.closest('form') : null;
+        if (!form || form.querySelector('input[type="file"]')) return null;
+        return form;
+      }
+      document.addEventListener('input', function (event) {
+        var form = trackedForm(event.target);
+        if (form) edited.add(form);
+      }, true);
+      document.addEventListener('submit', function (event) { edited.delete(event.target); }, true);
+      window.__hasUnsavedEdits = function () {
+        var any = false;
+        edited.forEach(function (form) { if (document.contains(form)) any = true; });
+        return any;
+      };
+    })();
+
     (function () {
       var dirtyForms = new Set();
       document.querySelectorAll('form[data-warn-unsaved]').forEach(function (form) {
@@ -2349,6 +2391,15 @@
         if (!anyDirty()) return;
         var link = event.target.closest('a[href]');
         if (!link) return;
+        // Links que no dejan la página (un PDF en otra pestaña, una descarga,
+        // un export): no preguntan ni limpian el aviso. Antes "Ver el PDF
+        // original" lo desarmaba y lo tipeado se perdía después sin aviso.
+        var href = link.getAttribute('href') || '';
+        if (
+          link.target === '_blank' || link.hasAttribute('download') ||
+          link.hasAttribute('data-no-unsaved-warning') || href.charAt(0) === '#' ||
+          /mode=download|\/exportar/.test(href)
+        ) return;
         var confirmed = window.confirm(
           'Hiciste cambios en este formulario que todavía no guardaste -- si salís ahora se van a perder. ¿Salir igual?'
         );
