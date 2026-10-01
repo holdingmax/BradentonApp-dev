@@ -1210,6 +1210,7 @@
           <div class="app-rail-panel-title">Proveedores</div>
           <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('carga_datos_proveedores') }}">Cargar factura</a>
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_proveedores_guardado') }}">Planilla</a>
+          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_proveedores_productos') }}">Productos</a>
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_proveedores_reglas') }}">Reglas de pago</a>
           {% if current_user.is_authenticated and current_user.is_admin %}
           <a class="app-rail-panel-link" href="{{ url_for('proveedores_nuevo') }}">+ Proveedor nuevo</a>

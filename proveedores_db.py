@@ -18,6 +18,14 @@ reportes_data/proveedores.db (mismo directorio gitignored de siempre):
   ocultar/desocultar no borra ni toca ninguna factura/pago, solo cambia si
   el módulo aparece en la grilla.
 
+- supplier_invoice_lines (2026-09-28, pedido explícito del usuario): los
+  renglones de producto de cada factura (UPC, pack, costo), leídos por
+  proveedores_productos.py -- base del historial de costos por producto.
+  Clave (supplier_key, invoice_no, line_no), sin FK a supplier_invoices a
+  propósito: el historial importado del Drive trae facturas viejas cuyo
+  encabezado nunca se cargó (y no se carga, para no ensuciar la cuenta
+  corriente de la Planilla con facturas sin sus pagos).
+
 El PDF original se guarda aparte con documents_db.py (módulo "proveedores"),
 igual que EFT/Gettel/CMV -- no se duplica esa pieza acá.
 """
@@ -137,6 +145,34 @@ def _connect():
             "INSERT OR IGNORE INTO supplier_settings (supplier_key, allow_manual_payments, allow_credit_memos) VALUES (?, 0, 1)",
             (_key,),
         )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS supplier_invoice_lines (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            supplier_key TEXT NOT NULL,
+            invoice_no TEXT NOT NULL,
+            invoice_date TEXT NOT NULL,
+            line_no INTEGER NOT NULL,
+            upc TEXT NOT NULL,
+            item_no TEXT,
+            description TEXT,
+            category TEXT,
+            qty REAL,
+            pack INTEGER,
+            size TEXT,
+            units INTEGER,
+            price REAL,
+            allowance REAL,
+            tax REAL,
+            net REAL,
+            ext REAL,
+            unit_cost REAL,
+            srp REAL,
+            UNIQUE (supplier_key, invoice_no, line_no)
+        )
+        """
+    )
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_invoice_lines_upc ON supplier_invoice_lines (upc)")
     conn.commit()
     return conn
 
@@ -254,13 +290,70 @@ def get_supplier_invoices(supplier_key):
 
 
 def delete_invoice(invoice_id):
+    """Borra la factura y, con ella, su detalle de productos."""
     conn = _connect()
     try:
-        cur = conn.execute("DELETE FROM supplier_invoices WHERE id = ?", (invoice_id,))
+        row = conn.execute(
+            "SELECT supplier_key, invoice_no FROM supplier_invoices WHERE id = ?", (invoice_id,)
+        ).fetchone()
+        if row is None:
+            return False
+        conn.execute("DELETE FROM supplier_invoices WHERE id = ?", (invoice_id,))
+        conn.execute(
+            "DELETE FROM supplier_invoice_lines WHERE supplier_key = ? AND invoice_no = ?",
+            (row["supplier_key"], row["invoice_no"]),
+        )
         conn.commit()
-        return cur.rowcount > 0
+        return True
     finally:
         conn.close()
+
+
+_LINE_FIELDS = (
+    "line_no", "upc", "item_no", "description", "category", "qty", "pack", "size", "units",
+    "price", "allowance", "tax", "net", "ext", "unit_cost", "srp",
+)
+
+
+def replace_invoice_lines(supplier_key, invoice_no, invoice_date, lines):
+    """
+    Reemplaza el detalle de productos de una factura (volver a subirla no
+    duplica renglones). Todo en una sola transacción: o quedan todos los
+    renglones nuevos, o quedan los de antes.
+    """
+    conn = _connect()
+    try:
+        with conn:
+            conn.execute(
+                "DELETE FROM supplier_invoice_lines WHERE supplier_key = ? AND invoice_no = ?",
+                (supplier_key, str(invoice_no)),
+            )
+            conn.executemany(
+                f"""
+                INSERT INTO supplier_invoice_lines
+                    (supplier_key, invoice_no, invoice_date, {", ".join(_LINE_FIELDS)})
+                VALUES (?, ?, ?, {", ".join("?" for _ in _LINE_FIELDS)})
+                """,
+                [
+                    (supplier_key, str(invoice_no), _date_key(invoice_date)) + tuple(line.get(f) for f in _LINE_FIELDS)
+                    for line in lines
+                ],
+            )
+        return len(lines)
+    finally:
+        conn.close()
+
+
+def get_all_invoice_lines():
+    """Todos los renglones de producto, del más viejo al más nuevo."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM supplier_invoice_lines ORDER BY invoice_date, supplier_key, invoice_no, line_no"
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(row) for row in rows]
 
 
 def set_supplier_hidden(supplier_key, hidden):

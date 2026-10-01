@@ -1,0 +1,143 @@
+{% extends "base.html" %}
+{% block main_class %}main-full{% endblock %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ url_for('carga_datos_proveedores') }}">Proveedores</a><span class="current">Productos</span></nav>
+{% endblock %}
+{% from "_table_filters_macros.html" import filter_styles, filter_config_button %}
+{% block head_extra %}
+{{ filter_styles() }}
+{% endblock %}
+{% macro ddmmyyyy(iso) %}{{ iso[8:10] }}/{{ iso[5:7] }}/{{ iso[:4] }}{% endmacro %}
+{% macro money(value) %}{% if value is not none %}${{ "{:,.2f}".format(value) }}{% else %}<span class="muted">—</span>{% endif %}{% endmacro %}
+{% block content %}
+<div class="page-header">
+  <span class="eyebrow">Proveedores</span>
+  <h1>Productos</h1>
+  <p class="page-subtitle">Cada producto comprado, con su costo por unidad en la última compra contra la anterior, a qué proveedor se compra y el costo y precio que tiene el POS. Se llena solo al subir facturas en <a href="{{ url_for('carga_datos_proveedores') }}">Proveedores</a> — por ahora de H.T. Hackney, el único proveedor que manda el detalle en texto.</p>
+</div>
+
+{% if not pos_loaded %}
+<div class="card prod-notice">
+  Todavía no hay costos del POS cargados. Cargá un archivo en <a href="{{ url_for('carga_datos_cmv') }}">CMV — Costo</a> para ver el precio de venta, el margen y si el costo del POS quedó desactualizado.
+</div>
+{% endif %}
+
+<div class="card">
+  {% if products %}
+  <div class="prod-toolbar">
+    <p class="muted prod-summary">
+      <strong>{{ products|length }}</strong> producto(s) ·
+      <span class="prod-up">{{ cost_up }} subieron</span> y <span class="prod-down">{{ cost_down }} bajaron</span> de costo en su última compra
+      {% if pos_loaded %} · <strong>{{ pos_stale }}</strong> con el costo del POS distinto al de la última compra{% endif %}
+    </p>
+    <div class="prod-toolbar-actions">
+      <input type="search" id="prod-search" placeholder="Buscar por nombre o UPC" autocomplete="off">
+      {{ filter_config_button("productos-table") }}
+    </div>
+  </div>
+  <div class="historial-table-wrap">
+    <table class="historial-table prod-table" id="productos-table" data-filter-table>
+      <thead>
+        <tr>
+          <th>Producto</th>
+          <th data-filter-col="proveedor">Proveedor</th>
+          <th data-filter-col="categoria">Categoría</th>
+          <th>Última compra</th>
+          <th class="num">Costo unit.</th>
+          <th class="num">Anterior</th>
+          <th class="num" data-filter-col="cambio">Cambio</th>
+          <th class="num">Costo POS</th>
+          <th class="num">Precio POS</th>
+          <th class="num">Margen</th>
+          <th data-filter-col="pos">POS</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in products %}
+        {% set change_state = 'Primera compra' if p.change is none else ('Subió' if p.change > 0.0001 else ('Bajó' if p.change < -0.0001 else 'Igual')) %}
+        {% set pos_state = 'Sin dato' if p.pos_cost_diff is none else ('Al día' if p.pos_cost_diff == 0 else 'Desactualizado') %}
+        <tr data-search="{{ (p.description or '')|lower }} {{ p.upc }} {{ p.item_no }}">
+          <td>
+            <a class="prod-name" href="{{ url_for('carga_datos_proveedores_producto', product_key=p.key) }}">{{ p.description }}</a>
+            <span class="prod-code">{% if p.upc %}UPC {{ p.upc }}{% else %}Item # {{ p.item_no }}{% endif %}{% if p.size %} · {{ p.size }}{% endif %}{% if p.units_per_case and p.units_per_case > 1 %} · {{ p.units_per_case }} u/caja{% endif %}</span>
+          </td>
+          <td>{{ p.suppliers|join(', ') }}</td>
+          <td>{{ p.category or '—' }}</td>
+          <td class="nowrap" data-filter-value="{{ p.last_date[:7] }}">{{ ddmmyyyy(p.last_date) }}</td>
+          <td class="num"><strong>{{ money(p.last_cost) }}</strong></td>
+          <td class="num">{{ money(p.previous_cost) }}</td>
+          <td class="num" data-filter-value="{{ change_state }}">
+            {% if p.change is none %}<span class="muted">—</span>
+            {% elif change_state == 'Igual' %}<span class="muted">=</span>
+            {% else %}<span class="{{ 'prod-up' if change_state == 'Subió' else 'prod-down' }}">{{ '+' if p.change > 0 else '−' }}${{ "{:,.2f}".format(p.change|abs) }}{% if p.change_pct is not none %} ({{ '+' if p.change_pct > 0 else '' }}{{ p.change_pct }}%){% endif %}</span>{% endif %}
+          </td>
+          <td class="num">{{ money(p.pos_cost) }}</td>
+          <td class="num">{{ money(p.pos_price) }}</td>
+          <td class="num">{% if p.margin_pct is not none %}<span class="{{ 'prod-up' if p.margin_pct < 0 else '' }}">{{ p.margin_pct }}%</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+          <td data-filter-value="{{ pos_state }}">
+            {% if pos_state == 'Desactualizado' %}<span class="prod-badge prod-badge-warn" title="El POS tiene ${{ '%.2f'|format(p.pos_cost) }} y la última compra costó ${{ '%.2f'|format(p.last_cost) }}">{{ '+' if p.pos_cost_diff > 0 else '−' }}${{ "{:,.2f}".format(p.pos_cost_diff|abs) }}</span>
+            {% elif pos_state == 'Al día' %}<span class="prod-badge prod-badge-ok">Al día</span>
+            {% else %}<span class="muted">—</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted prod-empty-search" id="prod-empty-search" hidden>Ningún producto coincide con la búsqueda.</p>
+  {% else %}
+  <p class="muted">Todavía no hay productos: se cargan solos al subir facturas de H.T. Hackney en <a href="{{ url_for('carga_datos_proveedores') }}">Proveedores</a>.</p>
+  {% endif %}
+</div>
+
+{% if products %}
+{% include "_table_filters.html" %}
+<script>
+  // Búsqueda por texto: se suma a los filtros por columna (una fila se ve
+  // solo si pasa los dos) -- por eso usa su propio atributo en vez de
+  // tocar style.display, que maneja _table_filters.html.
+  (function () {
+    var input = document.getElementById('prod-search');
+    var rows = Array.prototype.slice.call(document.querySelectorAll('#productos-table tbody tr'));
+    var empty = document.getElementById('prod-empty-search');
+    input.addEventListener('input', function () {
+      var q = input.value.trim().toLowerCase();
+      var visible = 0;
+      rows.forEach(function (row) {
+        var match = !q || row.getAttribute('data-search').indexOf(q) !== -1;
+        row.classList.toggle('prod-search-hidden', !match);
+        if (match) visible++;
+      });
+      empty.hidden = visible > 0;
+    });
+  })();
+</script>
+{% endif %}
+
+<style>
+  .historial-table-wrap { overflow-x: auto; margin-top: 10px; border: 1px solid var(--border); border-radius: 10px; }
+  .historial-table { width: 100%; min-width: 420px; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .historial-table th, .historial-table td { padding: 8px 14px; text-align: left; }
+  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
+  .prod-table { min-width: 1080px; }
+  .prod-table th.num, .prod-table td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .prod-table .nowrap { white-space: nowrap; }
+  .prod-table td:first-child { min-width: 260px; }
+  .prod-table tr.prod-search-hidden { display: none; }
+  .prod-name { font-weight: 600; text-decoration: none; }
+  .prod-name:hover { text-decoration: underline; }
+  .prod-code { display: block; font-size: 12px; color: var(--text-soft); margin-top: 2px; }
+  .prod-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .prod-toolbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .prod-toolbar-actions input[type="search"] { width: 240px; max-width: 100%; margin: 0; }
+  .prod-summary { margin: 0; }
+  .prod-up { color: var(--error); font-weight: 600; }
+  .prod-down { color: var(--success); font-weight: 600; }
+  .prod-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .prod-badge-ok { background: var(--success-soft); color: var(--success); }
+  .prod-badge-warn { background: var(--warning-soft); color: var(--warning); }
+  .prod-notice { background: var(--warning-soft); border-color: var(--warning-soft); color: var(--text); margin-bottom: 14px; }
+  .prod-empty-search { margin-top: 12px; }
+</style>
+{% endblock %}

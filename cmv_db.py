@@ -187,6 +187,29 @@ def get_costs_by_department(dept_name):
     return [dict(row) for row in rows]
 
 
+def get_all_costs():
+    """Todos los productos del POS (costo/precio), para cruzar con las compras a proveedores."""
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT * FROM cmv_costs").fetchall()
+    finally:
+        conn.close()
+    return [dict(row) for row in rows]
+
+
+def get_all_monthly_sales():
+    """Ventas mensuales por UPC (cantidad e importe), de todos los meses cargados."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT year, month, upc, SUM(count) AS count, SUM(amount) AS amount "
+            "FROM cmv_monthly_sales GROUP BY year, month, upc ORDER BY year, month"
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(row) for row in rows]
+
+
 def get_recent_price_changes(limit=30):
     conn = _connect()
     try:

@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ url_for('carga_datos_proveedores') }}">Proveedores</a><a href="{{ url_for('carga_datos_proveedores_productos') }}">Productos</a><span class="current">{{ product.description }}</span></nav>
+{% endblock %}
+{% macro ddmmyyyy(iso) %}{{ iso[8:10] }}/{{ iso[5:7] }}/{{ iso[:4] }}{% endmacro %}
+{% macro money(value) %}{% if value is not none %}${{ "{:,.2f}".format(value) }}{% else %}<span class="muted">—</span>{% endif %}{% endmacro %}
+{% macro change_cell(change, pct) %}{% if change is none %}<span class="muted">—</span>{% elif change|abs < 0.0001 %}<span class="muted">=</span>{% else %}<span class="{{ 'prod-up' if change > 0 else 'prod-down' }}">{{ '+' if change > 0 else '−' }}${{ "{:,.2f}".format(change|abs) }}{% if pct is not none %} ({{ '+' if pct > 0 else '' }}{{ pct }}%){% endif %}</span>{% endif %}{% endmacro %}
+{% block content %}
+<div class="page-header">
+  <span class="eyebrow">Producto</span>
+  <h1>{{ product.description }}</h1>
+  <p class="page-subtitle">
+    {% if product.upc %}UPC {{ product.upc }} · {% endif %}Item # {{ product.item_no }}{% if product.size %} · {{ product.size }}{% endif %}{% if product.units_per_case %} · {{ product.units_per_case }} unidad(es) por caja{% endif %}
+    · {{ product.suppliers|join(', ') }}{% if product.category %} · {{ product.category }}{% endif %}
+    {% if product.pos_name %}<br>En el POS: {{ product.pos_name }}{% if product.pos_dept %} ({{ product.pos_dept }}){% endif %}{% endif %}
+  </p>
+</div>
+
+<div class="prod-stats">
+  <div class="prod-stat">
+    <span class="prod-stat-label">Último costo unit.</span>
+    <span class="prod-stat-value">{{ money(product.last_cost) }}</span>
+    <span class="prod-stat-note">{{ ddmmyyyy(product.last_date) }}</span>
+  </div>
+  <div class="prod-stat">
+    <span class="prod-stat-label">Compra anterior</span>
+    <span class="prod-stat-value">{{ money(product.previous_cost) }}</span>
+    <span class="prod-stat-note">{{ change_cell(product.change, product.change_pct) }}</span>
+  </div>
+  <div class="prod-stat">
+    <span class="prod-stat-label">Mínimo / máximo</span>
+    <span class="prod-stat-value">{{ money(product.min_cost) }} / {{ money(product.max_cost) }}</span>
+    <span class="prod-stat-note">en {{ product.purchases }} compra(s) desde {{ ddmmyyyy(product.first_date) }}</span>
+  </div>
+  <div class="prod-stat">
+    <span class="prod-stat-label">Costo en el POS</span>
+    <span class="prod-stat-value">{{ money(product.pos_cost) }}</span>
+    <span class="prod-stat-note">
+      {% if product.pos_cost_diff is none %}sin dato en CMV
+      {% elif product.pos_cost_diff == 0 %}<span class="prod-down">al día con la última compra</span>
+      {% else %}<span class="prod-warn">{{ '+' if product.pos_cost_diff > 0 else '−' }}${{ "{:,.2f}".format(product.pos_cost_diff|abs) }} contra la última compra</span>{% endif %}
+    </span>
+  </div>
+  <div class="prod-stat">
+    <span class="prod-stat-label">Precio de venta (POS)</span>
+    <span class="prod-stat-value">{{ money(product.pos_price) }}</span>
+    <span class="prod-stat-note">{% if product.srp is not none %}SRP del proveedor {{ money(product.srp) }}{% else %}&nbsp;{% endif %}</span>
+  </div>
+  <div class="prod-stat">
+    <span class="prod-stat-label">Margen con el último costo</span>
+    <span class="prod-stat-value">{% if product.margin_pct is not none %}{{ product.margin_pct }}%{% else %}<span class="muted">—</span>{% endif %}</span>
+    <span class="prod-stat-note">{% if product.margin_pct is not none %}{{ money(product.pos_price - product.last_cost) }} por unidad{% else %}&nbsp;{% endif %}</span>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Compras</h2>
+  <div class="historial-table-wrap">
+    <table class="historial-table prod-table">
+      <thead>
+        <tr>
+          <th>Fecha</th><th>Proveedor</th><th>Factura</th>
+          <th class="num">Cajas</th><th class="num">Neto por caja</th><th class="num">Costo unit.</th><th class="num">Cambio</th><th class="num">SRP</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for line in purchases %}
+        <tr>
+          <td class="nowrap">{{ ddmmyyyy(line.invoice_date) }}</td>
+          <td>{{ line.supplier_label }}</td>
+          <td>{{ line.invoice_no }}</td>
+          <td class="num">{{ '%g'|format(line.qty) }}</td>
+          <td class="num" title="Precio {{ '%.2f'|format(line.price or 0) }}{% if line.allowance %} − descuento {{ '%.2f'|format(line.allowance) }}{% endif %}{% if line.tax %} + impuesto {{ '%.2f'|format(line.tax) }}{% endif %}">{{ money(line.net) }}</td>
+          <td class="num"><strong>{{ money(line.unit_cost) }}</strong></td>
+          <td class="num">{{ change_cell(line.change, line.change_pct) }}</td>
+          <td class="num">{{ money(line.srp) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<div class="card" style="margin-top: 18px;">
+  <h2>Ventas en el POS</h2>
+  {% if sales %}
+  <p class="muted">Unidades e importe vendidos por mes (CMV — Ventas), contra el costo de la última compra hasta fin de ese mes.</p>
+  <div class="historial-table-wrap">
+    <table class="historial-table prod-table">
+      <thead>
+        <tr><th>Mes</th><th class="num">Unidades</th><th class="num">Importe</th><th class="num">Precio promedio</th><th class="num">Costo unit.</th><th class="num">Margen</th></tr>
+      </thead>
+      <tbody>
+        {% for s in sales %}
+        <tr>
+          <td class="nowrap">{{ month_names[s.month - 1] }} {{ s.year }}</td>
+          <td class="num">{{ s.count }}</td>
+          <td class="num">{{ money(s.amount) }}</td>
+          <td class="num">{{ money(s.avg_price) }}</td>
+          <td class="num">{{ money(s.cost) }}</td>
+          <td class="num">{% if s.margin_pct is not none %}{{ s.margin_pct }}%{% else %}<span class="muted">—</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted">Todavía no hay ventas de este producto cargadas en <a href="{{ url_for('carga_datos_cmv') }}">CMV — Ventas</a>.</p>
+  {% endif %}
+</div>
+
+<style>
+  .historial-table-wrap { overflow-x: auto; margin-top: 10px; border: 1px solid var(--border); border-radius: 10px; }
+  .historial-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .historial-table th, .historial-table td { padding: 8px 14px; text-align: left; }
+  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
+  .prod-table { min-width: 640px; }
+  .prod-table th.num, .prod-table td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .prod-table .nowrap { white-space: nowrap; }
+  .prod-up { color: var(--error); font-weight: 600; }
+  .prod-down { color: var(--success); font-weight: 600; }
+  .prod-warn { color: var(--warning); font-weight: 600; }
+  .prod-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 18px; }
+  .prod-stat { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; }
+  .prod-stat-label { font-size: 12px; color: var(--text-soft); font-weight: 600; }
+  .prod-stat-value { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .prod-stat-note { font-size: 12.5px; color: var(--text-soft); }
+</style>
+{% endblock %}

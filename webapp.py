@@ -118,6 +118,7 @@ import gettel_reportes
 import cmv_db
 import documents_db
 import proveedores_db
+import proveedores_productos
 import horas_trabajo_db
 from horas_trabajo import extract_hours_report
 import jobs
@@ -6047,6 +6048,8 @@ def _run_carga_datos_proveedores_job(job_id, paths):
         duplicates = []
         failed = []
         date_mismatches = []
+        lines_saved = 0
+        lines_failed = []
 
         for index, path in enumerate(paths, start=1):
             filename = os.path.basename(path)
@@ -6088,6 +6091,28 @@ def _run_carga_datos_proveedores_job(job_id, paths):
                 else:
                     duplicates.append({"filename": filename, "supplier": supplier_label})
 
+            # Detalle de productos (proveedores_productos.py, pedido explícito
+            # del usuario 2026-09-28): solo proveedores con extractor de
+            # renglones (hoy H.T. Hackney). Corre también si la factura ya
+            # estaba cargada -- volver a subirla completa su detalle sin
+            # duplicar nada. Si el detalle no cierra contra la factura no se
+            # guarda ningún renglón, pero la factura en sí queda guardada.
+            if valid_invoices and supplier_key in proveedores_productos.LINE_EXTRACTORS:
+                try:
+                    detail = proveedores_productos.extract_lines(supplier_key, path)
+                    invoice = next(
+                        (inv for inv in valid_invoices if str(inv["invoice_no"]) == detail["invoice_no"]), None
+                    )
+                    if invoice is None:
+                        raise ValueError("el N° de invoice del detalle no coincide con el de la factura.")
+                    proveedores_db.replace_invoice_lines(
+                        supplier_key, detail["invoice_no"], invoice["date"], detail["lines"]
+                    )
+                    lines_saved += 1
+                except Exception as exc:
+                    print(f"[carga-datos/proveedores] detalle de productos de {filename}: {exc}")
+                    lines_failed.append({"filename": filename, "supplier": supplier_label})
+
             if valid_invoices:
                 try:
                     doc_when = valid_invoices[0]["date"]
@@ -6109,11 +6134,17 @@ def _run_carga_datos_proveedores_job(job_id, paths):
             ))
         if failed:
             parts.append(_group_by_supplier_message("No se pudieron cargar", failed, "factura(s)"))
+        if lines_saved:
+            parts.append(f"Detalle de productos guardado en {lines_saved} factura(s).")
+        if lines_failed:
+            parts.append(_group_by_supplier_message(
+                "Sin detalle de productos (los renglones no cerraban contra la factura)", lines_failed, "factura(s)"
+            ))
         if not parts:
             parts.append("No se guardó ninguna factura de este lote.")
         level = (
-            "success" if (saved and not duplicates and not failed and not date_mismatches)
-            else ("error" if not saved else "warning")
+            "success" if (saved and not duplicates and not failed and not date_mismatches and not lines_failed)
+            else ("error" if not saved and not lines_saved else "warning")
         )
 
         if saved:
@@ -6202,6 +6233,51 @@ def carga_datos_proveedores_eliminar(invoice_id):
 # solo "cuadro de cuenta corriente" cronológico con saldo corrido -- ver
 # _build_supplier_ledger.
 # ---------------------------------------------------------------------------
+
+def _supplier_labels():
+    return {entry["key"]: entry["label"] for entry in list_supplier_registry_entries()}
+
+
+@app.route("/carga-datos/proveedores/productos")
+def carga_datos_proveedores_productos():
+    """
+    Productos comprados a proveedores (pedido explícito del usuario,
+    2026-09-28): un renglón por UPC con su último costo contra el anterior,
+    a qué proveedor se compra, y el costo/precio del POS (CMV) para ver el
+    margen real y si el costo del POS quedó desactualizado. Se llena solo al
+    subir facturas en Proveedores -- ver proveedores_productos.py.
+    """
+    pos_costs = cmv_db.get_all_costs()
+    products = proveedores_productos.build_product_list(
+        proveedores_db.get_all_invoice_lines(), _supplier_labels(), pos_costs,
+    )
+    return render_template(
+        "carga_datos_proveedores_productos.html",
+        products=products,
+        cost_up=sum(1 for p in products if (p["change"] or 0) > 0.0001),
+        cost_down=sum(1 for p in products if (p["change"] or 0) < -0.0001),
+        pos_stale=sum(1 for p in products if p["pos_cost_diff"] not in (None, 0)),
+        pos_loaded=bool(pos_costs),
+        **THEME_BY_KEY["carga_proveedores"],
+    )
+
+
+@app.route("/carga-datos/proveedores/productos/<product_key>")
+def carga_datos_proveedores_producto(product_key):
+    detail = proveedores_productos.build_product_detail(
+        product_key, proveedores_db.get_all_invoice_lines(), _supplier_labels(),
+        cmv_db.get_all_costs(), cmv_db.get_all_monthly_sales(),
+    )
+    if detail is None:
+        flash("Ese producto no aparece en ninguna factura cargada.", "error")
+        return redirect(url_for("carga_datos_proveedores_productos"))
+    return render_template(
+        "carga_datos_proveedores_producto.html",
+        month_names=_MONTH_NAMES_ES,
+        **detail,
+        **THEME_BY_KEY["carga_proveedores"],
+    )
+
 
 @app.route("/carga-datos/proveedores/guardado")
 def carga_datos_proveedores_guardado():
