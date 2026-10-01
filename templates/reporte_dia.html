@@ -211,7 +211,7 @@
       </div>
     </div>
 
-    <label class="muted">Montos de tarjeta/crédito (separados por coma si hay más de uno)</label>
+    <label class="muted">Montos de tarjeta/crédito (separados por coma y espacio, o punto y coma, si hay más de uno)</label>
     <input type="text" name="credit_terms" id="credit-terms-input" value="{{ store_info.credit_terms|join(', ') if store_info else '' }}" placeholder="Ej. 500.00, 300.00">
     <div class="muted" id="credit-terms-breakdown" style="margin-top: 6px;"></div>
 
@@ -319,8 +319,15 @@
     var out = document.getElementById('credit-terms-breakdown');
     if (!input || !out) return;
     function recompute() {
-      var parts = input.value.split(',').map(function (s) { return s.trim(); }).filter(function (s) { return s !== ''; });
-      var amounts = parts.map(function (s) { return parseFloat(s.replace(',', '.')); }).filter(function (n) { return !isNaN(n); });
+      // Mismo criterio que _parse_amount_list (webapp.py): la coma de miles
+      // ("2,001.68") es parte del monto, no un separador.
+      var amounts = [];
+      input.value.split(/[;\n]|,\s+/).forEach(function (piece) {
+        piece = piece.trim().replace('$', '');
+        if (!piece) return;
+        if (/^-?\d{1,3}(,\d{3})+(\.\d+)?$/.test(piece)) { amounts.push(parseFloat(piece.replace(/,/g, ''))); return; }
+        piece.split(',').forEach(function (part) { var n = parseFloat(part.trim()); if (!isNaN(n)) amounts.push(n); });
+      });
       if (amounts.length === 0) { out.textContent = ''; return; }
       var total = amounts.reduce(function (a, b) { return a + b; }, 0);
       var formatted = amounts.map(function (n) { return '$' + n.toFixed(2); });

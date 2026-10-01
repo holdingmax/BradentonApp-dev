@@ -108,6 +108,7 @@ from reporte_diario import (
     process_lottery,
     process_reporte_diario,
     process_store_info,
+    real_store_info_total_sales,
 )
 import proyecciones
 import fisico
@@ -1003,7 +1004,9 @@ def _save_uploads_to_workspace(uploads, workdir=None):
 # Ventas) no tienen "la fecha equivocada" que chequear de esta forma.
 # ---------------------------------------------------------------------------
 
-_REPORTE_DIARIO_FILENAME_DATE_RE = re.compile(r"(\d{1,2})[.\-](\d{1,2})\s*$")
+# El lookbehind evita leer como DD-MM el final de una fecha completa
+# ("Scan 2026-08-01" daba (8, 1) y rechazaba el PDF correcto).
+_REPORTE_DIARIO_FILENAME_DATE_RE = re.compile(r"(?<![\d.\-])(\d{1,2})[.\-](\d{1,2})\s*$")
 _FULL_DATE_DMY_RE = re.compile(r"(?<!\d)(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{2,4})(?!\d)")
 _FULL_DATE_YMD_RE = re.compile(r"(?<!\d)(\d{4})[.\-/](\d{1,2})[.\-/](\d{1,2})(?!\d)")
 
@@ -4007,10 +4010,9 @@ def _build_store_info_rows(year, month):
         # El valor impreso en el PDF (lo que de verdad valida el OCR al
         # extraer, y lo que se puede corregir a mano) sigue guardado tal
         # cual en la base -- ver reporte_dia_store_info, no se tocó.
-        if None not in (row.get("total_fuel"), row.get("non_fuel_total"), row.get("desc_otros"), row.get("tax_collect")):
-            row["total_sales"] = round(
-                row["total_fuel"] + row["non_fuel_total"] + row["desc_otros"] + row["tax_collect"] - gettel_amount, 2
-            )
+        real_total_sales, _gettel = real_store_info_total_sales(row, detail)
+        if real_total_sales is not None:
+            row["total_sales"] = real_total_sales
 
         # Desglose para los cuadros flotantes de "qué valores usaron para
         # llegar a ese resultado" (Total Fuel/Total Sales/Total Rev) --
@@ -4122,7 +4124,7 @@ def reporte_store_info_exportar():
         month = today.month
 
     store_info_rows = _build_store_info_rows(year, month)
-    if not store_info_rows:
+    if not any(r.get("store_info_source") for r in store_info_rows):
         flash("No hay ningún Store Info guardado ese mes para exportar.", "error")
         return redirect(url_for("reporte_store_info_historial", year=year, month=month))
 
@@ -4147,7 +4149,7 @@ def reporte_store_info_exportar_pdf():
         month = today.month
 
     store_info_rows = _build_store_info_rows(year, month)
-    if not store_info_rows:
+    if not any(r.get("store_info_source") for r in store_info_rows):
         flash("No hay ningún Store Info guardado ese mes para exportar.", "error")
         return redirect(url_for("reporte_store_info_historial", year=year, month=month))
 
@@ -4333,11 +4335,33 @@ def reporte_dia_departamentos(report_date):
     return redirect(url_for("reporte_dia", report_date=report_date))
 
 
+_THOUSANDS_AMOUNT_RE = re.compile(r"-?\d{1,3}(,\d{3})+(\.\d+)?")
+
+
+def _parse_amount_list(raw):
+    """
+    Lista de montos tipeada a mano ("500.00, 300.00"). Los montos se separan
+    con coma y espacio, punto y coma o salto de línea; una coma de miles
+    ("2,001.68", el mismo formato que muestra la app) es parte del monto y
+    no un separador: antes se guardaba como 2.00 y 1.68 (auditoría 2026-09).
+    """
+    amounts = []
+    for piece in re.split(r"[;\n]|,\s+", raw or ""):
+        piece = piece.strip().replace("$", "")
+        if not piece:
+            continue
+        if _THOUSANDS_AMOUNT_RE.fullmatch(piece):
+            amounts.append(float(piece.replace(",", "")))
+            continue
+        amounts.extend(float(part.strip()) for part in piece.split(",") if part.strip())
+    return amounts
+
+
 @app.route("/reporte/dia/<report_date>/store-info", methods=["POST"])
 def reporte_dia_store_info(report_date):
     credit_terms_raw = request.form.get("credit_terms", "")
     try:
-        credit_terms = [float(v.strip()) for v in credit_terms_raw.split(",") if v.strip()]
+        credit_terms = _parse_amount_list(credit_terms_raw)
         fields = {
             "from_time": request.form.get("from_time") or None,
             "to_time": request.form.get("to_time") or None,

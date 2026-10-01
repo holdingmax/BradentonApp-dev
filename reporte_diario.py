@@ -287,9 +287,15 @@ def _clean_dept_name(value):
 
 
 def _sanitize_parsed_dept_name(value):
-    """Strip phantom leading/trailing dots, hyphens, and spaces from Dept.Name."""
+    """
+    Strip phantom leading/trailing punctuation from Dept.Name: dots, hyphens,
+    spaces, and also commas/semicolons or any other OCR junk glued to the
+    edges ('SODA ,' quedaba como un departamento aparte y caía en RESTO,
+    auditoría 2026-09). Inside the name everything stays; '/' and '&' are
+    kept at the end too.
+    """
     text = _clean_dept_name(value)
-    text = re.sub(r"^[.\-\s]+|[.\-\s]+$", "", text)
+    text = re.sub(r"^[^A-Za-z0-9]+|[^A-Za-z0-9/&]+$", "", text)
     return text
 
 
@@ -658,7 +664,8 @@ def _is_summary_row(label):
     key = _normalize_department_label(label)
     if not key:
         return True
-    if key.startswith("dept "):
+    # "dept " o "dept." (el encabezado de la tabla, con o sin el punto).
+    if re.match(r"dept\W", key):
         return True
     if key in PROTECTED_DEPARTMENT_LABELS:
         return False
@@ -1058,6 +1065,8 @@ _OCR_NET_COUNT_REVERSE_INDEX = -4
 # department name). Dropped before indexing so a lone noise token can't
 # shift the count.
 _OCR_NOISE_TOKEN_RE = re.compile(r"^_+$")
+# Token con forma de monto o conteo ('$1,234.56', '-12.00', '(5.00)', '511').
+_OCR_NUMERIC_TOKEN_RE = re.compile(r"^[(\-~]*\$?\d[\d,]*(\.\d+)?\)?$")
 
 
 def _parse_ocr_department_row(line):
@@ -1093,10 +1102,21 @@ def _parse_ocr_department_row(line):
     net_count_raw = tail_tokens[_OCR_NET_COUNT_REVERSE_INDEX]
     dept_tokens = tail_tokens[:-_OCR_ROW_TAIL_FIELDS]
 
+    # Una línea de ruido o un encabezado mal leído no trae ni Net Sales ni
+    # Net Count con forma de número: antes quedaba como un departamento de
+    # $0 ('PE EE LN', 'DEPT. N GROSS ...'). Auditoría 2026-09.
+    if not (_OCR_NUMERIC_TOKEN_RE.match(net_sales_raw) or _OCR_NUMERIC_TOKEN_RE.match(net_count_raw)):
+        return None
+
     amount = _sanitize_sales_float(net_sales_raw)
     count = _safe_parse_count(net_count_raw)
 
-    if not dept_tokens:
+    # La fila del gran total no tiene nombre de departamento. Si el OCR le
+    # mete un carácter suelto adelante ('|', '—') o lee una etiqueta 'Total',
+    # sigue siendo el total: nunca se guarda como departamento.
+    dept_has_letters = any(re.search(r"[A-Za-z]", token) for token in dept_tokens)
+    dept_key = _normalize_department_label(" ".join(dept_tokens))
+    if not dept_tokens or not dept_has_letters or dept_key in ("total", "grand total", "totals"):
         return {"department": "", "count": int(count), "amount": float(amount), "is_total": True}
 
     dept_raw = _normalize_department_spacing(" ".join(dept_tokens)).upper()
@@ -1509,6 +1529,25 @@ def group_department_sales(records):
         resto_group["amount"] = round(resto_group["amount"] + values["amount"], 2)
 
     return groups, []
+
+
+def real_store_info_total_sales(info, department_detail):
+    """
+    Total Sales real de Store Info!R: Total Fuel (Sales Fuel + Desc. Comb) +
+    Non Fuel + Desc. Otros + Tax Collect - VS, donde VS es la categoría
+    "Gettel" de los departamentos del día. El "Total Sales" impreso en el PDF
+    no resta VS. Compartido entre Store Info (webapp) y Caja para que las dos
+    pantallas muestren lo mismo (auditoría 2026-09, caja.py:253).
+
+    Devuelve (total_sales, gettel_amount); total_sales es None si falta
+    algún componente.
+    """
+    groups, _unmatched = group_department_sales(department_detail or [])
+    gettel_amount = next((g["amount"] for g in groups if g["label"] == "Gettel"), 0.0)
+    parts = [info.get(k) for k in ("sales_fuel", "desc_comb", "non_fuel_total", "desc_otros", "tax_collect")]
+    if None in parts:
+        return None, gettel_amount
+    return round(sum(parts) - gettel_amount, 2), gettel_amount
 
 
 def extract_store_info_for_day(pdf_path):
