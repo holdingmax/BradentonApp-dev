@@ -1400,7 +1400,8 @@ def extract_department_sales_for_day(pdf_path):
     records, diagnostics = parse_elistar_daily_pdf_page(pdf_path)
     period = diagnostics.get("period")
     if period is None:
-        period = extract_store_info_from_pdf(pdf_path)
+        # Solo hace falta el período: lo demás de Store Info puede faltar.
+        period = extract_store_info_from_pdf(pdf_path, strict=False)
     business_date = period["from_date"] + timedelta(days=1)
 
     # Cross-chequeo contra el total impreso al pie del Department Sales
@@ -1557,7 +1558,7 @@ def extract_store_info_for_day(pdf_path):
     A/C del Excel -- centralizado acá para que ningún llamador nuevo se
     olvide del ajuste (ya pasó más de una vez en este proyecto).
     """
-    fields = extract_store_info_from_pdf(pdf_path)
+    fields = extract_store_info_from_pdf(pdf_path, strict=False)
     business_date = fields["from_date"] + timedelta(days=1)
     return {"date": business_date, "fields": fields}
 
@@ -2701,130 +2702,124 @@ def _extract_store_info_fields(lines):
     if period is None:
         raise ValueError('No se encontró la línea "PERIOD FROM: ... TO: ..." en el PDF.')
 
-    fuel_values = _find_label_values(lines, "Total Fuel Sales")
-    if not fuel_values or len(fuel_values) < 2:
-        raise ValueError('No se encontró "Total Fuel Sales" con Volume y Sales.')
-    volume = _force_positive(_sanitize_store_info_float(fuel_values[0]))
-    sales_fuel = _force_positive(_sanitize_store_info_float(fuel_values[-1]))
+    # Cada campo se lee por separado (2026-10-02, pedido del usuario: "lo que
+    # se pueda cargar de forma automática bien, y si está medio borroso y no
+    # se sabe bien lo que se está cargando, no lo carga y listo"): un campo
+    # que no se encuentra o no se puede leer queda en None y se anota en
+    # "missing_fields" en vez de tirar todo el día. Solo el período (la
+    # fecha) es obligatorio. Antes, un "Total Sales" borroso (caso real
+    # 04/08) dejaba el día sin Store Info, sin departamentos y sin Lottery,
+    # porque los tres sacan la fecha de acá.
+    missing = []
 
-    fuel_discounts = _find_label_values(lines, "Fuel Discounts")
-    desc_comb = (
-        _force_negative(_sanitize_store_info_float(fuel_discounts[-1]))
-        if fuel_discounts
-        else 0.0
-    )
+    def read(label, reader):
+        try:
+            return reader()
+        except ValueError:
+            missing.append(label)
+            return None
 
-    non_fuel = _find_label_values(lines, "Total Non Fuel Sales")
-    if not non_fuel:
-        raise ValueError('No se encontró "Total Non Fuel Sales".')
-    non_fuel_total = _force_positive(_sanitize_store_info_float(non_fuel[-1]))
+    def required_last(label, message):
+        def reader():
+            values = _find_label_values(lines, label)
+            if not values:
+                raise ValueError(message)
+            return _force_positive(_sanitize_store_info_float(values[-1]))
+        return reader
 
-    other_discounts = _find_label_values(lines, "Other Discounts")
-    desc_otros = (
-        _force_negative(_sanitize_store_info_float(other_discounts[-1]))
-        if other_discounts
-        else 0.0
-    )
+    def optional_last(label, sign):
+        # Ausente = 0.0 (el día no tuvo ese concepto); presente pero ilegible = None.
+        def reader():
+            values = _find_label_values(lines, label)
+            return sign(_sanitize_store_info_float(values[-1])) if values else 0.0
+        return reader
 
-    taxes = _find_label_values(lines, "Total Taxes Collected")
-    if not taxes:
-        raise ValueError('No se encontró "Total Taxes Collected".')
-    tax_collect = _force_positive(_sanitize_store_info_float(taxes[-1]))
+    def fuel_reader():
+        fuel_values = _find_label_values(lines, "Total Fuel Sales")
+        if not fuel_values or len(fuel_values) < 2:
+            raise ValueError('No se encontró "Total Fuel Sales" con Volume y Sales.')
+        return (
+            _force_positive(_sanitize_store_info_float(fuel_values[0])),
+            _force_positive(_sanitize_store_info_float(fuel_values[-1])),
+        )
+
+    fuel = read("Total Fuel Sales", fuel_reader)
+    volume, sales_fuel = fuel if fuel is not None else (None, None)
+    desc_comb = read("Fuel Discounts", optional_last("Fuel Discounts", _force_negative))
+    non_fuel_total = read("Total Non Fuel Sales", required_last("Total Non Fuel Sales", 'No se encontró "Total Non Fuel Sales".'))
+    desc_otros = read("Other Discounts", optional_last("Other Discounts", _force_negative))
+    tax_collect = read("Total Taxes Collected", required_last("Total Taxes Collected", 'No se encontró "Total Taxes Collected".'))
 
     # "Total Sales" -- la misma cifra que Store Info!R ("Total Ventas")
     # recalcula con una fórmula (Total Fuel + Non Fuel + Desc Otros + Tax
     # Collect - VS) -- se lee directo del PDF en vez de reconstruir esa
-    # fórmula acá, porque VS (columna M de Store Info) no es un campo que
-    # este parser capture (casi siempre 0 en la práctica, pero replicar la
-    # fórmula a ciegas arriesgaría un valor mal calculado un día en que no
-    # lo sea). Mismo criterio que Total Revenue/Network Revenue: se lee tal
-    # cual lo imprime el propio reporte, no se llega a esa columna con
-    # fórmula (R es de solo lectura acá, igual que H/I..N/W).
-    total_sales_values = _find_label_values(lines, "Total Sales")
-    if not total_sales_values:
-        raise ValueError('No se encontró "Total Sales".')
-    total_sales = _force_positive(_sanitize_store_info_float(total_sales_values[-1]))
-
-    cash_values = _find_label_values(lines, "Cash")
-    if not cash_values:
-        raise ValueError('No se encontró la fila "Cash" bajo Method of Payment Totals.')
-    cash = _force_positive(_sanitize_store_info_float(cash_values[-1]))
+    # fórmula acá (VS no es un campo que este parser capture).
+    total_sales = read("Total Sales", required_last("Total Sales", 'No se encontró "Total Sales".'))
+    cash = read("Cash", required_last("Cash", 'No se encontró la fila "Cash" bajo Method of Payment Totals.'))
 
     # Every payment-method row strictly between "Cash" and "LOCAL ACCOUNTS"
     # (Credit, Crind CREDIT/DEBIT, CRIND P97, Debit, etc.) gets summed into
     # the credit-card total — zero-valued rows are dropped, same as the
-    # sheet's own historical "=a+b+c" formulas.
-    credit_terms = []
-    local_accounts = None
-    in_range = False
-    for line in lines:
-        label, values = _split_label_and_values(line)
-        if label is None:
-            continue
-        norm_label = label.lower()
-        if norm_label == "cash":
-            in_range = True
-            continue
-        if norm_label == "local accounts":
-            if values:
-                local_accounts = _force_positive(_sanitize_store_info_float(values[-1]))
-            break
-        if in_range and values:
-            amount = _force_positive(_sanitize_store_info_float(values[-1]))
-            if amount:
-                credit_terms.append(amount)
+    # sheet's own historical "=a+b+c" formulas. Sin "Cash" o sin "LOCAL
+    # ACCOUNTS" el rango no se sabe dónde empieza o termina: las dos cosas
+    # quedan sin leer, nunca una suma a medias.
+    def payments_reader():
+        terms = []
+        local = None
+        in_range = False
+        saw_cash = False
+        found_local = False
+        for line in lines:
+            label, values = _split_label_and_values(line)
+            if label is None:
+                continue
+            norm_label = label.lower()
+            if norm_label == "cash":
+                in_range = True
+                saw_cash = True
+                continue
+            if norm_label == "local accounts":
+                if values:
+                    local = _force_positive(_sanitize_store_info_float(values[-1]))
+                    found_local = True
+                break
+            if in_range and values:
+                amount = _force_positive(_sanitize_store_info_float(values[-1]))
+                if amount:
+                    terms.append(amount)
+        if not saw_cash or not found_local:
+            raise ValueError('No se encontró la fila "LOCAL ACCOUNTS".')
+        return terms, local
 
-    if local_accounts is None:
-        raise ValueError('No se encontró la fila "LOCAL ACCOUNTS".')
+    payments = read("Tarjetas / LOCAL ACCOUNTS", payments_reader)
+    credit_terms, local_accounts = payments if payments is not None else (None, None)
 
-    # Fila "Other" del Method of Payment Totals -- pedido explícito del
-    # usuario (2026-09-12): "en la parte de abajo... hay veces que hay pago
-    # de 1 o 2 dolares [bajo] 'Other'... nunca le enseñe al OCR a
-    # detectarlos". Vive en un bloque de filas (Loyalty/Other/Overruns/P97/
-    # Rounding/Test Fuel) DESPUÉS de "LOCAL ACCOUNTS" -- fuera del rango que
-    # ya recorre el loop de arriba (ese corta justo ahí), y _find_label_values
-    # matchea el label EXACTO ("Other"), nunca "Other Discounts" (ya
-    # capturado aparte, más arriba, con su propio significado). Ausente
-    # cuando el día no tuvo ningún pago de esa categoría -- 0.0, no error
-    # (no es un campo obligatorio del reporte como sí lo son Cash/Local
-    # Accounts).
-    other_values = _find_label_values(lines, "Other")
-    other_amount = (
-        _force_positive(_sanitize_store_info_float(other_values[-1])) if other_values else 0.0
-    )
-
-    network_values = _find_label_values(lines, "Network Revenue")
-    if not network_values:
-        raise ValueError('No se encontró "Network Revenue".')
-    network_revenue = _force_positive(_sanitize_store_info_float(network_values[-1]))
-
-    # No se usa para escribir Store Info (esa fila sigue viniendo de
-    # cash+credit_terms+local_accounts, columna por columna) -- se agrega
-    # solo como dato adicional para el control de Cierre mensual
-    # (controles_cierre_mensual.py), que necesita el "Total Revenue" tal
-    # como lo imprime el propio POS para cruzarlo contra el total del mes
-    # ya cargado en la hoja, sin depender de si esta función terminó
-    # sumando exactamente lo mismo (ver _extract_store_info_fields arriba:
-    # credit_terms deja de sumar apenas llega a "LOCAL ACCOUNTS", así que
-    # cualquier categoría de pago rara que aparezca después -- Loyalty,
-    # Other, Overruns, etc. -- no entra ahí, pero sí está reflejada en el
-    # "Total Revenue" que imprime el reporte).
-    total_revenue_values = _find_label_values(lines, "Total Revenue")
-    if not total_revenue_values:
-        raise ValueError('No se encontró "Total Revenue".')
-    total_revenue = _force_positive(_sanitize_store_info_float(total_revenue_values[-1]))
+    # Fila "Other" del Method of Payment Totals (pagos de 1 o 2 dólares,
+    # pedido del usuario 2026-09-12): ausente cuando el día no tuvo ninguno
+    # -- 0.0, no error. _find_label_values matchea el label EXACTO ("Other"),
+    # nunca "Other Discounts".
+    other_amount = read("Other", optional_last("Other", _force_positive))
+    network_revenue = read("Network Revenue", required_last("Network Revenue", 'No se encontró "Network Revenue".'))
+    # "Total Revenue" tal como lo imprime el POS (lo usa el control de Cierre
+    # mensual para cruzar contra el total del mes).
+    total_revenue = read("Total Revenue", required_last("Total Revenue", 'No se encontró "Total Revenue".'))
 
     # Cruce contra el "Total Sales" impreso: en todos los días reales cargados
     # se cumple exacto. Si no cierra, algún componente se leyó mal (o una
     # etiqueta opcional como "Fuel Discounts" no se reconoció y quedó en 0)
-    # -- se guarda igual pero se avisa con la diferencia.
-    components = sales_fuel + desc_comb + non_fuel_total + desc_otros + tax_collect
-    total_sales_mismatch = round(components - total_sales, 2)
-    if abs(total_sales_mismatch) <= 0.02:
-        total_sales_mismatch = None
+    # -- se guarda igual pero se avisa con la diferencia. Sin alguno de los
+    # números no hay cruce posible.
+    total_sales_mismatch = None
+    parts = (sales_fuel, desc_comb, non_fuel_total, desc_otros, tax_collect, total_sales)
+    if None not in parts:
+        components = sales_fuel + desc_comb + non_fuel_total + desc_otros + tax_collect
+        total_sales_mismatch = round(components - total_sales, 2)
+        if abs(total_sales_mismatch) <= 0.02:
+            total_sales_mismatch = None
 
     return {
         "total_sales_mismatch": total_sales_mismatch,
+        "missing_fields": missing,
         "from_date": period["from_date"],
         "from_time": period["from_time"],
         "to_date": period["to_date"],
@@ -2907,8 +2902,13 @@ def _extract_store_info_from_pdf_cached(pdf_path, start_page_index):
     return _extract_store_info_from_pdf_uncached(pdf_path, start_page_index)
 
 
-def extract_store_info_from_pdf(pdf_path, start_page_index=DEFAULT_STORE_INFO_PAGE_INDEX):
+def extract_store_info_from_pdf(pdf_path, start_page_index=DEFAULT_STORE_INFO_PAGE_INDEX, strict=True):
     """
+    strict=True (default, los usos viejos de Herramientas/Controles): si
+    algún campo no se pudo leer, ValueError como siempre. strict=False
+    (Carga de Datos): devuelve lo que se leyó, con None en lo que no y la
+    lista en fields["missing_fields"] -- solo falla si no hay período.
+
     Wrapper con caché sobre _extract_store_info_from_pdf_uncached -- mismo
     motivo/criterio que parse_elistar_daily_pdf_page de arriba (ver ese
     docstring): esta función se llama más de una vez para el MISMO PDF
@@ -2919,6 +2919,8 @@ def extract_store_info_from_pdf(pdf_path, start_page_index=DEFAULT_STORE_INFO_PA
     llamada, mismo criterio de seguridad que el otro wrapper.
     """
     fields = _extract_store_info_from_pdf_cached(os.path.abspath(pdf_path), start_page_index)
+    if strict and fields.get("missing_fields"):
+        raise ValueError("No se pudo leer del PDF: " + ", ".join(fields["missing_fields"]) + ".")
     return copy.deepcopy(fields)
 
 
@@ -3154,7 +3156,8 @@ def extract_lottery_department_fields_from_pdf(pdf_path, page_index=DEFAULT_PDF_
             f'No se encontró el departamento "{LOTTERY_SKOFF_DEPARTMENT}" en el Department Sales Report.'
         )
 
-    store_info_fields = extract_store_info_from_pdf(pdf_path)
+    # Solo la fecha: un campo de Store Info ilegible no frena ONLINE/SKOFF.
+    store_info_fields = extract_store_info_from_pdf(pdf_path, strict=False)
     from_date = store_info_fields["from_date"]
     report_date = date(from_date.year, from_date.month, from_date.day) + timedelta(days=1)
 

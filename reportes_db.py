@@ -272,7 +272,7 @@ def delete_departments_for_date(report_date):
         conn.close()
 
 
-def upsert_store_info(report_date, fields, source, pdf_filename=None):
+def upsert_store_info(report_date, fields, source, pdf_filename=None, keep_existing_for_none=False):
     """
     Reemplaza la fila completa de Store Info de ese día -- un solo
     formulario con todos los campos juntos, tanto para lo leído del PDF
@@ -280,6 +280,10 @@ def upsert_store_info(report_date, fields, source, pdf_filename=None):
     devuelve reporte_diario.extract_store_info_from_pdf (from_time/to_time
     como datetime.time o como texto "HH:MM"; el resto números;
     "credit_terms" una lista de montos).
+
+    keep_existing_for_none=True (lo leído del PDF): un campo que el OCR no
+    pudo leer (None) no pisa lo que ya estaba guardado -- ej. un valor
+    cargado a mano antes. La corrección manual sigue reemplazando todo.
     """
     key = _date_key(report_date)
     now = _now()
@@ -289,7 +293,10 @@ def upsert_store_info(report_date, fields, source, pdf_filename=None):
     row["to_time"] = _time_str(fields.get("to_time"))
     for field in _STORE_INFO_NUMERIC_FIELDS:
         row[field] = _to_float(fields.get(field))
-    row["credit_terms_json"] = json.dumps([_to_float(v) for v in (fields.get("credit_terms") or [])])
+    if keep_existing_for_none and fields.get("credit_terms") is None:
+        row["credit_terms_json"] = None
+    else:
+        row["credit_terms_json"] = json.dumps([_to_float(v) for v in (fields.get("credit_terms") or [])])
     row["store_info_source"] = source
     row["updated_at"] = now
     if pdf_filename:
@@ -297,7 +304,11 @@ def upsert_store_info(report_date, fields, source, pdf_filename=None):
 
     columns = list(row.keys())
     placeholders = ", ".join("?" for _ in columns)
-    update_clause = ", ".join(f"{col} = excluded.{col}" for col in columns if col != "date")
+    keepable = set(_STORE_INFO_NUMERIC_FIELDS) | {"credit_terms_json"} if keep_existing_for_none else set()
+    update_clause = ", ".join(
+        f"{col} = COALESCE(excluded.{col}, {col})" if col in keepable else f"{col} = excluded.{col}"
+        for col in columns if col != "date"
+    )
     conn = _connect()
     try:
         conn.execute(

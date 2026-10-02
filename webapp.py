@@ -1855,6 +1855,7 @@ def _run_carga_datos_reporte_diario_job(job_id, pdf_paths):
         days_partial = set()
         days_subtotal_mismatch = set()
         days_total_sales_mismatch = {}
+        days_store_info_missing = {}
         files_unreadable = 0
         date_mismatches = 0
         first_date = None
@@ -1865,6 +1866,7 @@ def _run_carga_datos_reporte_diario_job(job_id, pdf_paths):
             day_date = None
             got_departments = False
             got_store_info = False
+            got_store_info_partial = False
             file_had_mismatch = False
 
             def _check_filename_date(candidate_date):
@@ -1901,11 +1903,19 @@ def _run_carga_datos_reporte_diario_job(job_id, pdf_paths):
                     pdf_relpath = reportes_db.store_pdf_copy(
                         candidate_date, pdf_path, _reporte_pdf_canonical_filename(candidate_date)
                     )
-                    reportes_db.upsert_store_info(candidate_date, result["fields"], source="ocr", pdf_filename=pdf_relpath)
+                    reportes_db.upsert_store_info(
+                        candidate_date, result["fields"], source="ocr", pdf_filename=pdf_relpath,
+                        keep_existing_for_none=True,
+                    )
                     if result["fields"].get("total_sales_mismatch"):
                         days_total_sales_mismatch[candidate_date] = result["fields"]["total_sales_mismatch"]
+                    # Lo que el OCR no pudo leer quedó vacío (no se adivina):
+                    # se guarda el resto y se avisa qué falta completar.
+                    if result["fields"].get("missing_fields"):
+                        days_store_info_missing[candidate_date] = result["fields"]["missing_fields"]
                     day_date = candidate_date
-                    got_store_info = True
+                    got_store_info = not result["fields"].get("missing_fields")
+                    got_store_info_partial = bool(result["fields"].get("missing_fields"))
                 except Exception as exc:
                     if "no coincide con la fecha del nombre" in str(exc):
                         file_had_mismatch = True
@@ -1933,7 +1943,7 @@ def _run_carga_datos_reporte_diario_job(job_id, pdf_paths):
                     first_date = day_date
                 if got_departments and got_store_info:
                     days_complete.add(day_date)
-                elif got_departments or got_store_info:
+                elif got_departments or got_store_info or got_store_info_partial:
                     days_partial.add(day_date)
                 else:
                     files_unreadable += 1
@@ -1959,6 +1969,14 @@ def _run_carga_datos_reporte_diario_job(job_id, pdf_paths):
                 f"{len(days_subtotal_mismatch)} día(s) con la suma de departamentos distinta del total "
                 f"impreso en el PDF ({dates_txt}) — es señal de que el OCR se salteó alguna fila (ej. un "
                 "departamento esporádico como GIFT CARD), revisá Ventas por Departamento y completalo a mano si falta algo."
+            )
+        if days_store_info_missing:
+            dates_txt = "; ".join(
+                f"{d.strftime('%d/%m')}: {', '.join(fields)}" for d, fields in sorted(days_store_info_missing.items())
+            )
+            parts.append(
+                f"Store Info: lo demás se guardó, pero no se pudo leer con seguridad ({dates_txt}) — "
+                "quedó vacío, completalo a mano."
             )
         if days_total_sales_mismatch:
             dates_txt = ", ".join(
@@ -3659,7 +3677,9 @@ def _persist_reporte_diario_store_info(pdf_paths, progress_callback=None):
             pdf_relpath = reportes_db.store_pdf_copy(
                 result["date"], pdf_path, _reporte_pdf_canonical_filename(result["date"])
             )
-            reportes_db.upsert_store_info(result["date"], result["fields"], source="ocr", pdf_filename=pdf_relpath)
+            reportes_db.upsert_store_info(
+                result["date"], result["fields"], source="ocr", pdf_filename=pdf_relpath, keep_existing_for_none=True,
+            )
         except Exception as exc:
             print(f"[reportes_db] no se pudo guardar Store Info de {pdf_path}: {exc}")
 
