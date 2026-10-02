@@ -14,24 +14,30 @@
 
 <div class="card">
   {% if departments %}
-  <form method="get" style="margin-bottom: 16px;">
+  <form method="get" style="margin-bottom: 16px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
     <label class="muted">Departamento</label>
     <select name="dept" onchange="this.form.submit()">
+      <option value="{{ all_value }}" {{ "selected" if show_all else "" }}>Todos los productos ({{ total_products }})</option>
       {% for d in departments %}
       <option value="{{ d.dept_name }}" {{ "selected" if d.dept_name == selected else "" }}>{{ d.dept_name }} ({{ d.count }})</option>
       {% endfor %}
     </select>
+    {% if show_all %}
+    <input type="search" id="cmv-cost-search" placeholder="Buscar por nombre o UPC" autocomplete="off" style="width: 240px; max-width: 100%; margin: 0;"
+      onkeydown="if (event.key === 'Enter') event.preventDefault();">{# filtra en el momento: Enter no recarga #}
+    {% endif %}
   </form>
   <div class="historial-table-wrap">
-    <table class="historial-table">
+    <table class="historial-table" id="cmv-cost-table">
       <thead>
-        <tr><th>UPC</th><th>Nombre</th><th>Costo</th><th>Precio</th></tr>
+        <tr><th>UPC</th><th>Nombre</th>{% if show_all %}<th>Departamento</th>{% endif %}<th>Costo</th><th>Precio</th></tr>
       </thead>
       <tbody>
         {% for row in rows %}
-        <tr>
+        <tr{% if show_all %} data-search="{{ (row.name or '')|lower }} {{ row.upc }}"{% endif %}>
           <td>{{ row.upc }}</td>
           <td>{{ row.name }}</td>
+          {% if show_all %}<td>{{ row.dept_name or '—' }}</td>{% endif %}
           <td>${{ fmt(row.cost) }}</td>
           <td>${{ fmt(row.price) }}</td>
         </tr>
@@ -39,6 +45,26 @@
       </tbody>
     </table>
   </div>
+  {% if show_all %}
+  <p class="muted" id="cmv-cost-empty" hidden style="margin-top: 12px;">Ningún producto coincide con la búsqueda.</p>
+  <script>
+    (function () {
+      var input = document.getElementById('cmv-cost-search');
+      var rows = Array.prototype.slice.call(document.querySelectorAll('#cmv-cost-table tbody tr'));
+      var empty = document.getElementById('cmv-cost-empty');
+      input.addEventListener('input', function () {
+        var q = input.value.trim().toLowerCase();
+        var visible = 0;
+        rows.forEach(function (row) {
+          var match = !q || row.getAttribute('data-search').indexOf(q) !== -1;
+          row.style.display = match ? '' : 'none';
+          if (match) visible++;
+        });
+        empty.hidden = visible > 0;
+      });
+    })();
+  </script>
+  {% endif %}
   {% else %}
   <p class="muted">Todavía no hay ningún costo cargado. <a href="{{ url_for('carga_datos_cmv') }}">Subir archivos de costo</a>.</p>
   {% endif %}

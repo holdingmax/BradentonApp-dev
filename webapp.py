@@ -5771,15 +5771,27 @@ def carga_datos_cmv_costo_comparar():
     )
 
 
+_CMV_ALL_DEPARTMENTS = "__todos__"
+
+
 @app.route("/carga-datos/cmv/costo/historial")
 def carga_datos_cmv_costo_historial():
     departments = cmv_db.list_departments()
     selected = request.args.get("dept") or (departments[0]["dept_name"] if departments else None)
-    rows = cmv_db.get_costs_by_department(selected) if selected else []
+    # "Todos los productos" (pedido del usuario, 2026-10-02): el catálogo
+    # entero en una tabla, ordenado por departamento y nombre.
+    show_all = selected == _CMV_ALL_DEPARTMENTS
+    if show_all:
+        rows = sorted(cmv_db.get_all_costs(), key=lambda r: ((r.get("dept_name") or "").lower(), (r.get("name") or "").lower()))
+    else:
+        rows = cmv_db.get_costs_by_department(selected) if selected else []
     return render_template(
         "carga_datos_cmv_costo_historial.html",
         departments=departments,
         selected=selected,
+        show_all=show_all,
+        all_value=_CMV_ALL_DEPARTMENTS,
+        total_products=sum(d["count"] for d in departments),
         rows=rows,
         price_changes=cmv_db.get_recent_price_changes(),
         **THEME_BY_KEY["carga_cmv"],
