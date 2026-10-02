@@ -706,6 +706,30 @@ def autolink_missing_ddc_by_amount():
     return completed
 
 
+def get_coupon_gross_by_date():
+    """
+    {fecha ISO: {"gross", "count", "unknown"}} de los cupones por su fecha
+    (control Tarjetas y Cupones). `unknown` cuenta los cupones de un batch
+    que todavía no tienen monto propio (Gross en 0): ese día suma de menos.
+    """
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT date, gross, reported_group_text FROM cupones").fetchall()
+    finally:
+        conn.close()
+    result = {}
+    for row in rows:
+        parsed = _parse_cupon_date(row["date"])
+        if parsed is None:
+            continue
+        day = result.setdefault(parsed.date().isoformat(), {"gross": 0.0, "count": 0, "unknown": 0})
+        day["gross"] = round(day["gross"] + (row["gross"] or 0.0), 2)
+        day["count"] += 1
+        if row["reported_group_text"] and not row["gross"]:
+            day["unknown"] += 1
+    return result
+
+
 def eft_month_and_year(eft_date):
     """(año, mes) del EFT que pagó este cupón, o None si no hay cruce/fecha parseable."""
     parsed = _parse_eft_date(eft_date)

@@ -38,6 +38,7 @@ import chase_db
 import cheques_db
 import depositos
 import depositos_db
+import control_tarjetas
 from cheques import check_number_from_chase_description, extract_checks_from_pdf
 from chase_rules import (
     add_dynamic_rule as add_chase_rule,
@@ -633,6 +634,16 @@ CONTROLES_SECTIONS = [
         "description": "Los depósitos de Caja (los que salen de Chase) contra los recibos de depósito en PDF, hasta el último día cargado de Chase.",
         "accent": "#16A34A",
         "accent_soft": "#DCF3E3",
+    },
+    {
+        "key": "control_tarjetas",
+        "code": "TC",
+        "icon": _ICON_EXCHANGE,
+        "label": "Tarjetas y Cupones",
+        "url": "/controles/tarjetas",
+        "description": "Lo cobrado con tarjeta en el C-store contra los cupones que acredita JH: lo pendiente (unos 3 días, por las 72 hs) no debería pasar de $15,000.",
+        "accent": "#3B5BDB",
+        "accent_soft": "#DDE3FA",
     },
 ]
 
@@ -2440,7 +2451,15 @@ def carga_datos_lottery_resumen_mensual():
 
 @app.route("/controles")
 def controles():
-    return render_template("controles_index.html", controls=CONTROLES_SECTIONS)
+    # La tarjeta de un control muestra su alerta sin tener que entrar.
+    alerts = {}
+    try:
+        latest = control_tarjetas.latest_status(reportes_db.get_card_sales_by_date(), eft_db.get_coupon_gross_by_date())
+        if latest and latest["status"] == "alert":
+            alerts["control_tarjetas"] = f"Alerta: pendiente ${latest['pending']:,.2f} al {_fmt_ddmmyyyy(latest['date'])}"
+    except Exception as exc:
+        print(f"[controles] estado de Tarjetas y Cupones: {exc}")
+    return render_template("controles_index.html", controls=CONTROLES_SECTIONS, alerts=alerts)
 
 
 @app.route("/controles/cierre-mensual", methods=["GET", "POST"])
@@ -5982,6 +6001,41 @@ def _chase_kind_for(deposit_date, amount):
             if kind:
                 return kind
     return None
+
+
+@app.route("/controles/tarjetas")
+def controles_tarjetas():
+    """
+    Control Tarjetas y Cupones (pedido del usuario, 2026-10-02): lo vendido
+    con tarjeta en el C-store contra los cupones que acredita JH. Lo que
+    todavía no se acreditó (unos 3 días por las 72 hs) no debería pasar de
+    $15,000. Cálculo en control_tarjetas.py.
+    """
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+    control = control_tarjetas.build_month_control(
+        year, month, reportes_db.get_card_sales_by_date(), eft_db.get_coupon_gross_by_date(), today=today,
+    )
+    for row in control["rows"]:
+        row["date_display"] = _fmt_ddmmyyyy(row["date"])
+    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+    return render_template(
+        "controles_tarjetas.html",
+        control=control,
+        missing_days_display=[_fmt_ddmmyyyy(d) for d in control["missing_days"]],
+        year=year,
+        month=month,
+        month_name=_MONTH_NAMES_ES[month - 1],
+        prev_year=prev_year,
+        prev_month=prev_month,
+        next_year=next_year,
+        next_month=next_month,
+        **THEME_BY_KEY["carga_eft"],
+    )
 
 
 @app.route("/controles/depositos")

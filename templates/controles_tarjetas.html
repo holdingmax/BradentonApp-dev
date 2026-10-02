@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ url_for('controles') }}">Controles</a><span class="current">Tarjetas y Cupones</span></nav>
+{% endblock %}
+{% block head_extra %}
+<style>
+  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .historial-nav-btn { text-decoration: none; display: inline-block; }
+  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
+  .tc-control { margin-top: 18px; padding: 14px 16px; border-radius: 10px; border: 1px solid var(--border); }
+  .tc-control.ok { background: #F0FDF4; border-color: #BBF7D0; }
+  .tc-control.bad { background: #FEF2F2; border-color: #FECACA; }
+  .tc-control.none { background: var(--surface-alt); }
+  .tc-control-title { font-weight: 700; margin-bottom: 8px; }
+  .tc-control-grid { display: flex; gap: 28px; flex-wrap: wrap; font-size: 13.5px; }
+  .tc-control-grid strong { font-variant-numeric: tabular-nums; }
+  .tc-note { margin: 10px 0 0; font-size: 13px; color: var(--text-soft); }
+  .tc-table-wrap { overflow-x: auto; margin-top: 18px; border: 1px solid var(--border); border-radius: 10px; }
+  .tc-table { width: 100%; min-width: 760px; border-collapse: collapse; font-size: 13.5px; }
+  .tc-table th, .tc-table td { padding: 8px 12px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .tc-table th:first-child, .tc-table td:first-child, .tc-table th:last-child, .tc-table td:last-child { text-align: left; }
+  .tc-table thead th { background: var(--accent-soft); font-weight: 700; }
+  .tc-table tbody tr.tc-row-alert { background: #FEF2F2; }
+  .tc-table tbody tr.tc-row-off td { color: var(--text-soft); }
+  .tc-table tfoot td { font-weight: 700; background: var(--accent-soft); }
+  .tc-pending-alert { color: #B91C1C; font-weight: 700; }
+  .tc-sub { display: block; font-size: 11.5px; color: var(--text-soft); }
+  .tc-badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .tc-badge-ok { background: #DCFCE7; color: #166534; }
+  .tc-badge-alert { background: #FEE2E2; color: #991B1B; }
+  .tc-badge-off { background: var(--surface-alt); color: var(--text-soft); border: 1px solid var(--border); }
+</style>
+{% endblock %}
+{% block content %}
+{% from "_month_jump.html" import month_jump %}
+{% macro money(x) -%}{%- if x is none -%}—{%- else -%}${{ "{:,.2f}".format(x) }}{%- endif -%}{%- endmacro %}
+<div class="page-header">
+  <span class="eyebrow">Control de tarjetas</span>
+  <h1>Tarjetas y Cupones</h1>
+  <p class="page-subtitle">Lo que se cobra con tarjeta en el C-store (Store Info) es lo que JH nos acredita como cupones (DDC) y usa para pagar sus facturas en los EFT. La acreditación tarda unas 72 hs, así que lo vendido que todavía no llegó como cupón normalmente son los últimos 3 días: si pasa de {{ money(control.threshold) }}, es una alerta.</p>
+</div>
+
+<div class="card">
+  <div class="historial-nav">
+    <a href="{{ url_for('controles_tarjetas', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
+    <div class="historial-nav-title">
+      {{ month_jump('controles_tarjetas', year, month) }}
+      {% if year == today.year and month == today.month %}
+      <span class="muted">Mes actual</span>
+      {% else %}
+      <a href="{{ url_for('controles_tarjetas') }}" class="muted">Ir al mes actual</a>
+      {% endif %}
+    </div>
+    <a href="{{ url_for('controles_tarjetas', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
+  </div>
+
+  {% set last = control.last %}
+  {% if last %}
+  <div class="tc-control {{ 'bad' if last.status == 'alert' or control.alert_days else 'ok' }}">
+    <div class="tc-control-title">
+      {% if last.status == 'alert' %}Alerta: al {{ last.date[8:10] }}/{{ last.date[5:7] }} quedan {{ money(last.pending) }} sin acreditar, más de {{ money(control.threshold) }}.
+      {% elif control.alert_days %}Al {{ last.date[8:10] }}/{{ last.date[5:7] }} está bien, pero en el mes hubo {{ control.alert_days|length }} día{{ "s" if control.alert_days|length != 1 else "" }} con alerta.
+      {% else %}Bien: al {{ last.date[8:10] }}/{{ last.date[5:7] }} lo pendiente está dentro de lo normal.{% endif %}
+    </div>
+    <div class="tc-control-grid">
+      <span>Pendiente de acreditar al {{ last.date[8:10] }}/{{ last.date[5:7] }}: <strong>{{ money(last.pending) }}</strong></span>
+      <span>Vendido con tarjeta los últimos 3 días: <strong>{{ money(last.last3) }}</strong></span>
+      <span>Máximo del mes: <strong>{{ money(control.max_pending) }}</strong></span>
+      <span>Límite: <strong>{{ money(control.threshold) }}</strong></span>
+    </div>
+    {% if control.alert_days %}
+    <p class="tc-note">Días con alerta: {% for row in control.alert_days %}{{ row.date[8:10] }}/{{ row.date[5:7] }} ({{ money(row.pending) }}){{ ", " if not loop.last else "." }}{% endfor %}</p>
+    {% endif %}
+  </div>
+  {% else %}
+  <div class="tc-control none">
+    <div class="tc-control-title">Sin datos para controlar en {{ month_name }} {{ year }}.</div>
+    <p class="tc-note" style="margin-top:0;">Hace falta Store Info del mes (Reporte Diario) con las tarjetas leídas, y los cupones (EFT y Cupones).</p>
+  </div>
+  {% endif %}
+  {% if missing_days_display %}
+  <p class="tc-note">Sin Store Info: {{ missing_days_display|join(", ") }}. Después de un día que falta, el pendiente vuelve a arrancar de cero en el siguiente día cargado (si no, quedaría corrido en lo que se vendió ese día).</p>
+  {% endif %}
+  {% if control.unknown_coupons %}
+  <p class="tc-note">{{ control.unknown_coupons }} cupón{{ "es" if control.unknown_coupons != 1 else "" }} de un batch todavía sin monto propio: suma{{ "n" if control.unknown_coupons != 1 else "" }} $0 hasta que llegue el EFT que lo{{ "s" if control.unknown_coupons != 1 else "" }} trae.</p>
+  {% endif %}
+
+  {% if control.rows %}
+  <div class="tc-table-wrap">
+    <table class="tc-table">
+      <thead>
+        <tr><th>Fecha</th><th>Vendido con tarjeta</th><th>Cupones del día</th><th>Pendiente de acreditar</th><th>Últimos 3 días</th><th>Estado</th></tr>
+      </thead>
+      <tbody>
+        {% for row in control.rows %}
+        <tr class="{{ 'tc-row-alert' if row.status == 'alert' else ('tc-row-off' if row.status in ('missing', 'later') else '') }}">
+          <td><strong>{{ row.date_display }}</strong></td>
+          <td>{{ money(row.sale) }}</td>
+          <td>
+            {% if row.coupon_count %}{{ money(row.coupon_gross) }}<span class="tc-sub">{{ row.coupon_count }} DDC{% if row.pending is not none and not row.counted %} · paga ventas anteriores{% endif %}</span>{% else %}—{% endif %}
+          </td>
+          <td class="{{ 'tc-pending-alert' if row.status == 'alert' else '' }}">{{ money(row.pending) }}{% if row.segment_start %}<span class="tc-sub">arranca acá</span>{% endif %}</td>
+          <td>{{ money(row.last3) if row.sale is not none else '—' }}</td>
+          <td>
+            {% if row.status == 'alert' %}<span class="tc-badge tc-badge-alert">Alerta</span>
+            {% elif row.status == 'ok' %}<span class="tc-badge tc-badge-ok">OK</span>
+            {% elif row.status == 'missing' %}<span class="tc-badge tc-badge-off">Falta Store Info</span>
+            {% else %}<span class="tc-badge tc-badge-off">Store Info sin cargar</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        <tr><td>Total del mes</td><td>{{ money(control.sales_total) }}</td><td>{{ money(control.coupon_total) }}</td><td></td><td></td><td></td></tr>
+      </tfoot>
+    </table>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

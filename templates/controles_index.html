@@ -1,4 +1,9 @@
 {% extends "base.html" %}
+{% block head_extra %}
+<style>
+  .control-card-alert { display: inline-block; margin-top: 8px; padding: 3px 10px; border-radius: 999px; background: #FEE2E2; color: #991B1B; font-size: 12px; font-weight: 700; }
+</style>
+{% endblock %}
 {% block content %}
 <div class="page-header">
   <span class="eyebrow">Verificación del mes</span>
@@ -13,6 +18,7 @@
       <span class="tool-card-body">
         <span class="tool-card-label">{{ control.label }}</span>
         <span class="tool-card-desc">{{ control.description }}</span>
+        {% if alerts and alerts.get(control.key) %}<span class="control-card-alert">{{ alerts[control.key] }}</span>{% endif %}
       </span>
     </a>
   {% endfor %}

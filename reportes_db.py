@@ -488,6 +488,30 @@ def get_store_info_years():
         conn.close()
 
 
+def get_card_sales_by_date():
+    """
+    {fecha ISO: ventas con tarjeta del día} (suma de los términos de crédito
+    de Store Info, la columna TC de Caja) -- para el control Tarjetas y
+    Cupones. Un día sin Store Info o con las tarjetas sin leer no aparece.
+    """
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT date, credit_terms_json FROM daily_reports WHERE credit_terms_json IS NOT NULL"
+        ).fetchall()
+    finally:
+        conn.close()
+    result = {}
+    for row in rows:
+        try:
+            terms = json.loads(row["credit_terms_json"])
+        except (TypeError, ValueError):
+            continue
+        if isinstance(terms, list) and terms:
+            result[row["date"]] = round(sum(float(t or 0) for t in terms), 2)
+    return result
+
+
 def get_month_store_info(year, month):
     """
     Un renglón por CADA día del mes, haya datos o no -- para el reporte
