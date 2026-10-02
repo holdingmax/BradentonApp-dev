@@ -93,8 +93,8 @@ def _format_food_ice_label(detalle_keys):
 # columna por columna qué es fórmula/qué se pisa a mano:
 #   E Total SALES = Store Info!R, F Cash = Store Info!S,
 #   G TC = Store Info!T (suma de "credit_terms"), H Other = Store Info!U,
-#   J Total Revenue = Store Info!W (ya guardado tal cual, no hace falta
-#   recalcularlo -- Store Info!W es la MISMA suma que J calcularía),
+#   J Total Revenue = Cash + Other (corregido 2026-10-02: antes se tomaba
+#   Store Info!W, que suma también Tarjeta y Local Acc.),
 #   K CHASE = Depósitos, L OUT CASH y M EXPENSES CASH = a mano (nada más
 #   los tiene), N lottery = Cuenta Final, O DIF EFECT = F-K+H-L-M-N (fórmula
 #   real confirmada contra el archivo), P Saldo = Saldo(día anterior)+O.
@@ -271,8 +271,13 @@ def build_month_report_from_db(year, month, _depth=0):
         cash = info.get("cash")
         tc = round(sum(info.get("credit_terms") or []), 2) if info else None
         other_amount = info.get("other_amount")
-        total_revenue = info.get("total_revenue")
-        local_accounts = info.get("local_accounts")
+        # Total Revenue de Caja = Cash + Other, nada más (corrección del
+        # usuario, 2026-10-02): el de Store Info suma además Tarjeta y Local
+        # Acc., que en Caja no corresponden.
+        if cash is None and other_amount is None:
+            total_revenue = None
+        else:
+            total_revenue = round((cash or 0.0) + (other_amount or 0.0), 2)
 
         expenses_cash = expenses_by_date.get(key)
 
@@ -297,9 +302,7 @@ def build_month_report_from_db(year, month, _depth=0):
         # usado en Store Info (ver reporte_store_info_historial.html).
         total_revenue_breakdown = [
             ("Cash", cash),
-            ("Tarjeta/Crédito", tc),
             ("Other", other_amount),
-            ("Local Acc.", local_accounts),
         ]
         dif_efect_breakdown = [
             ("Cash", cash or 0.0),

@@ -87,7 +87,7 @@
           <td>{{ fmt(row.total_sales) }}</td>
           <td>{{ fmt(row.cash) }}</td>
           <td>{{ fmt(row.other_amount) }}</td>
-          <td><strong>{{ totals_popover('caja-rev-pop-' + row.date, 'Total Revenue (Cash + Tarjeta/Crédito + Other + Local Acc.)', row.total_revenue, row.total_revenue_breakdown) }}</strong></td>
+          <td><strong>{{ totals_popover('caja-rev-pop-' + row.date, 'Total Revenue (Cash + Other)', row.total_revenue, row.total_revenue_breakdown) }}</strong></td>
           <td>
             {{ fmt(row.deposit) }}
             {% if row.is_gettel %}<span class="historial-badge historial-badge-manual caja-gettel-tag">Gettel</span>{% endif %}
