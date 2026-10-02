@@ -11,15 +11,15 @@
 {% from "_table_filters_macros.html" import filter_styles, filter_config_button %}
 {% block crumbs %}
 <nav class="crumbs">
-  <a href="{{ url_for('carga_datos_proveedores') }}">Proveedores</a>
+  <a href="{{ url_for('controles') }}">Controles</a>
   {% if view == 'suppliers' %}
-  <span class="current">Productos</span>
+  <span class="current">Productos de proveedores</span>
   {% else %}
-  <a href="{{ url_for('carga_datos_proveedores_productos') }}">Productos</a>
+  <a href="{{ url_for('controles_productos') }}">Productos de proveedores</a>
   {% if view == 'invoices' %}
   <span class="current">{{ supplier_label }}</span>
   {% else %}
-  <a href="{{ url_for('carga_datos_proveedores_productos_carpeta', supplier_key=supplier_key) }}">{{ supplier_label }}</a>
+  <a href="{{ url_for('controles_productos_proveedor', supplier_key=supplier_key) }}">{{ supplier_label }}</a>
   <span class="current">{{ ddmmyyyy(invoice.invoice_date) }}</span>
   {% endif %}
   {% endif %}
@@ -71,14 +71,14 @@
 
 {% if view == 'suppliers' %}
 <div class="page-header">
-  <span class="eyebrow">Proveedores</span>
-  <h1>Productos</h1>
+  <span class="eyebrow">Control de precios</span>
+  <h1>Productos de proveedores</h1>
   <p class="page-subtitle">Una carpeta por proveedor cuyas facturas se leen bien renglón por renglón (hoy H.T. Hackney, el único que manda el detalle en texto). Adentro, sus facturas por fecha: cada una compara el precio de cada producto contra su compra anterior <strong>por fecha de factura</strong>, no por el orden en que se subieron.</p>
 </div>
 {% if folders %}
 <div class="pf-grid">
   {% for f in folders %}
-  <a class="pf-card" href="{{ url_for('carga_datos_proveedores_productos_carpeta', supplier_key=f.key) }}">
+  <a class="pf-card" href="{{ url_for('controles_productos_proveedor', supplier_key=f.key) }}">
     {{ folder_icon() }}
     <div>
       <div class="pf-card-title">{{ f.label }}</div>
@@ -91,11 +91,11 @@
 {% else %}
 <div class="card"><p class="muted" style="margin:0;">Todavía no hay productos: se cargan solos al subir facturas de H.T. Hackney en <a href="{{ url_for('carga_datos_proveedores') }}">Proveedores</a>.</p></div>
 {% endif %}
-<p class="pf-actions"><a href="{{ url_for('carga_datos_proveedores_productos_lista') }}">Ver todos los productos en una sola lista (con costo y precio del POS) →</a></p>
+<p class="pf-actions"><a href="{{ url_for('controles_productos_lista') }}">Ver todos los productos en una sola lista (con costo y precio del POS) →</a></p>
 
 {% elif view == 'invoices' %}
 <div class="page-header">
-  <span class="eyebrow">Productos</span>
+  <span class="eyebrow">Productos de proveedores</span>
   <h1>{{ supplier_label }}</h1>
   <p class="page-subtitle">{{ invoice_count }} factura(s) con productos guardados, de la más nueva a la más vieja. Cada una está comparada contra la compra anterior de cada producto, por fecha de factura.</p>
 </div>
@@ -111,7 +111,7 @@
       <tbody>
         {% for inv in y.invoices %}
         <tr>
-          <td><a class="pf-date-link" href="{{ url_for('carga_datos_proveedores_productos_factura', supplier_key=supplier_key, invoice_date=inv.invoice_date, invoice_no=inv.invoice_no) }}">{{ folder_icon() }}{{ ddmmyyyy(inv.invoice_date) }}</a></td>
+          <td><a class="pf-date-link" href="{{ url_for('controles_productos_factura', supplier_key=supplier_key, invoice_date=inv.invoice_date, invoice_no=inv.invoice_no) }}">{{ folder_icon() }}{{ ddmmyyyy(inv.invoice_date) }}</a></td>
           <td>{{ inv.invoice_no }}</td>
           <td class="num">{{ inv.lines }}</td>
           <td class="num">{{ money(inv.total) }}</td>
@@ -147,8 +147,8 @@
   <div class="pf-report">
     {% if invoice.up or invoice.down %}
     <span class="muted">Reporte para el manager, solo los {{ invoice.up + invoice.down }} que cambiaron de precio:</span>
-    <a class="btn-accent" href="{{ url_for('carga_datos_proveedores_productos_cambios', supplier_key=supplier_key, invoice_date=invoice.invoice_date, invoice_no=invoice.invoice_no, fmt='pdf') }}">Descargar PDF</a>
-    <a class="btn-accent" href="{{ url_for('carga_datos_proveedores_productos_cambios', supplier_key=supplier_key, invoice_date=invoice.invoice_date, invoice_no=invoice.invoice_no, fmt='xlsx') }}">Descargar Excel</a>
+    <a class="btn-accent" href="{{ url_for('controles_productos_cambios', supplier_key=supplier_key, invoice_date=invoice.invoice_date, invoice_no=invoice.invoice_no, fmt='pdf') }}">Descargar PDF</a>
+    <a class="btn-accent" href="{{ url_for('controles_productos_cambios', supplier_key=supplier_key, invoice_date=invoice.invoice_date, invoice_no=invoice.invoice_no, fmt='xlsx') }}">Descargar Excel</a>
     {% else %}
     <span class="muted">Ningún producto cambió de precio en esta factura: no hay reporte para el manager.</span>
     {% endif %}
@@ -171,7 +171,7 @@
         {% for r in rows %}
         <tr>
           <td>
-            <a class="prod-name" href="{{ url_for('carga_datos_proveedores_producto', product_key=r.product_key) }}">{{ r.description }}</a>
+            <a class="prod-name" href="{{ url_for('controles_productos_producto', product_key=r.product_key) }}">{{ r.description }}</a>
             <span class="prod-code">{% if r.upc %}UPC {{ r.upc }}{% else %}Item # {{ r.item_no }}{% endif %}{% if r.size %} · {{ r.size }}{% endif %}{% if r.units and r.units > 1 %} · {{ r.units }} u/caja{% endif %}</span>
           </td>
           <td>{{ r.category or '—' }}</td>

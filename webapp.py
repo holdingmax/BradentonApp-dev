@@ -645,6 +645,16 @@ CONTROLES_SECTIONS = [
         "accent": "#3B5BDB",
         "accent_soft": "#DDE3FA",
     },
+    {
+        "key": "control_productos",
+        "code": "PR",
+        "icon": _ICON_TRUCK,
+        "label": "Productos de proveedores",
+        "url": "/controles/productos",
+        "description": "El cambio de precio de cada producto de cada proveedor, factura por factura contra su compra anterior, con el reporte para el manager.",
+        "accent": "#DB2777",
+        "accent_soft": "#FBD9EA",
+    },
 ]
 
 # Tercera sección de la app, hermana de Herramientas/Controles pero del OTRO
@@ -6667,8 +6677,24 @@ def _supplier_labels():
     return {entry["key"]: entry["label"] for entry in list_supplier_registry_entries()}
 
 
-@app.route("/carga-datos/proveedores/productos")
-def carga_datos_proveedores_productos():
+# Productos pasó de Proveedores a Controles (pedido del usuario, 2026-10-02):
+# "ahí es donde se va a controlar el cambio de precios de cada producto de
+# cada proveedor". Las direcciones viejas redirigen a las nuevas.
+@app.route("/carga-datos/proveedores/productos", defaults={"rest": ""})
+@app.route("/carga-datos/proveedores/productos/<path:rest>")
+def carga_datos_proveedores_productos_viejo(rest):
+    if rest.startswith("carpeta/"):
+        rest = rest[len("carpeta/"):]
+    elif rest and rest != "lista":
+        rest = "producto/" + rest
+    target = "/controles/productos" + ("/" + quote(rest) if rest else "")
+    if request.query_string:
+        target += "?" + request.query_string.decode("utf-8", "replace")
+    return redirect(target)
+
+
+@app.route("/controles/productos")
+def controles_productos():
     """
     Productos como carpetas (pedido del usuario, 2026-10-02): una por
     proveedor que se lee bien (los que guardan renglones), adentro sus
@@ -6677,19 +6703,19 @@ def carga_datos_proveedores_productos():
     """
     folders = proveedores_productos.build_supplier_folders(proveedores_db.get_all_invoice_lines(), _supplier_labels())
     return render_template(
-        "carga_datos_proveedores_productos_carpetas.html",
+        "controles_productos.html",
         view="suppliers",
         folders=folders,
         **THEME_BY_KEY["carga_proveedores"],
     )
 
 
-@app.route("/carga-datos/proveedores/productos/carpeta/<supplier_key>")
-def carga_datos_proveedores_productos_carpeta(supplier_key):
+@app.route("/controles/productos/<supplier_key>")
+def controles_productos_proveedor(supplier_key):
     invoices = proveedores_productos.build_supplier_invoices(supplier_key, proveedores_db.get_all_invoice_lines())
     if not invoices:
         flash("Ese proveedor no tiene facturas con productos guardados.", "error")
-        return redirect(url_for("carga_datos_proveedores_productos"))
+        return redirect(url_for("controles_productos"))
     years = []
     for invoice in invoices:
         year = invoice["invoice_date"][:4]
@@ -6697,7 +6723,7 @@ def carga_datos_proveedores_productos_carpeta(supplier_key):
             years.append({"year": year, "invoices": []})
         years[-1]["invoices"].append(invoice)
     return render_template(
-        "carga_datos_proveedores_productos_carpetas.html",
+        "controles_productos.html",
         view="invoices",
         supplier_key=supplier_key,
         supplier_label=_supplier_labels().get(supplier_key, supplier_key),
@@ -6707,17 +6733,17 @@ def carga_datos_proveedores_productos_carpeta(supplier_key):
     )
 
 
-@app.route("/carga-datos/proveedores/productos/carpeta/<supplier_key>/<invoice_date>/<invoice_no>")
-def carga_datos_proveedores_productos_factura(supplier_key, invoice_date, invoice_no):
+@app.route("/controles/productos/<supplier_key>/<invoice_date>/<invoice_no>")
+def controles_productos_factura(supplier_key, invoice_date, invoice_no):
     found = proveedores_productos.build_invoice_products(
         supplier_key, invoice_date, invoice_no, proveedores_db.get_all_invoice_lines(),
     )
     if found is None:
         flash("Esa factura no tiene productos guardados.", "error")
-        return redirect(url_for("carga_datos_proveedores_productos_carpeta", supplier_key=supplier_key))
+        return redirect(url_for("controles_productos_proveedor", supplier_key=supplier_key))
     invoice, rows = found
     return render_template(
-        "carga_datos_proveedores_productos_carpetas.html",
+        "controles_productos.html",
         view="invoice",
         supplier_key=supplier_key,
         supplier_label=_supplier_labels().get(supplier_key, supplier_key),
@@ -6727,8 +6753,8 @@ def carga_datos_proveedores_productos_factura(supplier_key, invoice_date, invoic
     )
 
 
-@app.route("/carga-datos/proveedores/productos/carpeta/<supplier_key>/<invoice_date>/<invoice_no>/cambios.<fmt>")
-def carga_datos_proveedores_productos_cambios(supplier_key, invoice_date, invoice_no, fmt):
+@app.route("/controles/productos/<supplier_key>/<invoice_date>/<invoice_no>/cambios.<fmt>")
+def controles_productos_cambios(supplier_key, invoice_date, invoice_no, fmt):
     """
     Reporte para el manager (pedido del usuario, 2026-10-02): los productos
     de esta factura que cambiaron de costo contra su compra anterior, en PDF
@@ -6741,7 +6767,7 @@ def carga_datos_proveedores_productos_cambios(supplier_key, invoice_date, invoic
     )
     if found is None:
         flash("Esa factura no tiene productos guardados.", "error")
-        return redirect(url_for("carga_datos_proveedores_productos_carpeta", supplier_key=supplier_key))
+        return redirect(url_for("controles_productos_proveedor", supplier_key=supplier_key))
     invoice, rows = found
     changed = proveedores_productos.price_change_rows(rows, cmv_db.get_all_costs())
     label = _supplier_labels().get(supplier_key, supplier_key)
@@ -6757,8 +6783,8 @@ def carga_datos_proveedores_productos_cambios(supplier_key, invoice_date, invoic
     return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
 
 
-@app.route("/carga-datos/proveedores/productos/lista")
-def carga_datos_proveedores_productos_lista():
+@app.route("/controles/productos/lista")
+def controles_productos_lista():
     """
     Productos comprados a proveedores (pedido explícito del usuario,
     2026-09-28): un renglón por UPC con su último costo contra el anterior,
@@ -6771,7 +6797,7 @@ def carga_datos_proveedores_productos_lista():
         proveedores_db.get_all_invoice_lines(), _supplier_labels(), pos_costs,
     )
     return render_template(
-        "carga_datos_proveedores_productos.html",
+        "controles_productos_lista.html",
         products=products,
         cost_up=sum(1 for p in products if (p["change"] or 0) > 0.0001),
         cost_down=sum(1 for p in products if (p["change"] or 0) < -0.0001),
@@ -6781,17 +6807,17 @@ def carga_datos_proveedores_productos_lista():
     )
 
 
-@app.route("/carga-datos/proveedores/productos/<product_key>")
-def carga_datos_proveedores_producto(product_key):
+@app.route("/controles/productos/producto/<product_key>")
+def controles_productos_producto(product_key):
     detail = proveedores_productos.build_product_detail(
         product_key, proveedores_db.get_all_invoice_lines(), _supplier_labels(),
         cmv_db.get_all_costs(), cmv_db.get_all_monthly_sales(),
     )
     if detail is None:
         flash("Ese producto no aparece en ninguna factura cargada.", "error")
-        return redirect(url_for("carga_datos_proveedores_productos"))
+        return redirect(url_for("controles_productos"))
     return render_template(
-        "carga_datos_proveedores_producto.html",
+        "controles_productos_producto.html",
         month_names=_MONTH_NAMES_ES,
         **detail,
         **THEME_BY_KEY["carga_proveedores"],

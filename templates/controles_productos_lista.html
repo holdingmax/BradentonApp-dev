@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block main_class %}main-full{% endblock %}
 {% block crumbs %}
-<nav class="crumbs"><a href="{{ url_for('carga_datos_proveedores') }}">Proveedores</a><a href="{{ url_for('carga_datos_proveedores_productos') }}">Productos</a><span class="current">Lista completa</span></nav>
+<nav class="crumbs"><a href="{{ url_for('controles') }}">Controles</a><a href="{{ url_for('controles_productos') }}">Productos de proveedores</a><span class="current">Lista completa</span></nav>
 {% endblock %}
 {% from "_table_filters_macros.html" import filter_styles, filter_config_button %}
 {% block head_extra %}
@@ -39,7 +39,7 @@
 {% macro money(value) %}{% if value is not none %}${{ "{:,.2f}".format(value) }}{% else %}<span class="muted">—</span>{% endif %}{% endmacro %}
 {% block content %}
 <div class="page-header">
-  <span class="eyebrow">Proveedores</span>
+  <span class="eyebrow">Productos de proveedores</span>
   <h1>Productos</h1>
   <p class="page-subtitle">Cada producto comprado, con su costo por unidad en la última compra contra la anterior, a qué proveedor se compra y el costo y precio que tiene el POS. Se llena solo al subir facturas en <a href="{{ url_for('carga_datos_proveedores') }}">Proveedores</a> — por ahora de H.T. Hackney, el único proveedor que manda el detalle en texto.</p>
 </div>
@@ -86,7 +86,7 @@
         {% set pos_state = 'Sin dato' if p.pos_cost_diff is none else ('Al día' if p.pos_cost_diff == 0 else 'Desactualizado') %}
         <tr data-search="{{ (p.description or '')|lower }} {{ p.upc }} {{ p.item_no }}">
           <td>
-            <a class="prod-name" href="{{ url_for('carga_datos_proveedores_producto', product_key=p.key) }}">{{ p.description }}</a>
+            <a class="prod-name" href="{{ url_for('controles_productos_producto', product_key=p.key) }}">{{ p.description }}</a>
             <span class="prod-code">{% if p.upc %}UPC {{ p.upc }}{% else %}Item # {{ p.item_no }}{% endif %}{% if p.size %} · {{ p.size }}{% endif %}{% if p.units_per_case and p.units_per_case > 1 %} · {{ p.units_per_case }} u/caja{% endif %}</span>
           </td>
           <td>{{ p.suppliers|join(', ') }}</td>
