@@ -6604,6 +6604,66 @@ def _supplier_labels():
 @app.route("/carga-datos/proveedores/productos")
 def carga_datos_proveedores_productos():
     """
+    Productos como carpetas (pedido del usuario, 2026-10-02): una por
+    proveedor que se lee bien (los que guardan renglones), adentro sus
+    facturas por fecha y en cada una los productos contra su compra
+    anterior por fecha. La lista completa por producto sigue en /lista.
+    """
+    folders = proveedores_productos.build_supplier_folders(proveedores_db.get_all_invoice_lines(), _supplier_labels())
+    return render_template(
+        "carga_datos_proveedores_productos_carpetas.html",
+        view="suppliers",
+        folders=folders,
+        **THEME_BY_KEY["carga_proveedores"],
+    )
+
+
+@app.route("/carga-datos/proveedores/productos/carpeta/<supplier_key>")
+def carga_datos_proveedores_productos_carpeta(supplier_key):
+    invoices = proveedores_productos.build_supplier_invoices(supplier_key, proveedores_db.get_all_invoice_lines())
+    if not invoices:
+        flash("Ese proveedor no tiene facturas con productos guardados.", "error")
+        return redirect(url_for("carga_datos_proveedores_productos"))
+    years = []
+    for invoice in invoices:
+        year = invoice["invoice_date"][:4]
+        if not years or years[-1]["year"] != year:
+            years.append({"year": year, "invoices": []})
+        years[-1]["invoices"].append(invoice)
+    return render_template(
+        "carga_datos_proveedores_productos_carpetas.html",
+        view="invoices",
+        supplier_key=supplier_key,
+        supplier_label=_supplier_labels().get(supplier_key, supplier_key),
+        years=years,
+        invoice_count=len(invoices),
+        **THEME_BY_KEY["carga_proveedores"],
+    )
+
+
+@app.route("/carga-datos/proveedores/productos/carpeta/<supplier_key>/<invoice_date>/<invoice_no>")
+def carga_datos_proveedores_productos_factura(supplier_key, invoice_date, invoice_no):
+    found = proveedores_productos.build_invoice_products(
+        supplier_key, invoice_date, invoice_no, proveedores_db.get_all_invoice_lines(),
+    )
+    if found is None:
+        flash("Esa factura no tiene productos guardados.", "error")
+        return redirect(url_for("carga_datos_proveedores_productos_carpeta", supplier_key=supplier_key))
+    invoice, rows = found
+    return render_template(
+        "carga_datos_proveedores_productos_carpetas.html",
+        view="invoice",
+        supplier_key=supplier_key,
+        supplier_label=_supplier_labels().get(supplier_key, supplier_key),
+        invoice=invoice,
+        rows=rows,
+        **THEME_BY_KEY["carga_proveedores"],
+    )
+
+
+@app.route("/carga-datos/proveedores/productos/lista")
+def carga_datos_proveedores_productos_lista():
+    """
     Productos comprados a proveedores (pedido explícito del usuario,
     2026-09-28): un renglón por UPC con su último costo contra el anterior,
     a qué proveedor se compra, y el costo/precio del POS (CMV) para ver el

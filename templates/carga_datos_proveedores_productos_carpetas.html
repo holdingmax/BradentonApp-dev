@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+{% block main_class %}main-full{% endblock %}
+{% macro ddmmyyyy(iso) %}{% if iso %}{{ iso[8:10] }}/{{ iso[5:7] }}/{{ iso[:4] }}{% endif %}{% endmacro %}
+{% macro money(value) %}{% if value is not none %}${{ "{:,.2f}".format(value) }}{% else %}<span class="muted">—</span>{% endif %}{% endmacro %}
+{% macro folder_icon() %}<svg class="pf-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>{% endmacro %}
+{% macro changes(inv) %}
+  {% if inv.up %}<span class="prod-up">↑ {{ inv.up }} subieron</span>{% endif %}
+  {% if inv.down %}<span class="prod-down">↓ {{ inv.down }} bajaron</span>{% endif %}
+  {% if not inv.up and not inv.down %}<span class="muted">sin cambios de precio</span>{% endif %}
+{% endmacro %}
+{% from "_table_filters_macros.html" import filter_styles, filter_config_button %}
+{% block crumbs %}
+<nav class="crumbs">
+  <a href="{{ url_for('carga_datos_proveedores') }}">Proveedores</a>
+  {% if view == 'suppliers' %}
+  <span class="current">Productos</span>
+  {% else %}
+  <a href="{{ url_for('carga_datos_proveedores_productos') }}">Productos</a>
+  {% if view == 'invoices' %}
+  <span class="current">{{ supplier_label }}</span>
+  {% else %}
+  <a href="{{ url_for('carga_datos_proveedores_productos_carpeta', supplier_key=supplier_key) }}">{{ supplier_label }}</a>
+  <span class="current">{{ ddmmyyyy(invoice.invoice_date) }}</span>
+  {% endif %}
+  {% endif %}
+</nav>
+{% endblock %}
+{% block head_extra %}
+{% if view == 'invoice' %}{{ filter_styles() }}{% endif %}
+<style>
+  .pf-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
+  .pf-card { display: flex; gap: 14px; align-items: flex-start; padding: 16px 18px; border: 1px solid var(--border); border-radius: 12px;
+             background: var(--surface); color: var(--text); text-decoration: none; transition: border-color 0.12s ease, box-shadow 0.12s ease; }
+  .pf-card:hover { border-color: var(--accent); box-shadow: var(--shadow-md); }
+  .pf-icon { width: 30px; height: 30px; flex-shrink: 0; color: var(--accent); }
+  .pf-card-title { font-weight: 700; font-size: 15px; margin-bottom: 4px; }
+  .pf-card-meta { font-size: 12.5px; color: var(--text-soft); line-height: 1.5; }
+  .pf-card-meta span + span { margin-left: 8px; }
+  .pf-actions { margin-top: 16px; }
+  .pf-year { border: 1px solid var(--border); border-radius: 10px; margin-bottom: 14px; overflow: hidden; }
+  .pf-year > summary { list-style: none; user-select: none; display: flex; align-items: center; justify-content: space-between;
+                       padding: 12px 16px; background: var(--surface-alt); font-weight: 700; font-size: 15px; }
+  .pf-year > summary::-webkit-details-marker { display: none; }
+  .pf-year-count { font-weight: 500; font-size: 12.5px; color: var(--text-soft); margin-left: 6px; }
+  .pf-chevron { width: 16px; height: 16px; color: var(--text-soft); transition: transform 0.12s ease; }
+  .pf-year[open] .pf-chevron { transform: rotate(90deg); }
+  .pf-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .pf-table th, .pf-table td { padding: 8px 14px; text-align: left; }
+  .pf-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
+  .pf-table tbody tr:nth-child(even) { background: var(--surface-alt); }
+  .pf-table th.num, .pf-table td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .pf-table .nowrap { white-space: nowrap; }
+  .pf-table-wrap { overflow-x: auto; }
+  .pf-date-link { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; text-decoration: none; color: var(--text); }
+  .pf-date-link .pf-icon { width: 18px; height: 18px; }
+  .pf-date-link:hover { color: var(--accent); }
+  .pf-summary { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+  .pf-chip { padding: 4px 10px; border-radius: 999px; background: var(--surface-alt); font-size: 12.5px; font-weight: 600; }
+  .prod-table td:first-child { min-width: 260px; }
+  .prod-name { font-weight: 600; text-decoration: none; }
+  .prod-name:hover { text-decoration: underline; }
+  .prod-code { display: block; font-size: 12px; color: var(--text-soft); margin-top: 2px; }
+  .prod-up { color: var(--error); font-weight: 600; }
+  .prod-down { color: var(--success); font-weight: 600; }
+  .prod-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .prod-badge-new { background: var(--accent-soft); color: var(--accent); }
+</style>
+{% endblock %}
+{% block content %}
+
+{% if view == 'suppliers' %}
+<div class="page-header">
+  <span class="eyebrow">Proveedores</span>
+  <h1>Productos</h1>
+  <p class="page-subtitle">Una carpeta por proveedor cuyas facturas se leen bien renglón por renglón (hoy H.T. Hackney, el único que manda el detalle en texto). Adentro, sus facturas por fecha: cada una compara el precio de cada producto contra su compra anterior <strong>por fecha de factura</strong>, no por el orden en que se subieron.</p>
+</div>
+{% if folders %}
+<div class="pf-grid">
+  {% for f in folders %}
+  <a class="pf-card" href="{{ url_for('carga_datos_proveedores_productos_carpeta', supplier_key=f.key) }}">
+    {{ folder_icon() }}
+    <div>
+      <div class="pf-card-title">{{ f.label }}</div>
+      <div class="pf-card-meta">{{ f.invoices }} factura(s) · {{ ddmmyyyy(f.first_date) }} al {{ ddmmyyyy(f.last.invoice_date) }}</div>
+      <div class="pf-card-meta">Última ({{ ddmmyyyy(f.last.invoice_date) }}): {{ changes(f.last) }}</div>
+    </div>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card"><p class="muted" style="margin:0;">Todavía no hay productos: se cargan solos al subir facturas de H.T. Hackney en <a href="{{ url_for('carga_datos_proveedores') }}">Proveedores</a>.</p></div>
+{% endif %}
+<p class="pf-actions"><a href="{{ url_for('carga_datos_proveedores_productos_lista') }}">Ver todos los productos en una sola lista (con costo y precio del POS) →</a></p>
+
+{% elif view == 'invoices' %}
+<div class="page-header">
+  <span class="eyebrow">Productos</span>
+  <h1>{{ supplier_label }}</h1>
+  <p class="page-subtitle">{{ invoice_count }} factura(s) con productos guardados, de la más nueva a la más vieja. Cada una está comparada contra la compra anterior de cada producto, por fecha de factura.</p>
+</div>
+{% for y in years %}
+<details class="pf-year"{% if loop.first %} open{% endif %}>
+  <summary><span>{{ y.year }}<span class="pf-year-count">({{ y.invoices|length }} factura{{ 's' if y.invoices|length != 1 else '' }})</span></span>
+    <svg class="pf-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></summary>
+  <div class="pf-table-wrap">
+    <table class="pf-table">
+      <thead>
+        <tr><th>Fecha</th><th>N° factura</th><th class="num">Productos</th><th class="num">Total</th><th>Precios</th><th class="num">Nuevos</th><th>Comparada contra</th></tr>
+      </thead>
+      <tbody>
+        {% for inv in y.invoices %}
+        <tr>
+          <td><a class="pf-date-link" href="{{ url_for('carga_datos_proveedores_productos_factura', supplier_key=supplier_key, invoice_date=inv.invoice_date, invoice_no=inv.invoice_no) }}">{{ folder_icon() }}{{ ddmmyyyy(inv.invoice_date) }}</a></td>
+          <td>{{ inv.invoice_no }}</td>
+          <td class="num">{{ inv.lines }}</td>
+          <td class="num">{{ money(inv.total) }}</td>
+          <td class="nowrap">{{ changes(inv) }}</td>
+          <td class="num">{{ inv.new or '—' }}</td>
+          <td class="nowrap">{% if inv.previous_date %}{{ ddmmyyyy(inv.previous_date) }} (N° {{ inv.previous_invoice_no }}){% else %}<span class="muted">Primera factura</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</details>
+{% endfor %}
+
+{% else %}
+<div class="page-header">
+  <span class="eyebrow">{{ supplier_label }}</span>
+  <h1>Factura N° {{ invoice.invoice_no }} — {{ ddmmyyyy(invoice.invoice_date) }}</h1>
+  <p class="page-subtitle">
+    {% if invoice.previous_date %}Comparada contra la factura anterior por fecha: {{ ddmmyyyy(invoice.previous_date) }} (N° {{ invoice.previous_invoice_no }}). Si un producto no venía en esa, se compara con su última compra anterior (la fecha se ve en la columna "Compra anterior").
+    {% else %}Es la primera factura guardada de este proveedor: no hay contra qué comparar.{% endif %}
+  </p>
+</div>
+<div class="card">
+  <div class="pf-summary">
+    <span class="pf-chip">{{ invoice.lines }} producto(s)</span>
+    <span class="pf-chip">Total {{ money(invoice.total) }}</span>
+    <span class="pf-chip prod-up">↑ {{ invoice.up }} subieron</span>
+    <span class="pf-chip prod-down">↓ {{ invoice.down }} bajaron</span>
+    <span class="pf-chip">= {{ invoice.same }} iguales</span>
+    <span class="pf-chip">{{ invoice.new }} nuevos</span>
+  </div>
+  {{ filter_config_button("factura-table") }}
+  <div class="pf-table-wrap">
+    <table class="pf-table prod-table" id="factura-table" data-filter-table>
+      <thead>
+        <tr>
+          <th>Producto</th>
+          <th data-filter-col="categoria">Categoría</th>
+          <th class="num">Cant.</th>
+          <th class="num">Costo unit.</th>
+          <th class="num">Anterior</th>
+          <th>Compra anterior</th>
+          <th class="num" data-filter-col="cambio">Cambio</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in rows %}
+        <tr>
+          <td>
+            <a class="prod-name" href="{{ url_for('carga_datos_proveedores_producto', product_key=r.product_key) }}">{{ r.description }}</a>
+            <span class="prod-code">{% if r.upc %}UPC {{ r.upc }}{% else %}Item # {{ r.item_no }}{% endif %}{% if r.size %} · {{ r.size }}{% endif %}{% if r.units and r.units > 1 %} · {{ r.units }} u/caja{% endif %}</span>
+          </td>
+          <td>{{ r.category or '—' }}</td>
+          <td class="num">{{ '%g'|format(r.qty) if r.qty is not none else '—' }}</td>
+          <td class="num"><strong>{{ money(r.unit_cost) }}</strong></td>
+          <td class="num">{{ money(r.previous_cost) }}</td>
+          <td class="nowrap">{% if r.previous_date %}{{ ddmmyyyy(r.previous_date) }}{% else %}<span class="muted">—</span>{% endif %}</td>
+          <td class="num" data-filter-value="{{ r.state }}">
+            {% if r.state == 'Nuevo' %}<span class="prod-badge prod-badge-new">Nuevo</span>
+            {% elif r.state == 'Igual' %}<span class="muted">=</span>
+            {% else %}<span class="{{ 'prod-up' if r.state == 'Subió' else 'prod-down' }}">{{ '+' if r.change > 0 else '−' }}${{ "{:,.2f}".format(r.change|abs) }}{% if r.change_pct is not none %} ({{ '+' if r.change_pct > 0 else '' }}{{ r.change_pct }}%){% endif %}</span>{% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% include "_table_filters.html" %}
+{% endif %}
+{% endblock %}

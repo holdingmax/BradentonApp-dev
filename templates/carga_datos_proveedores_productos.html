@@ -1,11 +1,39 @@
 {% extends "base.html" %}
 {% block main_class %}main-full{% endblock %}
 {% block crumbs %}
-<nav class="crumbs"><a href="{{ url_for('carga_datos_proveedores') }}">Proveedores</a><span class="current">Productos</span></nav>
+<nav class="crumbs"><a href="{{ url_for('carga_datos_proveedores') }}">Proveedores</a><a href="{{ url_for('carga_datos_proveedores_productos') }}">Productos</a><span class="current">Lista completa</span></nav>
 {% endblock %}
 {% from "_table_filters_macros.html" import filter_styles, filter_config_button %}
 {% block head_extra %}
 {{ filter_styles() }}
+{# Estilos en <head> (2026-10-02): al pie de la página llegaban recién después de
+   la tabla entera y se veía sin formato un rato al entrar. #}
+<style>
+  .historial-table-wrap { overflow-x: auto; margin-top: 10px; border: 1px solid var(--border); border-radius: 10px; }
+  .historial-table { width: 100%; min-width: 420px; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .historial-table th, .historial-table td { padding: 8px 14px; text-align: left; }
+  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
+  .prod-table { min-width: 1080px; }
+  .prod-table th.num, .prod-table td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .prod-table .nowrap { white-space: nowrap; }
+  .prod-table td:first-child { min-width: 260px; }
+  .prod-table tr.prod-search-hidden { display: none; }
+  .prod-name { font-weight: 600; text-decoration: none; }
+  .prod-name:hover { text-decoration: underline; }
+  .prod-code { display: block; font-size: 12px; color: var(--text-soft); margin-top: 2px; }
+  .prod-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .prod-toolbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .prod-toolbar-actions input[type="search"] { width: 240px; max-width: 100%; margin: 0; }
+  .prod-summary { margin: 0; }
+  .prod-up { color: var(--error); font-weight: 600; }
+  .prod-down { color: var(--success); font-weight: 600; }
+  .prod-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
+  .prod-badge-ok { background: var(--success-soft); color: var(--success); }
+  .prod-badge-warn { background: var(--warning-soft); color: var(--warning); }
+  .prod-notice { background: var(--warning-soft); border-color: var(--warning-soft); color: var(--text); margin-bottom: 14px; }
+  .prod-empty-search { margin-top: 12px; }
+</style>
 {% endblock %}
 {% macro ddmmyyyy(iso) %}{{ iso[8:10] }}/{{ iso[5:7] }}/{{ iso[:4] }}{% endmacro %}
 {% macro money(value) %}{% if value is not none %}${{ "{:,.2f}".format(value) }}{% else %}<span class="muted">—</span>{% endif %}{% endmacro %}
@@ -114,30 +142,4 @@
 </script>
 {% endif %}
 
-<style>
-  .historial-table-wrap { overflow-x: auto; margin-top: 10px; border: 1px solid var(--border); border-radius: 10px; }
-  .historial-table { width: 100%; min-width: 420px; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
-  .historial-table th, .historial-table td { padding: 8px 14px; text-align: left; }
-  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
-  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
-  .prod-table { min-width: 1080px; }
-  .prod-table th.num, .prod-table td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .prod-table .nowrap { white-space: nowrap; }
-  .prod-table td:first-child { min-width: 260px; }
-  .prod-table tr.prod-search-hidden { display: none; }
-  .prod-name { font-weight: 600; text-decoration: none; }
-  .prod-name:hover { text-decoration: underline; }
-  .prod-code { display: block; font-size: 12px; color: var(--text-soft); margin-top: 2px; }
-  .prod-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-  .prod-toolbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .prod-toolbar-actions input[type="search"] { width: 240px; max-width: 100%; margin: 0; }
-  .prod-summary { margin: 0; }
-  .prod-up { color: var(--error); font-weight: 600; }
-  .prod-down { color: var(--success); font-weight: 600; }
-  .prod-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
-  .prod-badge-ok { background: var(--success-soft); color: var(--success); }
-  .prod-badge-warn { background: var(--warning-soft); color: var(--warning); }
-  .prod-notice { background: var(--warning-soft); border-color: var(--warning-soft); color: var(--text); margin-bottom: 14px; }
-  .prod-empty-search { margin-top: 12px; }
-</style>
 {% endblock %}

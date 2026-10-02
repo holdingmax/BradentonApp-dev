@@ -305,6 +305,113 @@ def build_product_list(lines, supplier_labels, pos_costs):
     return products
 
 
+# ---------------------------------------------------------------------------
+# Carpetas: proveedor -> facturas por fecha -> productos (2026-10-02)
+# ---------------------------------------------------------------------------
+# Pedido del usuario: "distintos módulos con fechas dentro de ellos como si
+# fueran carpetas", solo de los proveedores que se leen bien (los de
+# LINE_EXTRACTORS -- los únicos que guardan renglones), y cada factura
+# compara sus precios contra la factura ANTERIOR POR FECHA, no por orden de
+# carga: si se sube una del medio después, la más nueva pasa a compararse
+# contra esa. Por eso todo se recalcula al mostrar, ordenando por fecha.
+
+def _compare_supplier_invoices(supplier_lines):
+    """
+    Facturas de un proveedor del más vieja a la más nueva (fecha y N°), cada
+    renglón con el costo de la última compra ANTERIOR de ese producto (de
+    una factura con fecha previa; dos renglones de una misma factura nunca
+    se comparan entre sí). Devuelve [(fecha, N°, [renglones])].
+    """
+    by_invoice = {}
+    for line in sorted(supplier_lines, key=lambda l: (l["invoice_date"], str(l["invoice_no"]), l["line_no"] or 0)):
+        by_invoice.setdefault((line["invoice_date"], line["invoice_no"]), []).append(line)
+    last_by_product = {}
+    result = []
+    for (invoice_date, invoice_no), invoice_lines in sorted(by_invoice.items(), key=lambda item: (item[0][0], str(item[0][1]))):
+        rows = []
+        seen = {}
+        for line in invoice_lines:
+            key = product_key(line["supplier_key"], line["upc"], line["item_no"])
+            previous = last_by_product.get(key)
+            change = round(line["unit_cost"] - previous["unit_cost"], 4) if previous else None
+            if change is None:
+                state = "Nuevo"
+            elif change > 0.0001:
+                state = "Subió"
+            elif change < -0.0001:
+                state = "Bajó"
+            else:
+                state = "Igual"
+            rows.append({
+                **line,
+                "product_key": key,
+                "previous_cost": previous["unit_cost"] if previous else None,
+                "previous_date": previous["invoice_date"] if previous else None,
+                "previous_invoice_no": previous["invoice_no"] if previous else None,
+                "change": change,
+                "change_pct": _pct(change, previous["unit_cost"]) if previous else None,
+                "state": state,
+            })
+            seen[key] = line
+        last_by_product.update(seen)
+        result.append((invoice_date, invoice_no, rows))
+    return result
+
+
+def _invoice_summary(invoice_date, invoice_no, rows, previous):
+    count = lambda state: sum(1 for row in rows if row["state"] == state)
+    return {
+        "invoice_date": invoice_date,
+        "invoice_no": invoice_no,
+        "lines": len(rows),
+        "total": round(sum(row["ext"] or 0.0 for row in rows), 2),
+        "up": count("Subió"),
+        "down": count("Bajó"),
+        "same": count("Igual"),
+        "new": count("Nuevo"),
+        "previous_date": previous[0] if previous else None,
+        "previous_invoice_no": previous[1] if previous else None,
+    }
+
+
+def build_supplier_invoices(supplier_key, lines):
+    """Facturas del proveedor con su resumen contra la anterior, de la más nueva a la más vieja."""
+    compared = _compare_supplier_invoices([line for line in lines if line["supplier_key"] == supplier_key])
+    summaries = []
+    for index, (invoice_date, invoice_no, rows) in enumerate(compared):
+        previous = compared[index - 1][:2] if index > 0 else None
+        summaries.append(_invoice_summary(invoice_date, invoice_no, rows, previous))
+    summaries.reverse()
+    return summaries
+
+
+def build_invoice_products(supplier_key, invoice_date, invoice_no, lines):
+    """(resumen, renglones) de una factura con cada producto contra su compra anterior; None si no existe."""
+    compared = _compare_supplier_invoices([line for line in lines if line["supplier_key"] == supplier_key])
+    for index, (date_value, number, rows) in enumerate(compared):
+        if date_value == invoice_date and str(number) == str(invoice_no):
+            previous = compared[index - 1][:2] if index > 0 else None
+            return _invoice_summary(date_value, number, rows, previous), rows
+    return None
+
+
+def build_supplier_folders(lines, supplier_labels):
+    """Una carpeta por proveedor con renglones guardados: cuántas facturas, de qué fechas y cómo vino la última."""
+    keys = sorted({line["supplier_key"] for line in lines}, key=lambda k: supplier_labels.get(k, k).lower())
+    folders = []
+    for key in keys:
+        invoices = build_supplier_invoices(key, lines)
+        folders.append({
+            "key": key,
+            "label": supplier_labels.get(key, key),
+            "invoices": len(invoices),
+            "first_date": invoices[-1]["invoice_date"] if invoices else None,
+            "last": invoices[0] if invoices else None,
+            "years": sorted({inv["invoice_date"][:4] for inv in invoices}, reverse=True),
+        })
+    return folders
+
+
 def build_product_detail(key, lines, supplier_labels, pos_costs, monthly_sales):
     """
     Resumen + historial de compras de un producto, y sus ventas por mes del
