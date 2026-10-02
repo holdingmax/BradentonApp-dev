@@ -2258,7 +2258,9 @@ def carga_datos_lottery_bloque_chase(iso_year, iso_week):
             # 2026-09-12) -- avisar cuáles otros bloques se realinearon solos
             # para que no parezca magia si el usuario nota el cambio después.
             message += f" {len(corrected)} otro(s) bloque(s) se realinearon solos a la cadencia de 7 días."
-        flash(message, "success")
+        # "info" (no "success"): los avisos de éxito ya no se muestran, pero
+        # este cuenta algo que cambió además de lo que tocó el usuario.
+        flash(message, "info" if corrected else "success")
     year = request.form.get("year", type=int)
     month = request.form.get("month", type=int)
     return redirect(url_for("carga_datos_lottery_historial", year=year, month=month))
@@ -2733,7 +2735,7 @@ def _recategorize_all_chase_and_flash():
             parts.append(f"{detalle_changed} movimiento(s) recategorizado(s)")
         if supplier_changed:
             parts.append(f"{supplier_changed} movimiento(s) vinculado(s)/desvinculado(s) de un proveedor")
-        flash("Aplicado a lo ya guardado: " + ", ".join(parts) + ".", "success")
+        flash("Aplicado a lo ya guardado: " + ", ".join(parts) + ".", "info")
 
 
 @app.route("/carga-datos/chase/rules/save", methods=["POST"])
@@ -4956,7 +4958,7 @@ def carga_datos_caja_gastos_eliminar(item_id):
     if linked:
         flash(
             f"Gasto eliminado. Era un pago a mano a {linked['supplier_label']}: también se borró de su cuenta corriente.",
-            "success",
+            "info",
         )
     else:
         flash("Gasto eliminado.", "success")

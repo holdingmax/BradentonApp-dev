@@ -925,6 +925,19 @@
       white-space: pre-wrap;
       font-size: 13.5px;
     }
+    /* "info": algo que cambió además de lo que tocó el usuario (ej. borrar un
+       gasto que también borra el pago del proveedor). No es un error ni un
+       "guardado OK" -- esos ya no se muestran al editar (2026-10-02). */
+    .flash-info {
+      background: #EFF6FF;
+      border: 1px solid #BFDBFE;
+      color: #1E40AF;
+      padding: 12px 14px;
+      border-radius: 8px;
+      margin-bottom: 18px;
+      white-space: pre-wrap;
+      font-size: 13.5px;
+    }
     .muted { color: var(--text-soft); font-size: 13px; }
 
     /* El aviso instantáneo (#global-notice) flota por ENCIMA de la página
@@ -1325,7 +1338,7 @@
             <a class="account-dropdown-item" href="{{ url_for('admin_users') }}" style="text-decoration: none;">Gestionar usuarios</a>
             {% endif %}
             <a class="account-dropdown-item" href="{{ url_for('perfil_password') }}" style="text-decoration: none;">Cambiar contraseña</a>
-            <form method="post" action="{{ url_for('logout') }}" style="margin: 0;">
+            <form method="post" action="{{ url_for('logout') }}" style="margin: 0;" data-full-submit>
               <button type="submit" class="account-dropdown-item account-dropdown-button">Cerrar sesión</button>
             </form>
           </div>
@@ -1336,7 +1349,7 @@
   <main class="{% block main_class %}{% endblock %}">
     {% with messages = get_flashed_messages(with_categories=true) %}
       {% for category, message in messages %}
-        <div class="flash-{{ category }}" style="display:flex; justify-content:space-between; align-items:flex-start; gap:14px;">
+        <div class="flash-{{ category }}" data-flash="{{ category }}" style="display:flex; justify-content:space-between; align-items:flex-start; gap:14px;">
           <div>{{ message }}</div>
           <button type="button" aria-label="Cerrar aviso" onclick="this.parentElement.style.display='none';" style="background:none;border:none;font-size:18px;line-height:1;flex-shrink:0;color:inherit;padding:0;">×</button>
         </div>
@@ -1900,7 +1913,7 @@
     function showNotice(message, kind) {
       var box = noticeBox();
       if (!box) return;
-      box.className = kind === 'error' ? 'flash-error' : (kind === 'warning' ? 'flash-warning' : 'flash-success');
+      box.className = kind === 'error' ? 'flash-error' : (kind === 'warning' ? 'flash-warning' : (kind === 'info' ? 'flash-info' : 'flash-success'));
       box.style.display = 'flex';
       box.style.justifyContent = 'space-between';
       box.style.alignItems = 'flex-start';
@@ -2310,6 +2323,202 @@
           xhr.send(new FormData(form));
         });
       });
+    })();
+
+    // Guardar sin recargar -- pedido explícito del usuario (2026-10-02):
+    // "quiero que no te consuma esos segundos extra cada cambio que el
+    // usuario tiene que hacer, que sea rápido y al segundo". Todo form POST
+    // de edición (sin archivo) se manda por fetch: el servidor guarda y
+    // redirige igual que siempre, y la página que devuelve reemplaza a la
+    // actual en el mismo lugar -- sin recarga visible, con el mismo scroll
+    // (también el de las tablas anchas) y el foco en el mismo campo. El
+    // aviso verde de "guardado" ya no se muestra; errores, advertencias e
+    // "info" salen en el aviso flotante, sin mover la página. Quedan afuera
+    // los forms con archivo (tienen su barra de progreso arriba), los de
+    // jobs, los que abren otra pestaña y los marcados data-full-submit.
+    (function () {
+      if (!window.fetch || !window.URLSearchParams) return;
+
+      // Ubicación de un elemento que sobrevive al reemplazo de la página:
+      // el ancestro con id más cercano + los índices de hijo desde ahí (sin
+      // contar los avisos del servidor, que en la página nueva se sacan).
+      function realChildren(el) {
+        return Array.prototype.filter.call(el.children, function (c) { return !c.hasAttribute('data-flash'); });
+      }
+      function locate(el) {
+        var path = [];
+        while (el && el.nodeType === 1 && el !== document.body && !el.id) {
+          if (!el.parentElement) return null;
+          path.unshift(realChildren(el.parentElement).indexOf(el));
+          el = el.parentElement;
+        }
+        if (!el || el.nodeType !== 1) return null;
+        return { id: el === document.body ? null : el.id, path: path };
+      }
+      function resolve(loc) {
+        var el = loc.id ? document.getElementById(loc.id) : document.body;
+        for (var i = 0; el && i < loc.path.length; i++) el = realChildren(el)[loc.path[i]];
+        return el || null;
+      }
+      function captureState() {
+        var scrolled = [];
+        document.querySelectorAll('main *').forEach(function (el) {
+          if (el.scrollTop || el.scrollLeft) {
+            var loc = locate(el);
+            if (loc) scrolled.push({ loc: loc, top: el.scrollTop, left: el.scrollLeft });
+          }
+        });
+        var active = document.activeElement;
+        // Solo campos de texto/select: devolverle el foco a un botón (ej.
+        // "Eliminar" de la fila siguiente) haría que un Enter lo dispare.
+        var focusable = active && /^(INPUT|SELECT|TEXTAREA)$/.test(active.tagName) &&
+          !/^(submit|button|checkbox|radio|file)$/i.test(active.type || '');
+        // Valores tildados en los filtros de tabla (_table_filters.html): viven
+        // solo en memoria, así que sin esto cada guardado los borraba.
+        var filters = [];
+        document.querySelectorAll('[id^="tf-panel-"]').forEach(function (panel) {
+          var values = Array.prototype.map.call(panel.querySelectorAll('.tf-values input:checked'), function (cb) { return cb.value; });
+          if (values.length) filters.push({ id: panel.id, values: values });
+        });
+        return { x: window.scrollX, y: window.scrollY, scrolled: scrolled, active: focusable ? locate(active) : null, filters: filters };
+      }
+      function restoreState(state) {
+        state.filters.forEach(function (f) {
+          var panel = document.getElementById(f.id);
+          if (!panel) return;
+          var changed = null;
+          panel.querySelectorAll('.tf-values input[type="checkbox"]').forEach(function (cb) {
+            if (f.values.indexOf(cb.value) !== -1) { cb.checked = true; changed = cb; }
+          });
+          if (changed) changed.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+        state.scrolled.forEach(function (s) {
+          var el = resolve(s.loc);
+          if (el) { el.scrollTop = s.top; el.scrollLeft = s.left; }
+        });
+        if (state.active) {
+          var el = resolve(state.active);
+          if (el && /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName)) {
+            try { el.focus({ preventScroll: true }); } catch (focusErr) {}
+          }
+        }
+        window.scrollTo(state.x, state.y);
+      }
+
+      function downloadBlob(blob, disposition) {
+        var match = /filename\*=UTF-8''([^;]+)/i.exec(disposition) || /filename="?([^";]+)"?/i.exec(disposition);
+        var link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = match ? decodeURIComponent(match[1]) : 'descarga';
+        link.setAttribute('data-no-unsaved-warning', '');
+        document.body.appendChild(link);
+        link.click();
+        setTimeout(function () { URL.revokeObjectURL(link.href); link.remove(); }, 1000);
+      }
+
+      function swapPage(html, url, state) {
+        var finalUrl = new URL(url || window.location.href, window.location.href);
+        var samePage = finalUrl.pathname === window.location.pathname;
+        // La URL se ajusta ANTES de escribir la página nueva: sus scripts la
+        // leen al arrancar (ej. el control de "atrás" de abajo).
+        try {
+          if (samePage) {
+            window.history.replaceState(window.history.state, '', finalUrl.pathname + finalUrl.search + window.location.hash);
+          } else {
+            window.history.pushState({ ajaxSave: true }, '', finalUrl.pathname + finalUrl.search);
+          }
+        } catch (histErr) {}
+        // document.write en una sola tarea: el navegador no pinta nada entre
+        // la página vieja y la nueva (no hay pantalla en blanco), y los
+        // scripts de la página nueva corren como en una carga normal.
+        document.open();
+        document.write(html);
+        document.close();
+
+        var notices = [];
+        document.querySelectorAll('[data-flash]').forEach(function (el) {
+          var kind = el.getAttribute('data-flash');
+          if (kind === 'success') {
+            el.remove();
+          } else if (samePage) {
+            notices.push({ kind: kind, text: (el.firstElementChild || el).textContent.trim() });
+            el.remove();
+          }
+        });
+        if (samePage) {
+          restoreState(state);
+        } else {
+          window.scrollTo(0, 0);
+        }
+        if (notices.length && typeof showNotice === 'function') {
+          var kind = notices.some(function (n) { return n.kind === 'error'; }) ? 'error'
+            : (notices.some(function (n) { return n.kind === 'warning'; }) ? 'warning' : 'info');
+          showNotice(notices.map(function (n) { return n.text; }).join('\n'), kind);
+          if (kind === 'info') {
+            setTimeout(function () {
+              var box = document.getElementById('global-notice');
+              if (box && box.className === 'flash-info') box.style.display = 'none';
+            }, 6000);
+          }
+        }
+      }
+
+      var busy = false;
+      function onSubmit(event) {
+        if (event.defaultPrevented) return;
+        var form = event.target;
+        if (!form || form.tagName !== 'FORM') return;
+        var submitter = event.submitter || null;
+        var method = ((submitter && submitter.getAttribute('formmethod')) || form.getAttribute('method') || 'get').toLowerCase();
+        if (method !== 'post') return;
+        if (form.hasAttribute('data-full-submit') || (submitter && submitter.hasAttribute('data-full-submit'))) return;
+        var target = (submitter && submitter.getAttribute('formtarget')) || form.getAttribute('target') || '';
+        if (target && target !== '_self') return;
+        if (/multipart/i.test(form.getAttribute('enctype') || '') || form.querySelector('input[type="file"]')) return;
+        if (form.classList.contains('ajax-process-form') || form.classList.contains('background-job-form')) return;
+        // getAttribute y no form.action: un input name="action" lo taparía.
+        var action = (submitter && submitter.hasAttribute('formaction'))
+          ? submitter.formAction
+          : new URL(form.getAttribute('action') || window.location.href, window.location.href).href;
+        if (new URL(action).origin !== window.location.origin) return;
+
+        event.preventDefault();
+        if (busy) return;
+        busy = true;
+        var data = new FormData(form, submitter);
+        if (submitter && submitter.name && !data.has(submitter.name)) data.append(submitter.name, submitter.value);
+        var state = captureState();
+
+        fetch(action, { method: 'POST', body: new URLSearchParams(data), credentials: 'same-origin' })
+          .then(function (resp) {
+            var disposition = resp.headers.get('Content-Disposition') || '';
+            if (/attachment/i.test(disposition)) {
+              return resp.blob().then(function (blob) { busy = false; downloadBlob(blob, disposition); });
+            }
+            return resp.text().then(function (html) { swapPage(html, resp.url, state); });
+          })
+          .catch(function () {
+            busy = false;
+            if (typeof showNotice === 'function') showNotice('No se pudo guardar: error de conexión. Volvé a intentarlo.', 'error');
+          });
+      }
+
+      // "Atrás"/"Adelante" a una página que se mostró sin navegar de verdad:
+      // se recarga para que el contenido coincida con la URL.
+      var renderedUrl = window.location.pathname + window.location.search;
+      function onPopState() {
+        if (window.location.pathname + window.location.search !== renderedUrl) window.location.reload();
+      }
+
+      // Registrados una sola vez aunque el navegador conserve los listeners
+      // de la página anterior al reemplazarla (si no, cada envío se mandaría
+      // dos veces).
+      if (window.__ajaxSaveSubmit) document.removeEventListener('submit', window.__ajaxSaveSubmit);
+      if (window.__ajaxSavePopState) window.removeEventListener('popstate', window.__ajaxSavePopState);
+      window.__ajaxSaveSubmit = onSubmit;
+      window.__ajaxSavePopState = onPopState;
+      document.addEventListener('submit', onSubmit);
+      window.addEventListener('popstate', onPopState);
     })();
 
     // Encadenado genérico: cuando un form con class="chain-master-result"
