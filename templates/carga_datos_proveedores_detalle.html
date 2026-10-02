@@ -67,6 +67,13 @@
       <div class="ledger-stat-value">${{ "{:,.2f}".format(payment_total) }}</div>
       <div class="ledger-stat-sub">{{ payment_count }} movimiento(s)</div>
     </div>
+    {% if history_payment_count %}
+    <div class="ledger-stat">
+      <div class="ledger-stat-label">Pagos anteriores (Excel)</div>
+      <div class="ledger-stat-value">${{ "{:,.2f}".format(history_payment_total) }}</div>
+      <div class="ledger-stat-sub">{{ history_payment_count }} pago(s), antes de Chase</div>
+    </div>
+    {% endif %}
     {% if manual_payments %}
     <div class="ledger-stat">
       <div class="ledger-stat-label">Pagos a mano (Caja)</div>
@@ -192,6 +199,8 @@
               {% if e.document %}{{ pdf_links(url_for('carga_datos_documento_descargar', document_id=e.document.id), e.detail) }}{% else %}{{ e.detail }}{% endif %}
             {% elif e.kind == 'payment' %}
               <span title="{{ e.bank_description }}">{{ e.detail }}</span>
+            {% elif e.kind == 'history_payment' %}
+              <span title="{{ e.bank_description or '' }}">{{ e.detail }}</span>
             {% elif e.kind == 'credit' %}
               {{ e.detail }} <span class="muted" style="font-size:11.5px;">(credit memo)</span>
             {% else %}

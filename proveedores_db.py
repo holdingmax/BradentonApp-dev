@@ -145,6 +145,23 @@ def _connect():
             "INSERT OR IGNORE INTO supplier_settings (supplier_key, allow_manual_payments, allow_credit_memos) VALUES (?, 0, 1)",
             (_key,),
         )
+    # Pagos anteriores a lo que Chase tiene cargado, traídos de la planilla
+    # Excel real (2026-10-02, H.T. Hackney: "así armamos bien el proveedor
+    # en la planilla"). Haber en la cuenta corriente, como un pago de Chase,
+    # pero no pasa por Chase ni por Caja.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS supplier_history_payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            supplier_key TEXT NOT NULL,
+            payment_date TEXT NOT NULL,
+            amount REAL NOT NULL,
+            detail TEXT,
+            source TEXT,
+            uploaded_at TEXT
+        )
+        """
+    )
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS supplier_invoice_lines (
@@ -455,6 +472,37 @@ def delete_credit_memo(credit_id):
         return cur.rowcount > 0
     finally:
         conn.close()
+
+
+def replace_history_payments(supplier_key, payments, source):
+    """Reemplaza los pagos históricos de este proveedor que vinieron de `source` (volver a importar no duplica)."""
+    conn = _connect()
+    try:
+        conn.execute("DELETE FROM supplier_history_payments WHERE supplier_key = ? AND source = ?", (supplier_key, source))
+        now = datetime.now().isoformat(timespec="seconds")
+        conn.executemany(
+            """
+            INSERT INTO supplier_history_payments (supplier_key, payment_date, amount, detail, source, uploaded_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            [(supplier_key, _date_key(p["date"]), float(p["amount"]), p.get("detail"), source, now) for p in payments],
+        )
+        conn.commit()
+        return len(payments)
+    finally:
+        conn.close()
+
+
+def get_supplier_history_payments(supplier_key):
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM supplier_history_payments WHERE supplier_key = ? ORDER BY payment_date",
+            (supplier_key,),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(row) for row in rows]
 
 
 def save_manual_payment(supplier_key, supplier_label, payment_date, amount, note=None, caja_expense_item_id=None):

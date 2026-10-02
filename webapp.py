@@ -6853,7 +6853,7 @@ def _supplier_payment_label(description):
     return f"OP Cheque N° {check_no}" if check_no else "OP"
 
 
-def _build_supplier_ledger(invoices, payments, credit_memos=None, manual_payments=None):
+def _build_supplier_ledger(invoices, payments, credit_memos=None, manual_payments=None, history_payments=None):
     """
     Arma el "cuadro de cuenta corriente" de un proveedor -- pedido
     explícito del usuario (2026-09-22): "que sea como funcionaba la
@@ -6907,6 +6907,18 @@ def _build_supplier_ledger(invoices, payments, credit_memos=None, manual_payment
             "debe": 0.0,
             "haber": c["amount"],
         })
+    # Pagos de antes de que Chase estuviera cargado, traídos de la planilla
+    # Excel real (proveedores_db.replace_history_payments).
+    for hp in (history_payments or []):
+        entries.append({
+            "date": hp["payment_date"],
+            "kind": "history_payment",
+            "detail": "OP (Excel)",
+            "bank_description": hp.get("detail"),
+            "document": None,
+            "debe": 0.0,
+            "haber": hp["amount"],
+        })
     for mp in (manual_payments or []):
         label = "Pago a mano (Caja)" + (f" -- {mp['note']}" if mp.get("note") else "")
         entries.append({
@@ -6951,6 +6963,8 @@ def _build_supplier_ledger(invoices, payments, credit_memos=None, manual_payment
         "credit_count": len(credit_memos or []),
         "manual_payment_total": round(sum(mp["amount"] for mp in (manual_payments or [])), 2),
         "manual_payment_count": len(manual_payments or []),
+        "history_payment_total": round(sum(hp["amount"] for hp in (history_payments or [])), 2),
+        "history_payment_count": len(history_payments or []),
     }
 
 
@@ -6974,10 +6988,11 @@ def carga_datos_proveedores_guardado_detalle(supplier_key):
     payments = chase_db.get_supplier_transactions(supplier_key)
     credit_memos = proveedores_db.get_supplier_credit_memos(supplier_key)
     manual_payments = proveedores_db.get_supplier_manual_payments(supplier_key)
+    history_payments = proveedores_db.get_supplier_history_payments(supplier_key)
     supplier_settings = proveedores_db.get_supplier_settings(supplier_key)
     is_dynamic_supplier = supplier_key in load_dynamic_suppliers()
 
-    ledger = _build_supplier_ledger(invoices, payments, credit_memos, manual_payments)
+    ledger = _build_supplier_ledger(invoices, payments, credit_memos, manual_payments, history_payments)
     today = date.today()
     open_index = None
     if ledger["months"]:
@@ -7002,6 +7017,8 @@ def carga_datos_proveedores_guardado_detalle(supplier_key):
         credit_total=ledger["credit_total"],
         manual_payments=manual_payments,
         manual_payment_total=ledger["manual_payment_total"],
+        history_payment_total=ledger["history_payment_total"],
+        history_payment_count=ledger["history_payment_count"],
         supplier_settings=supplier_settings,
         is_dynamic_supplier=is_dynamic_supplier,
         today_iso=today.isoformat(),
