@@ -493,6 +493,219 @@ def get_cupones_flat():
     return cupones
 
 
+def order_cupones_by_eft(cupones):
+    """
+    Mismo listado de get_cupones_flat, reordenado para el historial (pedido
+    del usuario, 2026-10-02): "a todos los cupones que fueron aplicados en
+    una misma fecha de EFT que los pongas continuados... así se puede ver de
+    forma más clara qué cupones fueron aplicados y cuáles no". Por año (el
+    del EFT si ya se aplicó, si no el del cupón): primero los aplicados,
+    juntos por EFT (fecha + RCV, del más viejo al más nuevo), y al final los
+    pendientes por su fecha. Agrega a cada cupón `eft_date_display`
+    (DD/MM/YYYY), `group_year` y `eft_band` (0/1, alterna en cada EFT para
+    que la plantilla los distinga a simple vista).
+    """
+    for cp in cupones:
+        match = cp.get("match")
+        eft_parsed = _parse_eft_date(match.get("eft_date")) if match else None
+        cupon_parsed = _parse_cupon_date(cp.get("date"))
+        cp["eft_date_display"] = eft_parsed.strftime("%d/%m/%Y") if eft_parsed else None
+        anchor = eft_parsed or cupon_parsed
+        cp["group_year"] = anchor.year if anchor else None
+        cp["_sort"] = (
+            cp["group_year"] if cp["group_year"] is not None else -1,
+            0 if eft_parsed else 1,  # aplicados primero, pendientes al final del año
+            eft_parsed or datetime.min,
+            (match or {}).get("rcv_number") or "",
+            cupon_parsed or datetime.min,
+            cp.get("coupon_id") or "",
+        )
+    ordered = sorted(cupones, key=lambda cp: cp.pop("_sort"))
+    band = 0
+    previous = None
+    for cp in ordered:
+        match = cp.get("match")
+        block = (cp.get("eft_date_display"), (match or {}).get("rcv_number")) if match else None
+        cp["eft_block_start"] = block != previous
+        if block != previous:
+            band = 1 - band
+            previous = block
+        cp["eft_band"] = band
+        cp["eft_block_total"] = None
+
+    # Renglón de total debajo de cada EFT (pedido del usuario, 2026-10-02):
+    # lo que suman sus cupones contra lo que el EFT trae en sus líneas de
+    # cupón (todas, también las que no tienen DDC o cuyo DDC no está cargado).
+    eft_totals = _eft_coupon_totals()
+    block_members = []
+    for index, cp in enumerate(ordered):
+        if not cp.get("match"):
+            continue
+        block_members.append(cp)
+        following = ordered[index + 1] if index + 1 < len(ordered) else None
+        if following is not None and following.get("match") and not following["eft_block_start"]:
+            continue
+        sums = {key: round(sum((m.get(key) or 0.0) for m in block_members), 2) for key in ("gross", "fees", "net")}
+        eft = eft_totals.get(((cp["match"].get("rcv_number") or ""), cp["match"].get("eft_date") or ""))
+        total = {"count": len(block_members), **sums, "eft": eft}
+        if eft is not None:
+            # Los EFT de ene-may no detallan el Fee (Gross = Net, Fee 0):
+            # ahí solo se puede comparar el Net.
+            fees_detailed = not (abs(eft["fees"]) < 0.01 and abs(eft["gross"] - eft["net"]) < 0.01)
+            total["fees_detailed"] = fees_detailed
+            total["gross_ok"] = abs(sums["gross"] - eft["gross"]) < 0.01 if fees_detailed else None
+            total["fees_ok"] = abs(sums["fees"] - eft["fees"]) < 0.01 if fees_detailed else None
+            total["net_ok"] = abs(sums["net"] - eft["net"]) < 0.01
+            total["all_ok"] = total["net_ok"] and total["gross_ok"] is not False and total["fees_ok"] is not False
+            total["diff"] = round(sums["net"] - eft["net"], 2)
+        cp["eft_block_total"] = total
+        block_members = []
+    return ordered
+
+
+def _eft_coupon_totals():
+    """
+    {(RCV, fecha del EFT): Gross/Fee/Net sumados de todas sus líneas de
+    cupón}, más lo que explica una diferencia: líneas sin DDC y líneas con
+    un DDC que no está en Cupones.
+    """
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            """
+            SELECT ed.rcv_number, ed.eft_date, COUNT(ec.id) AS lines,
+                   SUM(ec.gross_amount) AS gross, SUM(ec.fees_amount) AS fees, SUM(ec.paid_amount) AS net,
+                   SUM(CASE WHEN ec.coupon IS NULL OR TRIM(ec.coupon) = '' THEN 1 ELSE 0 END) AS no_ddc_lines,
+                   SUM(CASE WHEN ec.coupon IS NULL OR TRIM(ec.coupon) = '' THEN ec.paid_amount ELSE 0 END) AS no_ddc_net,
+                   SUM(CASE WHEN TRIM(ec.coupon) <> '' AND c.coupon_id IS NULL THEN 1 ELSE 0 END) AS unknown_lines,
+                   SUM(CASE WHEN TRIM(ec.coupon) <> '' AND c.coupon_id IS NULL THEN ec.paid_amount ELSE 0 END) AS unknown_net
+            FROM eft_deposits ed
+            JOIN eft_coupons ec ON ec.deposit_id = ed.id
+            LEFT JOIN cupones c ON c.coupon_id = ec.coupon
+            GROUP BY ed.rcv_number, ed.eft_date
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+    return {
+        ((row["rcv_number"] or ""), row["eft_date"] or ""): {
+            "lines": row["lines"],
+            "gross": round(row["gross"] or 0.0, 2),
+            "fees": round(row["fees"] or 0.0, 2),
+            "net": round(row["net"] or 0.0, 2),
+            "no_ddc_lines": row["no_ddc_lines"] or 0,
+            "no_ddc_net": round(row["no_ddc_net"] or 0.0, 2),
+            "unknown_lines": row["unknown_lines"] or 0,
+            "unknown_net": round(row["unknown_net"] or 0.0, 2),
+        }
+        for row in rows
+    }
+
+
+def autolink_missing_ddc_by_amount():
+    """
+    Línea de EFT sin DDC (el PDF no lo traía o no se leyó) + un cupón
+    pendiente con EXACTAMENTE el mismo monto: se completa el DDC de esa
+    línea (pedido del usuario, 2026-10-02). Con eso el cupón queda cruzado
+    con su EFT (RCV, fecha, pagado) igual que si el DDC hubiera venido en
+    el PDF -- el cruce de get_cupones_with_status es por DDC.
+
+    Para no adivinar: Gross y Net iguales al centavo (y Fee también, si los
+    dos lo tienen), ningún monto en 0, la fecha del cupón no posterior a la
+    del EFT, y la pareja tiene que ser única de los dos lados -- si dos
+    cupones pendientes o dos líneas sin DDC comparten el monto, no se toca y
+    queda para completar a mano. coupon_manual = 2 marca "completado solo
+    por monto". Devuelve la cantidad de líneas completadas.
+
+    Cupón de un batch (2026-10-02): el reporte trae un total para varios
+    DDC y el que falta queda en 0 (ver backfill_grouped_cupones_from_eft).
+    Si es el ÚNICO que falta de su batch, su monto es lo que le queda al
+    batch (total menos los hermanos ya resueltos): ese saldo tiene que ser
+    igual al centavo al Net de la línea y la fecha de la línea igual a la
+    del cupón. Al completarse el DDC, el backfill le pasa Gross/Fee/Net del
+    EFT al cupón.
+    """
+    conn = _connect()
+    completed = 0
+    try:
+        lines = conn.execute(
+            """
+            SELECT ec.id, ec.date, ec.gross_amount, ec.fees_amount, ec.paid_amount, ed.eft_date
+            FROM eft_coupons ec JOIN eft_deposits ed ON ed.id = ec.deposit_id
+            WHERE ec.coupon IS NULL OR TRIM(ec.coupon) = ''
+            """
+        ).fetchall()
+        if not lines:
+            return 0
+        linked = {
+            row[0] for row in conn.execute(
+                "SELECT DISTINCT coupon FROM eft_coupons WHERE coupon IS NOT NULL AND TRIM(coupon) <> ''"
+            )
+        }
+        cupones = conn.execute(
+            "SELECT coupon_id, date, gross, fees, net, reported_group_text, reported_group_total FROM cupones"
+        ).fetchall()
+
+        def cents(value):
+            return None if value is None else round(value, 2)
+
+        # Saldo del batch para el único cupón en 0 de cada grupo.
+        group_remaining = {}
+        groups = {}
+        for cupon in cupones:
+            if cupon["reported_group_text"]:
+                groups.setdefault(cupon["reported_group_text"], []).append(cupon)
+        for members in groups.values():
+            total = next((m["reported_group_total"] for m in members if m["reported_group_total"] is not None), None)
+            zero = [m for m in members if not cents(m["net"])]
+            if total is None or len(zero) != 1 or cents(zero[0]["gross"]) or cents(zero[0]["fees"]):
+                continue
+            remaining = cents(total - sum(m["net"] for m in members if cents(m["net"])))
+            if remaining and remaining > 0:
+                group_remaining[zero[0]["coupon_id"]] = remaining
+
+        def matches(line, cupon):
+            eft_day = _parse_eft_date(line["eft_date"])
+            cupon_day = _parse_cupon_date(cupon["date"])
+            if eft_day is not None and cupon_day is not None and cupon_day > eft_day:
+                return False
+            line_gross, line_fees, line_net = cents(line["gross_amount"]), cents(line["fees_amount"]), cents(line["paid_amount"])
+            if not line_net:
+                return False
+            if cents(cupon["gross"]) and cents(cupon["net"]):
+                if line_gross != cents(cupon["gross"]) or line_net != cents(cupon["net"]):
+                    return False
+                return line_fees is None or cupon["fees"] is None or line_fees == cents(cupon["fees"])
+            remaining = group_remaining.get(cupon["coupon_id"])
+            if remaining is None or line_net != remaining:
+                return False
+            line_day = _parse_eft_date(line["date"]) or _parse_cupon_date(line["date"])
+            return line_day is not None and cupon_day is not None and line_day == cupon_day
+
+        pending = [c for c in cupones if c["coupon_id"] not in linked]
+        pairs = [(line, cupon) for line in lines for cupon in pending if matches(line, cupon)]
+        per_line, per_cupon = {}, {}
+        for line, cupon in pairs:
+            per_line[line["id"]] = per_line.get(line["id"], 0) + 1
+            per_cupon[cupon["coupon_id"]] = per_cupon.get(cupon["coupon_id"], 0) + 1
+        for line, cupon in pairs:
+            # Única de los dos lados; si no, no se adivina.
+            if per_line[line["id"]] != 1 or per_cupon[cupon["coupon_id"]] != 1:
+                continue
+            conn.execute(
+                "UPDATE eft_coupons SET coupon = ?, coupon_manual = 2 WHERE id = ? AND (coupon IS NULL OR TRIM(coupon) = '')",
+                (cupon["coupon_id"], line["id"]),
+            )
+            completed += 1
+        if completed:
+            conn.commit()
+    finally:
+        conn.close()
+    if completed:
+        backfill_grouped_cupones_from_eft()
+    return completed
+
+
 def eft_month_and_year(eft_date):
     """(año, mes) del EFT que pagó este cupón, o None si no hay cruce/fecha parseable."""
     parsed = _parse_eft_date(eft_date)
@@ -657,6 +870,7 @@ def upsert_cupones(records, source_filename=None):
     finally:
         conn.close()
     backfill_grouped_cupones_from_eft()
+    autolink_missing_ddc_by_amount()
     return inserted, updated, repeated
 
 
@@ -693,6 +907,7 @@ def build_eft_pdf_report(year, month, dest_path):
     from pdf_export import build_multi_section_pdf
 
     backfill_grouped_cupones_from_eft()
+    autolink_missing_ddc_by_amount()
     deposits = get_month_deposits(year, month)
     eft_rows = []
     total_gross = total_fees = total_net = 0.0

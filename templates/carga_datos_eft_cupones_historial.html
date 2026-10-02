@@ -24,7 +24,15 @@
     background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border);
   }
   .cupones-table tbody tr { border-bottom: 1px solid var(--border); }
-  .cupones-table tbody tr:nth-child(even) { background: var(--surface-alt); }
+  /* Fondo por EFT (no por fila): todos los cupones de un mismo EFT comparten
+     el fondo, y cambia en el EFT siguiente. Los pendientes quedan en blanco. */
+  .cupones-table tbody tr.cupon-band-alt { background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface)); }
+  .cupones-table tbody tr.cupon-block-start td { border-top: 2px solid var(--border); }
+  .cupones-table tbody tr.cupon-total-row td { font-weight: 700; border-top: 1px dashed var(--border); vertical-align: top; }
+  .cupon-total-count { font-weight: 500; color: var(--text-soft); }
+  .cupon-total-eft { font-size: 11.5px; font-weight: 600; color: var(--danger, #B91C1C); }
+  .cupon-total-status { font-size: 12.5px; }
+  .cupon-total-why { font-weight: 500; color: var(--text-soft); font-size: 12px; }
   .historial-col-day { font-weight: 700; white-space: nowrap; }
   .historial-badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
   .historial-badge-ocr { background: var(--success-soft); color: var(--success); }
@@ -49,7 +57,7 @@
 {% for group in cupones_by_year %}
 <details class="cupones-year"{% if group.year == latest_year %} open{% endif %}>
   <summary class="cupones-year-summary">
-    <span>{{ group.year if group.year is not none else "Sin fecha" }} <span class="cupones-year-count">({{ group.count }} cupón{{ "es" if group.count != 1 else "" }})</span></span>
+    <span>{{ group.year if group.year is not none else "Sin fecha" }} <span class="cupones-year-count">({{ group.count }} {{ "cupones" if group.count != 1 else "cupón" }})</span></span>
     <svg class="cupones-year-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
   </summary>
   <div class="cupones-scroll" data-cupones-scroll>
@@ -57,12 +65,13 @@
       <thead>
         <tr>
           <th>Fecha</th><th>DDC</th><th>Gross</th><th>Fee</th><th>Net Amount</th>
-          <th>Diferencia</th><th>EFT</th><th>Mes EFT</th>
+          <th>Diferencia</th><th>EFT</th><th>Fecha EFT</th><th>Mes EFT</th>
         </tr>
       </thead>
       <tbody>
         {% for cp in group.cupones %}
-        <tr>
+        {# Los aplicados en un mismo EFT van juntos y con el mismo fondo (alterna en cada EFT); los pendientes, al final del año. #}
+        <tr class="{{ 'cupon-band-alt' if cp.match and cp.eft_band else '' }}{{ ' cupon-pending-row' if not cp.match else '' }}{{ ' cupon-block-start' if cp.eft_block_start and not loop.first else '' }}">
           <td class="historial-col-day">{{ cp.date_display or cp.date or '—' }}</td>
           <td>{{ cp.coupon_id }}</td>
           <td>${{ "{:,.2f}".format(cp.gross or 0) }}</td>
@@ -84,8 +93,38 @@
             <span class="historial-badge historial-badge-manual">Pendiente</span>
             {% endif %}
           </td>
+          <td>{{ cp.eft_date_display or '—' }}</td>
           <td>{{ cp.eft_month_label or '—' }}</td>
         </tr>
+        {% set t = cp.eft_block_total %}
+        {% if t %}
+        {# Total del EFT: lo que suman sus cupones contra las líneas de cupón del EFT. #}
+        <tr class="cupon-total-row{{ ' cupon-band-alt' if cp.eft_band else '' }}">
+          <td colspan="2">Total {{ cp.match.rcv_number }} <span class="cupon-total-count">({{ t.count }} {{ "cupones" if t.count != 1 else "cupón" }})</span></td>
+          {% for key, ok_key in (("gross", "gross_ok"), ("fees", "fees_ok"), ("net", "net_ok")) %}
+          <td>
+            ${{ "{:,.2f}".format(t[key]) }}
+            {% if t.eft and t[ok_key] == false %}<div class="cupon-total-eft">EFT ${{ "{:,.2f}".format(t.eft[key]) }}</div>{% endif %}
+          </td>
+          {% endfor %}
+          <td>
+            {% if t.eft %}
+            <span class="{{ 'cupon-diff-ok' if t.net_ok else 'cupon-diff-off' }}">${{ "{:,.2f}".format(t.diff) }}</span>
+            {% else %}<span class="muted">—</span>{% endif %}
+          </td>
+          <td colspan="3" class="cupon-total-status">
+            {% if not t.eft %}
+            <span class="muted">No se encontró el EFT</span>
+            {% elif t.all_ok %}
+            <span class="cupon-diff-ok">Coincide con el EFT{% if not t.fees_detailed %} (Net; el EFT no detalla Fee){% endif %}</span>
+            {% else %}
+            <span class="cupon-diff-off">No coincide con el EFT</span>
+            {% if t.eft.no_ddc_lines %}<div class="cupon-total-why">${{ "{:,.2f}".format(t.eft.no_ddc_net) }} en {{ t.eft.no_ddc_lines }} línea{{ "s" if t.eft.no_ddc_lines != 1 else "" }} del EFT sin DDC</div>{% endif %}
+            {% if t.eft.unknown_lines %}<div class="cupon-total-why">${{ "{:,.2f}".format(t.eft.unknown_net) }} en {{ t.eft.unknown_lines }} línea{{ "s" if t.eft.unknown_lines != 1 else "" }} con un DDC que no está en Cupones</div>{% endif %}
+            {% endif %}
+          </td>
+        </tr>
+        {% endif %}
         {% endfor %}
       </tbody>
     </table>

@@ -4583,6 +4583,16 @@ def _run_carga_datos_eft_job(job_id, pdf_paths):
             parts.append(f"{saved} EFT guardado(s).")
         if duplicates:
             parts.append(f"{duplicates} ya estaban cargado(s) y se omitieron.")
+        # Líneas sin DDC que coinciden al centavo con un único cupón pendiente
+        # se completan solas (eft_db.autolink_missing_ddc_by_amount).
+        autolinked = 0
+        try:
+            autolinked = eft_db.autolink_missing_ddc_by_amount()
+        except Exception as exc:
+            print(f"[eft] no se pudieron completar DDC por monto: {exc}")
+        if autolinked:
+            parts.append(f"{autolinked} DDC faltante(s) se completaron solos: el monto coincide exacto con un cupón pendiente.")
+            missing_ddc_total = max(0, missing_ddc_total - autolinked)
         if missing_ddc_total:
             parts.append(f"{missing_ddc_total} cupón(es) sin número DDC -- se puede agregar a mano abajo.")
         if skipped_total:
@@ -4696,6 +4706,10 @@ def carga_datos_eft_historial():
     pegado debajo de los EFT de un solo mes en la misma página -- separados
     en dos apartados propios, cada uno con su propia navegación.
     """
+    try:
+        eft_db.autolink_missing_ddc_by_amount()
+    except Exception as exc:
+        print(f"[eft] no se pudieron completar DDC por monto: {exc}")
     today = date.today()
     year = request.args.get("year", type=int) or today.year
     month = request.args.get("month", type=int) or today.month
@@ -4747,10 +4761,15 @@ def carga_datos_eft_cupones_historial():
         backfilled = eft_db.backfill_grouped_cupones_from_eft()
         if backfilled:
             print(f"[cupones] {backfilled} cupón(es) de un batch completado(s) con datos de EFT ya cargados.")
+        autolinked = eft_db.autolink_missing_ddc_by_amount()
+        if autolinked:
+            print(f"[cupones] {autolinked} DDC de EFT completado(s) por monto exacto.")
     except Exception as exc:
         print(f"[cupones] no se pudo completar cupones agrupados desde EFT: {exc}")
 
-    cupones = eft_db.get_cupones_flat()
+    # Ordenados por EFT: los aplicados en un mismo EFT quedan juntos y los
+    # pendientes al final de cada año (ver eft_db.order_cupones_by_eft).
+    cupones = eft_db.order_cupones_by_eft(eft_db.get_cupones_flat())
     for cp in cupones:
         match = cp.get("match")
         my = eft_db.eft_month_and_year(match["eft_date"]) if match else None
@@ -4767,8 +4786,7 @@ def carga_datos_eft_cupones_historial():
     # plana, ese grupo queda primero acá también.
     groups_by_year = {}
     for cp in cupones:
-        year = int(cp["date_display"][-4:]) if cp.get("date_display") else None
-        groups_by_year.setdefault(year, []).append(cp)
+        groups_by_year.setdefault(cp.get("group_year"), []).append(cp)
     cupones_by_year = [
         {"year": year, "cupones": items, "count": len(items)}
         for year, items in groups_by_year.items()
