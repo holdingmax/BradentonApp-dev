@@ -55,6 +55,7 @@
   .pf-date-link .pf-icon { width: 18px; height: 18px; }
   .pf-date-link:hover { color: var(--accent); }
   .pf-summary { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+  .pf-report { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 12px 0 4px; font-size: 13px; }
   .pf-chip { padding: 4px 10px; border-radius: 999px; background: var(--surface-alt); font-size: 12.5px; font-weight: 600; }
   .prod-table td:first-child { min-width: 260px; }
   .prod-name { font-weight: 600; text-decoration: none; }
@@ -142,6 +143,15 @@
     <span class="pf-chip prod-down">↓ {{ invoice.down }} bajaron</span>
     <span class="pf-chip">= {{ invoice.same }} iguales</span>
     <span class="pf-chip">{{ invoice.new }} nuevos</span>
+  </div>
+  <div class="pf-report">
+    {% if invoice.up or invoice.down %}
+    <span class="muted">Reporte para el manager, solo los {{ invoice.up + invoice.down }} que cambiaron de precio:</span>
+    <a class="btn-accent" href="{{ url_for('carga_datos_proveedores_productos_cambios', supplier_key=supplier_key, invoice_date=invoice.invoice_date, invoice_no=invoice.invoice_no, fmt='pdf') }}">Descargar PDF</a>
+    <a class="btn-accent" href="{{ url_for('carga_datos_proveedores_productos_cambios', supplier_key=supplier_key, invoice_date=invoice.invoice_date, invoice_no=invoice.invoice_no, fmt='xlsx') }}">Descargar Excel</a>
+    {% else %}
+    <span class="muted">Ningún producto cambió de precio en esta factura: no hay reporte para el manager.</span>
+    {% endif %}
   </div>
   {{ filter_config_button("factura-table") }}
   <div class="pf-table-wrap">

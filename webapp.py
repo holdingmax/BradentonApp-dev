@@ -23,7 +23,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime
 from urllib.parse import quote, urlsplit
 
-from flask import Flask, flash, jsonify, redirect, render_template, request, send_file, session, url_for
+from flask import Flask, abort, flash, jsonify, redirect, render_template, request, send_file, session, url_for
 from flask_login import (
     LoginManager,
     UserMixin,
@@ -6671,6 +6671,36 @@ def carga_datos_proveedores_productos_factura(supplier_key, invoice_date, invoic
         rows=rows,
         **THEME_BY_KEY["carga_proveedores"],
     )
+
+
+@app.route("/carga-datos/proveedores/productos/carpeta/<supplier_key>/<invoice_date>/<invoice_no>/cambios.<fmt>")
+def carga_datos_proveedores_productos_cambios(supplier_key, invoice_date, invoice_no, fmt):
+    """
+    Reporte para el manager (pedido del usuario, 2026-10-02): los productos
+    de esta factura que cambiaron de costo contra su compra anterior, en PDF
+    o Excel, para mandárselo (ver proveedores_productos.price_change_rows).
+    """
+    if fmt not in ("pdf", "xlsx"):
+        abort(404)
+    found = proveedores_productos.build_invoice_products(
+        supplier_key, invoice_date, invoice_no, proveedores_db.get_all_invoice_lines(),
+    )
+    if found is None:
+        flash("Esa factura no tiene productos guardados.", "error")
+        return redirect(url_for("carga_datos_proveedores_productos_carpeta", supplier_key=supplier_key))
+    invoice, rows = found
+    changed = proveedores_productos.price_change_rows(rows, cmv_db.get_all_costs())
+    label = _supplier_labels().get(supplier_key, supplier_key)
+    workspace_dir = tempfile.mkdtemp(prefix="cambios_precio_")
+    dest_path = os.path.join(
+        workspace_dir,
+        f"Cambios de precio {label} {invoice_date[8:10]}-{invoice_date[5:7]}-{invoice_date[0:4]} N {invoice_no}.{fmt}",
+    )
+    if fmt == "pdf":
+        proveedores_productos.build_price_change_pdf(label, invoice, changed, dest_path)
+    else:
+        proveedores_productos.build_price_change_workbook(label, invoice, changed, dest_path)
+    return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
 
 
 @app.route("/carga-datos/proveedores/productos/lista")
