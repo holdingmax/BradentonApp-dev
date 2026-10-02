@@ -50,7 +50,7 @@ import gettel_db
 _MAX_CHAIN_MONTHS = 60  # tope de meses hacia atrás al encadenar (evita recursión sin fin)
 
 
-def _resolve_pendiente_anterior(year, month, _depth=0):
+def _resolve_pendiente_anterior(year, month, _depth=0, _floor=None):
     """(valor, fuente) del Pendiente Mes Anterior -- mismo patrón que caja._resolve_opening_balance/fisico._resolve_initial."""
     settings = gettel_db.get_pago_month_settings(year, month)
     if settings and settings.get("pendiente_anterior_override") is not None:
@@ -61,18 +61,25 @@ def _resolve_pendiente_anterior(year, month, _depth=0):
         return 0.0, "default"
 
     prev_year, prev_month = (year - 1, 12) if month == 1 else (year, month - 1)
-    prev_report = build_month_report(prev_year, prev_month, _depth=_depth + 1)
+    # Antes del dato más viejo no hay nada que arrastrar (ver
+    # gettel_db.get_earliest_month): la cadena para ahí en vez de ir siempre
+    # los 60 meses del tope.
+    if _floor is None or (prev_year, prev_month) < _floor:
+        return 0.0, "default"
+    prev_report = build_month_report(prev_year, prev_month, _depth=_depth + 1, _floor=_floor)
     if prev_report["has_any_data"]:
         return prev_report["pendiente_siguiente"], "prev_month_computed"
     return 0.0, "default"
 
 
-def build_month_report(year, month, _depth=0):
+def build_month_report(year, month, _depth=0, _floor=None):
     pagos = gettel_db.get_month_pagos(year, month)
     settings = gettel_db.get_pago_month_settings(year, month)
+    if _depth == 0:
+        _floor = gettel_db.get_earliest_month()
 
     total_mes = round(gettel_db.get_month_gettel_amount(year, month), 2)
-    pendiente_anterior, pendiente_source = _resolve_pendiente_anterior(year, month, _depth=_depth)
+    pendiente_anterior, pendiente_source = _resolve_pendiente_anterior(year, month, _depth=_depth, _floor=_floor)
     pendiente_anterior = round(pendiente_anterior, 2)
 
     total_a_pagar = round(total_mes + pendiente_anterior, 2)

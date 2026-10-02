@@ -48,7 +48,19 @@ _SALES_REPORT_FIELDS = (
 ALL_DAY_FIELDS = _DEPARTMENT_FIELDS + _SALES_REPORT_FIELDS
 
 
+_schema_ready_for = None
+
+
 def _connect():
+    global _schema_ready_for
+    # El esquema y el modo WAL (que queda guardado en el archivo) se aseguran
+    # una sola vez por proceso, no en cada conexión (2026-10-02): Caja abre
+    # una conexión por día del mes (get_day) y esto era ~3/4 de lo que
+    # tardaba en armarse la página después de cada guardado.
+    if _schema_ready_for == _DB_PATH and os.path.exists(_DB_PATH):
+        conn = sqlite3.connect(_DB_PATH, timeout=30)
+        conn.row_factory = sqlite3.Row
+        return conn
     os.makedirs(_BASE_DIR, exist_ok=True)
     # timeout=30 + WAL -- ver reportes_db.py: necesario desde que las cargas
     # en segundo plano (jobs.py) pueden escribir de verdad en paralelo.
@@ -56,6 +68,7 @@ def _connect():
     conn.execute("PRAGMA journal_mode=WAL")
     conn.row_factory = sqlite3.Row
     _ensure_schema(conn)
+    _schema_ready_for = _DB_PATH
     return conn
 
 
@@ -263,6 +276,19 @@ def get_day(report_date):
     finally:
         conn.close()
     return dict(row) if row is not None else None
+
+
+def get_days_between(start_date, end_date):
+    """Igual que get_day, pero todos los días de [start_date, end_date] en una sola consulta: {"YYYY-MM-DD": fila}."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM lottery_days WHERE date BETWEEN ? AND ?",
+            (_date_key(start_date), _date_key(end_date)),
+        ).fetchall()
+    finally:
+        conn.close()
+    return {row["date"]: dict(row) for row in rows}
 
 
 def store_pdf_copy(report_date, source_path, original_filename):

@@ -145,7 +145,7 @@ def _covered_prefix(days, budget):
 _MAX_CHAIN_MONTHS = 240  # 20 años -- tope de seguridad, ver docstring
 
 
-def resolve_month(year, month, _chain=True, _depth=0):
+def resolve_month(year, month, _chain=True, _depth=0, _floor=None):
     """
     Arma el ledger completo del mes -- la data de las 4 hojas del reporte.
 
@@ -164,6 +164,13 @@ def resolve_month(year, month, _chain=True, _depth=0):
     """
     settings = gettel_db.get_pago_month_settings(year, month)
     override = settings.get("pendiente_anterior_override") if settings else None
+    # La cadena para en el mes del dato más viejo (antes iba siempre los 240
+    # meses del tope y el Cuadro de Pagos tardaba ~4 s, 2026-10-02): un mes
+    # anterior a ese no tiene datos, así que daría "default" igual.
+    if _depth == 0:
+        _floor = gettel_db.get_earliest_month()
+    prev_year, prev_month = (year - 1, 12) if month == 1 else (year, month - 1)
+    prev_in_range = _floor is not None and (prev_year, prev_month) >= _floor
 
     if override is not None:
         # Mismo override manual que ya usa gettel_pagos.py (comparten la
@@ -174,9 +181,8 @@ def resolve_month(year, month, _chain=True, _depth=0):
         pendiente_anterior_total = float(override)
         pendiente_anterior_lump = pendiente_anterior_total
         pendiente_anterior_source = "manual"
-    elif _chain and _depth < _MAX_CHAIN_MONTHS:
-        prev_year, prev_month = (year - 1, 12) if month == 1 else (year, month - 1)
-        prev = resolve_month(prev_year, prev_month, _chain=True, _depth=_depth + 1)
+    elif _chain and _depth < _MAX_CHAIN_MONTHS and prev_in_range:
+        prev = resolve_month(prev_year, prev_month, _chain=True, _depth=_depth + 1, _floor=_floor)
         if prev["has_any_data"]:
             pendiente_anterior_days = prev["pendiente_siguiente_days"]
             pendiente_anterior_total = prev["pendiente_siguiente_total"]

@@ -237,6 +237,8 @@ def build_month_report_from_db(year, month, _depth=0):
     expenses_by_date = caja_db.get_month_expenses(year, month)
 
     days_in_month = calendar.monthrange(year, month)[1]
+    # Todo Lottery del mes en una consulta (antes, una conexión por día).
+    lottery_by_date = lottery_db.get_days_between(date(year, month, 1), date(year, month, days_in_month))
 
     opening_balance, opening_source = _resolve_opening_balance(year, month, _depth=_depth)
     running_saldo = opening_balance
@@ -253,7 +255,7 @@ def build_month_report_from_db(year, month, _depth=0):
         food_ice = food_ice_by_date.get(d)
         food_ice_label = _format_food_ice_label(food_ice_labels_by_date.get(d, set()))
 
-        lottery_day = lottery_db.get_day(d)
+        lottery_day = lottery_by_date.get(key)
         cuenta_final = None
         if lottery_day is not None:
             cuenta_final = lottery_db.decorate_day(lottery_day).get("cuenta_final")

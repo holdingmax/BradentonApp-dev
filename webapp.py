@@ -7379,4 +7379,21 @@ if __name__ == "__main__":
     # el servidor de desarrollo de Flask atiende una sola request a la vez
     # y ese sondeo quedaría trabado detrás de la carga que se supone que
     # tiene que poder consultar mientras corre.
+    #
+    # También en ::1 (IPv6 de esta misma PC), 2026-10-02: el navegador
+    # resuelve "localhost" primero a ::1 y, como el servidor escuchaba solo
+    # en 127.0.0.1, cada pedido esperaba ~300 ms antes de reintentar por IPv4
+    # (medido: 330 ms contra 30 ms por pedido). Eso se pagaba en cada página,
+    # cada guardado y cada sondeo de progreso. Solo en la PC (no en Render) y
+    # solo en el proceso que atiende de verdad (con el reloader de debug, el
+    # proceso padre solo vigila archivos). Si la PC no tiene IPv6, se sigue
+    # igual que antes.
+    if host == "127.0.0.1" and (not debug_mode or os.environ.get("WERKZEUG_RUN_MAIN") == "true"):
+        try:
+            from werkzeug.serving import make_server
+
+            _ipv6_server = make_server("::1", port, app, threaded=True)
+            threading.Thread(target=_ipv6_server.serve_forever, daemon=True, name="ipv6-loopback").start()
+        except OSError as exc:
+            print(f"[webapp] sin escucha en ::1 ({exc}); localhost va a responder más lento")
     app.run(debug=debug_mode, host=host, port=port, threaded=True)

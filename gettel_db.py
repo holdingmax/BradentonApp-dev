@@ -25,7 +25,19 @@ _BASE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reportes_d
 _DB_PATH = os.path.join(_BASE_DIR, "gettel_toyota.db")
 
 
+_schema_ready_for = None
+
+
 def _connect():
+    global _schema_ready_for
+    # El esquema (CREATE TABLE/ALTER) se asegura una sola vez por proceso y
+    # por archivo, no en cada conexión (2026-10-02): el Cuadro de Pagos abre
+    # cientos de conexiones por página y esto solo le costaba ~2 segundos.
+    if _schema_ready_for == _DB_PATH and os.path.exists(_DB_PATH):
+        conn = sqlite3.connect(_DB_PATH, timeout=30)
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA foreign_keys = ON")
+        return conn
     os.makedirs(_BASE_DIR, exist_ok=True)
     # timeout=30 + WAL -- ver reportes_db.py: necesario desde que las cargas
     # en segundo plano (jobs.py) pueden escribir de verdad en paralelo.
@@ -90,6 +102,8 @@ def _connect():
         )
         """
     )
+    conn.commit()
+    _schema_ready_for = _DB_PATH
     return conn
 
 
@@ -310,6 +324,31 @@ def get_pago_years():
         return [int(row["y"]) for row in rows if row["y"]]
     finally:
         conn.close()
+
+
+def get_earliest_month():
+    """
+    (año, mes) del dato de Gettel más viejo que haya -- días, pagos o ajustes
+    del mes --, o None si no hay nada. Los encadenados mes a mes
+    (gettel_reportes.resolve_month, gettel_pagos.build_month_report) paran
+    ahí: antes de ese mes no puede haber nada que arrastrar.
+    """
+    conn = _connect()
+    try:
+        row = conn.execute(
+            """
+            SELECT MIN(d) FROM (
+                SELECT MIN(date) AS d FROM gettel_toyota_days
+                UNION ALL SELECT MIN(fecha) FROM gettel_pagos
+                UNION ALL SELECT MIN(printf('%04d-%02d', year, month)) FROM gettel_pagos_months
+            )
+            """
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row or not row[0]:
+        return None
+    return int(row[0][:4]), int(row[0][5:7])
 
 
 def get_pago_month_settings(year, month):
