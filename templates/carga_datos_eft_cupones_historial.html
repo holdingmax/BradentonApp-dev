@@ -29,6 +29,8 @@
   .cupones-table tbody tr.cupon-band-alt { background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface)); }
   .cupones-table tbody tr.cupon-block-start td { border-top: 2px solid var(--border); }
   .cupones-table tbody tr.cupon-total-row td { font-weight: 700; border-top: 1px dashed var(--border); vertical-align: top; }
+  /* Separación debajo del total de cada EFT: línea y aire antes del EFT siguiente. */
+  .cupones-table tbody tr.cupon-gap td { padding: 0; height: 16px; background: var(--surface); border-top: 2px solid color-mix(in srgb, var(--accent) 35%, var(--border)); }
   .cupon-total-count { font-weight: 500; color: var(--text-soft); }
   .cupon-total-eft { font-size: 11.5px; font-weight: 600; color: var(--danger, #B91C1C); }
   .cupon-total-status { font-size: 12.5px; }
@@ -124,6 +126,7 @@
             {% endif %}
           </td>
         </tr>
+        {% if not loop.last %}<tr class="cupon-gap" aria-hidden="true"><td colspan="9"></td></tr>{% endif %}
         {% endif %}
         {% endfor %}
       </tbody>
