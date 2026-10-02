@@ -2020,3 +2020,11 @@ Commits, uno por tema: `e60a9ef` Caja Total Revenue, `b843893` guardar sin recar
 - Subir el Chase desde el 29/09: el pago de H.T. de ese día ($3,386.72) cierra la diferencia con el Excel.
 - Sumar al Excel los 2 credit memos del 23/09 si se sigue usando.
 - Unidades por caja mal en 21 productos de H.T. (cigarros sueltos): dan márgenes raros en el reporte del manager (ej. WC Profit Pal −79%).
+
+### Sesión 2026-10-02 (continuación): control Tarjetas y Cupones, Productos a Controles
+
+Commits: `ce684ba` control Tarjetas y Cupones, `a99330f` separación debajo del total de cada EFT en Cupones, `0574cbd` Productos de proveedores pasa a Controles.
+
+- **Relación tarjetas ↔ cupones** (la explicó el usuario): lo cobrado con tarjeta en el C-store es lo que JH acredita como cupones (DDC) y usa para pagar sus facturas en los EFT; tarda unas 72 hs. Verificado con los datos: cada DDC es un lote de tarjetas (lunes trae jueves-sábado, martes el domingo, los demás días con 2 días de atraso) y a veces su Gross es igual al centavo a las tarjetas de un día de Store Info (02/08 $3,096.41 = DDC-5150 del 04/08), pero solo en 12 de 45 días: el lote no siempre cierra con el día del POS. Por eso el control compara acumulados.
+- **Control Tarjetas y Cupones** (`control_tarjetas.py`, `/controles/tarjetas`): pendiente de acreditar = tarjetas de Store Info (`reportes_db.get_card_sales_by_date`, suma de `credit_terms_json`) menos Gross de cupones por fecha (`eft_db.get_coupon_gross_by_date`). Al arrancar un tramo no cuenta los cupones de los 2 primeros días; si falta un día de Store Info el tramo se corta y vuelve a arrancar. Alerta si |pendiente| > $15,000 (decisión del usuario). Agosto: entre −$2,000 y +$15,000.23 (el 30/08, un fin de semana con jueves alto); septiembre hasta el 12/09: máximo $13,369.81, falta Store Info del 11/09. La tarjeta en Controles muestra la alerta del último día cargado.
+- **Productos de proveedores → Controles**: rutas a `/controles/productos/...` (endpoints `controles_productos*`, plantillas `controles_productos*.html`), sin link desde Proveedores; `/carga-datos/proveedores/productos/...` redirige.
