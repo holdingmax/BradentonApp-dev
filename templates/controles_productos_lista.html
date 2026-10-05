@@ -41,7 +41,7 @@
 <div class="page-header">
   <span class="eyebrow">Productos de proveedores</span>
   <h1>Productos</h1>
-  <p class="page-subtitle">Cada producto comprado, con su costo por unidad en la última compra contra la anterior, a qué proveedor se compra y el costo y precio que tiene el POS. Se llena solo al subir facturas en <a href="{{ url_for('carga_datos_proveedores') }}">Proveedores</a> de los proveedores que se leen renglón por renglón: H.T. Hackney, CEC, Colonial, Gold Coast Eagle y Red Bull.</p>
+  <p class="page-subtitle">Cada producto comprado, con su costo por unidad en la última compra contra la anterior, a qué proveedor se compra y el costo y precio que tiene el POS. Se llena solo al subir facturas en <a href="{{ url_for('carga_datos_proveedores') }}">Proveedores</a> de los proveedores que se leen renglón por renglón: H.T. Hackney, CEC, Colonial, Gold Coast Eagle, Red Bull y Frito-Lay.</p>
 </div>
 
 {% if not pos_loaded %}
@@ -114,7 +114,7 @@
   </div>
   <p class="muted prod-empty-search" id="prod-empty-search" hidden>Ningún producto coincide con la búsqueda.</p>
   {% else %}
-  <p class="muted">Todavía no hay productos: se cargan solos al subir facturas de H.T. Hackney, CEC, Colonial, Gold Coast Eagle o Red Bull en <a href="{{ url_for('carga_datos_proveedores') }}">Proveedores</a>.</p>
+  <p class="muted">Todavía no hay productos: se cargan solos al subir facturas de H.T. Hackney, CEC, Colonial, Gold Coast Eagle, Red Bull o Frito-Lay en <a href="{{ url_for('carga_datos_proveedores') }}">Proveedores</a>.</p>
   {% endif %}
 </div>
 

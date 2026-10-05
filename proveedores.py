@@ -466,9 +466,16 @@ def _extract_frito_lay_invoice(pdf_path):
                 date_match = None
 
     if not (invoice_match and invoice_date and total_match):
-        raise ValueError(
-            f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total del PDF de Frito-Lay."
-        )
+        # 2026-10-05: respaldo con el lector de tickets (varias pasadas por
+        # renglón, cada dato confirmado por dos lecturas o por el nombre del
+        # archivo) -- la lectura de arriba perdía el N° y el TOTAL DUE de
+        # algunas facturas con la foto del cheque (60895948).
+        try:
+            return proveedores_productos.read_frito_lay_header(pdf_path)
+        except ValueError:
+            raise ValueError(
+                f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total del PDF de Frito-Lay."
+            ) from None
 
     invoice_no = int(invoice_match.group(1))
     amount = float(total_match.group(1).replace(",", ""))

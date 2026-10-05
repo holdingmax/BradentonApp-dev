@@ -2684,6 +2684,388 @@ def extract_red_bull_lines(pdf_path, invoices=None):
     raise ValueError(error or "no se encontró en el PDF la factura de Red Bull pedida.")
 
 
+# --- Frito-Lay (2026-10-05) ----------------------------------------------------
+# Pedido del usuario (2026-10-05): sumar otro proveedor a la lectura de
+# productos. Frito-Lay usa desde dic-2025 un ticket limpio ("E-CHECK SALE" /
+# "CASH SALE") con un renglón por producto:
+#   QTY UPC  SRP PKG-INFO  ITEM      COST    DISC-EACH DISC-TOTAL AMOUNT TAX
+#   12 77063 2.79 DR FLM   00046073  1.9500  0.0000    0.00       23.40  *
+# El UPC impreso es el código de producto de 5 dígitos: el UPC completo es
+# 0 + 28400 (Frito-Lay) + código + dígito verificador (028400770637, el del
+# POS). Lo que se lee limpio: ITEM y COST. La cantidad a veces queda pegada al
+# UPC ("477018" = 4 x 77018) y el AMOUNT sale mal seguido ("23:40", "7280"),
+# así que cada renglón se arma con COST x cantidad - descuento y se controla
+# con el pie: GROSS SALES AMOUNT, TOTAL EXTENDED EACHES SOLD y el UNIT COST
+# SUMMARY de la segunda página ("247 @ $1.9500": las unidades de cada costo).
+# Particularidades vistas en las 15 facturas de dic-2025 a sep-2026:
+# - renglones vendidos por caja: el ITEM baja a una segunda línea
+#   ("6 26034 2.09 GH VANILLA 1.1900 ... / 1 6REG 00025294");
+# - dips sin precio sugerido y con código corto ("2 26 NP FRO DIP"): el UPC
+#   sale igual (028400000260, el del POS);
+# - el código leído con basura ("7/060") no vota: igual cerraba la suma con
+#   un dígito menos y daba un UPC equivocado.
+# Las devoluciones (**RETURNS**, en el mismo documento o en otro con otro N°)
+# no se cuentan. Los formatos viejos ("CHARGE SALES", hasta oct-2025) no
+# tienen estas columnas y dan error (la factura entra sin productos).
+
+_FL_ITEM = re.compile(r"0\d{7}")
+_FL_COST = re.compile(r"\d{1,3}[.,]\d{4}")
+_FL_SRP = re.compile(r"\d{1,2}[.,]\d{2}")
+# "INVOICE #: 96889721", también "INVOICE 4: ..." o con un espacio en el medio ("968897 21").
+_FL_DOC = re.compile(r"INVOICE\s*[#4]?\s*[:;]\s*(\d[\d ]{4,10}\d)|INVOICE\s*#\s*(\d{6,10})", re.IGNORECASE)
+_FL_SUMMARY_TITLE = re.compile(r"UNIT\s*COST\s*SU\w{3,5}Y", re.IGNORECASE)
+_FL_SUMMARY = re.compile(r"(\d{1,4})\s*@\s*\$\s*(\d{1,3}[.,]\d{4})")
+
+
+def _fl_cost(text):
+    """'1.8800' / '«4.0400.' -> float, o None."""
+    match = re.fullmatch(r"\W*(\d{1,3}[.,]\d{4})\W*", _fix_digits(_clean_token(text or "")))
+    return float(match.group(1).replace(",", ".")) if match else None
+
+
+def _fl_upc(code):
+    """Código de producto de Frito-Lay (2 a 5 dígitos) -> UPC-A completo con el prefijo 28400."""
+    digits = "028400" + code.zfill(5)
+    check = (10 - sum(int(d) * (3 if i % 2 == 0 else 1) for i, d in enumerate(digits)) % 10) % 10
+    return digits + str(check)
+
+
+def _fl_product(row):
+    """Renglón de producto leído en una pasada, o None."""
+    words = [w for w in row["words"] if re.search(r"[0-9A-Za-z]", w["text"])]
+    texts = [_fix_digits(_clean_token(w["text"])) for w in words]
+    at = next((i for i, t in enumerate(texts) if _FL_ITEM.fullmatch(t)), None)
+    item = texts[at] if at is not None else None
+    if at is None:
+        # El ITEM a veces queda corrido al renglón de abajo: sin él, el
+        # renglón se ancla en el COST (y tiene que tener precio sugerido).
+        cost_at = next((i for i, t in enumerate(texts) if _fl_cost(t)), None)
+        if cost_at is None or not (any(_FL_SRP.fullmatch(t) for t in texts[:cost_at])
+                                   or (cost_at > 2 and texts[0].isdigit() and texts[1].isdigit())):
+            return None
+        at = cost_at - 1
+    elif at == 2 and re.fullmatch(r"[\dGSBOIl]{1,3}REG", words[1]["text"]):
+        return None  # "1 6REG 00025294": la segunda línea de un renglón vendido por caja
+    if at < 2 or len(texts) < at + 2:
+        return None
+    srp_at = next((i for i in range(at) if _FL_SRP.fullmatch(texts[i])), None)
+    has_srp = srp_at is not None
+    if srp_at is None:
+        # Sin precio sugerido ("2 26 NP FRO DIP"): la cantidad y el código son
+        # los números de adelante; la descripción empieza en la primera palabra.
+        srp_at = next((i for i in range(at) if not texts[i].isdigit()), at)
+        if srp_at == 0:
+            return None
+    # Cantidad y código: solo números limpios ("7/060" no es 7060 ni 77060:
+    # ese renglón no vota el código en esta pasada).
+    lead = [t for t in texts[:srp_at] if re.search(r"\d", t)]
+    pairs = []
+    if any(not t.isdigit() for t in lead[-2:]):
+        lead = []
+    if len(lead) >= 2 and len(lead[-2]) <= 3 and 2 <= len(lead[-1]) <= 5:
+        pairs.append((int(lead[-2]), lead[-1], True))  # cantidad y código separados: lectura limpia
+    elif lead and 5 <= len(lead[-1]) <= 8:
+        # Pegados ("477018"): cada corte posible (1 a 3 dígitos de cantidad, 4 o 5 de código).
+        joined = lead[-1]
+        pairs.extend((int(joined[:q]), joined[q:], False) for q in (1, 2, 3)
+                     if 4 <= len(joined) - q <= 5 and int(joined[:q]) > 0)
+    after = texts[at + 1:]
+    if not pairs and not (after and _fl_cost(after[0]) is not None):
+        return None
+    return {
+        "page": row["page"], "y": row["y"], "height": row["height"],
+        "item": item, "srp": _ticket_amount(texts[srp_at]) if has_srp else None,
+        "description": " ".join(w["text"] for w in words[srp_at + has_srp:at + (item is None)]),
+        "cost": _fl_cost(after[0]) if after else None,
+        "disc_each": _fl_cost(after[1]) if len(after) > 1 else None,
+        "disc_total": _ticket_amount(after[2]) if len(after) > 2 else None,
+        "amount": _ticket_amount(after[3]) if len(after) > 3 else None,
+        "pairs": pairs,
+    }
+
+
+def _fl_doc(text):
+    """N° de documento de un renglón ("INVOICE #: 96889721"), o None."""
+    match = _FL_DOC.search(text)
+    if not match:
+        return None
+    digits = re.sub(r"\s", "", match.group(1) or match.group(2))
+    return int(digits) if 6 <= len(digits) <= 10 else None
+
+
+def _fl_target(docs, wanted):
+    """
+    N° del documento de ventas en una pasada: el igual a `wanted`; si esta
+    pasada lo leyó mal, el único a 1 o 2 dígitos de distancia (los otros
+    documentos del PDF tienen otro N°); sin `wanted`, el primero.
+    """
+    if not docs:
+        return None
+    if wanted is None:
+        return docs[0]
+    if wanted in docs:
+        return wanted
+    near = {d for d in docs if len(str(d)) == len(str(wanted))
+            and sum(a != b for a, b in zip(str(d), str(wanted))) <= 2}
+    return near.pop() if len(near) == 1 else None
+
+
+def _fl_collect(readings, wanted):
+    """
+    Renglones de producto (agrupados entre pasadas) y pie del documento de
+    ventas `wanted` (el N° de la factura; None = el primero del PDF).
+    """
+    products, footer = [], {"gross": [], "eaches": [], "summary": {}}
+    docs_by_reading = [[d for d in (_fl_doc(row["text"]) for row in reading) if d is not None] for reading in readings]
+    found = {d for docs in docs_by_reading for d in docs}
+    if wanted is None and found:
+        # Sin el N° del encabezado: el documento que aparece primero en más pasadas.
+        wanted = _ticket_winner(_ticket_votes([{"doc": docs[0]} for docs in docs_by_reading if docs], "doc"))
+    single = wanted is not None and bool(found) and all(_fl_target([d], wanted) is not None for d in found)
+    for reading, docs in zip(readings, docs_by_reading):
+        if single and not docs:
+            # Esta pasada no leyó ningún N° y el PDF trae un solo documento:
+            # todo lo que lee es de esa factura.
+            target = doc = wanted
+        else:
+            target, doc = _fl_target(docs, wanted), None
+        section = summary_part = None
+        summary = {}
+        for row in reading:
+            text = row["text"]
+            number = _fl_doc(text)
+            if number is not None:
+                doc = number
+            is_summary = bool(_FL_SUMMARY_TITLE.search(text))
+            if re.search(r"RETURNS\s*\*", text) and not is_summary and summary_part is None:
+                section = "returns"
+            elif re.search(r"\*\s*SALES\s*\*", text) and not is_summary and summary_part is None:
+                section = "sales"
+            if doc is None or doc != target:
+                continue
+            # UNIT COST SUMMARY: "**SALES** 6 @ $1.9800" ... y después
+            # "**RETURNS** 17 @ $1.9500": solo cuentan los de ventas.
+            if is_summary or (summary_part and re.search(r"SALES\s*\*", text)):
+                summary_part = "sales"
+            if summary_part and re.search(r"RETURNS", text):
+                summary_part = "returns"
+            if re.search(r"SALES FOR WEEK|YTD", text, re.IGNORECASE):
+                summary_part = None
+            if summary_part == "sales":
+                for qty, cost in _FL_SUMMARY.findall(text):
+                    key = float(cost.replace(",", "."))
+                    summary[key] = summary.get(key, 0) + int(qty)
+            match = re.search(r"GROSS\s*SALES\s*A\w{3,6}\W*\$?\s*([\d,]+[.,]\d{2})", text, re.IGNORECASE)
+            if match:
+                footer["gross"].append(_ticket_amount(match.group(1)))
+            # Las unidades de los renglones son las "extendidas": un renglón
+            # vendido por caja ("26 76929 ... / 1 26REG") cuenta 26 acá y 0 en
+            # el TOTAL EACHES SOLD.
+            match = re.search(r"TOTAL\s*EXTENDED\s*EACHES\s*SOL\w\W*(\d+)", text, re.IGNORECASE)
+            if match:
+                footer["eaches"].append(int(match.group(1)))
+            if section == "sales":
+                product = _fl_product(row)
+                if product is not None:
+                    products.append(product)
+        if summary:
+            key = tuple(sorted(summary.items()))
+            footer["summary"][key] = footer["summary"].get(key, 0) + 1
+    all_rows = [row for reading in readings for row in reading]
+    tolerance = _median([row["height"] for row in all_rows]) if all_rows else 10
+    return _ticket_clusters(products, tolerance), footer
+
+
+def _fl_options(cluster, costs=None):
+    """
+    Combinaciones (cantidad, código) de un renglón con su total
+    (COST x cantidad - descuento), de la más creíble a la menos: primero las
+    que dan un AMOUNT leído, después las lecturas limpias.
+    """
+    votes = _ticket_votes(cluster, "cost")
+    if costs:
+        # Solo los costos del UNIT COST SUMMARY (4.0400 leído 4.0800 no vale).
+        votes = {cost: n for cost, n in votes.items() if cost in costs}
+    cost = _ticket_winner(votes)
+    if cost is None:
+        return cost, []
+    disc_total = _ticket_winner(_ticket_votes(cluster, "disc_total"))
+    if disc_total is None:
+        if _ticket_winner(_ticket_votes(cluster, "disc_each")) != 0.0:
+            return cost, []
+        disc_total = 0.0
+    amounts = _ticket_votes(cluster, "amount")
+    weight = {}
+    for cand in cluster:
+        for qty, code, clean in cand["pairs"]:
+            weight[(qty, code)] = weight.get((qty, code), 0) + (2 if clean else 1)
+    options = []
+    for (qty, code), votes in weight.items():
+        ext = round(qty * cost - disc_total, 2)
+        options.append((amounts.get(ext, 0), votes, qty, code, ext))
+    options.sort(key=lambda o: (-o[0], -o[1]))
+    return cost, options
+
+
+def _fl_resolve(clusters, footer):
+    """Renglones de la factura de Frito-Lay, o ValueError si no cierran contra el pie."""
+    if not clusters:
+        raise ValueError("no se ven los renglones de producto de la factura (¿formato viejo de Frito-Lay?).")
+    gross = _ticket_most_voted(footer["gross"])
+    summary = _ticket_winner(footer["summary"])
+    # El UNIT COST SUMMARY trae las unidades de cada costo: su suma son las
+    # unidades vendidas (las mismas que el TOTAL EXTENDED EACHES SOLD).
+    eaches = sum(qty for _, qty in summary) if summary else _ticket_most_voted(footer["eaches"])
+    if gross is None or eaches is None:
+        raise ValueError("no se pudo leer el GROSS SALES AMOUNT o el TOTAL EACHES SOLD de Frito-Lay.")
+    rows = []
+    for line_no, cluster in enumerate(clusters, start=1):
+        cost, options = _fl_options(cluster, {c for c, _ in summary} if summary else None)
+        item = _ticket_winner(_ticket_votes(cluster, "item"))
+        if cost is None or not options:
+            raise ValueError(f"el renglón {line_no} de Frito-Lay no se pudo leer (cantidad, costo o ITEM).")
+        rows.append({"cluster": cluster, "cost": cost, "item": item, "options": options})
+
+    def fits(choice):
+        qty = sum(r["options"][i][2] for r, i in zip(rows, choice))
+        ext = round(sum(r["options"][i][4] for r, i in zip(rows, choice)), 2)
+        if qty != eaches or abs(ext - gross) >= 0.005:
+            return False
+        if summary is not None:
+            by_cost = {}
+            for r, i in zip(rows, choice):
+                by_cost[r["cost"]] = by_cost.get(r["cost"], 0) + r["options"][i][2]
+            if tuple(sorted(by_cost.items())) != summary:
+                return False
+        return True
+
+    choice = [0] * len(rows)
+    if not fits(choice):
+        # Probar otra combinación en hasta dos renglones (la cantidad pegada al
+        # código cortada en otro lugar); vale si una sola cierra todo el pie.
+        alternatives = [(n, i) for n, r in enumerate(rows) for i in range(1, len(r["options"]))]
+        found = []
+        for size in (1, 2):
+            for combo in itertools.combinations(alternatives, size):
+                if len({n for n, _ in combo}) != size:
+                    continue
+                trial = list(choice)
+                for n, i in combo:
+                    trial[n] = i
+                if fits(trial):
+                    found.append(trial)
+            if found:
+                break
+        if len(found) != 1:
+            total = round(sum(r["options"][0][4] for r in rows), 2)
+            raise ValueError(f"los renglones de Frito-Lay suman ${total:,.2f} y el GROSS SALES impreso es ${gross:,.2f} "
+                             f"(o no dan las {eaches} unidades del pie).")
+        choice = found[0]
+    lines = []
+    for r, i in zip(rows, choice):
+        _, _, qty, code, ext = r["options"][i]
+        cluster = r["cluster"]
+        disc_each = _ticket_winner(_ticket_votes(cluster, "disc_each")) or 0.0
+        description = (_ticket_winner(_ticket_votes(cluster, "description"))
+                       or next((c["description"] for c in cluster if c.get("description")), ""))
+        lines.append(_line(
+            len(lines) + 1, upc=_fl_upc(code), item_no=r["item"], description=description,
+            qty=qty, pack=1, size="", units=1, price=r["cost"], allowance=disc_each or None,
+            net=round(r["cost"] - disc_each, 4), ext=ext,
+            srp=_ticket_winner(_ticket_votes(cluster, "srp")),
+        ))
+    return lines, gross
+
+
+def _fl_text_date(text):
+    """'01 Jan 2026' -> datetime; el OCR cambia la M del mes por H o N ('25 Har 2026')."""
+    match = re.search(r"DATE\W*(\d{1,2})\s+([A-Za-z]{3})\w*\s+(\d{4})", text, re.IGNORECASE)
+    if match is None:
+        return None
+    day, month, year = match.groups()
+    found = set()
+    for first in {month[0], "M", "N"} if month[0] in "HMNhmn" else {month[0]}:
+        try:
+            found.add(datetime.strptime(f"{day} {first}{month[1:]} {year}", "%d %b %Y"))
+        except ValueError:
+            pass
+    return found.pop() if len(found) == 1 else None
+
+
+def read_frito_lay_header(pdf_path):
+    """
+    Respaldo del encabezado de Frito-Lay (proveedores._extract_frito_lay_invoice
+    lee la página entera de una vez y a veces pierde el "INVOICE #" o el
+    importe del "TOTAL DUE:", visto en la factura 60895948): N°, fecha y
+    TOTAL DUE del primer documento del PDF, con las pasadas del lector de
+    tickets. Cada dato vale si lo leen igual dos pasadas, o una y el nombre
+    del archivo. ValueError si no.
+    """
+    images = _ticket_images(pdf_path)
+    filename = os.path.basename(pdf_path)
+    votes = {"invoice_no": {}, "date": {}, "amount": {}}
+    for passes_done in range(min(3, len(_TICKET_PASSES))):
+        doc = None
+        found = {}
+        for row in _ticket_readings(images, passes_done):
+            number = _fl_doc(row["text"])
+            if number is not None:
+                if doc is not None and number != doc:
+                    break  # otro documento (devoluciones): ya no es esta factura
+                doc = found["invoice_no"] = number
+            if found.get("date") is None:
+                found["date"] = _fl_text_date(row["text"])
+            match = re.search(r"TOTAL\s*DUE\W*\$?\s*([\d,]+[.,]\d{2})", row["text"], re.IGNORECASE)
+            if match and "amount" not in found:
+                found["amount"] = _ticket_amount(match.group(1))
+        for field, value in found.items():
+            if value is not None:
+                votes[field][value] = votes[field].get(value, 0) + 1
+        named_numbers = {int(n) for n in re.findall(r"\d{6,10}", filename)}
+        named_dates = _filename_dates(filename)
+        result = {}
+        for field, counts in votes.items():
+            for value, n in sorted(counts.items(), key=lambda kv: -kv[1]):
+                if n >= 2 or (field == "invoice_no" and value in named_numbers) or (field == "date" and value in named_dates):
+                    result[field] = value
+                    break
+        if len(result) == 3:
+            return result
+    raise ValueError("no se pudo leer invoice/fecha/total del PDF de Frito-Lay.")
+
+
+def extract_frito_lay_lines(pdf_path, invoices=None):
+    """
+    Renglones de una factura de Frito-Lay (formato desde dic-2025). Con
+    `invoices` (lo que leyó el encabezado de la app), los del documento con
+    ese N°; la suma tiene que dar el GROSS SALES AMOUNT impreso.
+    """
+    images = _ticket_images(pdf_path)
+    if not images:
+        raise ValueError("no se encontró la imagen escaneada de la factura de Frito-Lay.")
+    wanted = int(invoices[0]["invoice_no"]) if invoices else None
+    readings, error, pages = [], None, range(len(images))
+    for passes_done in range(len(_TICKET_PASSES)):
+        config, scale, prep = _TICKET_PASSES[passes_done]
+        readings.append([_ticket_row(page, words) for page in pages
+                         for words in _ocr_rows(images[page], config, scale=scale, prep=prep)])
+        if passes_done == 0:
+            if not any(re.search(r"ITE[MN]\s+COST|EACH\s+UPC", row["text"]) for row in readings[0]):
+                raise ValueError("la factura de Frito-Lay no tiene el formato con ITEM y COST (formato viejo).")
+            # Las pasadas siguientes, solo sobre las páginas con renglones o con el pie
+            # (no la foto del cheque ni el documento de devoluciones de otro N°).
+            pages = sorted({row["page"] for row in readings[0]
+                            if _fl_product(row) or re.search(r"GROSS|EACHES|@\s*\$", row["text"])})
+        try:
+            clusters, footer = _fl_collect(readings, wanted)
+            lines, gross = _fl_resolve(clusters, footer)
+            return {"invoice_no": str(wanted) if wanted is not None else None, "lines": lines,
+                    "subtotal": gross, "total": gross}
+        except ValueError as exc:
+            error = exc
+    raise error
+
+
 # supplier_key (el de SUPPLIER_REGISTRY en proveedores.py) -> extractor de renglones.
 LINE_EXTRACTORS = {
     "ht_hackney": extract_ht_hackney_lines,
@@ -2691,6 +3073,7 @@ LINE_EXTRACTORS = {
     "colonial": extract_colonial_lines,
     "gce": extract_gce_lines,
     "red_bull": extract_red_bull_lines,
+    "frito_lay": extract_frito_lay_lines,
 }
 
 
