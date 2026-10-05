@@ -83,7 +83,7 @@ from controles_mercaderia import check_mercaderia_invoices
 from controles_valuacion import check_and_complete_valuation
 from monthly_sales import _resolve_sheet_name, parse_monthly_sales_file, process_monthly_sales
 from proveedores import append_supplier_invoices, append_supplier_payments, extract_invoices_from_pdf
-from proveedores import _PDF_EXTRACTION_EXCEPTIONS
+from proveedores import _PDF_EXTRACTION_EXCEPTIONS, invoice_errors
 from proveedores import list_supplier_registry_entries, match_supplier_for_chase_description
 import proveedores_pago_rules
 from proveedores_dynamic_extractors import (
@@ -3102,7 +3102,7 @@ def _read_check_invoice(pdf_path, filename, check_pages=()):
         except Exception as exc:
             print(f"[cheques] proveedor {supplier_key} reconocido pero sin factura legible en {filename}: {exc}")
             continue
-        invoices = [inv for inv in (result if isinstance(result, list) else [result]) if inv]
+        invoices, _ = proveedores_module.invoice_errors(result if isinstance(result, list) else [result])
         if invoices:
             auto["auto_invoice_no"] = " ".join(str(inv["invoice_no"]) for inv in invoices if inv.get("invoice_no")) or None
             dates = [inv["date"] for inv in invoices if inv.get("date")]
@@ -6631,8 +6631,35 @@ def carga_datos_proveedores_subir():
     return jsonify({"job_id": job_id, "total": len(paths)})
 
 
+def _invoice_ref(invoice_no, filename):
+    """
+    Lo que identifica una factura en el aviso de la carga: su N° o, si no se
+    pudo leer, el N° que trae el nombre del archivo ("Invoice 2035255085
+    22.06.2026.pdf") o, si no trae uno solo, el nombre mismo.
+    """
+    if invoice_no:
+        return str(invoice_no)
+    found = re.findall(r"(?<![\d.,/])\d{6,}(?![\d.,/])", os.path.splitext(filename)[0])
+    return found[0] if len(found) == 1 else f"archivo «{filename}»"
+
+
+def _invoice_notice_line(text, item):
+    """'No se pudo cargar factura de Red Bull (2035255085)' -- una factura por renglón del aviso."""
+    ref = _invoice_ref(item.get("invoice_no"), item["filename"])
+    if item.get("supplier"):
+        return f"{text} de {item['supplier']} ({ref})"
+    return f"{text} ({ref}, proveedor no reconocido)"
+
+
 def _run_carga_datos_proveedores_job(job_id, paths):
-    """Corre en su propio hilo -- mismo patrón que _run_carga_datos_reporte_diario_job, ver ese docstring."""
+    """
+    Corre en su propio hilo -- mismo patrón que _run_carga_datos_reporte_diario_job, ver ese docstring.
+
+    Aviso final como lista, una factura por renglón (pedido del usuario
+    2026-10-05: "No se pudo cargar factura de Red Bull (N° de invoice)"):
+    cada factura de un PDF se carga o se rechaza por su cuenta -- una
+    ilegible no frena las demás del mismo PDF ni del lote.
+    """
     try:
         saved = []
         duplicates = []
@@ -6647,10 +6674,17 @@ def _run_carga_datos_proveedores_job(job_id, paths):
             try:
                 supplier_key, supplier_label, invoices = extract_invoices_from_pdf(path)
             except _PDF_EXTRACTION_EXCEPTIONS as exc:
-                failed.append({"filename": filename, "error": str(exc), "supplier": None})
+                print(f"[carga-datos/proveedores] {filename}: {exc}")
+                failed.append({"filename": filename, "supplier": getattr(exc, "supplier_label", None)})
                 jobs.update_job(job_id, done=index, total=len(paths))
                 continue
-            if not invoices:
+            # Gold Coast y Red Bull devuelven aparte cada factura del PDF que no
+            # se pudo leer con seguridad (proveedores._ticket_invoices).
+            invoices, unreadable = invoice_errors(invoices)
+            for bad in unreadable:
+                print(f"[carga-datos/proveedores] {filename}, factura {bad.get('invoice_no')}: {bad['error']}")
+                failed.append({"filename": filename, "supplier": supplier_label, "invoice_no": bad.get("invoice_no")})
+            if not invoices and not unreadable:
                 # Un PDF sin ninguna factura (por ejemplo, solo una devolución
                 # de Coca-Cola) no es un error, pero tampoco puede desaparecer
                 # del lote sin que se note (auditoría 2026-09).
@@ -6673,7 +6707,8 @@ def _run_carga_datos_proveedores_job(job_id, paths):
                 if not invoice.get("skip_filename_date_check") and _filename_date_mismatch(
                     filename, invoice["date"]
                 ):
-                    date_mismatches.append({"filename": filename, "supplier": supplier_label})
+                    date_mismatches.append({"filename": filename, "supplier": supplier_label,
+                                            "invoice_no": invoice["invoice_no"]})
                     continue
                 valid_invoices.append(invoice)
 
@@ -6689,12 +6724,25 @@ def _run_carga_datos_proveedores_job(job_id, paths):
                     duplicates.append({"filename": filename, "supplier": supplier_label})
 
             # Detalle de productos (proveedores_productos.py, pedido explícito
-            # del usuario 2026-09-28): solo proveedores con extractor de
-            # renglones (H.T. Hackney, CEC, Colonial, Gold Coast y Red Bull). Corre también si la factura ya
-            # estaba cargada -- volver a subirla completa su detalle sin
-            # duplicar nada. Si el detalle no cierra contra la factura no se
-            # guarda ningún renglón, pero la factura en sí queda guardada.
-            if valid_invoices and supplier_key in proveedores_productos.LINE_EXTRACTORS:
+            # del usuario 2026-09-28). Corre también si la factura ya estaba
+            # cargada -- volver a subirla completa su detalle sin duplicar
+            # nada. Si el detalle no cierra contra la factura no se guarda
+            # ningún renglón, pero la factura en sí queda guardada.
+            if any("lines" in inv for inv in valid_invoices):
+                # Gold Coast y Red Bull: el mismo lector que leyó cada factura ya
+                # trae su detalle (o None si los renglones no cerraron).
+                for invoice in valid_invoices:
+                    if invoice.get("lines"):
+                        proveedores_db.replace_invoice_lines(
+                            supplier_key, str(invoice["invoice_no"]), invoice["date"], invoice["lines"]
+                        )
+                        lines_saved += 1
+                    else:
+                        print(f"[carga-datos/proveedores] detalle de productos de {filename}, factura "
+                              f"{invoice['invoice_no']}: {invoice.get('lines_error')}")
+                        lines_failed.append({"filename": filename, "supplier": supplier_label,
+                                             "invoice_no": invoice["invoice_no"]})
+            elif valid_invoices and supplier_key in proveedores_productos.LINE_EXTRACTORS:
                 try:
                     detail = proveedores_productos.extract_lines(supplier_key, path, invoices=valid_invoices)
                     invoice = next(
@@ -6708,7 +6756,8 @@ def _run_carga_datos_proveedores_job(job_id, paths):
                     lines_saved += 1
                 except Exception as exc:
                     print(f"[carga-datos/proveedores] detalle de productos de {filename}: {exc}")
-                    lines_failed.append({"filename": filename, "supplier": supplier_label})
+                    lines_failed.append({"filename": filename, "supplier": supplier_label,
+                                         "invoice_no": ", ".join(str(inv["invoice_no"]) for inv in valid_invoices)})
 
             # Solo si se guardó alguna factura de este PDF: volver a subir uno
             # ya cargado no archiva otra copia (auditoría 2026-09).
@@ -6724,25 +6773,19 @@ def _run_carga_datos_proveedores_job(job_id, paths):
 
         parts = []
         if saved:
-            parts.append(f"{len(saved)} factura(s) guardada(s).")
+            parts.append(f"{len(saved)} factura(s) guardada(s)"
+                         + (f", {lines_saved} con detalle de productos." if lines_saved else "."))
+        elif lines_saved:
+            parts.append(f"Detalle de productos guardado en {lines_saved} factura(s).")
         if duplicates:
             parts.append(f"{len(duplicates)} factura(s) ya estaban cargadas y se omitieron.")
-        if date_mismatches:
-            parts.append(_group_by_supplier_message(
-                "Rechazadas (la fecha no coincide con el nombre del archivo)", date_mismatches, "factura(s)"
-            ))
-        if failed:
-            parts.append(_group_by_supplier_message("No se pudieron cargar", failed, "factura(s)"))
-        if without_invoice:
-            parts.append(_group_by_supplier_message(
-                "Sin ninguna factura para guardar (por ejemplo, solo devolución)", without_invoice, "PDF(s)"
-            ))
-        if lines_saved:
-            parts.append(f"Detalle de productos guardado en {lines_saved} factura(s).")
-        if lines_failed:
-            parts.append(_group_by_supplier_message(
-                "Sin detalle de productos (los renglones no cerraban contra la factura)", lines_failed, "factura(s)"
-            ))
+        parts.extend(_invoice_notice_line("No se pudo cargar factura", item) for item in failed)
+        parts.extend(_invoice_notice_line("No se pudo cargar factura", item)
+                     + ": la fecha no coincide con el nombre del archivo" for item in date_mismatches)
+        parts.extend(_invoice_notice_line("Sin ninguna factura para guardar (por ejemplo, solo devolución) en el PDF",
+                                          item) for item in without_invoice)
+        parts.extend(_invoice_notice_line("Sin detalle de productos (los renglones no cerraban): factura", item)
+                     for item in lines_failed)
         if not parts:
             parts.append("No se guardó ninguna factura de este lote.")
         level = (
@@ -6758,7 +6801,7 @@ def _run_carga_datos_proveedores_job(job_id, paths):
 
         jobs.update_job(
             job_id, status="done", done=len(paths), total=len(paths),
-            notice=" ".join(parts), notice_level=level, redirect_url=redirect_url,
+            notice="\n".join(parts), notice_level=level, redirect_url=redirect_url,
         )
     except Exception as exc:
         jobs.update_job(job_id, status="error", error=f"Error: {exc}")

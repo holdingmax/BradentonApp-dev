@@ -60,6 +60,7 @@ except ImportError:  # pragma: no cover - environment guard
 
 from proveedores_pago_rules import match_supplier_sheet
 import proveedores_dynamic_extractors as _dynamic_extractors
+import proveedores_productos
 from ocr_utils import (
     ensure_pdfplumber as _ensure_pdfplumber,
     ensure_pytesseract as _ensure_pytesseract,
@@ -354,45 +355,41 @@ def _extract_colonial_invoice(pdf_path):
     return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
 
 
+def _ticket_invoices(found, pdf_path, label):
+    """
+    Lista de facturas de un PDF leído con el lector de tickets de
+    proveedores_productos (Gold Coast y Red Bull). Las que no se pudieron
+    leer con seguridad vienen como {"error", "invoice_no"} -- la carga las
+    avisa una por una sin frenar las demás del mismo PDF; quien no las
+    entiende las filtra con `invoice_errors`.
+    """
+    if not found:
+        raise ValueError(f"{os.path.basename(pdf_path)}: no se encontró ninguna factura de {label} en el PDF.")
+    return found
+
+
+def invoice_errors(invoices):
+    """Separa (facturas leídas, facturas ilegibles {"error", "invoice_no"}) de lo que devuelve un extractor."""
+    good = [inv for inv in invoices if inv and "error" not in inv]
+    return good, [inv for inv in invoices if inv and "error" in inv]
+
+
 def _extract_gce_invoice(pdf_path):
     """
-    Gold Coast Eagle -- escaneo; con muchos ítems, la factura se corre a
-    una segunda página y la línea de confirmación ("Inv# 657065
-    $1,381.00", con invoice y total juntos) queda ahí, no en la primera.
+    Gold Coast Eagle -- ticket escaneado de 1 o 2 páginas, a veces con dos
+    facturas del mismo reparto en un PDF.
 
-    La fecha real vive en una línea de confirmación tipo "Thu Aug 20,
-    2026" (día de semana + mes + día + año) -- bug real encontrado
-    2026-09-03: el regex viejo (\\w{3} suelto, sin exigir un día de semana
-    válido) matcheaba el TEXTO "...Expires Mar 31, 2027" del recuadro de
-    licencia que casi todas las facturas traen cerca del encabezado
-    ("License: ... Expires Mar 31, 2027" -> "res Mar 31, 2027" matcheaba
-    igual), leyendo una fecha completamente ajena a la factura sin ningún
-    aviso. Exigir un día de semana real (Mon/Tue/.../Sun) al principio
-    descarta ese falso positivo.
+    2026-10-05 (pedido del usuario): el encabezado viejo leía N° e importe
+    de la línea de confirmación ("Inv# 657065 $1,381.00") con una sola
+    lectura de OCR y guardaba importes mal leídos sin avisar ($82,185.34 por
+    $1,278.98), leía 8 por 0 en el N° y de un PDF con dos facturas cargaba
+    una. Ahora sale del mismo lector de tickets que el detalle de productos
+    (proveedores_productos.read_gce_invoices): cada factura del PDF por
+    separado, con N°, fecha e importe confirmados por la suma de los
+    renglones o por dos lugares distintos del ticket; la que no se puede
+    confirmar se avisa sola.
     """
-    _ensure_pdfplumber()
-    _ensure_pytesseract()
-    with pdfplumber.open(pdf_path) as pdf:
-        pages_text = []
-        for page in pdf.pages:
-            image = _extract_page_image(page)
-            if image is not None:
-                pages_text.append(pytesseract.image_to_string(image))
-    text = "\n".join(pages_text)
-
-    confirm_match = re.search(r"Inv.{0,4}?(\d{5,7})\D{0,3}\$?\s*([\d,]+\.\d{2})", text)
-    date_match = re.search(r"\b(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+\w{3}\s+\d{1,2},\s*\d{4}\b", text)
-
-    if not (confirm_match and date_match):
-        raise ValueError(
-            f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total del PDF de "
-            "Gold Coast Eagle."
-        )
-
-    invoice_no = int(confirm_match.group(1))
-    invoice_date = datetime.strptime(date_match.group(0), "%a %b %d, %Y")
-    amount = float(confirm_match.group(2).replace(",", ""))
-    return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
+    return _ticket_invoices(proveedores_productos.read_gce_invoices(pdf_path), pdf_path, "Gold Coast Eagle")
 
 
 def _parse_frito_lay_text_date(text):
@@ -651,34 +648,15 @@ def _extract_kings_invoice(pdf_path):
 
 def _extract_red_bull_invoice(pdf_path):
     """
-    Red Bull Distribution -- escaneo de una sola página. El renglón
-    "TOTAL DUE" final a veces no lo lee Tesseract, pero el mismo número
-    aparece en el cuadro TOTALS como "INVOICE" (Deposit/Tax siempre en
-    $0.00 en las facturas vistas, así que es el mismo importe).
+    Red Bull Distribution -- ticket escaneado de una página.
+
+    2026-10-05 (pedido del usuario): el encabezado viejo leía "INVOICE ...
+    $" de una sola lectura de OCR: guardaba $0.00 o el DISCOUNT como
+    importe, fallaba con el pie de jun-jul 2026 ("Subtotal"/"Invoice
+    Total") y leía 6 por 5 en el N°. Ahora sale del lector de tickets
+    (proveedores_productos.read_red_bull_invoices), como Gold Coast.
     """
-    _ensure_pdfplumber()
-    _ensure_pytesseract()
-    with pdfplumber.open(pdf_path) as pdf:
-        image = _extract_page_image(pdf.pages[0])
-    if image is None:
-        raise ValueError(
-            f"{os.path.basename(pdf_path)}: no se encontró la imagen escaneada de la factura Red Bull."
-        )
-    text = pytesseract.image_to_string(image)
-
-    invoice_match = re.search(r"\bInv\w{0,6}:\s*(\d{6,})", text)
-    date_match = re.search(r"(\d{1,2}/\d{1,2}/\d{4})\s+\d{1,2}:\d{2}\s*[AP]M", text)
-    total_match = re.search(r"INVOICE\D*([\d,]+\.\d{2})", text)
-
-    if not (invoice_match and date_match and total_match):
-        raise ValueError(
-            f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total del PDF de Red Bull."
-        )
-
-    invoice_no = int(invoice_match.group(1))
-    invoice_date = datetime.strptime(date_match.group(1), "%m/%d/%Y")
-    amount = float(total_match.group(1).replace(",", ""))
-    return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
+    return _ticket_invoices(proveedores_productos.read_red_bull_invoices(pdf_path), pdf_path, "Red Bull")
 
 
 def _extract_sweetheart_invoice(pdf_path):
@@ -2740,14 +2718,21 @@ def extract_invoices_from_pdf(pdf_path):
     Devuelve (supplier_key, supplier_label, invoices) -- `invoices` siempre
     una lista (la mayoría de los proveedores devuelven 1 factura por PDF,
     Coca-Cola/Pepsi a veces 2 -- ver `append_supplier_invoices`), cada una
-    con "date"/"invoice_no"/"amount". Deja pasar las mismas excepciones que
+    con "date"/"invoice_no"/"amount"; Gold Coast y Red Bull suman las que no
+    se pudieron leer como {"error", "invoice_no"} (ver `invoice_errors`) y el
+    detalle de productos de cada una ("lines"). Deja pasar las mismas excepciones que
     ya usa `append_supplier_invoices` para aislar por PDF (ValueError/
     TypeError/AttributeError/RuntimeError/OSError/cv2.error) -- el caller
     decide cómo aislar el lote.
     """
     registry = _effective_supplier_registry()
     supplier_key = _detect_supplier(pdf_path)
-    result = registry[supplier_key]["extract"](pdf_path)
+    try:
+        result = registry[supplier_key]["extract"](pdf_path)
+    except _PDF_EXTRACTION_EXCEPTIONS as exc:
+        # Para el aviso de la carga ("No se pudo cargar factura de Colonial (...)").
+        exc.supplier_label = registry[supplier_key]["label"]
+        raise
     invoices = result if isinstance(result, list) else [result]
     return supplier_key, registry[supplier_key]["label"], invoices
 
@@ -3422,7 +3407,9 @@ def append_supplier_invoices(ledger_path, pdf_paths):
         # ya sabe ordenar/deduplicar/insertar cada factura por su cuenta
         # sin importar de qué PDF vino.
         filename = os.path.basename(pdf_path)
-        extracted_invoices = result if isinstance(result, list) else [result]
+        extracted_invoices, unreadable = invoice_errors(result if isinstance(result, list) else [result])
+        for bad in unreadable:
+            failed.append({"filename": filename, "error": bad["error"], "supplier": registry[supplier_key]["label"]})
         for invoice in extracted_invoices:
             invoice["filename"] = filename
             by_supplier.setdefault(supplier_key, []).append(invoice)

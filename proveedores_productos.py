@@ -25,7 +25,9 @@ cierra, ValueError y no se guarda ningún renglón (nunca un detalle a medias).
 """
 
 import itertools
+import os
 import re
+from datetime import datetime
 
 import pdfplumber
 
@@ -1841,6 +1843,9 @@ _GCE_RULES = {
 
 def _gce_footer(text):
     """Valores del pie que trae un renglón: {"cases"|"selling"|"sales"|"credits"|"total": valor}."""
+    # "1, 385.99" (la coma separada) y "] 385.99" / "|, 385.99" (el 1 de adelante mal leído).
+    text = re.sub(r"(?<![\d,.])[\]|](?:\s*,\s*|\s+)(\d{3}[.,]\d{2})(?!\d)", r"1,\1", text)
+    text = re.sub(r"(\d)\s*,\s+(\d{3}[.,]\d{2})(?!\d)", r"\1,\2", text)
     found = {}
     patterns = (
         ("sales", r"Total\s*Sa\w*"), ("credits", r"Total\s*Cr\w*"), ("total", r"In\w{3,5}\s*T[o0]\w{2,3}"),
@@ -1867,18 +1872,40 @@ def _gce_header_no(text):
     if "$" in text:
         return None
     match = re.search(r"(\d{6})\s*P[O0]\w?\W", text)
-    if match is None and "Account" in text:
-        match = re.search(r"Inv\w{0,6}\W{0,4}(\d{6})(?!\d)", text)
+    if match is None:
+        match = re.search(r"(?:Inv|nvo)\w{0,5}\W{1,4}(\d{6})(?!\d)", text)
     return match.group(1) if match else None
+
+
+_GCE_CONFIRM = re.compile(r"Inv\w{0,2}\W{0,4}(\d{6})\W{0,3}[$S§]\s*([\d,]+[.,]\d{2})(?!\d)")
+_GCE_DATE = re.compile(r"\b(Mon|Tue|Wed|Thu|Fri|Sat|Sun)\w*\W+([A-Z][a-z]{2})\w*\W+(\d{1,2}),?\s*(\d{4})\b")
+
+
+def _gce_date(text):
+    """
+    Fecha del encabezado ("Thu Jan 22, 2026 7:18 AM"), o None. Exige el día de
+    la semana y que coincida con la fecha: así un dígito mal leído no pasa, y
+    tampoco el "Expires Mar 31, 2027" del recuadro de la licencia.
+    """
+    match = _GCE_DATE.search(text)
+    if match is None:
+        return None
+    try:
+        found = datetime.strptime(f"{match.group(2)} {int(match.group(3))} {match.group(4)}", "%b %d %Y")
+    except ValueError:
+        return None
+    return found if found.strftime("%a") == match.group(1) else None
 
 
 def _gce_blocks(readings):
     """
     Arma las facturas del PDF con todas las pasadas hechas hasta ahora. Cada
     factura termina en su renglón "Invoice Total" (o "Total Sales"): los
-    renglones de producto, el pie y el N° del encabezado van a la factura
-    cuyo cierre es el primero que viene después. Devuelve (facturas,
-    confirmación {N°: [importes]}, columnas).
+    renglones de producto, el pie, la fecha y el N° del encabezado van a la
+    factura cuyo cierre es el primero que viene después. Las líneas de
+    confirmación del reparto ("Inv# 677092 $1,034.07", una por cada factura
+    del reparto, repetidas al pie de cada ticket) van aparte. Devuelve
+    (facturas, confirmaciones {N°: {importe}}, columnas).
     """
     all_rows = [row for reading in readings for row in reading]
     tolerance = _median([row["height"] for row in all_rows]) if all_rows else 10
@@ -1892,13 +1919,15 @@ def _gce_blocks(readings):
     def block_of(row):
         return next((i for i, (page, y) in enumerate(boundaries) if (row["page"], row["y"]) <= (page, y)), None)
 
-    blocks = [{"products": [], "footer": {}, "numbers": {}} for _ in boundaries]
-    confirm = {}
+    blocks = [{"end": end, "products": [], "footer": {}, "numbers": {}, "dates": {}} for end in boundaries]
+    confirm_rows = []
     for reading in readings:
+        started = set()  # facturas que en esta pasada ya pasaron el encabezado
         for position, row in enumerate(reading):
-            match = re.search(r"Inv\w{0,4}\W{0,3}(\d{6})\s*\$?\s*([\d,]+[.,]\d{2})", row["text"])
+            match = _GCE_CONFIRM.search(row["text"])
             if match:
-                confirm.setdefault(match.group(1), []).append(_ticket_amount(match.group(2)))
+                confirm_rows.append({"page": row["page"], "y": row["y"], "number": match.group(1),
+                                     "amount": _ticket_amount(match.group(2))})
                 continue
             index = block_of(row)
             if index is None:
@@ -1915,67 +1944,79 @@ def _gce_blocks(readings):
                             and not _gce_footer(text)):
                         product["description"] = text
                 block["products"].append(product)
+                started.add(index)
                 continue
             for key, value in _gce_footer(row["text"]).items():
                 block["footer"].setdefault(key, []).append(value)
+            if index in started:
+                continue
             number = _gce_header_no(row["text"])
-            if number and not block["products"]:
+            if number:
                 block["numbers"][number] = block["numbers"].get(number, 0) + 1
+            found = _gce_date(row["text"])
+            if found:
+                block["dates"][found] = block["dates"].get(found, 0) + 1
     for block in blocks:
         block["clusters"] = _ticket_clusters(block["products"], tolerance)
-    return blocks, confirm, columns
+    # Cada línea de confirmación (la misma línea en todas las pasadas) vota su N°
+    # y su importe; las dos líneas del reparto quedan muy juntas (16 px). Su
+    # letra se lee peor que la del encabezado (0/8, 8/6: "633549 $6,020.99" por
+    # 833549 $8,020.99): su N° es seguro ("sure") solo si todas las pasadas (3 o
+    # más) lo leyeron igual.
+    pairs = {}
+    for cluster in _ticket_clusters(confirm_rows, max(4, tolerance * 0.35)):
+        votes = _ticket_votes(cluster, "number")
+        number = _ticket_winner(votes)
+        amount = _ticket_winner(_ticket_votes(cluster, "amount"))
+        if number is not None and amount is not None:
+            entry = pairs.setdefault(number, {"amounts": set(), "sure": False})
+            entry["amounts"].add(amount)
+            entry["sure"] = entry["sure"] or (votes[number] >= 3 and len(votes) == 1)
+    return blocks, pairs, columns
 
 
-def _gce_numbers(blocks, confirm, invoices):
+def _gce_resolve(block, images, cache, columns, confirmed):
     """
-    N° de cada factura del PDF. Vale el del encabezado de esa factura si es
-    uno de los conocidos (los que leyó el encabezado de la app o la línea de
-    confirmación "Inv# ... $..."); si no se leyó o se leyó mal (8 por 0), la
-    factura se queda con el único N° conocido que no tiene otra -- el total
-    de la factura igual se controla contra el importe del encabezado.
+    Detalle de una factura de GCE ya armada, o ValueError si algo no cierra.
+    confirmed: los importes de las líneas de confirmación del PDF (el Invoice
+    Total de la factura puede estar ilegible).
     """
-    known = {str(inv["invoice_no"]) for inv in (invoices or [])} | set(confirm)
-    numbers = []
-    for block in blocks:
-        ranked = sorted(block["numbers"].items(), key=lambda kv: -kv[1])
-        numbers.append(next((n for n, _ in ranked if n in known), None) if known else _ticket_winner(block["numbers"]))
-    for index, number in enumerate(numbers):
-        if number is not None and numbers.count(number) > 1:
-            numbers[index] = None  # dos facturas con el mismo N°: ninguna se lo queda
-    missing = [n for n in known if n not in numbers]
-    if numbers.count(None) == 1 and len(missing) == 1:
-        numbers[numbers.index(None)] = missing[0]
-    return numbers
-
-
-def _gce_resolve(block, number, images, cache, confirm, columns):
-    """Detalle de una factura de GCE ya armada, o ValueError si algo no cierra."""
     rows = _ticket_rows(block["clusters"], images, cache, lambda row: _gce_product(row, columns), "Gold Coast",
                         _GCE_RULES)
     if not rows:
-        raise ValueError("no se encontró ningún renglón de producto en la factura de Gold Coast.")
+        raise ValueError("no se ven los renglones de producto de la factura.")
     footer = block["footer"]
-    sales = _ticket_fix_sum(rows, _ticket_top(footer.get("sales", [])), "Total Sales", "Gold Coast")
     credit = _ticket_most_voted(footer.get("credits", [])) or 0.0
-    total = next((t for t in _ticket_top(footer.get("total", [])) + _ticket_top(confirm.get(number, []))
-                  if t is not None and abs(sales - credit - t) < 0.005), None)
+    totals = [t for t in _ticket_top(footer.get("total", [])) if t is not None]
+    if not totals:
+        # Invoice Total ilegible: el Total Sales menos los créditos o, sin pie
+        # legible, los importes de las líneas de confirmación.
+        totals = ([round(s - credit, 2) for s in _ticket_top(footer.get("sales", [])) if s is not None]
+                  or sorted(confirmed))
+    # La suma de los renglones tiene que dar el Total Sales o el Invoice Total más los créditos.
+    printed = set(_ticket_top(footer.get("sales", []))) | {round(t + credit, 2) for t in totals}
+    sales = _ticket_fix_sum(rows, printed, "Total Sales", "Gold Coast")
+    total = next((t for t in totals if abs(sales - credit - t) < 0.005), None)
     if total is None:
-        raise ValueError(f"el Total Sales (${sales:,.2f}) menos los créditos no da el Invoice Total leído de Gold Coast.")
+        raise ValueError(f"el Total Sales (${sales:,.2f}) menos los créditos no da el Invoice Total leído.")
     chosen = [c for c in _ticket_chosen(rows) if c["qty"]]  # EXT 0.00: sin stock, no se entregó
     if not chosen:
-        raise ValueError("la factura de Gold Coast no tiene ningún producto entregado.")
+        raise ValueError("la factura no tiene ningún producto entregado.")
     for c in chosen:
+        # Se vota solo la cantidad por caja: el texto del pack varía con el OCR
+        # ("6/4/16 Can" / "6/4/16 Can.") y partía los votos en un empate.
         packs = [_gce_units(cand.get("description")) for cand in c["cluster"]]
-        c["pack"] = _ticket_most_voted([p for p in packs if p[0]])
-        if c["pack"] is None:
-            raise ValueError(f"no se pudo leer el pack (unidades por caja) de {c['description'] or c['upc']} "
-                             "en Gold Coast.")
+        per_case = _ticket_most_voted([p[0] for p in packs if p[0]])
+        if per_case is None:
+            raise ValueError(f"no se pudo leer el pack (unidades por caja) de {c['description'] or c['upc']}.")
+        sizes = [p[1] for p in packs if p[0] == per_case]
+        c["pack"] = (per_case, _ticket_most_voted(sizes) or sizes[0])
     selling = sum(c["qty"] * c["pack"][0] for c in chosen)
     selling_ok = selling in footer.get("selling", [])
     _ticket_check_qty(chosen, selling_ok or sum(c["qty"] for c in chosen) in footer.get("cases", []),
                       "Gold Coast", "total de cajas (Cases) o de unidades (Selling Units)")
     if not selling_ok:
-        raise ValueError(f"las unidades de venta de Gold Coast ({selling}) no coinciden con el Selling Units del pie.")
+        raise ValueError(f"las unidades de venta ({selling}) no coinciden con el Selling Units del pie.")
     lines = []
     for c in chosen:
         per_case, size = c["pack"]
@@ -1984,61 +2025,311 @@ def _gce_resolve(block, number, images, cache, confirm, columns):
             description=c["description"], qty=c["qty"], pack=per_case, size=size, units=per_case,
             price=c["price"], allowance=c["disc"] or None, net=c["net"], ext=c["ext"],
         ))
-    return {"invoice_no": number, "lines": lines, "subtotal": sales, "total": total}
+    return {"lines": lines, "subtotal": sales, "total": total}
 
 
-def extract_gce_lines(pdf_path, invoices=None):
+def _gce_footer_total(block, pairs, number):
     """
-    Renglones de una factura de Gold Coast Eagle. Con `invoices` (lo que la
-    app ya leyó del encabezado) se devuelve la factura del PDF que tiene ese
-    N°, y su Invoice Total tiene que coincidir con el importe leído.
+    Invoice Total de una factura cuyos renglones no cerraron: vale si lo dicen
+    dos lugares distintos del ticket -- el Invoice Total y la línea de
+    confirmación de ese N°, o el Invoice Total y el Total Sales menos los
+    créditos. None si no.
+    """
+    footer = block["footer"]
+    totals = set(_ticket_top(footer.get("total", []))) - {None}
+    agree = totals & pairs.get(number, {}).get("amounts", set())
+    if len(agree) == 1:
+        return agree.pop()
+    total = _ticket_most_voted(footer.get("total", []))
+    sales = _ticket_most_voted(footer.get("sales", []))
+    credit = _ticket_most_voted(footer.get("credits", [])) or 0.0
+    if total is not None and sales is not None and abs(sales - credit - total) < 0.005:
+        return total
+    return None
+
+
+def _filename_numbers(filename, digits):
+    return set(re.findall(rf"(?<!\d)(\d{{{digits}}})(?!\d)", filename or ""))
+
+
+def _filename_dates(filename):
+    """
+    Fechas completas del nombre del archivo, en los dos órdenes (día-mes y
+    mes-día, igual que el control de fecha de la carga en webapp.py):
+    "Invoice 668752 22.01.2026.pdf" -> {22/01/2026}.
+    """
+    found = set()
+    for match in re.finditer(r"(?<!\d)(\d{1,2})[.\-_](\d{1,2})[.\-_](\d{4})(?!\d)", filename or ""):
+        a, b, year = (int(g) for g in match.groups())
+        for day, month in ((a, b), (b, a)):
+            try:
+                found.add(datetime(year, month, day))
+            except ValueError:
+                pass
+    return found
+
+
+# Algunos repartos especiales (una sola marca, 1 renglón) vienen en otra
+# plantilla: hoja completa impresa, no ticket ("LOAD SLSMN ACCT # DATE INV"
+# arriba; el pie "8 CASE 232.48 BEER$ / 232.48 CONTENT$ / .00 DEPOSIT$" y el
+# TOTAL a la derecha). 3 de 73 PDFs de 2025-2026. Renglón: descripción,
+# CODE, CASE, PRICE (el neto), UPC sin el 0 de adelante ni el dígito
+# verificador, DISC, AMOUNT.
+_GCE_FORM_HEADER = re.compile(r"(?<!\d)\d{3,4}\s+\d{3}\s+\d{5}\s+(\d{1,2})/(\d{1,2})/(\d{2})\s+(\d{6})(?!\d)")
+_GCE_FORM_LINE = re.compile(r"^(?P<description>.*?[A-Za-z].*?)\s+(?P<code>\d{5})\s+(?P<qty>\d{1,3})\s+"
+                            r"(?P<price>\d[\d,]*\.\d{2})\s+(?P<upc>\d{10})\s+(?:\d*\.\d{2}\s+)?(?P<ext>\d[\d,]*\.\d{2})$")
+_GCE_FORM_FOOTER = re.compile(r"(\d[\d,]*\.\d{2}|\.\d{2})\s*DEPOSIT\S*\s+(\d[\d,]*\.\d{2})\s*$")
+
+
+def _gce_is_form(reading):
+    return any("SLSMN" in row["text"] or re.search(r"DESCRIPTION\s+CODE\s+CASE", row["text"]) for row in reading)
+
+
+def _form_amount(text):
+    return _ticket_amount("0" + text if text.startswith(".") else text)
+
+
+def _gce_form_read(readings):
+    """Lo leído de la plantilla de hoja completa en todas las pasadas."""
+    found = {"numbers": {}, "dates": {}, "contents": [], "deposits": [], "totals": [], "products": []}
+    for reading in readings:
+        for row in reading:
+            text = row["text"].strip(" |")
+            match = _GCE_FORM_HEADER.search(text)
+            if match:
+                found["numbers"][match.group(4)] = found["numbers"].get(match.group(4), 0) + 1
+                try:
+                    when = datetime(2000 + int(match.group(3)), int(match.group(1)), int(match.group(2)))
+                    found["dates"][when] = found["dates"].get(when, 0) + 1
+                except ValueError:
+                    pass
+            match = re.search(r"(\d[\d,]*\.\d{2}|\.\d{2})\s*CONTENT", text)
+            if match:
+                found["contents"].append(_form_amount(match.group(1)))
+            match = _GCE_FORM_FOOTER.search(text)
+            if match:
+                found["deposits"].append(_form_amount(match.group(1)))
+                found["totals"].append(_form_amount(match.group(2)))
+            match = _GCE_FORM_LINE.match(text)
+            if match:
+                upc = "0" + match.group("upc")
+                found["products"].append({
+                    "page": row["page"], "y": row["y"], "description": match.group("description"),
+                    "item": match.group("code"), "qty": int(match.group("qty")),
+                    "price": _form_amount(match.group("price")), "ext": _form_amount(match.group("ext")),
+                    "upc": upc + str((10 - sum(int(d) * (3 if i % 2 == 0 else 1) for i, d in enumerate(upc)) % 10) % 10),
+                })
+    return found
+
+
+def _gce_form_lines(found, tolerance, content):
+    """Renglones de la plantilla de hoja completa, o (None, motivo) si no cierran contra el CONTENT$."""
+    lines = []
+    for cluster in _ticket_clusters(found["products"], tolerance):
+        closing = [c for c in cluster if c["price"] and c["ext"] is not None
+                   and abs(c["qty"] * c["price"] - c["ext"]) < _TOLERANCE]
+        best = _ticket_winner(_ticket_votes([{"v": (c["qty"], c["price"], c["ext"], c["upc"])} for c in closing], "v"))
+        if best is None:
+            return None, "un renglón no cierra: ninguna lectura da cantidad x precio = total."
+        qty, price, ext, upc = best
+        description = _ticket_winner(_ticket_votes(cluster, "description")) or cluster[0]["description"]
+        per_case, size = _gce_units(description)
+        if per_case is None:
+            return None, f"no se pudo leer el pack (unidades por caja) de {description}."
+        lines.append(_line(len(lines) + 1, upc=upc, item_no=_ticket_winner(_ticket_votes(cluster, "item")) or "",
+                           description=description, qty=qty, pack=per_case, size=size, units=per_case,
+                           price=price, allowance=None, net=price, ext=ext))
+    if not lines:
+        return None, "no se ven los renglones de producto de la factura."
+    if abs(round(sum(line["ext"] for line in lines), 2) - content) >= 0.005:
+        return None, "los renglones no suman el CONTENT$ impreso."
+    return lines, None
+
+
+def _gce_form_invoices(images, reading, filename, readings):
+    """
+    La factura de la plantilla de hoja completa: N° y fecha del renglón
+    LOAD/SLSMN/ACCT/DATE/INV; importe = el TOTAL, confirmado por el CONTENT$
+    más el DEPOSIT$ (y por la suma de renglones, si cierran).
+    """
+    from_name = _filename_numbers(filename, 6)
+    result = None
+    for passes_done in range(len(readings), len(_TICKET_PASSES) + 1):
+        found = _gce_form_read(readings)
+        tolerance = _median([row["height"] for reading_ in readings for row in reading_]) or 10
+        number = _ticket_winner(found["numbers"])
+        if number is not None and not (number in from_name or (found["numbers"][number] >= 3
+                                                              and len(found["numbers"]) == 1)):
+            number = None
+        total = _ticket_most_voted(found["totals"])
+        content = _ticket_most_voted(found["contents"])
+        deposit = _ticket_most_voted(found["deposits"]) or 0.0
+        when = _ticket_winner(found["dates"])
+        if number is None:
+            result = {"error": "no se pudo leer el N° de invoice con seguridad.", "invoice_no": None}
+        elif total is None or content is None or abs(round(content + deposit, 2) - total) >= 0.005:
+            result = {"error": "no se pudo leer el TOTAL con seguridad.", "invoice_no": int(number)}
+        elif when is None:
+            result = {"error": "no se pudo leer la fecha de la factura.", "invoice_no": int(number)}
+        else:
+            lines, problem = _gce_form_lines(found, tolerance, content)
+            result = {"invoice_no": int(number), "date": when, "amount": total, "lines": lines, "lines_error": problem}
+            if lines is not None:
+                break
+        if passes_done == len(_TICKET_PASSES):
+            break
+        readings.append(reading(passes_done))
+    return [result]
+
+
+def _gce_invoices(images, reading, filename, cache=None):
+    """
+    Todas las facturas de GCE de un PDF (ver read_gce_invoices). reading(n):
+    los renglones de la pasada n de _TICKET_PASSES; cache: las relecturas de
+    renglones ya hechas. Se lee de a una pasada y se sigue mientras alguna
+    factura no cierre o no tenga su encabezado seguro.
+    """
+    readings, resolved, failures = [], [], []
+    cache = {} if cache is None else cache
+    results = None
+    for passes_done in range(len(_TICKET_PASSES)):
+        readings.append(reading(passes_done))
+        if passes_done == 0 and _gce_is_form(readings[0]):
+            return _gce_form_invoices(images, reading, filename, readings)
+        try:
+            blocks, pairs, columns = _gce_blocks(readings)
+        except ValueError:
+            continue
+        confirmed = {amount for entry in pairs.values() for amount in entry["amounts"]}
+        for block in blocks:
+            if _ticket_resolved(resolved, block["end"]) is None:
+                try:
+                    resolved.append((block["end"], _gce_resolve(block, images, cache, columns, confirmed)))
+                except ValueError as exc:
+                    failures.append((block["end"], str(exc)))
+        details = [_ticket_resolved(resolved, block["end"]) for block in blocks]
+        results = _gce_assign(blocks, pairs, details, failures, filename)
+        if all(details) and not any("error" in invoice for invoice in results):
+            break
+    if results is None:
+        raise ValueError("no se encontró el pie (Invoice Total) de ninguna factura de Gold Coast.")
+    return results
+
+
+def _gce_assign(blocks, pairs, details, failures, filename):
+    """
+    Encabezado de cada factura armada: N°, importe y fecha confirmados (ver
+    read_gce_invoices), o {"error", "invoice_no"} si alguno no es seguro.
+    """
+    from_name = _filename_numbers(filename, 6)
+    results, taken = [], set()
+    # Primero las facturas con detalle (su total ya está confirmado por la suma).
+    for index in sorted(range(len(blocks)), key=lambda i: details[i] is None):
+        block, detail = blocks[index], details[index]
+        footer = block["footer"]
+        if detail is not None:
+            amounts = {detail["total"]}
+        else:
+            credit = _ticket_most_voted(footer.get("credits", [])) or 0.0
+            amounts = (set(_ticket_top(footer.get("total", [])))
+                       | {round(s - credit, 2) for s in _ticket_top(footer.get("sales", [])) if s is not None}) - {None}
+        agree = {n for n in pairs if n not in taken and pairs[n]["amounts"] & amounts}
+        votes = {n: v for n, v in block["numbers"].items() if n not in taken}
+        header = _ticket_winner(votes)
+        if header is not None and (header in from_name or header in agree
+                                   or (votes[header] >= 3 and len(votes) == 1)):
+            # El del encabezado: lo confirma el nombre del archivo, la línea de
+            # confirmación con el mismo importe, o todas las pasadas (3 o más).
+            number = header
+        elif votes:
+            # Encabezado empatado ("616458" / "816458"): el leído que confirma el
+            # nombre del archivo o la línea de confirmación con el mismo importe.
+            named = {n for n in votes if n in from_name or n in agree}
+            number = named.pop() if len(named) == 1 else None
+        else:
+            # Sin encabezado (el ticket cortado arriba): la línea de confirmación
+            # con el importe de la factura, si su N° es seguro.
+            sure = {n for n in agree if n in from_name or pairs[n]["sure"]}
+            number = sure.pop() if len(sure) == 1 else None
+        if number is None:
+            if not block["products"] and not votes and (
+                    not amounts or any(pairs[n]["amounts"] & amounts for n in taken if n in pairs)):
+                continue  # un pie suelto, o repetido de una factura ya leída
+            results.append((index, {"error": "no se pudo leer el N° de invoice con seguridad.", "invoice_no": None}))
+            continue
+        amount = detail["total"] if detail is not None else _gce_footer_total(block, pairs, number)
+        if amount is None:
+            results.append((index, {"error": "no se pudo leer el Invoice Total con seguridad.",
+                                    "invoice_no": int(number)}))
+            continue
+        taken.add(number)
+        results.append((index, {"invoice_no": int(number), "amount": amount,
+                                "lines": detail["lines"] if detail is not None else None,
+                                "lines_error": None if detail is not None else _ticket_resolved(failures, block["end"])}))
+    # Fecha: la del encabezado de la factura; si no se ve (el ticket cortado
+    # arriba), la del reparto (la de las otras facturas del PDF, si es una
+    # sola) o la del nombre del archivo.
+    dates = {_ticket_winner(block["dates"]) for block in blocks} - {None}
+    named = _filename_dates(filename)
+    for index, invoice in results:
+        if "error" in invoice:
+            continue
+        found = _ticket_winner(blocks[index]["dates"])
+        if found is None:
+            found = next(iter(dates)) if len(dates) == 1 else (next(iter(named)) if len(named) == 1 else None)
+        if found is None:
+            number = invoice["invoice_no"]
+            invoice.clear()
+            invoice.update(error="no se pudo leer la fecha de la factura.", invoice_no=number)
+            continue
+        invoice["date"] = found
+    return [invoice for _, invoice in sorted(results, key=lambda r: r[0])]
+
+
+def _ticket_resolved(found, end):
+    """
+    Lo último guardado (el detalle, o el error) de la factura que termina en
+    `end` (página, altura): de una pasada a otra, el cierre se mueve unos píxeles.
+    """
+    page, y = end
+    return next((value for (p, other), value in reversed(found) if p == page and abs(other - y) < 60), None)
+
+
+def read_gce_invoices(pdf_path):
+    """
+    Todas las facturas de Gold Coast Eagle de un PDF (puede traer dos del
+    mismo reparto), cada una con su encabezado confirmado y, si cierra, su
+    detalle de productos:
+    [{"invoice_no", "date", "amount", "lines" (o None), "lines_error"}] y,
+    por cada factura que no se pudo leer con seguridad,
+    {"error", "invoice_no" (el leído, o None)}.
+    - N°: el del encabezado, si una línea de confirmación ("Inv# 668752
+      $1,831.05") lo trae con el mismo importe; si no, el de la única línea
+      de confirmación con el importe de la factura.
+    - Importe: la suma de los renglones (que además da el Total Sales y el
+      Invoice Total impresos) o, si los renglones no cierran, el Invoice
+      Total confirmado por la línea de confirmación o por el Total Sales.
     """
     images = _ticket_images(pdf_path)
     if not images:
         raise ValueError("no se encontró la imagen escaneada de la factura de Gold Coast.")
-    wanted = {str(inv["invoice_no"]): inv for inv in (invoices or [])}
-    readings, cache, error = [], {}, None
-    for passes_done in range(len(_TICKET_PASSES)):
-        readings.append(_ticket_readings(images, passes_done))
-        try:
-            blocks, confirm, columns = _gce_blocks(readings)
-            numbers = _gce_numbers(blocks, confirm, invoices)
-            targets = [i for i, n in enumerate(numbers) if n in wanted] if wanted else [0]
-            if not targets and len(blocks) == 1 and len(wanted) == 1:
-                # Una sola factura en el PDF y el N° del encabezado leído distinto
-                # (un dígito): es esa, con el N° del encabezado (el mismo con el que
-                # se guardó la factura); su total igual tiene que dar el importe.
-                targets, numbers = [0], list(wanted)
-            if not targets:
-                raise ValueError("no se encontró en el PDF la factura de Gold Coast que leyó el encabezado.")
-            detail = _gce_resolve(blocks[targets[0]], numbers[targets[0]], images, cache, confirm, columns)
-            if detail["invoice_no"] is None:
-                raise ValueError("no se pudo leer el N° de invoice de la factura de Gold Coast.")
-            header = wanted.get(detail["invoice_no"])
-            if header is not None and abs(header["amount"] - detail["total"]) >= 0.01:
-                # Dos facturas en el PDF con el N° mal asignado: vale la única
-                # factura del PDF cuyo total es el importe del encabezado (el
-                # encabezado lee N° e importe juntos, de "Inv# ... $...").
-                others = []
-                for index, block in enumerate(blocks):
-                    if index != targets[0]:
-                        try:
-                            other = _gce_resolve(block, header and str(header["invoice_no"]), images, cache, confirm,
-                                                 columns)
-                        except ValueError:
-                            continue
-                        if abs(other["total"] - header["amount"]) < 0.01:
-                            others.append(other)
-                if len(others) != 1:
-                    raise ValueError(
-                        f"el Invoice Total del detalle (${detail['total']:,.2f}) no coincide con el importe leído "
-                        f"del encabezado (${header['amount']:,.2f})."
-                    )
-                detail = others[0]
-            return detail
-        except ValueError as exc:
-            error = exc
-    raise error
+    return _gce_invoices(images, lambda n: _ticket_readings(images, n), os.path.basename(pdf_path))
+
+
+def extract_gce_lines(pdf_path, invoices=None):
+    """
+    Renglones de una factura de Gold Coast Eagle (LINE_EXTRACTORS). La carga
+    de Proveedores ya los trae de read_gce_invoices; esto queda para quien
+    pida solo el detalle. Con `invoices`, el de la factura con ese N°.
+    """
+    found = [inv for inv in read_gce_invoices(pdf_path) if "error" not in inv]
+    wanted = {str(inv["invoice_no"]) for inv in (invoices or [])}
+    for invoice in found:
+        if (not wanted or str(invoice["invoice_no"]) in wanted) and invoice["lines"] is not None:
+            return {"invoice_no": str(invoice["invoice_no"]), "lines": invoice["lines"],
+                    "subtotal": None, "total": invoice["amount"]}
+    error = next((inv["lines_error"] for inv in found if inv.get("lines_error")), None)
+    raise ValueError(error or "no se encontró en el PDF la factura de Gold Coast pedida.")
 
 
 # --- Red Bull ------------------------------------------------------------------
@@ -2115,7 +2406,7 @@ _RB_RULES = {
 def _rb_footer(text):
     found = {}
     patterns = (
-        ("subtotal", r"(?:INVOICE|Subtotal)"), ("total_due", r"TOTAL\s*DUE"),
+        ("subtotal", r"(?:INVOICE|Subtotal)"), ("total_due", r"(?:TOTAL\s*DUE|Invoice\s*Total)"),
         ("deposit", r"(?:DEPOSIT|Can Deposit)"), ("tax", r"(?:TAX|Sales Tax)"), ("sugar", r"Sugar Tax"),
         ("fees", r"Fees"),
     )
@@ -2130,14 +2421,45 @@ def _rb_footer(text):
     return found
 
 
-def _rb_collect(readings):
-    """Renglones de producto (agrupados entre pasadas), pie, N° de invoice leído y columnas."""
+_RB_NUMBER = re.compile(r"\bInv\w{0,6}\W{1,3}(\d{9,11})(?!\d)")
+_RB_DATE = re.compile(r"(?<!\d)(\d{2})/(\d{2})/(20\d{2})\s+\d{1,2}:\d{2}")
+
+
+def _rb_date(text):
+    """Fecha del renglón del vendedor ("Salesman: Ryan Burris 02/16/2026 3:11 PM"), o None."""
+    match = _RB_DATE.search(text)
+    if match is None:
+        return None
+    try:
+        return datetime(int(match.group(3)), int(match.group(1)), int(match.group(2)))
+    except ValueError:
+        return None
+
+
+def _rb_blocks(readings):
+    """
+    Arma las facturas del PDF (cada una termina en su TOTAL DUE) con todas las
+    pasadas hechas hasta ahora: renglones de producto (agrupados entre
+    pasadas), pie, N° y fecha leídos. Devuelve (facturas, columnas).
+    """
     all_rows = [row for reading in readings for row in reading]
     tolerance = _median([row["height"] for row in all_rows]) if all_rows else 10
     columns = _ticket_columns(readings, _RB_HEADERS)
-    products, footer, numbers = [], {}, {}
+    ends = [{"page": row["page"], "y": row["y"]} for row in all_rows if "total_due" in _rb_footer(row["text"])]
+    boundaries = [(c[0]["page"], max(e["y"] for e in c) + tolerance) for c in _ticket_clusters(ends, tolerance * 5)]
+    if not boundaries:
+        raise ValueError("no se encontró el pie (TOTAL DUE) de la factura de Red Bull.")
+
+    def block_of(row):
+        return next((i for i, (page, y) in enumerate(boundaries) if (row["page"], row["y"]) <= (page, y)), None)
+
+    blocks = [{"end": end, "products": [], "footer": {}, "numbers": {}, "dates": {}} for end in boundaries]
     for reading in readings:
         for position, row in enumerate(reading):
+            index = block_of(row)
+            if index is None:
+                continue
+            block = blocks[index]
             product = _rb_product(row, columns)
             if product is not None:
                 # UPC: en los dos renglones siguientes de esta pasada (antes del próximo producto).
@@ -2151,25 +2473,42 @@ def _rb_collect(readings):
                         product["upc"], product["upc_raw"] = _ticket_upc(digits), _ticket_raw_upc(digits)
                         product["upc_box"] = (word["x0"], word["top"], word["x1"], word["bottom"])
                         break
-                products.append(product)
+                block["products"].append(product)
                 continue
             for key, value in _rb_footer(row["text"]).items():
-                footer.setdefault(key, []).append(value)
-            match = re.search(r"\bInv\w{0,6}:\s*(\d{9,11})", row["text"])
+                block["footer"].setdefault(key, []).append(value)
+            match = _RB_NUMBER.search(row["text"])
             if match:
-                numbers[match.group(1)] = numbers.get(match.group(1), 0) + 1
-    return _ticket_clusters(products, tolerance), footer, numbers, columns
+                block["numbers"][match.group(1)] = block["numbers"].get(match.group(1), 0) + 1
+            found = _rb_date(row["text"])
+            if found:
+                block["dates"][found] = block["dates"].get(found, 0) + 1
+    for block in blocks:
+        block["clusters"] = _ticket_clusters(block["products"], tolerance)
+    return blocks, columns
 
 
-def _rb_resolve(clusters, footer, images, cache, columns):
+def _rb_charges(footer):
+    return sum(_ticket_most_voted(footer.get(key, [])) or 0.0 for key in ("deposit", "tax", "sugar", "fees"))
+
+
+def _rb_resolve(block, images, cache, columns):
     """Detalle de una factura de Red Bull, o ValueError si algo no cierra."""
+    clusters, footer = block["clusters"], block["footer"]
     rows = _ticket_rows(clusters, images, cache, lambda row: _rb_product(row, columns), "Red Bull", _RB_RULES)
     if not rows:
-        raise ValueError("no se encontró ningún renglón de producto en la factura de Red Bull.")
-    charges = sum(_ticket_most_voted(footer.get(key, [])) or 0.0 for key in ("deposit", "tax", "sugar", "fees"))
+        raise ValueError("no se ven los renglones de producto de la factura.")
+    charges = _rb_charges(footer)
     printed = _ticket_top(footer.get("subtotal", [])) + [round(t - charges, 2) for t in _ticket_top(footer.get("total_due", []))
                                                          if t is not None]
-    subtotal = _ticket_fix_sum(rows, printed, "INVOICE/Subtotal", "Red Bull")
+    try:
+        subtotal = _ticket_fix_sum(rows, printed, "INVOICE/Subtotal", "Red Bull")
+    except ValueError:
+        # Los renglones, tal como cerraron cada uno, suman el total impreso con
+        # 5 donde se leyó 6 ($670.15 leído $670.16 en todas las pasadas).
+        subtotal = round(sum(r["options"][r["choice"]][1]["ext"] for r in rows), 2)
+        if not any(_rb_same(f"{v:.2f}", f"{subtotal:.2f}") for v in printed if v is not None):
+            raise
     chosen = _ticket_chosen(rows)
     for c in chosen:
         c["per_case"] = _ticket_most_voted([cand["units_total"] // c["qty"] for cand in c["cluster"]
@@ -2186,14 +2525,14 @@ def _rb_resolve(clusters, footer, images, cache, columns):
             missing[0]["per_case"], deduced = rest // missing[0]["qty"], True
     for c in chosen:
         if c["per_case"] is None:
-            raise ValueError(f"no se pudieron leer las unidades por caja de {c['description']} en Red Bull.")
+            raise ValueError(f"no se pudieron leer las unidades por caja de {c['description']}.")
     units_sum = sum(c["qty"] * c["per_case"] for c in chosen)
     units_ok = units_sum in footer.get("units", [])
     # Con unas unidades deducidas del pie, el pie ya no puede confirmar las cantidades por unidades.
     _ticket_check_qty(chosen, (units_ok and not deduced) or sum(c["qty"] for c in chosen) in footer.get("cases", []),
                       "Red Bull", "Cases Delivered o Units Delivered")
     if not units_ok:
-        raise ValueError(f"las unidades de Red Bull ({units_sum}) no coinciden con el Units Delivered del pie.")
+        raise ValueError(f"las unidades ({units_sum}) no coinciden con el Units Delivered del pie.")
     lines = []
     for c in chosen:
         per_case = c["per_case"]
@@ -2203,42 +2542,146 @@ def _rb_resolve(clusters, footer, images, cache, columns):
             qty=c["qty"], pack=per_case, size=f"{match.group(1)}OZ" if match else "", units=per_case,
             price=c["price"], allowance=c["disc"] or None, net=c["net"], ext=c["ext"],
         ))
-    total = next((t for t in _ticket_top(footer.get("total_due", []))
-                  if t is not None and abs(t - round(subtotal + charges, 2)) < 0.005), None)
+    total = next((round(subtotal + charges, 2) for t in _ticket_top(footer.get("total_due", []))
+                  if t is not None and _rb_same(f"{t:.2f}", f"{subtotal + charges:.2f}")), None)
     if total is None:
-        raise ValueError(f"el subtotal de Red Bull (${subtotal:,.2f}) más los cargos no da el TOTAL DUE leído.")
+        raise ValueError(f"el subtotal (${subtotal:,.2f}) más los cargos no da el TOTAL DUE leído.")
     return {"lines": lines, "subtotal": subtotal, "total": total}
 
 
-def extract_red_bull_lines(pdf_path, invoices=None):
-    """Renglones de una factura de Red Bull. Con `invoices`, el total tiene que coincidir con el del encabezado."""
+def _rb_footer_total(footer):
+    """
+    TOTAL DUE de una factura cuyos renglones no cerraron: vale si el más
+    leído coincide con el INVOICE/Subtotal más leído más los cargos (dos
+    renglones distintos del pie) y no tiene ningún 6 (en Red Bull el 5
+    impreso sale 6 en todas las lecturas: sin los renglones, $670.16 puede
+    ser $670.15). None si no.
+    """
+    total = _ticket_most_voted(footer.get("total_due", []))
+    subtotal = _ticket_most_voted(footer.get("subtotal", []))
+    if (total is not None and subtotal is not None and "6" not in f"{total:.2f}"
+            and abs(round(subtotal + _rb_charges(footer), 2) - total) < 0.005):
+        return total
+    return None
+
+
+def _rb_same(read, printed):
+    """El N° (o la fecha) leído puede ser el impreso: los mismos dígitos, salvo 6 leídos donde dice 5."""
+    return len(read) == len(printed) and all(a == b or (a == "6" and b == "5") for a, b in zip(read, printed))
+
+
+def _rb_number(block, from_name):
+    """
+    N° de la factura. En Red Bull el 5 impreso sale 6 casi siempre (también
+    en el N°: 2035255085 se lee 2036256086), así que lo leído vale si lo
+    confirma el nombre del archivo (el mismo N°, o con 5 donde se leyó 6), o
+    si todas las pasadas (3 o más) leyeron igual un N° sin ningún 6. None si no.
+    """
+    votes = block["numbers"]
+    named = {name for read in votes for name in from_name if _rb_same(read, name)}
+    if len(named) == 1:
+        return named.pop()
+    header = _ticket_winner(votes)
+    if header is not None and "6" not in header and votes[header] >= 3 and len(votes) == 1:
+        return header
+    return None
+
+
+def _rb_date_of(block, filename):
+    """
+    Fecha de la factura, con el mismo cuidado que el N°: la del nombre del
+    archivo si es la leída (o la leída con 6 donde dice 5, también en el año:
+    2025 sale 2026, y a lo sumo otro dígito distinto: 29 sale 28); si no, la
+    leída, siempre que no tenga ningún 6 en el día o el mes. None si no.
+    """
+    named = _filename_dates(filename)
+    for read in sorted(block["dates"], key=lambda d: -block["dates"][d]):
+        for name in named:
+            pairs = list(zip(read.strftime("%m%d%Y"), name.strftime("%m%d%Y")))
+            if sum(a != b and not (a == "6" and b == "5") for a, b in pairs) <= 1:
+                return name
+    found = _ticket_winner(block["dates"])
+    if found is not None and "6" in found.strftime("%m%d"):
+        return None
+    return found
+
+
+def _rb_invoices(images, reading, filename, cache=None):
+    """Todas las facturas de Red Bull de un PDF (ver read_red_bull_invoices)."""
+    readings, resolved, failures = [], [], []
+    cache = {} if cache is None else cache
+    results = None
+    for passes_done in range(len(_TICKET_PASSES)):
+        readings.append(reading(passes_done))
+        try:
+            blocks, columns = _rb_blocks(readings)
+        except ValueError:
+            continue
+        for block in blocks:
+            if _ticket_resolved(resolved, block["end"]) is None:
+                try:
+                    resolved.append((block["end"], _rb_resolve(block, images, cache, columns)))
+                except ValueError as exc:
+                    failures.append((block["end"], str(exc)))
+        details = [_ticket_resolved(resolved, block["end"]) for block in blocks]
+        results = _rb_assign(blocks, details, failures, filename)
+        if all(details) and not any("error" in invoice for invoice in results):
+            break
+    if results is None:
+        raise ValueError("no se encontró el pie (TOTAL DUE) de ninguna factura de Red Bull.")
+    return results
+
+
+def _rb_assign(blocks, details, failures, filename):
+    """Encabezado de cada factura armada de Red Bull, como _gce_assign."""
+    # El N° en el nombre del archivo, aunque tenga un dígito de más ("Invoice 22036941041").
+    from_name = {run[i:i + 10] for run in re.findall(r"\d{10,12}", filename or "") for i in range(len(run) - 9)}
+    results, taken = [], set()
+    for block, detail in zip(blocks, details):
+        number = _rb_number(block, from_name)
+        if number is None or number in taken:
+            if not block["products"] and not block["numbers"]:
+                continue  # un pie suelto, sin nada de una factura
+            results.append({"error": "no se pudo leer el N° de invoice con seguridad.", "invoice_no": None})
+            continue
+        amount = detail["total"] if detail is not None else _rb_footer_total(block["footer"])
+        if amount is None:
+            results.append({"error": "no se pudo leer el TOTAL DUE con seguridad.", "invoice_no": int(number)})
+            continue
+        found = _rb_date_of(block, filename)
+        if found is None:
+            results.append({"error": "no se pudo leer la fecha de la factura.", "invoice_no": int(number)})
+            continue
+        taken.add(number)
+        results.append({"invoice_no": int(number), "date": found, "amount": amount,
+                        "lines": detail["lines"] if detail is not None else None,
+                        "lines_error": None if detail is not None else _ticket_resolved(failures, block["end"])})
+    return results
+
+
+def read_red_bull_invoices(pdf_path):
+    """
+    Todas las facturas de Red Bull de un PDF, con el mismo formato que
+    read_gce_invoices. Importe: la suma de los renglones (que además da el
+    INVOICE/Subtotal y el TOTAL DUE impresos) o, si los renglones no cierran,
+    el TOTAL DUE confirmado por el INVOICE más los cargos.
+    """
     images = _ticket_images(pdf_path)
     if not images:
         raise ValueError("no se encontró la imagen escaneada de la factura de Red Bull.")
-    readings, cache, error = [], {}, None
-    for passes_done in range(len(_TICKET_PASSES)):
-        readings.append(_ticket_readings(images, passes_done))
-        try:
-            clusters, footer, numbers, columns = _rb_collect(readings)
-            detail = _rb_resolve(clusters, footer, images, cache, columns)
-            number = _ticket_winner(numbers)
-            if invoices:
-                header = invoices[0]
-                if number is not None and number != str(header["invoice_no"]):
-                    raise ValueError("el N° de invoice del detalle no coincide con el de la factura de Red Bull.")
-                number = str(header["invoice_no"])
-                if all(abs(header["amount"] - v) >= 0.01 for v in (detail["subtotal"], detail["total"])):
-                    raise ValueError(
-                        f"el total del detalle (${detail['total']:,.2f}) no coincide con el importe leído "
-                        f"del encabezado (${header['amount']:,.2f})."
-                    )
-            if number is None:
-                raise ValueError("no se pudo leer el N° de invoice de la factura de Red Bull.")
-            detail["invoice_no"] = number
-            return detail
-        except ValueError as exc:
-            error = exc
-    raise error
+    return _rb_invoices(images, lambda n: _ticket_readings(images, n), os.path.basename(pdf_path))
+
+
+def extract_red_bull_lines(pdf_path, invoices=None):
+    """Renglones de una factura de Red Bull (LINE_EXTRACTORS); ver extract_gce_lines."""
+    found = [inv for inv in read_red_bull_invoices(pdf_path) if "error" not in inv]
+    wanted = {str(inv["invoice_no"]) for inv in (invoices or [])}
+    for invoice in found:
+        if (not wanted or str(invoice["invoice_no"]) in wanted) and invoice["lines"] is not None:
+            return {"invoice_no": str(invoice["invoice_no"]), "lines": invoice["lines"],
+                    "subtotal": None, "total": invoice["amount"]}
+    error = next((inv["lines_error"] for inv in found if inv.get("lines_error")), None)
+    raise ValueError(error or "no se encontró en el PDF la factura de Red Bull pedida.")
 
 
 # supplier_key (el de SUPPLIER_REGISTRY en proveedores.py) -> extractor de renglones.
