@@ -5,8 +5,8 @@
 {% endblock %}
 {% block content %}
 {% from "_pdf_links.html" import pdf_links %}
-{% set loaded_amount = departments|sum(attribute='amount') %}
-{% set loaded_units = departments|sum(attribute='count') %}
+{% set loaded_amount = departments|selectattr('amount', 'number')|sum(attribute='amount') %}
+{% set loaded_units = departments|selectattr('count', 'number')|sum(attribute='count') %}
 <div class="page-header">
   <span class="eyebrow">Reporte Diario</span>
   <h1>{{ report_date.strftime('%d/%m/%Y') }}</h1>
@@ -35,8 +35,9 @@
           {% for dept in departments %}
           <tr>
             <td><input type="text" name="dept_name" value="{{ dept.department }}" readonly class="dia-input-readonly"></td>
-            <td><input type="number" step="1" name="dept_count" value="{{ dept.count }}"></td>
-            <td><input type="number" step="0.01" name="dept_amount" value="{{ dept.amount }}"></td>
+            {# Vacío = el OCR no lo pudo leer con seguridad (nunca se guarda un valor dudoso): falta completarlo. #}
+            <td><input type="number" step="1" name="dept_count" value="{{ dept.count if dept.count is not none else '' }}"{% if dept.count is none %} class="dia-input-missing" placeholder="falta"{% endif %}></td>
+            <td><input type="number" step="0.01" name="dept_amount" value="{{ dept.amount if dept.amount is not none else '' }}"{% if dept.amount is none %} class="dia-input-missing" placeholder="falta"{% endif %}></td>
             <td class="dia-col-delete"><input type="checkbox" name="dept_delete" value="{{ dept.department }}"></td>
           </tr>
           {% endfor %}
@@ -228,6 +229,7 @@
   .dia-table tbody tr { border-bottom: 1px solid var(--border); }
   .dia-table input[type=text], .dia-table input[type=number] { padding: 6px 8px; font-size: 12.5px; }
   .dia-col-delete { text-align: center; }
+  .dia-table input.dia-input-missing { border-color: var(--warning, #D97706); background: color-mix(in srgb, var(--warning, #D97706) 10%, var(--surface)); }
   .dia-col-delete input[type=checkbox] { width: 16px; height: 16px; }
   .dia-check-box {
     margin-top: 18px;

@@ -185,7 +185,9 @@ def replace_department_sales(report_date, records, pdf_filename=None):
     sea una carga vieja o una corrección manual). `records` es la lista tal
     cual la devuelve reporte_diario.extract_department_sales_for_day:
     [{"department", "count", "amount"}, ...] -- incluye "LOCAL ACCT" cuando
-    el PDF lo trae, como cualquier otro departamento real.
+    el PDF lo trae, como cualquier otro departamento real. Un count/amount
+    None (el OCR no lo pudo leer con seguridad, 2026-10-04) se guarda vacío:
+    nunca un valor dudoso.
     """
     key = _date_key(report_date)
     now = _now()
@@ -198,7 +200,7 @@ def replace_department_sales(report_date, records, pdf_filename=None):
                 INSERT INTO daily_report_departments (date, department, count, amount, source, updated_at)
                 VALUES (?, ?, ?, ?, 'ocr', ?)
                 """,
-                (key, record["department"], int(record["count"]), float(record["amount"]), now),
+                (key, record["department"], _int_or_none(record["count"]), _float_or_none(record["amount"]), now),
             )
         conn.execute(
             """
@@ -212,6 +214,14 @@ def replace_department_sales(report_date, records, pdf_filename=None):
         conn.commit()
     finally:
         conn.close()
+
+
+def _int_or_none(value):
+    return int(value) if value is not None else None
+
+
+def _float_or_none(value):
+    return float(value) if value is not None else None
 
 
 def upsert_department_row(report_date, department, count, amount, source="manual"):
@@ -228,7 +238,7 @@ def upsert_department_row(report_date, department, count, amount, source="manual
                 count = excluded.count, amount = excluded.amount,
                 source = excluded.source, updated_at = excluded.updated_at
             """,
-            (key, department.strip(), int(count), float(amount), source, now),
+            (key, department.strip(), _int_or_none(count), _float_or_none(amount), source, now),
         )
         conn.execute(
             """

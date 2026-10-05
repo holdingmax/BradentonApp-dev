@@ -59,7 +59,7 @@
             <td class="dept-detail-col">
               {% if day.department_count %}
               <span class="historial-badge historial-badge-{{ 'mixed' if day.department_sources|length > 1 else day.department_sources[0] }}"
-                    title="{% for d in day.department_detail %}{{ d.department }}: ${{ '%.2f'|format(d.amount) }}&#10;{% endfor %}">
+                    title="{% for d in day.department_detail %}{{ d.department }}: {% if d.amount is not none %}${{ '%.2f'|format(d.amount) }}{% else %}falta{% endif %}&#10;{% endfor %}">
                 {{ day.department_count }} depto.{% if day.department_sources|length > 1 %} (mixto){% elif day.department_sources[0] == 'manual' %} (manual){% endif %}
               </span>
               {% else %}
@@ -127,8 +127,8 @@
         {% for d in department_totals %}
         <tr>
           <td>{{ d.department }}</td>
-          <td>{{ d.count }}</td>
-          <td>${{ "{:,.2f}".format(d.amount) }}</td>
+          <td>{{ d.count if d.count is not none else '—' }}</td>
+          <td>${{ "{:,.2f}".format(d.amount or 0) }}</td>
         </tr>
         {% endfor %}
       </tbody>

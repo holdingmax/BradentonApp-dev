@@ -1875,6 +1875,8 @@ def _run_carga_datos_reporte_diario_job(job_id, pdf_paths):
         days_complete = set()
         days_partial = set()
         days_subtotal_mismatch = set()
+        days_doubtful = {}
+        days_unverified = set()
         days_total_sales_mismatch = {}
         days_store_info_missing = {}
         files_unreadable = 0
@@ -1911,6 +1913,15 @@ def _run_carga_datos_reporte_diario_job(job_id, pdf_paths):
                 got_departments = True
                 if result.get("subtotal_mismatch"):
                     days_subtotal_mismatch.add(candidate_date)
+                if result.get("doubtful_departments"):
+                    days_doubtful[candidate_date] = result["doubtful_departments"]
+                if result.get("total_unverified"):
+                    days_unverified.add(candidate_date)
+                # El total impreso al pie de la tabla queda guardado para el
+                # chequeo "Total impreso" del día (antes había que tipearlo).
+                printed = result.get("printed_totals")
+                if printed:
+                    reportes_db.upsert_printed_totals(candidate_date, printed["amount"], printed["count"])
             except Exception as exc:
                 if "no coincide con la fecha del nombre" in str(exc):
                     file_had_mismatch = True
@@ -1999,6 +2010,20 @@ def _run_carga_datos_reporte_diario_job(job_id, pdf_paths):
                 f"Store Info: lo demás se guardó, pero no se pudo leer con seguridad ({dates_txt}) — "
                 "quedó vacío, completalo a mano."
             )
+        if days_doubtful:
+            dates_txt = "; ".join(
+                f"{d.strftime('%d/%m')}: {', '.join(items)}" for d, items in sorted(days_doubtful.items())
+            )
+            parts.append(
+                f"Ventas por Departamento: valores que el OCR no pudo leer con seguridad ({dates_txt}) — "
+                "quedaron vacíos, completalos a mano en el día."
+            )
+        if days_unverified:
+            dates_txt = ", ".join(sorted(d.isoformat() for d in days_unverified))
+            parts.append(
+                f"{len(days_unverified)} día(s) sin el total impreso legible al pie de Ventas por Departamento "
+                f"({dates_txt}) — no se pudo verificar la suma, revisalos contra el PDF."
+            )
         if days_total_sales_mismatch:
             dates_txt = ", ".join(
                 f"{d.isoformat()} (${v:+,.2f})" for d, v in sorted(days_total_sales_mismatch.items())
@@ -2012,7 +2037,7 @@ def _run_carga_datos_reporte_diario_job(job_id, pdf_paths):
             notice, level = "No se pudo guardar nada de este lote.", "error"
         else:
             notice = " ".join(parts)
-            level = "warning" if (days_partial or files_unreadable or days_subtotal_mismatch or days_total_sales_mismatch) else "success"
+            level = "warning" if (days_partial or files_unreadable or days_subtotal_mismatch or days_doubtful or days_unverified or days_total_sales_mismatch) else "success"
 
         redirect_url = (
             f"/reporte/historial?year={first_date.year}&month={first_date.month}"
@@ -4377,8 +4402,8 @@ def reporte_dia_departamentos(report_date):
         if not count_raw and not amount_raw:
             continue
         try:
-            count = int(float(count_raw or 0))
-            amount = float(amount_raw or 0)
+            count = int(float(count_raw)) if count_raw else None
+            amount = float(amount_raw) if amount_raw else None
         except ValueError:
             skipped += 1
             continue

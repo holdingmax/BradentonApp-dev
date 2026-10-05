@@ -321,8 +321,9 @@ def _aggregate_department_records(records, column_map):
             unmatched.append(record["department"])
             continue
         bucket = totals_by_coords.setdefault(coords, {"count": 0, "amount": 0.0})
-        bucket["count"] += record["count"]
-        bucket["amount"] += record["amount"]
+        # Un valor dudoso del OCR viene vacío (None): no suma.
+        bucket["count"] += record["count"] or 0
+        bucket["amount"] += record["amount"] or 0.0
     return totals_by_coords, unmatched
 
 

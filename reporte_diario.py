@@ -9,10 +9,13 @@ and injects count/amount pairs on the first eligible operational row.
 import copy
 import functools
 import io
+import itertools
 import os
 import re
+import statistics
 import tempfile
 import unicodedata
+from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from difflib import SequenceMatcher, get_close_matches
 from datetime import date, datetime, time, timedelta
@@ -1158,23 +1161,655 @@ def _score_ocr_page_text(text):
     return (int(has_anchor), count)
 
 
-def _ocr_page_text(image):
-    """Best-effort OCR of a full page photo into plain text."""
-    if image is None:
+# ---------------------------------------------------------------------------
+# Department Sales Report por OCR: lectura por votación (2026-10-04)
+# ---------------------------------------------------------------------------
+# Pedido explícito del usuario (2026-10-04): "muchas veces me falló errando a
+# la cantidad de productos que tenía algún que otro departamento". Antes se
+# guardaba la fila de UNA sola pasada de OCR (la de más filas), leída por
+# posición desde la derecha, y la suma contra el total impreso toleraba hasta
+# 2 unidades de diferencia. Relevamiento contra el Excel de Ventas (hoja CARGA
+# AQUI, cargada a mano) en 142 días reales de 2025-2026: los errores eran casi
+# todos de unidades y de tres tipos:
+#   1. Tesseract funde dos dígitos iguales ("77" -> "7", "11" -> "1") en las
+#      TRES pasadas a la vez, así que votar no alcanza. Pero la caja de esa
+#      palabra en la imagen mide lo que miden dos dígitos: se recorta esa
+#      celda, se agranda 3x y se relee solo con dígitos.
+#   2. Basura pegada a un número ("4.", "40°", "1—", "$0.00.") o suelta entre
+#      columnas ("-", "~", "*") que corría todas las columnas de lugar.
+#   3. Un dígito mal leído en una sola columna ("215 0 216"): la fila trae su
+#      propia ecuación (Item Count - Refund Count = Net Count; Gross - Refund
+#      - Discount = Net Sales) y el % de ventas confirma el monto.
+# Ahora: se leen las filas de 3 pasadas (--psm 6 con cajas por palabra, 4 y
+# 3; la 11 parte cada celda en su propia línea y no sirve para filas), cada
+# valor se vota entre ellas dando más peso a las filas que cierran su
+# ecuación, y el día se cierra EXACTO contra la fila del total impreso
+# (unidades y monto): si no cierra, se prueba cambiar 1 o 2 valores dudosos
+# por su otra lectura y se aplica solo si hay una única salida clara. Lo que
+# sigue dudoso queda VACÍO y se avisa (regla de oro del OCR).
+
+_OCR_ROW_CONFIGS = ("--psm 6", "--psm 4", "--psm 3")
+
+# Confusiones típicas de Tesseract dentro de un número.
+_OCR_DIGIT_FIX = str.maketrans({
+    "O": "0", "o": "0", "D": "0", "Q": "0", ")": "0", "(": "0",
+    "l": "1", "I": "1", "|": "1", "i": "1", "!": "1", "]": "1",
+    "S": "5", "s": "5", "§": "5", "B": "8", "Z": "2", "z": "2", "g": "9",
+})
+_OCR_MONEY_TOKEN_RE = re.compile(r"^[-~—–=]?\$?-?\(?\$?\d{1,3}(,?\d{3})*\.\d{2}\)?$")
+# El reporte siempre imprime centavos: "$3480" es $34.80 con el punto perdido.
+_OCR_MONEY_NO_POINT_RE = re.compile(r"^(-?)\$(\d{1,3}(?:,\d{3})+|\d{1,5})[^\d,]?(\d{2})$")
+_OCR_INT_TOKEN_RE = re.compile(r"^\d{1,5}$")
+_OCR_EDGE_JUNK = "\"'`‘’“”~—–\\-_.,:;°*"
+_OCR_EDGE_JUNK_RE = re.compile(f"^[{_OCR_EDGE_JUNK}]+|[{_OCR_EDGE_JUNK}]+$")
+
+# Departamentos que imprime el POS, EN EL ORDEN en que los imprime (alfabético
+# por su nombre en el POS, con HOT DOGS primero y LOCAL ACCT -- acá
+# "GETTEL/TOYOTA" -- en la L), tal como quedan después de normalizar el
+# nombre leído (ver _ocr_row_department). Solo para corregir un nombre
+# garabateado ("J TAXABLE", "TAY AELE", "GAN" por HBA). Un departamento
+# nuevo de verdad que las tres pasadas leen igual se guarda con su nombre.
+_OCR_KNOWN_DEPARTMENTS = (
+    "HOT DOGS SANDWICH", "AUTO", "BEER/WINE", "BOILED PEANUTS", "CANDY", "CHEVRON GIFT CARD",
+    "CIGARS", "COFFE", "E-GIGARETTE", "FEES", "FLOWERS", "FOUTAIN", "GEN-CTN", "GEN-PAK",
+    "GIFT CARD", "GROCERIES", "HBA", "ICECREAM", "JUICE", "GETTEL/TOYOTA", "MAJ CR", "MAJ PAK",
+    "MILK", "NONTAX", "ONLINE", "PROPANE", "SKOFF", "SNACK", "SNUFF", "SODA", "STORE COUPON",
+    "TAXABLE", "WATER",
+)
+
+
+def _ocr_money_value(token):
+    text = token.replace("—", "-").replace("–", "-").replace("~", "-").replace("=", "-")
+    negative = text.startswith("-") or "(" in text or "-$" in text
+    try:
+        value = float(re.sub(r"[^\d.]", "", text))
+    except ValueError:
+        return None
+    return -value if negative else value
+
+
+def _classify_ocr_token(token):
+    """
+    Un token de una fila de departamento -> ("M", monto), ("I", entero),
+    ("P", porcentaje) o None (nombre, ruido o ilegible).
+    """
+    raw = token.strip(",;:'\"`")
+    if not raw:
+        return None
+    if raw.endswith("%"):
+        try:
+            return ("P", float(re.sub(r"[^\d.]", "", raw) or "x"))
+        except ValueError:
+            return ("P", None)
+    if "$" in raw or re.search(r"\.\d{2}\)?$", raw):
+        # Un signo menos garabateado ("—$3.00", o un carácter ilegible antes del "$") queda como "-";
+        # una comilla suelta adelante ("‘$10.96") es ruido, no un signo.
+        lead = re.match(r"^[^\d$]+", raw)
+        if lead:
+            raw = ("-" if re.search(r"[-—–~=\ufffd]", lead.group(0)) else "") + raw[lead.end():]
+        fixed = raw.translate(_OCR_DIGIT_FIX) if re.search(r"\d", raw) else raw
+        if _OCR_MONEY_TOKEN_RE.match(fixed) or _OCR_MONEY_TOKEN_RE.match(fixed.replace("$", "")):
+            return ("M", _ocr_money_value(fixed))
+    elif re.search(r"\d", raw) and len(raw) <= 5:
+        fixed = raw.translate(_OCR_DIGIT_FIX)
+        if _OCR_INT_TOKEN_RE.match(fixed):
+            return ("I", int(fixed))
+    if raw in ("O", "o", ")", "(", "D", "Q"):
+        return ("I", 0)
+    # Basura pegada adelante/atrás: "4.", "40°", "1—", "$0.00.", "$3480".
+    if token.startswith("-$"):
+        trimmed = "-" + _OCR_EDGE_JUNK_RE.sub("", token[1:])
+    else:
+        trimmed = _OCR_EDGE_JUNK_RE.sub("", token)
+    if "$" in trimmed:
+        fixed = trimmed.translate(_OCR_DIGIT_FIX)
+        match = _OCR_MONEY_NO_POINT_RE.match(fixed)
+        if match:
+            value = float(f"{match.group(2).replace(',', '')}.{match.group(3)}")
+            return ("M", -value if match.group(1) else value)
+        if trimmed != token and _OCR_MONEY_TOKEN_RE.match(fixed):
+            return ("M", _ocr_money_value(fixed))
+        return None
+    if trimmed and trimmed != token and re.fullmatch(r"[\dOoDQlI|SBZ]{1,5}", trimmed) and re.search(r"\d", trimmed):
+        fixed = trimmed.translate(_OCR_DIGIT_FIX)
+        if _OCR_INT_TOKEN_RE.match(fixed):
+            return ("I", int(fixed))
+    return None
+
+
+def _parse_ocr_sales_row(line, allow_unknown=False):
+    """
+    Una línea de OCR -> dict con TODOS los campos de la fila (no solo Net
+    Count/Net Sales), asignados por la forma de cada valor y no por posición:
+    monto, 3 enteros, 3 montos y el % al final (M I I I M M M [P]). Así un
+    token de ruido suelto ya no corre las columnas. Si falta exactamente uno
+    de los tres conteos, se deduce de la ecuación de la fila. Con
+    allow_unknown, una fila con dos o más conteos ilegibles vuelve igual
+    ("partial") para releer esas celdas en la imagen.
+    """
+    text = _normalize_department_spacing(_strip_cell(line))
+    if not text or _is_ocr_header_line(text):
+        return None
+    tokens = text.split()
+    name_tokens, entries = [], []
+    merged = set()
+    for index, token in enumerate(tokens):
+        if index in merged or _OCR_NOISE_TOKEN_RE.match(token):
+            continue
+        if (entries and index + 1 < len(tokens) and re.fullmatch(r"-?\$\d{1,3}(,\d{3})*", token)
+                and re.fullmatch(r"\d{2}", tokens[index + 1])):
+            token = f"{token}.{tokens[index + 1]}"
+            merged.add(index + 1)
+        kind = _classify_ocr_token(token)
+        if kind is None and entries and not re.search(r"[0-9A-Za-z§]", token):
+            # Ruido suelto ("-", "~-", "*", "<~")... o un conteo garabateado ("€" por "7").
+            kind = ("J", None)
+        if kind is None:
+            if not entries:
+                if re.search(r"[A-Za-z]", token):
+                    name_tokens.append(token)
+                continue
+            kind = ("X", None)
+        elif not entries and kind[0] == "I" and name_tokens and re.fullmatch(r"\d+[A-Za-z]+|[A-Za-z]+\d+", token):
+            name_tokens.append(token)
+            continue
+        entries.append((kind, token, index))
+    # Primero el ruido suelto no cuenta; si así la fila no cierra su forma,
+    # se prueba de nuevo tomándolo como un valor ilegible.
+    row = _assign_ocr_row_values([e for e in entries if e[0][0] != "J"], allow_unknown)
+    if row is None and any(e[0][0] == "J" for e in entries):
+        row = _assign_ocr_row_values([(("X", None) if e[0][0] == "J" else e[0], e[1], e[2]) for e in entries], allow_unknown)
+    if row is None:
+        return None
+    row.update({"name": " ".join(name_tokens), "tokens": tokens})
+    return row
+
+
+def _assign_ocr_row_values(entries, allow_unknown):
+    """Los valores de una fila (kind, token, posición) -> campos de la fila, o None si no tiene la forma."""
+    values = [kind for kind, _token, _index in entries]
+    raw_values = [token for _kind, token, _index in entries]
+    positions = [index for _kind, _token, index in entries]
+    pct = None
+    if values and values[-1][0] == "P":
+        pct = values.pop()[1]
+        positions.pop()
+    elif len(values) == 8 and values[-1][0] in ("M", "X") and "$" not in raw_values[-1]:
+        # El % sin su "%" ("0.20") o ilegible en su lugar.
+        values.pop()
+        positions.pop()
+    if len(values) == 8 and "".join(kind for kind, _ in values).endswith("MMMI"):
+        values.pop()
+        positions.pop()
+    kinds = "".join(kind for kind, _ in values)
+    vals = [value for _, value in values]
+    if len(kinds) > 7 and kinds.endswith("MIIIMMM"):
+        kinds, vals, positions = kinds[-7:], vals[-7:], positions[-7:]
+    inferred = partial = False
+    count_positions = positions[1:4]
+    if kinds == "MIIIMMM":
+        gross, item, refund_count, net_count, refund, discount, net = vals
+    elif (len(kinds) == 7 and kinds[0] == "M" and kinds[4:] == "MMM"
+            and kinds[1:4].count("X") == 1 and kinds[1:4].count("I") == 2):
+        gross, a, b, c, refund, discount, net = vals
+        if a is None:
+            item, refund_count, net_count = c + b, b, c
+        elif b is None:
+            item, refund_count, net_count = a, a - c, c
+        else:
+            item, refund_count, net_count = a, b, a - b
+        inferred = True
+        if min(item, refund_count, net_count) < 0:
+            return None
+    elif allow_unknown and len(kinds) == 7 and kinds[0] == "M" and kinds[4:] == "MMM" and set(kinds[1:4]) <= {"I", "X"}:
+        gross, item, refund_count, net_count, refund, discount, net = vals
+        partial = True
+    elif kinds == "MIIMMM":
+        # Falta un entero: si los dos que hay son iguales, el que falta es Refund Count = 0.
+        gross, a, b, refund, discount, net = vals
+        if a != b:
+            return None
+        item, refund_count, net_count = a, 0, b
+        count_positions = [positions[1], None, positions[2]]
+    else:
+        return None
+    return {
+        "count_positions": count_positions,
+        "gross": gross, "item": item, "refund_count": refund_count, "net_count": net_count,
+        "refund": refund, "discount": discount, "net": net, "pct": pct,
+        "inferred": inferred, "partial": partial,
+        "count_ok": not partial and item - refund_count == net_count,
+        "amount_ok": abs(gross - abs(refund) - abs(discount) - net) < 0.011,
+    }
+
+
+def _ocr_row_department(name):
+    """Nombre leído -> departamento normalizado; "" para la fila del total; None si no es una fila."""
+    if not name or not re.search(r"[A-Za-z]", name):
         return ""
+    if _normalize_department_label(name) in ("total", "grand total", "totals"):
+        return ""
+    text, _fused = _split_dept_name_from_fused_tail(_normalize_department_spacing(name).upper())
+    department = normalize_parsed_department_name(_fallback_department_alias(text))
+    if not department or _is_summary_row(department):
+        return None
+    if department in _OCR_KNOWN_DEPARTMENTS:
+        return department
+    # Basura corta pegada adelante o atrás del nombre ("J TAXABLE", "FOUTAIN I").
+    tokens = department.split()
+    for start in range(0, min(2, len(tokens))):
+        for end in range(len(tokens), max(len(tokens) - 2, start), -1):
+            trimmed = " ".join(tokens[start:end])
+            extra = tokens[:start] + tokens[end:]
+            if extra and trimmed in _OCR_KNOWN_DEPARTMENTS and all(len(token) <= 2 for token in extra):
+                return trimmed
+    close = get_close_matches(department, _OCR_KNOWN_DEPARTMENTS, n=2, cutoff=0.75)
+    if len(close) == 1 or (close and SequenceMatcher(None, department, close[0]).ratio()
+                           - SequenceMatcher(None, department, close[1]).ratio() > 0.1):
+        return close[0]
+    return department
+
+
+def _ocr_page_readings(image):
+    """
+    Las lecturas de una página: el texto de cada configuración de
+    _OCR_TEXT_CONFIGS, las palabras de --psm 6 con su caja en la imagen
+    (image_to_data; de ahí sale también su texto) y el mejor texto según
+    _score_ocr_page_text (el que se usa para el ancla y el período).
+    """
+    readings = {"texts": {}, "words": [], "best": "", "image": image}
+    if image is None:
+        return readings
     _ensure_pytesseract()
-    best_text = ""
-    best_score = (-1, -1)
     for config in _OCR_TEXT_CONFIGS:
         try:
-            text = pytesseract.image_to_string(image, config=config) or ""
+            if config == "--psm 6":
+                data = pytesseract.image_to_data(image, config=config, output_type=pytesseract.Output.DICT)
+                words = [
+                    (str(data["text"][i]), data["left"][i], data["top"][i], data["width"][i], data["height"][i],
+                     (data["block_num"][i], data["par_num"][i], data["line_num"][i]))
+                    for i in range(len(data["text"])) if str(data["text"][i]).strip()
+                ]
+                readings["words"] = words
+                text = "\n".join(" ".join(word[0] for word in line) for line in _ocr_word_lines(words))
+            else:
+                text = pytesseract.image_to_string(image, config=config) or ""
         except Exception:
+            continue
+        readings["texts"][config] = text
+    best_score = (-1, -1)
+    for config in _OCR_TEXT_CONFIGS:
+        text = readings["texts"].get(config)
+        if text is None:
             continue
         score = _score_ocr_page_text(text)
         if score > best_score:
             best_score = score
-            best_text = text
-    return best_text
+            readings["best"] = text
+    return readings
+
+
+def _ocr_word_lines(words):
+    """Palabras de image_to_data agrupadas en líneas, en el orden de lectura de Tesseract."""
+    lines = {}
+    for word in words:
+        lines.setdefault(word[5], []).append(word)
+    return [sorted(line, key=lambda word: word[1]) for line in lines.values()]
+
+
+def _ocr_reread_digits(image, box):
+    """Relee una celda de conteo recortada y agrandada 3x, solo con dígitos ("" si no lee nada)."""
+    _ensure_pytesseract()
+    left, top, width, height = box
+    pad = 6
+    crop = image.convert("L").crop((left - pad, top - pad, left + width + pad, top + height + pad))
+    big = crop.resize((crop.width * 3, crop.height * 3), Image.LANCZOS)
+    digits = ""
+    for psm in ("7", "10"):
+        try:
+            text = pytesseract.image_to_string(big, config=f"--psm {psm} -c tessedit_char_whitelist=0123456789")
+        except Exception:
+            continue
+        digits = re.sub(r"\D", "", text or "")
+        if digits:
+            break
+    return digits
+
+
+def _ocr_digit_width(rows):
+    """Ancho de un dígito en la página: la mediana de las cajas de los conteos de un solo dígito."""
+    widths = []
+    for row, words in rows:
+        for position in row["count_positions"]:
+            if position is not None and re.fullmatch(r"\d", row["tokens"][position]):
+                widths.append(words[position][3])
+    return statistics.median(widths) if len(widths) >= 5 else None
+
+
+def _ocr_fix_counts_from_image(row, words, image, digit_width):
+    """
+    Relee en la imagen los conteos dudosos de una fila de --psm 6: la caja
+    más ancha que los dígitos leídos ("7" con el ancho de "77"), un conteo
+    ilegible, o las tres celdas si la fila no cierra su ecuación (siempre en
+    la fila del total). Aplica la relectura entera si la fila cierra; si no,
+    solo las celdas corregidas por ancho.
+    """
+    if image is None or len(words) != len(row["tokens"]):
+        return
+    names = ("item", "refund_count", "net_count")
+    reread_all = not row["count_ok"] or row["inferred"] or row["department"] == ""
+    reread = {}
+    for name, position in zip(names, row["count_positions"]):
+        if position is None:
+            continue
+        word = words[position]
+        expected = round(word[3] / digit_width) if digit_width else None
+        too_wide = row[name] is not None and expected is not None and expected > len(str(row[name]))
+        if not (too_wide or reread_all or row[name] is None):
+            continue
+        digits = _ocr_reread_digits(image, word[1:5])
+        if digits and (not too_wide or len(digits) == expected):
+            reread[name] = (int(digits), too_wide)
+    if not reread:
+        return
+    if "net_count" in reread and reread["net_count"][1]:
+        row["net_confirmed"] = reread["net_count"][0]
+    candidate = {name: reread[name][0] if name in reread else row[name] for name in names}
+    if row["count_positions"][1] is None:
+        candidate["refund_count"] = 0
+    missing = [name for name in names if candidate[name] is None]
+    inferred = False
+    if len(missing) == 1:
+        item, refund_count, net_count = (candidate[name] for name in names)
+        value = {"item": lambda: refund_count + net_count, "refund_count": lambda: item - net_count,
+                 "net_count": lambda: item - refund_count}[missing[0]]()
+        if value >= 0:
+            candidate[missing[0]] = value
+            inferred = True
+    if None not in candidate.values() and candidate["item"] - candidate["refund_count"] == candidate["net_count"]:
+        new = candidate
+    elif row["department"] == "":
+        return
+    else:
+        new = {name: reread[name][0] if name in reread and reread[name][1] else row[name] for name in names}
+    if None in new.values() or new == {name: row[name] for name in names}:
+        return
+    row.update(new)
+    row["count_ok"] = new["item"] - new["refund_count"] == new["net_count"]
+    row["image_checked"] = True
+    row["partial"] = False
+    row["inferred"] = inferred and new is candidate
+
+
+def _ocr_table_rows(pages):
+    """
+    Filas de la tabla de las 3 pasadas, desde el ancla hasta "Safe Drop
+    Report". `pages` = lecturas de _ocr_page_readings, la del ancla primero.
+    """
+    rows = []
+    for config in _OCR_ROW_CONFIGS:
+        for number, page in enumerate(pages):
+            past_anchor = number != 0
+            stop = False
+            if config == "--psm 6":
+                lines = [(" ".join(word[0] for word in line), line) for line in _ocr_word_lines(page["words"])]
+            else:
+                lines = [(line, None) for line in page["texts"].get(config, "").splitlines()]
+            parsed = []
+            for text, words in lines:
+                if not past_anchor:
+                    past_anchor = _line_contains_anchor(text)
+                    continue
+                if _line_contains_stop_marker(text):
+                    stop = True
+                    break
+                row = _parse_ocr_sales_row(text, allow_unknown=words is not None)
+                if row is None:
+                    continue
+                department = _ocr_row_department(row["name"])
+                if department is None:
+                    continue
+                row["department"] = department
+                row["config"] = config
+                parsed.append((row, words))
+            if config == "--psm 6":
+                digit_width = _ocr_digit_width(parsed)
+                for row, words in parsed:
+                    _ocr_fix_counts_from_image(row, words, page["image"], digit_width)
+            rows.extend(row for row, _words in parsed if not row["partial"])
+            if stop:
+                break
+    return rows
+
+
+def _ocr_candidates(rows, field):
+    """
+    {valor: puntaje} de un campo entre las lecturas de una fila: la lectura
+    que cierra su ecuación vale 3; la deducida, 2; una que no cierra vale 1,
+    y también suma 1 el valor que daría su ecuación.
+    """
+    score = Counter()
+    for row in rows:
+        if field == "count":
+            if row["inferred"]:
+                score[row["net_count"]] += 2
+            elif row["count_ok"]:
+                score[row["net_count"]] += 3
+            else:
+                score[row["net_count"]] += 1
+                score[row["item"] - row["refund_count"]] += 1
+        else:
+            value = round(row["net"], 2)
+            if row["amount_ok"]:
+                score[value] += 3
+            else:
+                score[value] += 1
+                score[round(row["gross"] - abs(row["refund"]) - abs(row["discount"]), 2)] += 1
+    return score
+
+
+def _ocr_resolve_unknown_names(order, by_department):
+    """
+    Nombres ilegibles que no se parecen a ninguno ("TAY AELE"; "GAN" y "GEA"
+    para el mismo renglón de HBA, cada pasada lo garabatea distinto). El POS
+    imprime los departamentos siempre en el mismo orden
+    (_OCR_KNOWN_DEPARTMENTS), así que el renglón se ubica por sus vecinos:
+    si entre ellos entra un solo departamento conocido que falta ese día (o
+    uno solo con la misma inicial), es ese. Si no se puede saber: un nombre
+    que las tres pasadas leen igual es un departamento nuevo de verdad y se
+    guarda así; si no, el renglón NO se guarda con un nombre inventado y se
+    devuelve aparte (unnamed) para avisar sus valores.
+    Devuelve (order, unnamed) y deja by_department con los nombres resueltos.
+    """
+    known = _OCR_KNOWN_DEPARTMENTS
+    groups = []
+    for index, department in enumerate(order):
+        if department in known:
+            continue
+        nets = {round(row["net"], 2) for row in by_department[department]}
+        # Ilegibles seguidos con el mismo monto son el mismo renglón leído distinto.
+        if groups and groups[-1]["end"] == index - 1 and groups[-1]["nets"] & nets:
+            groups[-1]["names"].append(department)
+            groups[-1]["nets"] |= nets
+            groups[-1]["end"] = index
+        else:
+            groups.append({"start": index, "end": index, "names": [department], "nets": nets})
+    resolved = {}
+    unnamed = []
+    for group in groups:
+        before = next((d for d in reversed(order[:group["start"]]) if d in known), None)
+        after = next((d for d in order[group["end"] + 1:] if d in known), None)
+        low = known.index(before) if before else -1
+        high = known.index(after) if after else len(known)
+        free = [d for d in known[low + 1:high] if d not in by_department]
+        if len(free) > 1:
+            same_letter = [d for d in free if any(d[0] == name[0] for name in group["names"])]
+            if len(same_letter) == 1:
+                free = same_letter
+        rows = [row for name in group["names"] for row in by_department.pop(name)]
+        if len(free) == 1:
+            target = free[0]
+        else:
+            stable = [name for name in group["names"] if len(name) >= 4
+                      and len({row["config"] for row in rows if row["department"] == name}) == len(_OCR_ROW_CONFIGS)]
+            target = stable[0] if len(stable) == 1 else None
+        for name in group["names"]:
+            resolved[name] = target
+        if target:
+            for row in rows:
+                row["department"] = target
+            by_department[target] = rows
+        else:
+            unnamed.append(rows)
+    new_order = []
+    for department in order:
+        department = resolved.get(department, department)
+        if department and department not in new_order:
+            new_order.append(department)
+    return new_order, unnamed
+
+
+def _vote_ocr_departments(pages):
+    """
+    (records, printed_totals, status): un registro por departamento con el
+    valor votado de Net Count y Net Sales, el total impreso ya confirmado, y
+    el resultado del cierre contra ese total ({"count"/"amount": "ok" |
+    "corregido" | "no_cierra" | "sin_total"}).
+    """
+    rows = _ocr_table_rows(pages)
+    by_department, order, totals = {}, [], []
+    previous = {}
+    for row in rows:
+        if row["department"] == "":
+            totals.append(row)
+            continue
+        if row["department"] not in by_department:
+            # Un departamento que solo leyó otra pasada va donde lo leyó esa
+            # pasada (después del mismo vecino), no al final de la lista.
+            if row["config"] not in previous:
+                position = 0
+            else:
+                after = previous[row["config"]]
+                position = order.index(after) + 1 if after in order else len(order)
+            order.insert(position, row["department"])
+        previous[row["config"]] = row["department"]
+        by_department.setdefault(row["department"], []).append(row)
+    order, unnamed = _ocr_resolve_unknown_names(order, by_department)
+
+    records = []
+    for department in order:
+        record = {"department": department, "is_total": False}
+        for field in ("count", "amount"):
+            department_rows = by_department[department]
+            if field == "count" and any(r.get("image_checked") and r["count_ok"] for r in department_rows):
+                # La relectura en la imagen manda: las otras pasadas fundieron los mismos dígitos.
+                department_rows = [r for r in department_rows if r.get("image_checked") and r["count_ok"]]
+            candidates = _ocr_candidates(department_rows, field)
+            if field == "count":
+                for row in by_department[department]:
+                    if row.get("net_confirmed") is not None:
+                        candidates[row["net_confirmed"]] += 6
+            ranked = candidates.most_common()
+            record[field] = ranked[0][0]
+            record[field + "_options"] = candidates
+            record[field + "_sure"] = len(ranked) == 1 or (ranked[0][1] >= 2 * ranked[1][1] and ranked[0][1] >= 3)
+        records.append(record)
+
+    total_count = _ocr_candidates(totals, "count")
+    for row in totals:
+        if row.get("image_checked") and row["count_ok"]:
+            total_count[row["net_count"]] += 3
+    total_amount = _ocr_candidates(totals, "amount")
+    printed_amount = total_amount.most_common(1)[0][0] if total_amount else None
+    # % de ventas: confirma cuál de las lecturas del monto es la buena.
+    if printed_amount:
+        for record in records:
+            pcts = {r["pct"] for r in by_department[record["department"]] if r["pct"] is not None}
+            options = record["amount_options"]
+            confirmed = [v for v in options if any(abs(v / printed_amount * 100 - p) < 0.006 for p in pcts)]
+            if len(confirmed) == 1 and len(options) > 1:
+                options[confirmed[0]] += 10
+                record["amount"] = confirmed[0]
+                record["amount_sure"] = True
+
+    # Un renglón sin nombre legible no se guarda, pero sus valores sí se
+    # conocen: se descuentan del total impreso para cerrar los demás.
+    unnamed_values = [
+        {"count": _ocr_candidates(rows, "count").most_common(1)[0][0],
+         "amount": _ocr_candidates(rows, "amount").most_common(1)[0][0]}
+        for rows in unnamed
+    ]
+    unnamed_count = sum(item["count"] for item in unnamed_values)
+    unnamed_amount = sum(item["amount"] for item in unnamed_values)
+    status = _reconcile_ocr_departments(records, {
+        "count": Counter({value - unnamed_count: score for value, score in total_count.items()}),
+        "amount": Counter({round(value - unnamed_amount, 2): score for value, score in total_amount.items()}),
+    })
+    for field, offset in (("count", unnamed_count), ("amount", unnamed_amount)):
+        if field + "_target" in status:
+            status[field + "_target"] = round(status[field + "_target"] + offset, 2)
+    status["unnamed"] = unnamed_values
+    printed_totals = None
+    if totals:
+        printed_totals = {
+            "department": "", "is_total": True,
+            "count": int(status.get("count_target", total_count.most_common(1)[0][0])),
+            "amount": float(status.get("amount_target", printed_amount)),
+        }
+    return records, printed_totals, status
+
+
+def _ocr_total_fixes(records, field, target, tolerance):
+    """Cambios de 1 o 2 valores dudosos que cierran contra target, del más barato al más caro."""
+    current = sum(record[field] for record in records)
+    if abs(current - target) <= tolerance:
+        return [(0, [])]
+    doubtful = [record for record in records if len(record[field + "_options"]) > 1]
+    fixes = []
+    for size in (1, 2):
+        for combo in itertools.combinations(doubtful, size):
+            alternatives = [[v for v in record[field + "_options"] if v != record[field]] for record in combo]
+            for choice in itertools.product(*alternatives):
+                delta = sum(value - record[field] for value, record in zip(choice, combo))
+                if abs(current + delta - target) <= tolerance:
+                    cost = sum(record[field + "_options"][record[field]] - record[field + "_options"][value]
+                               for value, record in zip(choice, combo))
+                    fixes.append((cost, list(zip(combo, choice))))
+        if fixes:
+            break
+    return sorted(fixes, key=lambda fix: fix[0])
+
+
+def _reconcile_ocr_departments(records, total_options):
+    """
+    Cierra unidades y monto EXACTO contra el total impreso. Prueba las
+    lecturas posibles del total (también puede estar mal leído: "593" como
+    "693"), de la más votada a la menos, y aplica el cambio más barato solo
+    si es claramente mejor que el siguiente. Si no cierra con ninguna, los
+    valores que no estaban seguros quedan marcados como dudosos.
+    """
+    status = {}
+    for record in records:
+        record["doubt"] = []
+    for field, tolerance in (("count", 0), ("amount", 0.005)):
+        targets = [value for value, _score in total_options[field].most_common()]
+        closed = False
+        for target in targets:
+            fixes = _ocr_total_fixes(records, field, target, tolerance)
+            if not fixes or (len(fixes) > 1 and fixes[1][0] - fixes[0][0] < 2):
+                continue
+            for record, value in fixes[0][1]:
+                record[field] = value
+            status[field] = "ok" if not fixes[0][1] else "corregido"
+            status[field + "_target"] = target
+            closed = True
+            break
+        if not closed:
+            status[field] = "no_cierra" if targets else "sin_total"
+            for record in records:
+                if not record[field + "_sure"]:
+                    record["doubt"].append(field)
+    return status
 
 
 def parse_elistar_daily_pdf_ocr(pdf_path, start_page_index=DEFAULT_PDF_PAGE_INDEX):
@@ -1185,19 +1820,21 @@ def parse_elistar_daily_pdf_ocr(pdf_path, start_page_index=DEFAULT_PDF_PAGE_INDE
     forward from start_page_index (wrapping around) for the anchor,
     corrects page rotation via Tesseract OSD, and keeps reading department
     rows across pages until the "Safe Drop Report" anchor is reached.
+    Each value is voted across three OCR passes and the day is closed
+    against the printed grand-total line (see _vote_ocr_departments).
 
     Returns:
-        tuple[list[dict], dict]: (records, diagnostics) — diagnostics has
-        keys "pages_used", "last_department", "subtotal_mismatch" (the
-        printed grand-total line is cross-checked against the sum of parsed
-        rows as a soft OCR-quality sanity check, never a blocking one),
-        "printed_totals" (the grand-total line itself, as a
-        {"count", "amount"} dict, always present when the report printed
-        one — regardless of whether it matched — for callers that want the
-        official total rather than just a mismatch flag), and "period"
-        (the {"from_date", "to_date", ...} dict parsed from this same
-        page's own "PERIOD FROM: ... TO: ..." line, or None if it wasn't
-        found there).
+        tuple[list[dict], dict]: (records, diagnostics) — each record is
+        {"department", "count", "amount", "is_total": False}, with count
+        and/or amount None when it couldn't be read with confidence (never
+        a guessed value). diagnostics has keys "pages_used",
+        "last_department", "subtotal_mismatch" (the sum of the rows doesn't
+        close against the printed grand total even after trying the other
+        readings — e.g. a whole row OCR skipped), "doubtful_departments"
+        ([{"department", "fields"}] left empty), "printed_totals" (the
+        grand-total line as {"count", "amount"}, when the report printed
+        one) and "period" (the {"from_date", "to_date", ...} dict parsed
+        from this same page's own "PERIOD FROM: ... TO: ..." line, or None).
     """
     pdf_path = os.path.abspath(pdf_path)
     if not os.path.isfile(pdf_path):
@@ -1211,14 +1848,17 @@ def parse_elistar_daily_pdf_ocr(pdf_path, start_page_index=DEFAULT_PDF_PAGE_INDE
     search_order = list(range(start_page_index, total_pages)) + list(
         range(0, start_page_index)
     )
+    readings_by_page = {}
+
+    def page_readings(idx):
+        if idx not in readings_by_page:
+            readings_by_page[idx] = _ocr_page_readings(images[idx])
+        return readings_by_page[idx]
 
     anchor_page = None
-    anchor_page_text = None
     for idx in search_order:
-        text = _ocr_page_text(images[idx])
-        if _line_contains_anchor(text):
+        if _line_contains_anchor(page_readings(idx)["best"]):
             anchor_page = idx
-            anchor_page_text = text
             break
 
     if anchor_page is None:
@@ -1229,74 +1869,95 @@ def parse_elistar_daily_pdf_ocr(pdf_path, start_page_index=DEFAULT_PDF_PAGE_INDE
             "borroso o girado."
         )
 
-    records = []
-    printed_totals = None
+    table_pages = []
     pages_used = []
-    reached_stop = False
     idx = anchor_page
     while idx < total_pages:
-        page_text = anchor_page_text if idx == anchor_page else _ocr_page_text(images[idx])
+        readings = page_readings(idx)
+        table_pages.append(readings)
         pages_used.append(idx + 1)
         past_anchor = idx != anchor_page
-        for line in page_text.splitlines():
+        reached_stop = False
+        for line in readings["best"].splitlines():
             if not past_anchor:
-                if _line_contains_anchor(line):
-                    past_anchor = True
+                past_anchor = _line_contains_anchor(line)
                 continue
             if _line_contains_stop_marker(line):
                 reached_stop = True
                 break
-            if not _strip_cell(line):
-                continue
-            parsed = _parse_ocr_department_row(line)
-            if parsed is None:
-                continue
-            if parsed["is_total"]:
-                printed_totals = parsed
-            else:
-                records.append(parsed)
         if reached_stop:
             break
         idx += 1
 
-    images.close()
+    try:
+        voted, printed_totals, status = _vote_ocr_departments(table_pages)
+    finally:
+        images.close()
 
-    if not records:
+    if not voted:
         raise ValueError(
             f"No se encontraron registros de departamento vía OCR después de "
             f'"{DEPARTMENT_SALES_REPORT_ANCHOR}". Verifique que el reporte no esté '
             "demasiado borroso o girado."
         )
 
+    # Lo que sigue dudoso después de votar y cerrar contra el total queda
+    # VACÍO (None) y se avisa -- regla de oro del OCR: nunca un valor dudoso.
+    records = []
+    doubtful = []
+    for record in voted:
+        fields = record["doubt"]
+        records.append({
+            "department": record["department"],
+            "count": None if "count" in fields else int(record["count"]),
+            "amount": None if "amount" in fields else round(float(record["amount"]), 2),
+            "is_total": False,
+        })
+        if fields:
+            doubtful.append({"department": record["department"], "fields": list(fields)})
+    for item in status.get("unnamed", []):
+        doubtful.append({"department": None, "fields": ["count", "amount"], "values": item})
+
     subtotal_mismatch = None
-    if printed_totals is not None:
-        computed_amount = round(sum(r["amount"] for r in records), 2)
-        computed_count = sum(r["count"] for r in records)
-        amount_diff = round(abs(computed_amount - printed_totals["amount"]), 2)
-        count_diff = abs(computed_count - printed_totals["count"])
-        if amount_diff > 1.00 or count_diff > 2:
-            subtotal_mismatch = {
-                "computed_amount": computed_amount,
-                "printed_amount": printed_totals["amount"],
-                "computed_count": computed_count,
-                "printed_count": printed_totals["count"],
-            }
+    if printed_totals is not None and "no_cierra" in (status.get("count"), status.get("amount")):
+        subtotal_mismatch = {
+            "computed_amount": round(sum(r["amount"] for r in records if r["amount"] is not None), 2),
+            "printed_amount": printed_totals["amount"],
+            "computed_count": sum(r["count"] for r in records if r["count"] is not None),
+            "printed_count": printed_totals["count"],
+        }
 
     period = None
-    for line in anchor_page_text.splitlines():
-        if PERIOD_FROM_ANCHOR in line.lower():
-            period = _parse_period_from_to_line(line)
-            if period:
-                break
+    anchor_readings = readings_by_page[anchor_page]
+    for text in [anchor_readings["best"]] + list(anchor_readings["texts"].values()):
+        for line in text.splitlines():
+            if PERIOD_FROM_ANCHOR in line.lower():
+                period = _parse_period_from_to_line(line)
+                if period:
+                    break
+        if period:
+            break
 
     diagnostics = {
         "pages_used": pages_used,
         "last_department": records[-1]["department"],
         "subtotal_mismatch": subtotal_mismatch,
+        "doubtful_departments": doubtful,
+        # Sin la fila del total legible no hay contra qué verificar la suma.
+        "total_unverified": status.get("count") == "sin_total",
         "printed_totals": printed_totals,
         "period": period,
     }
     return records, diagnostics
+
+
+def _page_is_scanned(page):
+    """La página es una foto/escaneo: una imagen incrustada que cubre al menos la mitad de la hoja."""
+    page_area = float(page.width * page.height) or 1.0
+    return any(
+        (image["x1"] - image["x0"]) * (image["bottom"] - image["top"]) >= 0.5 * page_area
+        for image in page.images
+    )
 
 
 def _parse_elistar_daily_pdf_page_uncached(pdf_path, page_index=DEFAULT_PDF_PAGE_INDEX):
@@ -1328,7 +1989,13 @@ def _parse_elistar_daily_pdf_page_uncached(pdf_path, page_index=DEFAULT_PDF_PAGE
                 f"el documento tiene {len(pdf.pages)} página(s)."
             )
         page = pdf.pages[page_index]
-        has_text = bool((page.extract_text() or "").strip())
+        # Una foto/escaneo puede traer igual una capa de texto que le agrega
+        # la app del escáner, inservible ("R E T A W E L B A X A T ...", al
+        # revés y letra por letra): con ella no se encontraba el ancla y se
+        # perdía el día entero, o salían 5 departamentos de 23 sin aviso
+        # (relevamiento 2026-10-04: 11 de 189 PDFs reales). Si la página es
+        # una imagen, se lee siempre por OCR.
+        has_text = bool((page.extract_text() or "").strip()) and not _page_is_scanned(page)
         records = _parse_tables_with_line_anchor(page) if has_text else []
 
     if records:
@@ -1443,6 +2110,16 @@ def extract_department_sales_for_day(pdf_path):
         "date": business_date,
         "records": records,
         "subtotal_mismatch": subtotal_mismatch,
+        # Lectura por votación (2026-10-04): lo que quedó vacío por dudoso,
+        # el total impreso confirmado y si no hubo total contra qué verificar.
+        "doubtful_departments": [
+            f"un renglón con el nombre ilegible ({item['values']['count']} unidades, ${item['values']['amount']:,.2f})"
+            if item.get("values") else
+            f"{item['department']} ({' y '.join('unidades' if f == 'count' else 'monto' for f in item['fields'])})"
+            for item in diagnostics.get("doubtful_departments") or []
+        ],
+        "printed_totals": diagnostics.get("printed_totals"),
+        "total_unverified": bool(diagnostics.get("total_unverified")),
     }
 
 
@@ -2171,6 +2848,10 @@ def inject_daily_sales(sheet, pdf_records, column_map, target_row):
             skipped.append(dept_name)
             continue
 
+        if record["count"] is None or record["amount"] is None:
+            # El OCR no lo pudo leer con seguridad: la celda queda como está.
+            skipped.append(dept_name)
+            continue
         amount_value = _sanitize_sales_float(record["amount"])
         _write_count_cell(sheet, target_row, count_col, int(record["count"]))
         _write_amount_cell(
@@ -3155,6 +3836,13 @@ def extract_lottery_department_fields_from_pdf(pdf_path, page_index=DEFAULT_PDF_
         raise ValueError(
             f'No se encontró el departamento "{LOTTERY_SKOFF_DEPARTMENT}" en el Department Sales Report.'
         )
+
+    for record in (online_record, skoff_record):
+        if record["count"] is None or record["amount"] is None:
+            raise ValueError(
+                f'El departamento "{record["department"]}" no se pudo leer con seguridad en el '
+                "Department Sales Report: quedó vacío, cargalo a mano."
+            )
 
     # Solo la fecha: un campo de Store Info ilegible no frena ONLINE/SKOFF.
     store_info_fields = extract_store_info_from_pdf(pdf_path, strict=False)
