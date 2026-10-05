@@ -287,6 +287,31 @@ def _require_password_change():
     return None
 
 
+@app.after_request
+def _download_error_as_message(response):
+    """
+    Descargas sin recargar (pedido del usuario, 2026-10-05): base.html pide
+    cada PDF/Excel por detrás con el encabezado X-Download-Check. Si la ruta
+    no puede armar el archivo (no hay datos ese mes, el PDF ya no está
+    guardado...) hace lo de siempre, avisar con flash y redirigir; acá ese
+    redirect se cambia por el mensaje solo, que el navegador muestra en el
+    aviso flotante sin recargar la página. Sin el encabezado (un link abierto
+    a mano, otra pestaña) todo sigue igual que antes.
+    """
+    if not request.headers.get("X-Download-Check") or not 300 <= response.status_code < 400:
+        return response
+    flashes = session.pop("_flashes", None) or []
+    if flashes:
+        category, message = next(((c, m) for c, m in flashes if c == "error"), flashes[0])
+    elif urlsplit(response.location or "").path == url_for("login"):
+        category, message = "error", "La sesión venció: volvé a entrar."
+    else:
+        category, message = "error", "No se pudo generar el archivo."
+    message_response = jsonify({"error": str(message), "level": "error" if category == "error" else "warning"})
+    message_response.status_code = 409
+    return message_response
+
+
 # Endpoints alcanzables desde LOS DOS lados de la bifurcación Carga de
 # Datos/Excels (ej. /reporte/historial, linkeado tanto desde reporte.html
 # como desde la barra lateral global) o transversales a los dos (cuenta,

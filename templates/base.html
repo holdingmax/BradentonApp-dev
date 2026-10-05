@@ -1159,6 +1159,10 @@
       .qc-panel, .qc-panel.wide { right: 0; bottom: calc(100% + 8px); width: calc(100vw - 36px); max-width: none; }
     }
     @media print { .qc { display: none; } }
+
+    /* Link de descarga mientras se arma el archivo (ver "Descargas sin
+       recargar" en el script de abajo). */
+    a[aria-busy="true"] { opacity: 0.55; pointer-events: none; }
   </style>
   {% block head_extra %}{% endblock %}
 </head>
@@ -2601,6 +2605,130 @@
       window.addEventListener('popstate', onPopState);
     })();
 
+    // Descargas sin recargar (pedido del usuario, 2026-10-05): "no quiero
+    // que cuando una persona quiera descargar un reporte y no haya datos...
+    // se recargue la página". Todo link o form GET a un PDF/Excel de la app
+    // se pide por detrás: si llega el archivo se descarga (o, el "Ver", se
+    // abre en otra pestaña), y si no se pudo armar, el servidor devuelve solo
+    // el mensaje (ver _download_error_as_message en webapp.py) y sale en el
+    // aviso flotante sin tocar la página.
+    (function () {
+      if (!window.fetch || !window.URL) return;
+      var DOWNLOAD_PATH = /\/(pdf|excel|exportar|descargar|download)(\/|$)|\.(pdf|xlsx)$/i;
+
+      function downloadUrl(href) {
+        var url;
+        try { url = new URL(href, window.location.href); } catch (urlErr) { return null; }
+        if (url.origin !== window.location.origin || url.pathname.indexOf('/static/') === 0) return null;
+        return DOWNLOAD_PATH.test(url.pathname) ? url : null;
+      }
+      window.__isDownloadHref = function (href) { return !!downloadUrl(href); };
+
+      function fail(message, level) {
+        if (typeof showNotice === 'function') showNotice(message, level || 'error');
+      }
+      function saveBlob(blob, disposition) {
+        var match = /filename\*=UTF-8''([^;]+)/i.exec(disposition) || /filename="?([^";]+)"?/i.exec(disposition);
+        var link = document.createElement('a');
+        link.href = URL.createObjectURL(blob);
+        link.download = match ? decodeURIComponent(match[1]) : 'descarga';
+        link.setAttribute('data-no-download-check', '');
+        link.setAttribute('data-no-unsaved-warning', '');
+        document.body.appendChild(link);
+        link.click();
+        setTimeout(function () { URL.revokeObjectURL(link.href); link.remove(); }, 1000);
+      }
+      // Una página HTML en vez del archivo: el aviso que trae, si trae alguno.
+      function messageFromPage(html) {
+        var page = new DOMParser().parseFromString(html, 'text/html');
+        var flash = page.querySelector('[data-flash="error"], [data-flash="warning"]');
+        return flash ? (flash.firstElementChild || flash).textContent.trim() : null;
+      }
+
+      function fetchFile(url, view, done) {
+        if (typeof hideNotice === 'function') hideNotice();
+        fetch(url.href, { credentials: 'same-origin', headers: { 'X-Download-Check': '1' } })
+          .then(function (resp) {
+            var type = resp.headers.get('Content-Type') || '';
+            var disposition = resp.headers.get('Content-Disposition') || '';
+            if (!resp.ok && /application\/json/i.test(type)) {
+              return resp.json().then(function (data) {
+                fail(data.error || 'No se pudo generar el archivo.', data.level);
+              });
+            }
+            if (!resp.ok) {
+              fail('No se pudo generar el archivo (error ' + resp.status + ').');
+              return;
+            }
+            if (/text\/html/i.test(type)) {
+              return resp.text().then(function (html) {
+                fail(messageFromPage(html) || 'No se pudo generar el archivo.');
+              });
+            }
+            if (view || !/attachment/i.test(disposition)) {
+              // Para verlo en el navegador se abre la dirección de siempre
+              // (el visor de PDF toma el nombre del archivo de ahí).
+              if (resp.body && resp.body.cancel) resp.body.cancel();
+              if (view) window.open(url.href, '_blank', 'noopener');
+              else window.location.assign(url.href);
+              return;
+            }
+            return resp.blob().then(function (blob) { saveBlob(blob, disposition); });
+          })
+          .catch(function () { fail('No se pudo descargar: error de conexión. Volvé a intentarlo.'); })
+          .then(done, done);
+      }
+
+      function onClick(event) {
+        if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        var link = event.target.closest ? event.target.closest('a[href]') : null;
+        if (!link || link.hasAttribute('data-no-download-check') || link.hasAttribute('download')) return;
+        var target = link.getAttribute('target') || '';
+        if (target && target !== '_blank' && target !== '_self') return;
+        var url = downloadUrl(link.getAttribute('href'));
+        if (!url) return;
+        event.preventDefault();
+        if (link.getAttribute('aria-busy') === 'true') return;
+        link.setAttribute('aria-busy', 'true');
+        var view = target === '_blank' && url.searchParams.get('mode') !== 'download';
+        fetchFile(url, view, function () { link.removeAttribute('aria-busy'); });
+      }
+
+      function onSubmit(event) {
+        if (event.defaultPrevented) return;
+        var form = event.target;
+        if (!form || form.tagName !== 'FORM' || form.hasAttribute('data-full-submit')) return;
+        var submitter = event.submitter || null;
+        var method = ((submitter && submitter.getAttribute('formmethod')) || form.getAttribute('method') || 'get').toLowerCase();
+        if (method !== 'get') return;
+        var target = (submitter && submitter.getAttribute('formtarget')) || form.getAttribute('target') || '';
+        if (target && target !== '_self') return;
+        // getAttribute y no form.action: un input name="action" lo taparía.
+        var url = downloadUrl((submitter && submitter.hasAttribute('formaction'))
+          ? submitter.formAction
+          : (form.getAttribute('action') || window.location.href));
+        if (!url) return;
+        event.preventDefault();
+        var button = submitter || form.querySelector('button[type="submit"], button:not([type])');
+        if (button && button.disabled) return;
+        // Un form GET reemplaza todo el query de la dirección, igual que el navegador.
+        url.search = new URLSearchParams(new FormData(form, submitter)).toString();
+        var label = button ? button.textContent : null;
+        if (button) { button.disabled = true; button.textContent = 'Generando…'; }
+        fetchFile(url, false, function () {
+          if (button) { button.disabled = false; button.textContent = label; }
+        });
+      }
+
+      // Una sola vez aunque la página se reemplace sin recargar (ver arriba).
+      if (window.__downloadClick) document.removeEventListener('click', window.__downloadClick);
+      if (window.__downloadSubmit) document.removeEventListener('submit', window.__downloadSubmit);
+      window.__downloadClick = onClick;
+      window.__downloadSubmit = onSubmit;
+      document.addEventListener('click', onClick);
+      document.addEventListener('submit', onSubmit);
+    })();
+
     // Encadenado genérico: cuando un form con class="chain-master-result"
     // termina de procesar, el resultado recién producido queda cargado solo
     // en el input compartido de la página (.shared-master-input), para que
@@ -2687,7 +2815,8 @@
         if (
           link.target === '_blank' || link.hasAttribute('download') ||
           link.hasAttribute('data-no-unsaved-warning') || href.charAt(0) === '#' ||
-          /mode=download|\/exportar/.test(href)
+          /mode=download|\/exportar/.test(href) ||
+          (window.__isDownloadHref && window.__isDownloadHref(href))
         ) return;
         var confirmed = window.confirm(
           'Hiciste cambios en este formulario que todavía no guardaste -- si salís ahora se van a perder. ¿Salir igual?'
