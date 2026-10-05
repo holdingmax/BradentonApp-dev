@@ -146,6 +146,8 @@ def upsert_department_fields(report_date, online_count, online_net_sales, skoff_
     a esto -- primer paso del "interconectado" que pidió el usuario:
     subir un solo PDF alimenta los dos módulos, igual que ya hacía el
     Excel). Nunca toca las columnas de Sales Report (F/G/H/I/K/P/Q/R/S).
+    Un None (lo que el OCR no pudo leer con seguridad) deja lo que ya había
+    guardado, igual que Store Info: no borra un valor cargado a mano.
     """
     key = _date_key(report_date)
     now = _now()
@@ -158,10 +160,10 @@ def upsert_department_fields(report_date, online_count, online_net_sales, skoff_
                  department_source, department_pdf_filename, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(date) DO UPDATE SET
-                online_count = excluded.online_count,
-                online_net_sales = excluded.online_net_sales,
-                skoff_count = excluded.skoff_count,
-                skoff_net_sales = excluded.skoff_net_sales,
+                online_count = COALESCE(excluded.online_count, lottery_days.online_count),
+                online_net_sales = COALESCE(excluded.online_net_sales, lottery_days.online_net_sales),
+                skoff_count = COALESCE(excluded.skoff_count, lottery_days.skoff_count),
+                skoff_net_sales = COALESCE(excluded.skoff_net_sales, lottery_days.skoff_net_sales),
                 department_source = excluded.department_source,
                 department_pdf_filename = COALESCE(excluded.department_pdf_filename, lottery_days.department_pdf_filename),
                 updated_at = excluded.updated_at

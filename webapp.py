@@ -1880,6 +1880,8 @@ def _run_carga_datos_reporte_diario_job(job_id, pdf_paths):
         days_unverified = set()
         days_total_sales_mismatch = {}
         days_store_info_missing = {}
+        days_lottery_missing = {}
+        lottery_unreadable = 0
         files_unreadable = 0
         date_mismatches = 0
         first_date = None
@@ -1959,11 +1961,17 @@ def _run_carga_datos_reporte_diario_job(job_id, pdf_paths):
                     fields = extract_lottery_department_fields_from_pdf(pdf_path)
                     _check_filename_date(fields["report_date"])
                     lottery_relpath = lottery_db.store_pdf_copy(fields["report_date"], pdf_path, filename)
+                    # Lo dudoso viene en None y deja lo que ya había (ver
+                    # upsert_department_fields); se avisa qué falta.
                     lottery_db.upsert_department_fields(
                         fields["report_date"], fields["online_count"], fields["online_net_sales"],
                         fields["skoff_count"], fields["skoff_net_sales"], source="ocr", pdf_filename=lottery_relpath,
                     )
+                    if fields["missing"]:
+                        days_lottery_missing[fields["report_date"]] = fields["missing"]
                 except Exception as exc:
+                    if "no coincide con la fecha del nombre" not in str(exc):
+                        lottery_unreadable += 1
                     print(f"[carga-datos/reporte-diario] ONLINE/SKOFF de {pdf_path}: {exc}")
 
             if file_had_mismatch:
@@ -2019,6 +2027,19 @@ def _run_carga_datos_reporte_diario_job(job_id, pdf_paths):
                 f"Ventas por Departamento: valores que el OCR no pudo leer con seguridad ({dates_txt}) — "
                 "quedaron vacíos, completalos a mano en el día."
             )
+        if days_lottery_missing:
+            dates_txt = "; ".join(
+                f"{d.strftime('%d/%m')}: {', '.join(items)}" for d, items in sorted(days_lottery_missing.items())
+            )
+            parts.append(
+                f"Lottery: ventas que el OCR no pudo leer con seguridad ({dates_txt}) — no se cargaron, "
+                "completalas a mano en el día de Lottery."
+            )
+        if lottery_unreadable:
+            parts.append(
+                f"Lottery: {lottery_unreadable} archivo(s) sin las ventas ONLINE/SKOFF "
+                "(no se pudo leer la fecha o la página) — completalas a mano en Lottery."
+            )
         if days_unverified:
             dates_txt = ", ".join(sorted(d.isoformat() for d in days_unverified))
             parts.append(
@@ -2038,7 +2059,7 @@ def _run_carga_datos_reporte_diario_job(job_id, pdf_paths):
             notice, level = "No se pudo guardar nada de este lote.", "error"
         else:
             notice = " ".join(parts)
-            level = "warning" if (days_partial or files_unreadable or days_subtotal_mismatch or days_doubtful or days_unverified or days_total_sales_mismatch) else "success"
+            level = "warning" if (days_partial or files_unreadable or days_subtotal_mismatch or days_doubtful or days_unverified or days_total_sales_mismatch or days_lottery_missing or lottery_unreadable) else "success"
 
         redirect_url = (
             f"/reporte/historial?year={first_date.year}&month={first_date.month}"

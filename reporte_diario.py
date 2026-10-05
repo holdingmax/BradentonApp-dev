@@ -3820,42 +3820,33 @@ def extract_lottery_department_fields_from_pdf(pdf_path, page_index=DEFAULT_PDF_
     extract_lottery_receipt_fields_from_sales_report, which reads those
     columns from the Florida Lottery portal's own "Daily Sales Report"
     PDF — real embedded text instead of a photographed receipt.
+
+    Lo que no se pudo leer con seguridad (o el departamento que no apareció)
+    vuelve en None y su nombre en "missing" (2026-10-05): antes un solo valor
+    dudoso tiraba error y el día quedaba sin ONLINE ni SKOFF, sin aviso.
+    Nunca se adivina; quien guarda deja lo que ya había y avisa.
     """
     pdf_path = os.path.abspath(pdf_path)
     if not os.path.isfile(pdf_path):
         raise FileNotFoundError(f"PDF no encontrado: {pdf_path}")
 
     dept_records, _dept_diagnostics = parse_elistar_daily_pdf_page(pdf_path, page_index=page_index)
-    online_record = _find_department_record(dept_records, LOTTERY_ONLINE_DEPARTMENT)
-    if online_record is None:
-        raise ValueError(
-            f'No se encontró el departamento "{LOTTERY_ONLINE_DEPARTMENT}" en el Department Sales Report.'
-        )
-    skoff_record = _find_department_record(dept_records, LOTTERY_SKOFF_DEPARTMENT)
-    if skoff_record is None:
-        raise ValueError(
-            f'No se encontró el departamento "{LOTTERY_SKOFF_DEPARTMENT}" en el Department Sales Report.'
-        )
-
-    for record in (online_record, skoff_record):
-        if record["count"] is None or record["amount"] is None:
-            raise ValueError(
-                f'El departamento "{record["department"]}" no se pudo leer con seguridad en el '
-                "Department Sales Report: quedó vacío, cargalo a mano."
-            )
+    values = {}
+    missing = []
+    for department, prefix in ((LOTTERY_ONLINE_DEPARTMENT, "online"), (LOTTERY_SKOFF_DEPARTMENT, "skoff")):
+        record = _find_department_record(dept_records, department) or {}
+        count, amount = record.get("count"), record.get("amount")
+        values[f"{prefix}_count"] = int(count) if count is not None else None
+        values[f"{prefix}_net_sales"] = float(amount) if amount is not None else None
+        if count is None or amount is None:
+            missing.append(department)
 
     # Solo la fecha: un campo de Store Info ilegible no frena ONLINE/SKOFF.
     store_info_fields = extract_store_info_from_pdf(pdf_path, strict=False)
     from_date = store_info_fields["from_date"]
     report_date = date(from_date.year, from_date.month, from_date.day) + timedelta(days=1)
 
-    return {
-        "report_date": report_date,
-        "online_count": int(online_record["count"]),
-        "online_net_sales": float(online_record["amount"]),
-        "skoff_count": int(skoff_record["count"]),
-        "skoff_net_sales": float(skoff_record["amount"]),
-    }
+    return {"report_date": report_date, **values, "missing": missing}
 
 
 _LOTTERY_SALES_REPORT_START_DATE_RE = re.compile(r"Start Date:\s*(\d{4})-(\d{2})-(\d{2})")
