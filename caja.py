@@ -678,6 +678,10 @@ def build_caja_pdf_resumen(report, year, month, dest_path):
     corrido, no un monto del día) -- se muestran tal cual ya los expone
     el reporte (`opening_balance`/`effective_closing_balance`), mismo
     criterio que ya usa build_caja_export_pdf en el título.
+
+    Sin Tarjeta/Crédito (pedido del usuario, 2026-10-05: "no deberían estar
+    ahí"): lo cobrado con tarjeta nunca pasa por la caja; se controla en
+    Controles -> Tarjetas y Cupones.
     """
     from pdf_export import build_simple_table_pdf
 
@@ -686,7 +690,6 @@ def build_caja_pdf_resumen(report, year, month, dest_path):
         ["Saldo Inicial", _fmt_money_pdf(report.get("opening_balance"))],
         ["Total Sales", _fmt_money_pdf(totals.get("total_sales"))],
         ["Cash", _fmt_money_pdf(totals.get("cash"))],
-        ["Tarjeta/Crédito", _fmt_money_pdf(totals.get("tc"))],
         ["Other", _fmt_money_pdf(totals.get("other_amount"))],
         ["Total Revenue", _fmt_money_pdf(totals.get("total_revenue"))],
         ["Depósitos", _fmt_money_pdf(totals.get("deposit"))],
