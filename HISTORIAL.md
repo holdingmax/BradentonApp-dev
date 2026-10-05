@@ -2062,3 +2062,39 @@ Sin commits todavía (el usuario confirma). Validación siempre contra datos rea
 - Decidir si re-subir los días de Reporte Diario (también siguen pendientes 09-14, 18 y 22-31 de agosto).
 - Probar la carga de gastos con un mes real y confirmar/descartar lo de "Para confirmar".
 - Renglones de Johnson Bros, Midtown y Gold Coast Eagle.
+
+## Sesión 2026-10-05: renglones de productos de Gold Coast Eagle y Red Bull
+
+Pedido: "agregar un par de proveedores más que consideres óptimos para la extracción de sus productos, así compararlos con los de la factura anterior". Commit `5b4c6d5` (código) más la documentación. Nada se escribió en las bases reales: la prueba de punta a punta usó una copia temporal de `proveedores.db`.
+
+### Elección
+- Relevamiento del Drive por volumen y legibilidad: Gold Coast Eagle (177 PDFs, cerveza, ticket con UPC, PRICE/DISC/D.PRICE/DEP/EXT y pie con Cases, Selling Units, Total Sales, Invoice Total) y Red Bull (56 PDFs, ticket con UPC, QTY/UNITS/PRICE/DEP/DISC/SUGAR/TOTAL y pie con Cases/Units Delivered, Number of SKU's, INVOICE, TOTAL DUE). Descartados por ahora: J.J. Taylor (132, limpio pero sin UPC), Pepsi (ticket angosto de 500 px), Coca-Cola y Frito-Lay.
+- Unidades por caja de GCE verificadas contra "Selling Units" y contra la lista de productos del POS (`C:\Alfonso\Lista productos.xlsx`): "4/6/12" = 4 six-packs ("6 PK CORONA EXTRA" $9.40 = $37.60 / 4); "2/12/12" = 2; "6/4/16" = 6; "15/25", "12/32", "24/200ml" = sueltas; envase de 16 oz o menos en caja de 15 o más ("24/12", "18/12", "24/7", "15/16") = la caja es la unidad ("BUSCH 24PK CANS", "18 PK CORONA", "BUDWEISER 15PK/16OZ"). Red Bull: unidades por caja = UNITS / QTY.
+
+### Cómo (`proveedores_productos.py`, sección "Tickets impresos por lectura múltiple")
+- Fuente de los problemas: escaneos de poca resolución, torcidos y curvados; Tesseract confunde dígitos de esas fuentes (GCE: 8/6, 9/0, 1/7, 3/8; Red Bull: el 5 sale 6 casi siempre, en montos, UPC y N° de factura) y cada preparación de la imagen se equivoca en renglones distintos. Una sola lectura cerraba 22 de 73 facturas de GCE.
+- `_deskew` (ángulo de máxima varianza por fila, lienzo agrandado para no recortar el total pegado al borde derecho). `_ticket_readings`: hasta 6 pasadas (`_TICKET_PASSES`), de a una y solo hasta que la factura cierra; renglones de distintas pasadas emparejados por altura (`_ticket_clusters`). `_ocr_rows` acepta `prep` (arreglo de la imagen ya agrandada).
+- Montos por columna (`_ticket_assign`): si el renglón trae justo 5 montos, por orden; si falta o sobra alguno (el código de barras dibujado en Red Bull), por cercanía al título de la columna de esa página, descontando el corrimiento del renglón (página curvada).
+- `_ticket_options`: combinaciones que cierran el renglón, por niveles: (0) todo leído; (1) hasta 2 montos (GCE) o 3 (Red Bull, solo 6 -> 5) cambiados por un dígito confundible -- este nivel queda siempre como alternativa, porque en Red Bull "$64.70 / 3.25 / $61.45" se lee así en todas las pasadas y cierra, pero lo impreso es $54.70 / $51.45; (2) un campo deducido de la cuenta con la cantidad leída (D.PRICE = PRICE - DISC; EXT = cantidad x D.PRICE cuando el EXT queda pegado a la línea punteada; en Red Bull SUGAR/DEP/DISC). DEP (y DEP + SUGAR) tiene que ser menor que el precio: si no, "1 x (67.12 + 67.12) = 134.24" cerraba con un D.PRICE metido en DEP.
+- Renglón sin combinación ganadora o sin UPC: relectura de su franja enderezada por su cuenta (`_ticket_reread_row`), de la celda del UPC solo dígitos (`_ticket_reread_upc`) y, como último recurso, un dígito confundible del UPC leído igual en 2+ pasadas que pase el dígito verificador y sea el único (`_ticket_upc_variants`; Red Bull sin tocar el prefijo 611269).
+- `_ticket_fix_sum`: la suma tiene que dar el total impreso **más votado** (`_ticket_top`); si no, se prueba cambiar 1, 2 o 3 renglones por otra combinación que cierra, y vale solo si un único cambio da el total. Bug encontrado en la revisión cruzada: aceptando cualquier lectura, Red Bull 2028624825 "cerraba" en $593.90 contra un TOTAL DUE leído una sola vez (las otras cinco lecturas y el INVOICE decían $553.90, como el Excel): ahora da error.
+- Confirmación de cantidades deducidas: la suma de cantidades = Cases, o la de cantidad x unidades = Selling Units (GCE) / Units Delivered (Red Bull). En 777888 "Cases: 41" sale "4" en todas las pasadas. Un solo renglón de Red Bull con UNITS ilegible ("3s72") toma las del Units Delivered menos los demás (y entonces las unidades ya no confirman cantidades).
+- GCE con dos facturas en un PDF: se arma una factura por cada "Invoice Total"; vale la del N° del encabezado y, si su total no da el importe del encabezado, la única del PDF cuyo total sí lo da. Una sola factura y el N° del encabezado leído distinto: es esa, con el N° del encabezado.
+- `extract_gce_lines` y `extract_red_bull_lines` en `LINE_EXTRACTORS`; el total del detalle tiene que coincidir con el importe del encabezado de la app.
+
+### Validación
+- Banco con las 6 pasadas en caché (scratchpad) para iterar y validación final con el flujo real (encabezado de la app + renglones, OCR completo) sobre los 233 PDFs, contra el Excel de Proveedores (testeo):
+  - GCE: 2026 26 de 33 PDFs con encabezado leído; 2025 28 de 48; 2024 16 de 42; 2023 2 de 11 (+3 recuperadas después con el arreglo del N° del encabezado).
+  - Red Bull: 2026 9 de 11 con encabezado; 2025 4 de 11; 2024 1 de 9.
+  - Ningún detalle guardado con total distinto del Excel, salvo GCE 857480: $3,174.63 (21 renglones que suman exacto el Total Sales impreso) contra $3,174.00 del Excel -- parece tipeo o redondeo del Excel.
+  - Lo que no cierra da error claro (pack ilegible, suma que no da, UPC ilegible) y la factura entra sin productos. Mediana ~20 s por PDF, máximo ~4 min.
+- Punta a punta con una copia de `proveedores.db`: el job de carga real con GCE 765986 y 777888 y Red Bull 2037583145 y 2037583240 -> 4 facturas guardadas, detalle en 3; la 777888 se compara contra la 765986 en Controles > Productos (Corona 4/6/12 $9.40, Modelo 2/12/12 $15.70, Michelob Ultra 4/6/12 $8.48: los mismos costos que el POS).
+- Pantallas de Productos: el texto decía "por ahora de H.T. Hackney" (viejo desde CEC/Colonial); ahora lista los cinco.
+
+### Hallazgo: los encabezados de GCE y Red Bull (de antes) no son confiables
+- `_extract_red_bull_invoice` lee "INVOICE ... $" del primer OCR: guarda $0.00 en 2037583240 (es $301.38), $44.00 en 2031633523 ($648.06); falla en 7 de 18 PDFs de 2026 (el pie de jun-jul 2026 dice "Subtotal"/"Invoice Total"); lee N° con 5 -> 6 (2029432664 por 2029432864).
+- `_extract_gce_invoice` usa la línea de confirmación "Inv# ... $...": guarda $82,185.34 en 883053 (es $1,278.98), $100.60 en 591848 ($100.80); falla en 7 de 40 PDFs de 2026; N° con 0 -> 8 (748130 por 740130); de un PDF con dos facturas carga una sola.
+- El detalle nuevo detecta el desacuerdo y no guarda renglones, pero la factura se guarda con el importe mal leído. Todavía no hay facturas de GCE ni Red Bull en la base real. Propuesta: rehacer los dos encabezados sobre el lector de tickets (N°, fecha y total confirmado por la suma de renglones; todas las facturas de un PDF).
+
+**Pendientes que deja la sesión:**
+- Rehacer los encabezados de GCE y Red Bull (ver arriba) antes de cargar facturas de estos dos proveedores.
