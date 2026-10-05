@@ -1097,6 +1097,68 @@
     }
     .pdf-link-download:hover { color: var(--accent); background: var(--accent-soft); }
     .pdf-link-download svg { width: 14px; height: 14px; }
+
+    /* Botonera de controles rápidos (pedido del jefe, 2026-10-05): un botón
+       chico abajo a la derecha abre los accesos (Tarjetas, Caja, Precios a
+       revisar) y cada uno muestra su resumen en un cuadro que flota encima,
+       sin mover nada de la página. El contenido lo arma
+       /controles/rapidos/<kind> (_controles_rapidos.html). */
+    .qc { position: fixed; right: 18px; bottom: 18px; z-index: 450; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+    .qc-fab {
+      width: 42px; height: 42px; padding: 0; border-radius: 50%; border: none; cursor: default;
+      background: #111827; color: #fff; display: flex; align-items: center; justify-content: center;
+      box-shadow: 0 6px 18px rgba(15, 23, 42, 0.25);
+    }
+    .qc-fab:hover, .qc.open .qc-fab { background: #374151; }
+    .qc-fab svg { width: 18px; height: 18px; }
+    .qc-menu { display: none; flex-direction: column; align-items: flex-end; gap: 6px; }
+    .qc.open .qc-menu { display: flex; }
+    .qc-item {
+      display: inline-flex; align-items: center; gap: 7px; cursor: default;
+      border: 1px solid var(--border); background: var(--surface); color: var(--text);
+      border-radius: 999px; padding: 6px 12px 6px 10px; font: inherit; font-size: 12.5px; font-weight: 600;
+      box-shadow: var(--shadow-md);
+    }
+    .qc-item::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--qc-color); }
+    .qc-item:hover, .qc-item.active { border-color: var(--qc-color); color: var(--qc-color); }
+    .qc-panel {
+      display: none; flex-direction: column; position: absolute; right: calc(100% + 12px); bottom: 0;
+      width: 390px; max-width: calc(100vw - 170px); max-height: min(72vh, 580px);
+      background: var(--surface); border: 1px solid var(--border); border-top: 3px solid var(--qc-color, #111827);
+      border-radius: 10px; box-shadow: 0 14px 36px rgba(15, 23, 42, 0.22);
+    }
+    .qc-panel.open { display: flex; }
+    .qc-panel.wide { width: 620px; }
+    .qc-panel-head { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--border); font-weight: 700; font-size: 13.5px; }
+    .qc-close { background: none; border: none; padding: 0; font-size: 18px; line-height: 1; color: var(--text-soft); cursor: default; }
+    .qc-panel-body { padding: 12px 14px 14px; overflow-y: auto; font-size: 12.5px; }
+    .qc-status { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface-alt); }
+    .qc-status strong { font-size: 20px; font-variant-numeric: tabular-nums; }
+    .qc-status.ok { background: #F0FDF4; border-color: #BBF7D0; }
+    .qc-status.bad { background: #FEF2F2; border-color: #FECACA; }
+    .qc-sub { font-size: 11.5px; color: var(--text-soft); }
+    .qc-month { margin: 0 0 8px; font-size: 11px; font-weight: 700; letter-spacing: 0.03em; text-transform: uppercase; color: var(--text-soft); }
+    .qc-note { margin: 8px 0 0; font-size: 12px; color: var(--text-soft); }
+    .qc-warn { color: var(--warning); }
+    .qc-good { color: var(--success); }
+    .qc-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; font-variant-numeric: tabular-nums; }
+    .qc-table th, .qc-table td { padding: 5px 6px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; }
+    .qc-table th:first-child, .qc-table td:first-child { text-align: left; }
+    .qc-table th { font-size: 11px; font-weight: 700; color: var(--text-soft); }
+    .qc-table .qc-product { white-space: normal; min-width: 170px; }
+    .qc-row-bad td { background: #FEF2F2; }
+    .qc-row-off td { color: var(--text-soft); }
+    .qc-up { color: #B91C1C; font-weight: 600; }
+    .qc-down { color: var(--success); font-weight: 600; }
+    .qc-tag { display: inline-block; margin-left: 4px; padding: 0 6px; border-radius: 999px; background: var(--warning-soft); color: var(--warning); font-size: 10.5px; font-weight: 600; }
+    .qc-sup { margin-top: 14px; }
+    .qc-sup-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; font-size: 13px; }
+    .qc-sup-head a { font-size: 12px; }
+    .qc-link { display: inline-block; margin-top: 12px; font-size: 12.5px; font-weight: 600; }
+    @media (max-width: 760px) {
+      .qc-panel, .qc-panel.wide { right: 0; bottom: calc(100% + 8px); width: calc(100vw - 36px); max-width: none; }
+    }
+    @media print { .qc { display: none; } }
   </style>
   {% block head_extra %}{% endblock %}
 </head>
@@ -1358,6 +1420,25 @@
     {% block content %}{% endblock %}
   </main>
   </div>
+  {% if current_user.is_authenticated %}
+  <div class="qc" id="quick-controls">
+    <div class="qc-panel" id="qc-panel" role="dialog" aria-labelledby="qc-title">
+      <div class="qc-panel-head">
+        <span id="qc-title"></span>
+        <button type="button" class="qc-close" data-qc-close aria-label="Cerrar">×</button>
+      </div>
+      <div class="qc-panel-body" id="qc-body"></div>
+    </div>
+    <div class="qc-menu">
+      <button type="button" class="qc-item" data-qc="tarjetas" data-qc-title="Tarjetas y Cupones" style="--qc-color: #3B5BDB;">Tarjetas</button>
+      <button type="button" class="qc-item" data-qc="caja" data-qc-title="Caja" style="--qc-color: #16A34A;">Caja</button>
+      <button type="button" class="qc-item" data-qc="precios" data-qc-title="Precios a revisar" data-qc-wide style="--qc-color: #DB2777;">Precios a revisar</button>
+    </div>
+    <button type="button" class="qc-fab" aria-label="Controles rápidos" title="Controles rápidos">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon></svg>
+    </button>
+  </div>
+  {% endif %}
   <script>
     // Barra lateral global (.app-rail) -- "fijada abierta" dura solo
     // mientras dure esta vista de página (nunca persiste entre navegaciones
@@ -2749,6 +2830,79 @@
       });
       document.addEventListener('keydown', function (event) {
         if (event.key === 'Escape') closeAllPopovers();
+      });
+    })();
+
+    // Botonera de controles rápidos (pedido del jefe, 2026-10-05): el botón
+    // de abajo a la derecha muestra los accesos, cada acceso pide su resumen
+    // a /controles/rapidos/<kind> y lo mete en el cuadro. Tocar el mismo
+    // acceso, la ×, Escape o cualquier lugar afuera lo cierra.
+    (function () {
+      var root = document.getElementById('quick-controls');
+      if (!root) return;
+      var panel = document.getElementById('qc-panel');
+      var title = document.getElementById('qc-title');
+      var body = document.getElementById('qc-body');
+      var current = null;
+      var request = 0;
+
+      function closePanel() {
+        panel.classList.remove('open');
+        root.querySelectorAll('.qc-item.active').forEach(function (item) { item.classList.remove('active'); });
+        current = null;
+        request++;
+      }
+      function closeAll() {
+        closePanel();
+        root.classList.remove('open');
+      }
+      function showMessage(text) {
+        body.innerHTML = '';
+        var p = document.createElement('p');
+        p.className = 'qc-note qc-warn';
+        p.textContent = text;
+        body.appendChild(p);
+      }
+      function openPanel(item) {
+        var kind = item.getAttribute('data-qc');
+        if (current === kind) { closePanel(); return; }
+        closePanel();
+        current = kind;
+        item.classList.add('active');
+        panel.style.setProperty('--qc-color', item.style.getPropertyValue('--qc-color'));
+        panel.classList.toggle('wide', item.hasAttribute('data-qc-wide'));
+        title.textContent = item.getAttribute('data-qc-title');
+        body.innerHTML = '<p class="qc-note">Cargando…</p>';
+        panel.classList.add('open');
+        var mine = ++request;
+        fetch('/controles/rapidos/' + kind, { credentials: 'same-origin' })
+          .then(function (response) {
+            if (mine !== request) return;
+            if (response.redirected) { showMessage('La sesión venció: volvé a entrar.'); return; }
+            if (!response.ok) { showMessage('No se pudo cargar (error ' + response.status + ').'); return; }
+            return response.text().then(function (html) {
+              if (mine === request) body.innerHTML = html;
+            });
+          })
+          .catch(function () {
+            if (mine === request) showMessage('No se pudo cargar: el servidor no responde.');
+          });
+      }
+
+      root.addEventListener('click', function (event) {
+        if (event.target.closest('.qc-fab')) {
+          if (root.classList.contains('open')) closeAll(); else root.classList.add('open');
+          return;
+        }
+        if (event.target.closest('[data-qc-close]')) { closePanel(); return; }
+        var item = event.target.closest('.qc-item');
+        if (item) openPanel(item);
+      });
+      document.addEventListener('click', function (event) {
+        if (!root.contains(event.target)) closeAll();
+      });
+      document.addEventListener('keydown', function (event) {
+        if (event.key === 'Escape') closeAll();
       });
     })();
   </script>

@@ -1,0 +1,119 @@
+{# Contenido del cuadro de la botonera de controles rápidos (base.html): el
+   navegador lo pide al tocar un botón y lo mete en el cuadro. Los estilos
+   (.qc-*) viven en base.html. #}
+{% macro money(x) -%}{%- if x is none -%}—{%- elif x < 0 -%}-${{ "{:,.2f}".format(-x) }}{%- else -%}${{ "{:,.2f}".format(x) }}{%- endif -%}{%- endmacro %}
+{# Costo por unidad: hasta 4 decimales, nunca menos de 2. #}
+{% macro cost(x) -%}{%- if x is none -%}—{%- else -%}{%- set s = "{:,.4f}".format(x) -%}${{ s[:-2] if s.endswith("00") else (s[:-1] if s.endswith("0") else s) }}{%- endif -%}{%- endmacro %}
+{% macro dmy(iso) -%}{{ iso[8:10] }}/{{ iso[5:7] }}/{{ iso[:4] }}{%- endmacro %}
+{% macro dm(iso) -%}{{ iso[8:10] }}/{{ iso[5:7] }}{%- endmacro %}
+{% macro behind(days, iso) -%}
+  {%- if days > 1 %}<p class="qc-note qc-warn">El Reporte Diario está cargado hasta el {{ dmy(iso) }} (hace {{ days }} días).</p>{% endif -%}
+{%- endmacro %}
+{# Solo el mes actual: lo de meses anteriores se mira en Controles. #}
+{% macro empty_month(what, endpoint) -%}
+  <p class="qc-note">{{ month_label }} todavía no tiene {{ what }}. Los meses anteriores se ven en
+    <a href="{{ url_for(endpoint) }}">Controles</a>.</p>
+{%- endmacro %}
+<p class="qc-month">{{ month_label }}</p>
+
+{% if kind == "tarjetas" %}
+  {% if not data %}
+  {{ empty_month("ventas con tarjeta cargadas (Store Info del Reporte Diario)", "controles_tarjetas") }}
+  {% else %}
+  {% set last = data.last %}
+  <div class="qc-status {{ 'bad' if last.status == 'alert' else 'ok' }}">
+    <span>Pendiente de acreditar al {{ dmy(last.date) }}</span>
+    <strong>{{ money(last.pending) }}</strong>
+    <span class="qc-sub">{{ "Pasa" if last.status == "alert" else "No pasa" }} el límite de {{ money(data.threshold) }}</span>
+  </div>
+  {{ behind(data.days_behind, last.date) }}
+  <table class="qc-table">
+    <thead><tr><th>Día</th><th>Tarjeta</th><th>Cupones</th><th>Pendiente</th></tr></thead>
+    <tbody>
+    {% for row in data.recent %}
+      <tr class="{{ 'qc-row-bad' if row.status == 'alert' else ('qc-row-off' if row.status == 'missing' else '') }}">
+        <td>{{ dm(row.date) }}</td>
+        <td>{{ money(row.sale) if row.sale is not none else "sin cargar" }}</td>
+        <td>{{ money(row.coupon_gross) if row.coupon_gross else "—" }}</td>
+        <td>{{ money(row.pending) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <a class="qc-link" href="{{ url_for('controles_tarjetas', year=last.date[:4]|int, month=last.date[5:7]|int) }}">Ver control completo &rarr;</a>
+  {% endif %}
+
+{% elif kind == "caja" %}
+  {% if not data %}
+  {{ empty_month("ningún día de Reporte Diario cargado", "controles") }}
+  {% else %}
+  <div class="qc-status neutral">
+    <span>Efectivo que debería haber al {{ dmy(data.date) }}</span>
+    <strong>{{ money(data.saldo) }}</strong>
+    <span class="qc-sub">Saldo de Caja: lo cobrado en efectivo menos lo depositado, los gastos y Lottery</span>
+  </div>
+  {{ behind(data.days_behind, data.date) }}
+  {% if data.last_deposit %}
+  <p class="qc-note">Último depósito en Chase: {{ dmy(data.last_deposit.date) }} ({{ money(data.last_deposit.amount) }}).</p>
+  {% endif %}
+  <table class="qc-table">
+    <thead><tr><th>Día</th><th>Efectivo</th><th>Depósito</th><th>Saldo</th></tr></thead>
+    <tbody>
+    {% for row in data.recent %}
+      <tr class="{{ 'qc-row-off' if row.cash is none else '' }}">
+        <td>{{ dm(row.date) }}</td>
+        <td>{{ money(row.cash) if row.cash is not none else "sin cargar" }}</td>
+        <td>{{ money(row.deposit) if row.deposit else "—" }}</td>
+        <td>{{ money(row.saldo) }}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="qc-note">Si el saldo crece varios días seguidos sin depósitos, el efectivo se está juntando en la estación.</p>
+  <a class="qc-link" href="{{ url_for('carga_datos_caja', year=data.date[:4]|int, month=data.date[5:7]|int) }}">Ver Caja del mes &rarr;</a>
+  {% endif %}
+
+{% elif kind == "precios" %}
+  {% if not data.pos_loaded %}
+  <p class="qc-note">Todavía no hay un CMV cargado (el Costo que se exporta de eListar). Se carga en Carga de Datos &rarr; CMV.</p>
+  {% elif not data.suppliers %}
+  {{ empty_month("facturas de proveedores con productos guardados", "controles_productos") }}
+  {% else %}
+  <p class="qc-note">Costo del CMV{% if data.cmv_date %} del {{ dmy(data.cmv_date) }}{% endif %} (eListar) contra la última factura del mes de cada proveedor, solo los productos con el mismo UPC. Si el costo cambió, hay que revisar el precio.</p>
+  {% for sup in data.suppliers %}
+  <div class="qc-sup">
+    <div class="qc-sup-head">
+      <strong>{{ sup.label }}</strong>
+      <a href="{{ url_for('controles_productos_factura', supplier_key=sup.key, invoice_date=sup.invoice_date, invoice_no=sup.invoice_no) }}">N° {{ sup.invoice_no }} del {{ dmy(sup.invoice_date) }}</a>
+    </div>
+    {% if not sup.matched %}
+    <p class="qc-note">Ningún producto de esta factura tiene el UPC en el CMV.</p>
+    {% elif not sup.rows %}
+    <p class="qc-note qc-good">Los {{ sup.matched }} productos con UPC en el CMV tienen el mismo costo.</p>
+    {% else %}
+    <p class="qc-note">{{ sup.rows|length }} de {{ sup.matched }} productos con UPC en el CMV tienen otro costo.</p>
+    <table class="qc-table qc-table-prices">
+      <thead><tr><th>Producto</th><th>Costo POS</th><th>Factura</th><th>Dif.</th><th>Precio POS</th><th>Margen</th></tr></thead>
+      <tbody>
+      {% for row in sup.rows %}
+        <tr class="{{ 'qc-row-off' if row.pack_suspect else '' }}">
+          <td class="qc-product" title="UPC {{ row.upc }}{% if row.pos_name %} · en el POS: {{ row.pos_name }}{% endif %}">
+            {{ row.description }}
+            {% if row.pack_suspect %}<span class="qc-tag" title="La diferencia es demasiado grande para ser un aumento: casi siempre son las unidades por caja mal tomadas.">¿pack?</span>{% endif %}
+          </td>
+          <td>{{ cost(row.pos_cost) }}</td>
+          <td>{{ cost(row.unit_cost) }}</td>
+          <td class="{{ 'qc-up' if row.diff > 0 else 'qc-down' }}">{{ "{:+.1f}".format(row.diff_pct) }}%</td>
+          <td>{{ money(row.pos_price) }}</td>
+          <td class="{{ 'qc-up' if row.margin_pct is not none and row.margin_pct < 0 else '' }}">{{ "{:.1f}".format(row.margin_pct) ~ "%" if row.margin_pct is not none else "—" }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+  {% endfor %}
+  <p class="qc-note">Margen = el que deja el precio del POS con el costo nuevo. J.J. Taylor y Midtown no traen UPC y no entran.</p>
+  <a class="qc-link" href="{{ url_for('controles_productos') }}">Ver Productos de proveedores &rarr;</a>
+  {% endif %}
+{% endif %}

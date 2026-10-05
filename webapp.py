@@ -39,6 +39,7 @@ import cheques_db
 import depositos
 import depositos_db
 import control_tarjetas
+import controles_rapidos
 from cheques import check_number_from_chase_description, extract_checks_from_pdf
 from chase_rules import (
     add_dynamic_rule as add_chase_rule,
@@ -6222,6 +6223,39 @@ def controles_tarjetas():
         next_year=next_year,
         next_month=next_month,
         **THEME_BY_KEY["carga_eft"],
+    )
+
+
+@app.route("/controles/rapidos/<kind>")
+def controles_rapidos_panel(kind):
+    """
+    Cuadro de la botonera de controles rápidos de abajo a la derecha
+    (base.html, pedido del jefe, 2026-10-05): un resumen chico de Tarjetas,
+    Caja o Precios a revisar, que el navegador pide al tocar el botón y mete
+    en el cuadro. Cálculo en controles_rapidos.py.
+    """
+    today = date.today()
+    if kind == "tarjetas":
+        data = controles_rapidos.tarjetas_status(
+            reportes_db.get_card_sales_by_date(), eft_db.get_coupon_gross_by_date(), today=today,
+        )
+    elif kind == "caja":
+        data = controles_rapidos.caja_status(today=today)
+    elif kind == "precios":
+        pos_costs = cmv_db.get_all_costs()
+        snapshots = cmv_db.list_snapshots()
+        data = {
+            "pos_loaded": bool(pos_costs),
+            "cmv_date": snapshots[0]["loaded_on"] if snapshots else None,
+            "suppliers": controles_rapidos.price_review(
+                proveedores_db.get_all_invoice_lines(), pos_costs, _supplier_labels(), today=today,
+            ),
+        }
+    else:
+        abort(404)
+    return render_template(
+        "_controles_rapidos.html", kind=kind, data=data,
+        month_label=f"{_MONTH_NAMES_ES[today.month - 1]} {today.year}",
     )
 
 
