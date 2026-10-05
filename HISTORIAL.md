@@ -2139,3 +2139,27 @@ Pedido: "arregla los encabezados (intenta que ya no de error)" de Gold Coast Eag
 **Pendientes que deja la sesión:**
 - Errores que quedan (dan aviso, no guardan nada mal): GCE 2024 (6 de 61, N° o total ilegible), Red Bull 2024-2025 (TOTAL DUE ilegible en escaneos viejos), "dos facturas proveedores.pdf" (CEC + Pepsi en un PDF: no se soporta mezclar proveedores).
 - Coca-Cola (pedido del usuario: después).
+
+## Sesión 2026-10-05 (chat 18, segunda parte): J.J. Taylor y Midtown, productos comparados por el nombre
+
+Pedido: "los productos que se pueden leer bien en proveedores pero que no tienen upc igual a los del POS, compara sus productos con los de la factura anterior aunque no tengan UPC, pero que matchen el nombre así igual se puede pasar un excel con esos productos de ese proveedor al manager". El usuario eligió **Midtown y J.J. Taylor** (este último estaba en pausa desde antes: "de momento ignora a J.J."; ahora sus facturas se detectan y se cargan).
+
+### Clave por nombre (`proveedores_productos.py`, sección "Productos sin UPC")
+- `NAME_KEYED_SUPPLIERS = {"jj_taylor", "midtown"}`: `product_key` usa el nombre normalizado (`name_key`, en un hash para que la URL no tenga "/"), no el UPC ni el SKU (el de Midtown a veces es de relleno, "123456").
+- El nombre de cada renglón sale de `_name_consensus`: las palabras que leyeron igual la mayoría de las pasadas (las tildes de control a mano salen distintas en cada lectura; la letra impresa, igual). Midtown hace siempre al menos dos pasadas por eso.
+- `name_key` pliega las confusiones fijas de la letra de J.J. Taylor en las palabras sin números ("Claw"/"Gaw", "White"/"While", "Ice"/"Iee", "Smir"/"$mir"); números y demás letras tienen que coincidir exacto. **Sin parecidos aproximados**: "White Claw Black Cherry" / "Blackberry", "Hein 4/6/12 B" / "C" y "Bud Lite" / "Lime" siguen siendo distintos. Única tolerancia: si a un nombre le falta la letra del envase del final (B/C, sale ilegible seguido) o la tiene y la anterior no, vale la compra anterior solo si hay una única posible (`_container_alternatives`).
+- Un nombre que no coincide con el de la compra anterior queda "Nuevo" (nunca comparado contra otro producto). El Excel/PDF de "Cambios de precio" para el manager es el mismo de siempre (sin UPC en estos dos).
+
+### J.J. Taylor (`read_jj_taylor_invoices`, `proveedores._extract_jj_taylor_invoice`)
+- Ticket de reparto con la letra de Red Bull: el 5 impreso sale 6 hasta en los cuatro montos del renglón ($35.90 / $6.95 / $28.95 leído 36.90 / 6.96 / 28.96 en todas las pasadas), en el N° (5431210 -> 6431210), en la fecha y en el Total. Cuentas: PRICE − DISC = NET, DEL × NET = TOTAL; suma = Total (o Total + el impuesto por galón cuando aparece); DEL suma "Total U without pick ups". Variantes 6 -> 5 hasta 4 montos por renglón, `_jj_prefer_five` (si en el renglón se leyó el 5 en algún lado, vale el 5), `_jj_fix_sum` (hasta 6 renglones cambiados por su lectura con 5, única combinación), Total con 5 donde se leyó 6. El "Piece Count" no es control exigido (cuenta los "2/12/12" a veces como 2 y a veces como 12).
+- Páginas al revés: Tesseract no lo detecta en estos tickets; `_jj_upright` gira 180° la página sin títulos legibles, y `_detect_supplier` tiene un último respaldo girando las páginas escaneadas 180°.
+- Varios documentos por PDF: tickets de cambio ("SWAP", Total $0.00) en otras páginas, se ignoran. Marcas del margen antes de la cantidad (";", "*", "Bo", "2 - Mikes"). Descuento escrito "$.80". N° y fecha confirmados por el nombre del archivo (con el 6 por 5); sin fecha legible, la del nombre si el N° la confirmó. Sin renglones que cierren, el Total solo vale si es unánime y no tiene ningún 6.
+- Formato con UPC en un segundo renglón ("0-72890-00011-8") hasta el 17/09/2025; desde el 24/09/2025 sin UPC. Los dos se leen igual (por nombre).
+- Validación (64 PDFs de 2025-2026 contra el Excel): 31 facturas cargadas, 25 con detalle, **ningún importe distinto del PDF** (las dos diferencias son fechas del Excel: 5970207 24/08 contra 27/08 del archivo, 6032572 10/09 contra 24/09). Formato actual: 22 cargadas, 20 con detalle, 5 errores (escaneos borrosos, montos sin punto).
+
+### Midtown (`extract_midtown_lines`, en `LINE_EXTRACTORS`; el encabezado sigue siendo `_extract_midtown_invoice`)
+- Dos plantillas: SplitPOS (hasta jul-2026, "Receipt #", "BX/50CT", descripción partida en dos renglones, la tilde a mano tapa la Qty: sale de monto / precio) y SALESGENT (desde ago-2026: SKU, "[30/BX]", SO Qty / Qty, a veces columna Tax). Cierre contra el Subtotal, el Grand Total (en SALESGENT el descuento "Line Item (D/C)" ya va en un renglón: la suma da el Grand Total), Subtotal − descuento, o la suma de los Subtotales de dos recibos del mismo PDF (102242: $620.48 + $56.97). Montos partidos ("$1 56.75"), guion suelto ("$18.50 - $18.50") y monto sin punto ("$2339": sale de cantidad × precio).
+- Validación: 25 de 33 facturas con detalle; las que no cierran son ítems tachados a mano (100307: el Total corregido a mano) o renglones ilegibles: entran sin productos.
+
+### Punta a punta
+- Copia de `proveedores.db`: J.J. Taylor 6000658 (escaneada al revés) y 6032572, Midtown 1069, 1545 y 556 -> 5 facturas guardadas, 4 con detalle ("Sin detalle de productos (los renglones no cerraban): factura de Midtown Wholesale LLC (556)"); en la factura más nueva de cada uno, los productos repetidos salen comparados contra la anterior (J.J. Taylor: 5 "Igual"; Midtown: 1) y el Excel de cambios se arma. Pantallas de Productos con la base real: OK.
