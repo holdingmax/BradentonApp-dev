@@ -1319,6 +1319,16 @@ def carga_datos_reportes():
     )
 
 
+def _report_without_data(message):
+    """
+    Un reporte mensual sin ningún dato ese mes no se arma vacío (pedido del
+    usuario, 2026-10-05): se avisa, y con la descarga sin recargar de
+    base.html el aviso sale sin recargar la página.
+    """
+    flash(message, "error")
+    return redirect(url_for("carga_datos_reportes"))
+
+
 @app.route("/carga-datos/reportes/chase/pdf")
 def reportes_chase_pdf():
     """
@@ -1354,16 +1364,20 @@ def reportes_eft_pdf():
     EFT incluyendo todos los datos que se tengan del mes que se
     selecciono, y lo mismo estar incluido en ese PDF los cupones cargados
     hasta ese momento y cuanto acumulan". Ver eft_db.build_eft_pdf_report.
-    A diferencia de Chase, este PDF nunca queda vacío por falta de EFT ese
-    mes -- la sección de Cupones (acumulado histórico) siempre tiene algo
-    para mostrar, así que no se bloquea la descarga aunque el mes elegido
-    no tenga ningún EFT cargado todavía.
+    Un mes sin ningún EFT ni cupón no se descarga (2026-10-05): antes salía
+    igual, con la tabla de EFT vacía y solo el acumulado de Cupones.
     """
     today = date.today()
     year = request.args.get("year", type=int) or today.year
     month = request.args.get("month", type=int) or today.month
     if not (1 <= month <= 12):
         month = today.month
+
+    prefix = f"{year:04d}-{month:02d}-"
+    if not eft_db.get_month_deposits(year, month) and not any(
+        day.startswith(prefix) for day in eft_db.get_coupon_gross_by_date()
+    ):
+        return _report_without_data("No hay ningún EFT ni cupón cargado ese mes para el reporte.")
 
     workspace_dir = tempfile.mkdtemp(prefix="eft_reporte_")
     dest_path = os.path.join(workspace_dir, f"EFT Reporte {month:02d}-{year}.pdf")
@@ -1389,6 +1403,12 @@ def reportes_diario_pdf():
         month = today.month
 
     store_info_rows = _build_store_info_rows(year, month)
+    if not any(
+        row.get(field) is not None
+        for row in store_info_rows
+        for field in ("from_time", "volume", "total_sales", "cash", "non_fuel_total", "total_revenue")
+    ):
+        return _report_without_data("No hay ningún Reporte Diario cargado ese mes para el reporte.")
     workspace_dir = tempfile.mkdtemp(prefix="reporte_diario_reporte_")
     dest_path = os.path.join(workspace_dir, f"Reporte Diario {month:02d}-{year}.pdf")
     build_store_info_pdf_resumen(store_info_rows, year, month, dest_path)
@@ -1413,6 +1433,14 @@ def reportes_lottery_pdf():
     if not (1 <= month <= 12):
         month = today.month
 
+    days = lottery_db.get_days_between(date(year, month, 1), date(year, month, calendar.monthrange(year, month)[1]))
+    if not any(
+        day.get(field) is not None
+        for day in days.values()
+        for field in ("online_count", "online_net_sales", "sales", "pagos", "skoff_count", "skoff_net_sales", "pays_amount")
+    ):
+        return _report_without_data("No hay ningún día de Lottery cargado ese mes para el reporte.")
+
     workspace_dir = tempfile.mkdtemp(prefix="lottery_reporte_")
     dest_path = os.path.join(workspace_dir, f"Lottery Reporte {month:02d}-{year}.pdf")
     lottery_db.build_lottery_pdf_resumen(year, month, dest_path)
@@ -1436,6 +1464,13 @@ def reportes_caja_pdf():
         month = today.month
 
     report = build_caja_month_report(year, month)
+    # Un mes futuro viene con todo en 0, por eso se mira que haya algún monto y no solo que no sea None.
+    if not any(
+        row.get(field)
+        for row in report["rows"]
+        for field in ("total_sales", "cash", "deposit", "expenses_cash", "cuenta_final", "food_ice")
+    ):
+        return _report_without_data("No hay datos de Caja ese mes para el reporte (ni Reporte Diario, ni Chase, ni Lottery, ni gastos).")
     workspace_dir = tempfile.mkdtemp(prefix="caja_reporte_")
     dest_path = os.path.join(workspace_dir, f"Caja Reporte {month:02d}-{year}.pdf")
     build_caja_pdf_resumen(report, year, month, dest_path)
@@ -1456,6 +1491,9 @@ def reportes_proveedores_pdf():
     month = request.args.get("month", type=int) or today.month
     if not (1 <= month <= 12):
         month = today.month
+
+    if not proveedores_db.get_month_invoices(year, month):
+        return _report_without_data("No hay ninguna factura de proveedores cargada ese mes para el reporte.")
 
     workspace_dir = tempfile.mkdtemp(prefix="proveedores_reporte_")
     dest_path = os.path.join(workspace_dir, f"Proveedores Reporte {month:02d}-{year}.pdf")
@@ -1484,6 +1522,9 @@ def reportes_gettel_excel():
         month = today.month
 
     report = gettel_reportes.resolve_month(year, month)
+    # Un mes que todavía no llegó arrastra igual el pendiente del anterior: tampoco se arma.
+    if (year, month) > (today.year, today.month) or not report["has_any_data"]:
+        return _report_without_data("No hay datos de Gettel ese mes para el reporte.")
     workspace_dir = tempfile.mkdtemp(prefix="gettel_reporte_")
     dest_path = os.path.join(workspace_dir, f"Gettel Reporte {month:02d}-{year}.xlsx")
     gettel_reportes.build_gettel_reportes_workbook(report, year, month, dest_path)
@@ -1506,6 +1547,9 @@ def reportes_gettel_pdf():
         month = today.month
 
     report = gettel_reportes.resolve_month(year, month)
+    # Un mes que todavía no llegó arrastra igual el pendiente del anterior: tampoco se arma.
+    if (year, month) > (today.year, today.month) or not report["has_any_data"]:
+        return _report_without_data("No hay datos de Gettel ese mes para el reporte.")
     workspace_dir = tempfile.mkdtemp(prefix="gettel_reporte_")
     dest_path = os.path.join(workspace_dir, f"Gettel Reporte {month:02d}-{year}.pdf")
     gettel_reportes.build_gettel_pdf_report(report, year, month, dest_path)
