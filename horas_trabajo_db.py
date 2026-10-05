@@ -211,6 +211,17 @@ def get_week(week_id):
         conn.close()
 
 
+def known_employee_names():
+    """Los nombres de empleados ya guardados (para corregir una letra mal leída por el OCR)."""
+    conn = _connect()
+    try:
+        return [row[0] for row in conn.execute(
+            "SELECT DISTINCT employee_name FROM horas_trabajo_employees WHERE employee_name <> ''"
+        ).fetchall()]
+    finally:
+        conn.close()
+
+
 def get_month_weeks(year, month):
     """Semanas cuyo report_date cae en este mes, más antigua primero (mismo
     orden ascendente ya elegido para EFT) -- cada una con sus empleados."""

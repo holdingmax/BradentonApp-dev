@@ -5682,7 +5682,7 @@ def _run_carga_datos_horas_trabajo_job(job_id, paths):
 
         for index, path in enumerate(paths, start=1):
             try:
-                data = extract_hours_report(path)
+                data = extract_hours_report(path, known_names=horas_trabajo_db.known_employee_names())
                 if data["report_date"] is None:
                     raise ValueError('No se pudo leer la fecha de "REPORT PRINTED".')
                 if not data["employees"] and not data["unresolved_employees"]:
@@ -5703,7 +5703,7 @@ def _run_carga_datos_horas_trabajo_job(job_id, paths):
                     data["employees"], source="ocr", document_id=document_id,
                 )
                 weeks_saved += 1
-                unresolved_total.extend(data["unresolved_employees"])
+                unresolved_total.extend((data["report_date"], name) for name in data["unresolved_employees"])
                 if first_date is None or data["report_date"] < first_date:
                     first_date = data["report_date"]
             except Exception as exc:
@@ -5714,24 +5714,16 @@ def _run_carga_datos_horas_trabajo_job(job_id, paths):
         parts = []
         if weeks_saved:
             parts.append(f"{weeks_saved} semana(s) guardada(s).")
-        open_shifts = [name for name in unresolved_total if "turno abierto" in name]
-        no_total = len(unresolved_total) - len(open_shifts)
-        if no_total:
-            parts.append(
-                f"{no_total} empleado(s) sin su Total legible -- agregalos a mano desde el cuadro de esa semana."
-            )
-        if open_shifts:
-            parts.append(
-                f"{len(open_shifts)} empleado(s) con el turno abierto (no marcaron la salida): no se pagan solos, "
-                "cargá sus horas reales a mano."
-            )
+        # Un empleado por renglón (como el aviso de Proveedores): quién quedó
+        # sin horas y por qué -- se agrega a mano desde el cuadro de esa semana.
+        parts.extend(f"Reporte del {when:%d/%m/%Y}: cargá a mano las horas de {name}" for when, name in unresolved_total)
         if files_failed:
             parts.append(f"{files_failed} archivo(s) no se pudieron leer.")
 
         if not parts:
             notice, level = "No se pudo guardar nada de este lote.", "error"
         else:
-            notice, level = " ".join(parts), ("warning" if (files_failed or unresolved_total) else "success")
+            notice, level = "\n".join(parts), ("warning" if (files_failed or unresolved_total) else "success")
 
         if first_date:
             redirect_url = f"/carga-datos/horas-trabajo/historial?year={first_date.year}&month={first_date.month}"
