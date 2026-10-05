@@ -19,9 +19,10 @@ reportes_data/eft.db (gitignored, mismo directorio que las demás bases):
   lectura, nunca un valor guardado que se desactualice).
 """
 
+import calendar
 import os
 import sqlite3
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 _BASE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reportes_data")
 _DB_PATH = os.path.join(_BASE_DIR, "eft.db")
@@ -907,6 +908,160 @@ def _fmt_money_pdf(value):
     return "${:,.2f}".format(value)
 
 
+def _month_bounds(year, month):
+    first = date(year, month, 1)
+    last = date(year, month, calendar.monthrange(year, month)[1])
+    prev_first = date(year - 1, 12, 1) if month == 1 else date(year, month - 1, 1)
+    return first, last, prev_first
+
+
+def coupon_month_summary(year, month):
+    """
+    Resumen de los cupones de un mes, sin listarlos uno por uno (pedido del
+    usuario, 2026-10-05): "un resumen de la cantidad de cupones que hay en
+    ese mes, cuántos se aplicaron a cada EFT y cuáles y cuántos quedaron
+    pendientes... debe aclararse cuánta es la cantidad de cupones del mes
+    anterior que se aplicó... para así no mezclar los números".
+
+    Cada cupón cuenta según SU fecha: del mes anterior o de este mes (uno
+    más viejo solo aparece si un EFT de este mes lo pagó). Está aplicado en
+    este mes si alguna línea de un EFT con fecha de este mes lo pagó, y
+    pendiente al cierre si ningún EFT con fecha hasta fin de mes lo pagó
+    (aunque uno del mes siguiente ya lo haya pagado: pasa al mes siguiente).
+    En lo aplicado, el monto es lo que pagó el EFT; en el resto, el Net del
+    cupón, y un cupón de batch que sigue en 0 cuenta el saldo del batch una
+    sola vez (mismo criterio que get_cupones_with_status).
+
+    Devuelve {cantidad, monto} del mes anterior y de este mes, el detalle
+    por EFT y los pendientes al cierre agrupados por fecha del cupón.
+    """
+    first, last, prev_first = _month_bounds(year, month)
+    cupones = {}
+    for c in get_cupones_with_status():
+        parsed = _parse_cupon_date(c.get("date"))
+        if parsed:
+            cupones[c["coupon_id"]] = {**c, "day": parsed.date()}
+
+    conn = _connect()
+    try:
+        lines = conn.execute(
+            """
+            SELECT ec.coupon, ec.paid_amount, ed.id AS deposit_id, ed.eft_date
+            FROM eft_coupons ec JOIN eft_deposits ed ON ed.id = ec.deposit_id
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+    paid_on = {}  # cupón -> [(fecha del EFT, pagado)]
+    for line in lines:
+        eft_day = _parse_eft_date(line["eft_date"])
+        if line["coupon"] and eft_day:
+            paid_on.setdefault(line["coupon"], []).append((eft_day.date(), line["paid_amount"] or 0.0))
+
+    def bucket(coupon_id):
+        c = cupones.get(coupon_id)
+        if c is None:
+            return "unknown"
+        if c["day"] < prev_first:
+            return "older"
+        if c["day"] < first:
+            return "prev"
+        return "this" if c["day"] <= last else "later"
+
+    def applied_until(coupon_id, until):
+        return any(day <= until for day, _ in paid_on.get(coupon_id, ()))
+
+    def paid_this_month(coupon_id):
+        return sum(paid for day, paid in paid_on.get(coupon_id, ()) if first <= day <= last)
+
+    def applied_this_month(coupon_id):
+        return any(first <= day <= last for day, _ in paid_on.get(coupon_id, ()))
+
+    counted_groups = set()
+
+    def open_amount(coupon_id):
+        """Net del cupón; uno de batch sin resolver, el saldo del batch una sola vez."""
+        c = cupones[coupon_id]
+        net = c.get("net") or 0.0
+        if net or c.get("group_remaining") is None:
+            return net
+        if c.get("reported_group_text") in counted_groups:
+            return 0.0
+        counted_groups.add(c.get("reported_group_text"))
+        return c["group_remaining"]
+
+    def tally(amounts):
+        return {"count": len(amounts), "amount": round(sum(amounts), 2)}
+
+    by_bucket = {"prev": [], "this": [], "older": []}
+    for coupon_id in cupones:
+        b = bucket(coupon_id)
+        if b in by_bucket:
+            by_bucket[b].append(coupon_id)
+
+    prev_open = [cid for cid in by_bucket["prev"] if not applied_until(cid, first - timedelta(days=1))]
+    prev_applied = [cid for cid in prev_open if applied_this_month(cid)]
+    prev_still = [cid for cid in prev_open if not applied_until(cid, last)]
+    this_applied = [cid for cid in by_bucket["this"] if applied_this_month(cid)]
+    this_pending = [cid for cid in by_bucket["this"] if not applied_until(cid, last)]
+    older_applied = [cid for cid in by_bucket["older"] if applied_this_month(cid)]
+
+    # Primero los pendientes: el saldo de un batch queda contado ahí (una
+    # sola vez) y los totales reusan el mismo monto.
+    amounts = {cid: open_amount(cid) for cid in prev_still + this_pending}
+    for cid in prev_open + by_bucket["this"]:
+        if cid not in amounts:
+            amounts[cid] = open_amount(cid)
+
+    pending_by_day = {}
+    for cid in prev_still + this_pending:
+        entry = pending_by_day.setdefault(cupones[cid]["day"], [0, 0.0])
+        entry[0] += 1
+        entry[1] += amounts[cid]
+
+    per_eft = []
+    for entry in get_month_deposits(year, month):
+        dep = entry["deposit"]
+        # "unknown": renglón del EFT sin N° de cupón (o con uno que no está
+        # cargado en Cupones); cuenta en el total del EFT, aparte.
+        groups = {"prev": {}, "this": {}, "older": {}, "unknown": {}}
+        for index, line in enumerate(lines):
+            if line["deposit_id"] != dep["id"]:
+                continue
+            b = bucket(line["coupon"]) if line["coupon"] else "unknown"
+            key = b if b in groups else "unknown"
+            coupon_key = line["coupon"] or f"sin N° {index}"
+            groups[key][coupon_key] = groups[key].get(coupon_key, 0.0) + (line["paid_amount"] or 0.0)
+        row = {"rcv": dep.get("rcv_number"), "eft_date": _parse_eft_date(dep.get("eft_date"))}
+        for key, paid in groups.items():
+            row[key] = {"count": len(paid), "amount": round(sum(paid.values()), 2)}
+        row["total"] = {
+            "count": sum(row[k]["count"] for k in groups),
+            "amount": round(sum(row[k]["amount"] for k in groups), 2),
+        }
+        per_eft.append(row)
+    per_eft.sort(key=lambda r: (r["eft_date"] is None, r["eft_date"] or datetime.min))
+
+    return {
+        "unknown_applied": {
+            "count": sum(r["unknown"]["count"] for r in per_eft),
+            "amount": round(sum(r["unknown"]["amount"] for r in per_eft), 2),
+        },
+        "prev_open": tally([amounts[cid] for cid in prev_open]),
+        "prev_applied": tally([paid_this_month(cid) for cid in prev_applied]),
+        "prev_still": tally([amounts[cid] for cid in prev_still]),
+        "this_total": tally([amounts[cid] for cid in by_bucket["this"]]),
+        "this_applied": tally([paid_this_month(cid) for cid in this_applied]),
+        "this_pending": tally([amounts[cid] for cid in this_pending]),
+        "older_applied": tally([paid_this_month(cid) for cid in older_applied]),
+        "pending_by_day": [
+            {"day": day, "count": count, "amount": round(amount, 2)}
+            for day, (count, amount) in sorted(pending_by_day.items())
+        ],
+        "per_eft": per_eft,
+    }
+
+
 def build_eft_pdf_report(year, month, dest_path):
     """
     PDF del módulo nuevo "Reportes" (pedido explícito del usuario,
@@ -917,16 +1072,14 @@ def build_eft_pdf_report(year, month, dest_path):
     por Detalle), acá "todos los datos" significa una fila por CADA EFT
     (RCV) cargado ese mes -- no se agrupa nada, se listan todos.
 
-    Dos secciones (ver `pdf_export.build_multi_section_pdf`):
+    Secciones (ver `pdf_export.build_multi_section_pdf`):
     1. "EFT del mes" -- un renglón por depósito (RCV/Fecha/Gross/Fees/Net)
        más una fila TOTAL. El período que se imprime en el membrete usa la
        fecha MÍNIMA/MÁXIMA real de los EFT de ese mes (mismo criterio que
        el PDF de Chase) -- nunca asume que el mes esté completo.
-    2. "Cupones" -- NO es un listado (serían miles de filas, va contra "que
-       se vea bien y agradable a la vista") sino el acumulado HISTÓRICO
-       completo -- "cupones cargados hasta ese momento" es today, no solo
-       los de este mes -- mismo total que ya muestra `/carga-datos/eft/
-       cupones/historial` (get_cupones_with_status, sin filtrar por mes).
+    2-4. Cupones, sin listarlos uno por uno (2026-10-05, ver
+       coupon_month_summary): resumen del mes anterior y de este mes,
+       cupones aplicados en cada EFT y pendientes al cierre por fecha.
     """
     from pdf_export import build_multi_section_pdf
 
@@ -966,81 +1119,73 @@ def build_eft_pdf_report(year, month, dest_path):
     else:
         period_label = f"Período: sin EFT cargados todavía en {month:02d}/{year}"
 
-    # Cupones -- pedido explícito del usuario (2026-09-22): reemplaza el
-    # resumen histórico de una sola línea por DOS cuadros reales, los dos
-    # acotados al mes que se está reportando: (1) los cupones que un EFT
-    # de ESTE mes efectivamente pagó (match.eft_date, no cupon.date -- un
-    # EFT de septiembre puede pagar un cupón cargado con fecha de agosto,
-    # lo que importa acá es cuándo se cobró) y (2) los cupones con fecha
-    # de este mes que TODAVÍA no se aplicaron a ningún EFT (pendientes),
-    # para poder ver de un vistazo qué falta cobrar de lo que se cargó.
-    cupones = get_cupones_with_status()
+    # Cupones (pedido del usuario, 2026-10-05): ya no se lista cupón por
+    # cupón; un resumen del mes que separa lo del mes anterior de lo de
+    # este mes, lo aplicado en cada EFT y lo que pasa al mes siguiente (ver
+    # coupon_month_summary).
+    summary = coupon_month_summary(year, month)
+    prev_label = f"{12 if month == 1 else month - 1:02d}/{year - 1 if month == 1 else year}"
+    this_label = f"{month:02d}/{year}"
+    next_label = f"{1 if month == 12 else month + 1:02d}/{year + 1 if month == 12 else year}"
 
-    applied_rows = []
-    total_applied_net = total_applied_paid = 0.0
-    for c in cupones:
-        match = c.get("match")
-        if not match:
-            continue
-        eft_parsed = _parse_eft_date(match.get("eft_date"))
-        if not eft_parsed or eft_parsed.year != year or eft_parsed.month != month:
-            continue
-        cupon_parsed = _parse_cupon_date(c.get("date"))
-        net = c.get("net") or 0.0
-        paid = match.get("paid_amount") or 0.0
-        total_applied_net += net
-        total_applied_paid += paid
-        applied_rows.append(
+    def count_amount(item):
+        return [str(item["count"]), _fmt_money_pdf(item["amount"])]
+
+    def add_up(items):
+        return {"count": sum(i["count"] for i in items), "amount": round(sum(i["amount"] for i in items), 2)}
+
+    # Cada renglón dice de qué mes es el cupón y en qué mes se aplicó: la
+    # tabla se imprime centrada, así que no hay sangría que lo aclare.
+    resumen_rows = [
+        [f"Cupones del {prev_label} sin aplicar al 01/{this_label}"] + count_amount(summary["prev_open"]),
+        [f"Del {prev_label}: aplicados en EFT del {this_label}"] + count_amount(summary["prev_applied"]),
+        [f"Del {prev_label}: siguen pendientes"] + count_amount(summary["prev_still"]),
+        [f"Cupones con fecha del {this_label}"] + count_amount(summary["this_total"]),
+        [f"Del {this_label}: aplicados en EFT del {this_label}"] + count_amount(summary["this_applied"]),
+        [f"Del {this_label}: pendientes, pasan al {next_label}"] + count_amount(summary["this_pending"]),
+    ]
+    applied_parts = [summary["prev_applied"], summary["this_applied"]]
+    if summary["older_applied"]["count"]:
+        resumen_rows.append(
+            [f"Anteriores al {prev_label}: aplicados en EFT del {this_label}"] + count_amount(summary["older_applied"])
+        )
+        applied_parts.append(summary["older_applied"])
+    if summary["unknown_applied"]["count"]:
+        resumen_rows.append(
+            [f"Renglones de EFT del {this_label} sin N° de cupón"] + count_amount(summary["unknown_applied"])
+        )
+        applied_parts.append(summary["unknown_applied"])
+    resumen_rows.append([f"Total aplicado en EFT del {this_label}"] + count_amount(add_up(applied_parts)))
+
+    per_eft = summary["per_eft"]
+    per_eft_rows = [
+        [
+            row["rcv"] or "—",
+            row["eft_date"].strftime("%d/%m/%Y") if row["eft_date"] else "—",
+            *count_amount(row["prev"]),
+            *count_amount(row["this"]),
+            *count_amount(row["total"]),
+        ]
+        for row in per_eft
+    ]
+    if per_eft_rows:
+        per_eft_rows.append(
             [
-                c.get("coupon_id") or "—",
-                cupon_parsed.strftime("%d/%m/%Y") if cupon_parsed else (c.get("date") or "—"),
-                match.get("rcv_number") or "—",
-                eft_parsed.strftime("%d/%m/%Y"),
-                _fmt_money_pdf(net),
-                _fmt_money_pdf(paid),
+                "TOTAL", "",
+                *count_amount(add_up([r["prev"] for r in per_eft])),
+                *count_amount(add_up([r["this"] for r in per_eft])),
+                *count_amount(add_up([r["total"] for r in per_eft])),
             ]
         )
-    applied_rows.sort(key=lambda row: row[3])
-    if applied_rows:
-        applied_rows.append(
-            ["TOTAL", "", "", "", _fmt_money_pdf(total_applied_net), _fmt_money_pdf(total_applied_paid)]
-        )
+    other_count = sum(r["older"]["count"] + r["unknown"]["count"] for r in per_eft)
 
-    pending_rows = []
-    total_pending = 0.0
-    counted_groups = set()
-    for c in cupones:
-        if c.get("match"):
-            continue
-        cupon_parsed = _parse_cupon_date(c.get("date"))
-        if not cupon_parsed or cupon_parsed.year != year or cupon_parsed.month != month:
-            continue
-        net = c.get("net") or 0.0
-        # Un miembro de batch sin resolver tiene net 0: lo que falta cobrar
-        # es el saldo del batch (group_remaining), contado una sola vez.
-        group_text = c.get("reported_group_text")
-        net_cell = _fmt_money_pdf(net)
-        if not net and c.get("group_remaining") is not None:
-            if group_text not in counted_groups:
-                counted_groups.add(group_text)
-                total_pending += c["group_remaining"]
-                net_cell = f"{_fmt_money_pdf(c['group_remaining'])} (saldo del batch)"
-            else:
-                net_cell = "en el mismo batch"
-        total_pending += net
-        pending_rows.append(
-            [
-                c.get("coupon_id") or "—",
-                cupon_parsed.strftime("%d/%m/%Y"),
-                _fmt_money_pdf(c.get("gross")),
-                _fmt_money_pdf(c.get("fees")),
-                net_cell,
-            ]
-        )
-    pending_rows.sort(key=lambda row: row[1])
+    pending = summary["pending_by_day"]
+    pending_rows = [[d["day"].strftime("%d/%m/%Y"), str(d["count"]), _fmt_money_pdf(d["amount"])] for d in pending]
     if pending_rows:
-        pending_rows.append(["TOTAL", "", "", "", _fmt_money_pdf(total_pending)])
+        pending_rows.append(["TOTAL", *count_amount(add_up(pending))])
 
+    per_eft_heading = "Cupones aplicados en cada EFT"
+    pending_heading = "Pendientes al cierre del mes (pasan al mes siguiente)"
     title = f"EFT — {month:02d}/{year}"
     sections = [
         {
@@ -1051,29 +1196,38 @@ def build_eft_pdf_report(year, month, dest_path):
             "bold_last_row": True,
         },
         {
-            "heading": "Cupones aplicados a EFT de este mes",
-            "headers": ["Cupón", "Fecha Cupón", "RCV", "Fecha EFT", "Net", "Pagado"],
-            "rows": applied_rows,
-            "col_widths_mm": [40, 40, 40, 40, 40, 40],
+            "heading": "Resumen de cupones",
+            "headers": ["Detalle", "Cupones", "Monto"],
+            "rows": resumen_rows,
+            "col_widths_mm": [150, 40, 55],
             "bold_last_row": True,
-        }
-        if applied_rows
-        else {
-            "heading": "Cupones aplicados a EFT de este mes",
-            "note": "Ningún EFT de este mes pagó un cupón todavía.",
+            "footnote": (
+                "Cada cupón cuenta según su propia fecha, así lo del mes anterior no se mezcla con lo de este mes. "
+                "En los aplicados, el monto es lo que pagó el EFT; en el resto, el Net del cupón."
+            ),
         },
         {
-            "heading": "Cupones pendientes (fecha de este mes, sin aplicar a ningún EFT)",
-            "headers": ["Cupón", "Fecha", "Gross", "Fees", "Net"],
+            "heading": per_eft_heading,
+            "headers": ["RCV", "Fecha", f"Del {prev_label}", "Monto", f"Del {this_label}", "Monto", "Total", "Monto"],
+            "rows": per_eft_rows,
+            "col_widths_mm": [36, 30, 26, 36, 26, 36, 26, 36],
+            "bold_last_row": True,
+            "footnote": (
+                f"El Total incluye {other_count} renglón(es) de cupones anteriores al {prev_label} o sin N° de cupón "
+                "(ver el Resumen)." if other_count else None
+            ),
+        }
+        if per_eft_rows
+        else {"heading": per_eft_heading, "note": "No hay EFT cargados este mes."},
+        {
+            "heading": pending_heading,
+            "headers": ["Fecha del cupón", "Cupones", "Monto"],
             "rows": pending_rows,
-            "col_widths_mm": [48, 48, 48, 48, 48],
+            "col_widths_mm": [80, 40, 55],
             "bold_last_row": True,
         }
         if pending_rows
-        else {
-            "heading": "Cupones pendientes (fecha de este mes, sin aplicar a ningún EFT)",
-            "note": "No hay cupones pendientes con fecha de este mes.",
-        },
+        else {"heading": pending_heading, "note": "No quedó ningún cupón del mes anterior ni de este mes sin aplicar."},
     ]
     build_multi_section_pdf(dest_path, title, sections, period_label=period_label, company_header=True)
     return dest_path

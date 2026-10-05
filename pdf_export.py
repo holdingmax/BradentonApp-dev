@@ -275,7 +275,14 @@ def build_multi_section_pdf(dest_path, title, sections, period_label=None, compa
                     section.get("bold_last_row", False),
                 )
             )
-        elements.append(Spacer(1, 14))
+            # Aclaración corta debajo de la tabla (cómo leer los números).
+            if section.get("footnote"):
+                elements.append(Spacer(1, 4))
+                elements.append(Paragraph(section["footnote"], styles["Normal"]))
+        # Sin espacio después de la última: si la página justo se llena,
+        # ese espacio solo armaba una hoja en blanco al final.
+        if section is not sections[-1]:
+            elements.append(Spacer(1, 14))
 
     doc.build(elements)
     return dest_path
