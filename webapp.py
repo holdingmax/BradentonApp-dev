@@ -6690,7 +6690,7 @@ def _run_carga_datos_proveedores_job(job_id, paths):
 
             # Detalle de productos (proveedores_productos.py, pedido explícito
             # del usuario 2026-09-28): solo proveedores con extractor de
-            # renglones (H.T. Hackney, CEC y Colonial). Corre también si la factura ya
+            # renglones (H.T. Hackney, CEC, Colonial, Gold Coast y Red Bull). Corre también si la factura ya
             # estaba cargada -- volver a subirla completa su detalle sin
             # duplicar nada. Si el detalle no cierra contra la factura no se
             # guarda ningún renglón, pero la factura en sí queda guardada.

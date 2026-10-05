@@ -11,10 +11,12 @@ sección Proveedores de webapp.py.
 H.T. Hackney trae texto real. CEC y Colonial (2026-10-04, pedido del
 usuario: "mejorar la precisión de los OCR de las facturas de los
 proveedores... así se puedan extraer los productos al igual que H.T.")
-son escaneos y se leen por OCR, con más controles (ver más abajo). El
+son escaneos y se leen por OCR, con más controles (ver más abajo). Gold
+Coast Eagle y Red Bull (2026-10-05) son tickets impresos escaneados y se
+leen por lectura múltiple con votación (sección "Tickets impresos"). El
 resto de los proveedores todavía no -- ver los relevamientos del
-2026-09-28 y 2026-10-04 en HISTORIAL.md. Cada proveedor nuevo se suma en
-LINE_EXTRACTORS.
+2026-09-28, 2026-10-04 y 2026-10-05 en HISTORIAL.md. Cada proveedor nuevo
+se suma en LINE_EXTRACTORS.
 
 Regla de oro: el detalle de una factura se guarda solo si cierra al
 centavo -- cantidad x neto = total de cada renglón, la suma de renglones =
@@ -22,6 +24,7 @@ INVOICE SUBTOTAL impreso, y subtotal + cargos = Total impreso. Si algo no
 cierra, ValueError y no se guarda ningún renglón (nunca un detalle a medias).
 """
 
+import itertools
 import re
 
 import pdfplumber
@@ -39,11 +42,12 @@ from ocr_utils import (
 try:
     import cv2
     import numpy as np
-    from PIL import Image
-except ImportError:  # sin OpenCV/Pillow: solo fallan CEC y Colonial, con un error claro (ensure_cv2)
+    from PIL import Image, ImageFilter
+except ImportError:  # sin OpenCV/Pillow: solo fallan los escaneos (CEC, Colonial, GCE, Red Bull), con un error claro (ensure_cv2)
     cv2 = None  # type: ignore[assignment]
     np = None  # type: ignore[assignment]
     Image = None  # type: ignore[assignment]
+    ImageFilter = None  # type: ignore[assignment]
 
 # Columnas de la grilla de H.T., en el orden de los 16 bloques de guiones
 # que la factura imprime debajo del encabezado ("- ------- -------------- ...").
@@ -264,7 +268,7 @@ def _page_images(pdf_path):
     return [image for image in images if image is not None]
 
 
-def _ocr_rows(image, config="--psm 6", box=None, scale=1, clean=False):
+def _ocr_rows(image, config="--psm 6", box=None, scale=1, clean=False, prep=None):
     """
     Renglones del OCR con la posición de cada palabra. psm 6 lee la página
     como un único bloque, así cada renglón de la tabla sale entero (con psm 3
@@ -274,7 +278,8 @@ def _ocr_rows(image, config="--psm 6", box=None, scale=1, clean=False):
     de puntitos (renglones alternados de Colonial) antes de leer, de dos
     formas distintas (dos lecturas independientes): "blur" (desenfoque leve
     y corte fijo: los puntitos quedan más claros que la letra) o "median"
-    (filtro de mediana y blanco/negro automático).
+    (filtro de mediana y blanco/negro automático). prep: otro arreglo de la
+    imagen ya agrandada (las pasadas de los tickets, más abajo).
     """
     pytesseract = _pytesseract()
     x_off = y_off = 0
@@ -294,6 +299,8 @@ def _ocr_rows(image, config="--psm 6", box=None, scale=1, clean=False):
             gray = cv2.medianBlur(gray, 7 if scale >= 3 else 5)
             _, gray = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         source = Image.fromarray(gray)
+    if prep is not None:
+        source = prep(source)
     data = pytesseract.image_to_data(source, config=config, output_type=pytesseract.Output.DICT)
     rows = {}
     for i, text in enumerate(data["text"]):
@@ -1235,11 +1242,1012 @@ def _colonial_vote(group, field, line_no):
     return value
 
 
+# ---------------------------------------------------------------------------
+# Tickets impresos por lectura múltiple: Gold Coast Eagle y Red Bull (2026-10-05)
+# ---------------------------------------------------------------------------
+# Pedido del usuario (2026-10-05): sumar un par de proveedores más a la
+# lectura de productos para comparar los precios con los de la factura
+# anterior. Los dos son tickets impresos escaneados con poca resolución, a
+# veces torcidos o curvados: el texto se lee bastante limpio, pero Tesseract
+# confunde algunos dígitos de esas fuentes (en Red Bull el 5 sale 6 casi
+# siempre; en GCE 8/6, 9/0 y 1/7), y cada forma de preparar la imagen se
+# equivoca en renglones distintos. Entonces:
+# - la página se endereza y se lee varias veces (_TICKET_PASSES, de a una y
+#   solo hasta que la factura cierra); los renglones de las distintas
+#   pasadas se emparejan por altura en la página, y cada monto va a la
+#   columna cuyo título le queda encima;
+# - de cada renglón se elige la combinación de lecturas que cierra sus
+#   cuentas con más votos (_ticket_options: primero solo lo leído; si no
+#   cierra nada, uno o dos montos cambiados por un dígito confundible de lo
+#   leído; y por último un campo deducido de la cuenta con la cantidad
+#   leída). Un renglón que no cierra se relee solo (su franja, enderezada);
+# - la suma de los renglones tiene que dar el total impreso tal como lo leyó
+#   alguna pasada (si no, se prueba cambiar UN renglón por otra combinación
+#   que también cierra, y vale solo si exactamente un cambio da el total), y
+#   los conteos del pie (cajas, unidades) confirman cantidades y packs.
+# Misma regla de oro que el resto: si algo no cierra, ValueError y no se
+# guarda ningún renglón.
+
+
+def _sharpen(image):
+    return image.filter(ImageFilter.UnsharpMask(radius=2, percent=150, threshold=3))
+
+
+def _otsu(image):
+    ensure_cv2()
+    _, gray = cv2.threshold(np.array(image.convert("L")), 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    return Image.fromarray(gray)
+
+
+def _blur_threshold(image):
+    ensure_cv2()
+    gray = cv2.GaussianBlur(np.array(image.convert("L")), (5, 5), 0)
+    return Image.fromarray(np.where(gray < 150, 0, 255).astype(np.uint8))
+
+
+# (config de Tesseract, agrandado, arreglo de la imagen), de la que más
+# renglones lee bien a la que menos (medido sobre facturas reales de GCE).
+_TICKET_PASSES = (
+    ("--psm 6", 2, None),
+    ("--psm 6", 3, _sharpen),
+    ("--psm 6", 3, None),
+    ("--psm 4", 3, None),
+    ("--psm 6", 3, _otsu),
+    ("--psm 6", 4, _blur_threshold),
+)
+# Dígitos que Tesseract confunde en estas fuentes (visto en las facturas reales).
+_TICKET_CONFUSIONS = {"5": "6", "6": "58", "8": "63", "3": "8", "0": "9", "9": "0", "1": "7", "7": "1"}
+_TICKET_AMOUNT = re.compile(r"-?\d{1,3}(?:[.,]?\d{3})*[.,]\d{2}")
+
+
+def _deskew(image):
+    """
+    Endereza un ticket escaneado torcido (hasta 3 grados): con la imagen
+    achicada prueba ángulos y se queda con el que deja los renglones más
+    horizontales (máxima varianza de la tinta por fila). Torcido, el total
+    del renglón (a la derecha) queda a otra altura que el Item # y el OCR lo
+    lee como otro renglón. Si ya está derecha, devuelve la misma imagen.
+    """
+    ensure_cv2()
+    gray = np.array(image.convert("L"))
+    factor = min(1.0, 500 / gray.shape[1])
+    small = cv2.resize(gray, None, fx=factor, fy=factor, interpolation=cv2.INTER_AREA)
+    _, ink = cv2.threshold(small, 0, 1, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    center = (small.shape[1] / 2, small.shape[0] / 2)
+    best_angle, best_score = 0.0, None
+    for step in range(-30, 31):
+        angle = step / 10
+        matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
+        rotated = cv2.warpAffine(ink, matrix, (small.shape[1], small.shape[0]), flags=cv2.INTER_NEAREST)
+        score = float(np.var(rotated.sum(axis=1)))
+        if best_score is None or score > best_score:
+            best_angle, best_score = angle, score
+    if abs(best_angle) < 0.15:
+        return image
+    # El lienzo se agranda para que el giro no recorte las puntas (el total
+    # del renglón está pegado al borde derecho).
+    height, width = gray.shape
+    matrix = cv2.getRotationMatrix2D((width / 2, height / 2), best_angle, 1.0)
+    cos, sin = abs(matrix[0, 0]), abs(matrix[0, 1])
+    new_width, new_height = int(height * sin + width * cos) + 2, int(height * cos + width * sin) + 2
+    matrix[0, 2] += new_width / 2 - width / 2
+    matrix[1, 2] += new_height / 2 - height / 2
+    straight = cv2.warpAffine(gray, matrix, (new_width, new_height), flags=cv2.INTER_CUBIC,
+                              borderMode=cv2.BORDER_CONSTANT, borderValue=255)
+    return Image.fromarray(straight)
+
+
+def _ticket_images(pdf_path):
+    """Imágenes de las páginas, orientadas y enderezadas."""
+    return [_deskew(image) for image in _page_images(pdf_path)]
+
+
+def _ticket_amount(text):
+    """'«1.80' / '39,20' / '$1,373.70' -> float; '33.117', '26.9%', '4).21' -> None (dudoso)."""
+    text = _clean_token(text or "").strip("«»~+$§")
+    if not _TICKET_AMOUNT.fullmatch(text):
+        return None
+    whole = re.sub(r"[.,]", "", text[:-3].lstrip("-")) or "0"
+    value = float(f"{whole}.{text[-2:]}")
+    return -value if text.startswith("-") else value
+
+
+def _ticket_variants(value, confusions):
+    """Montos a un dígito confundible de distancia: 3.26 -> 3.25, 3.28, ..."""
+    text = f"{value:.2f}"
+    found = set()
+    for index, char in enumerate(text):
+        for other in confusions.get(char, ""):
+            found.add(round(float(text[:index] + other + text[index + 1:]), 2))
+    found.discard(value)
+    return found
+
+
+def _ticket_upc(digits):
+    """UPC-A válido dentro de los dígitos leídos (con el 0 de adelante perdido, también), o None."""
+    upc = _upc_candidate(digits)
+    if upc is None and len(digits) == 11 and _gtin_ok("0" + digits):
+        upc = "0" + digits
+    return upc
+
+
+def _median_height(words):
+    heights = sorted(w["bottom"] - w["top"] for w in words)
+    return heights[len(heights) // 2]
+
+
+def _ticket_row(page, words, y=None, height=None):
+    return {
+        "page": page,
+        "y": y if y is not None else sum((w["top"] + w["bottom"]) / 2 for w in words) / len(words),
+        "height": height if height is not None else _median_height(words),
+        "words": words,
+        "text": _row_text(words),
+    }
+
+
+def _ticket_readings(images, passes_done):
+    """
+    Una pasada más sobre todas las páginas: renglones con su página y altura
+    ({"page", "y", "height", "words", "text"}), en orden. passes_done:
+    cuántas pasadas ya se hicieron (la siguiente de _TICKET_PASSES).
+    """
+    config, scale, prep = _TICKET_PASSES[passes_done]
+    rows = []
+    for page_no, image in enumerate(images):
+        rows.extend(_ticket_row(page_no, words) for words in _ocr_rows(image, config, scale=scale, prep=prep))
+    return rows
+
+
+def _ticket_columns(readings, labels):
+    """
+    Centro (x) de cada columna de montos según el renglón de títulos, por
+    página (cada página es otro escaneo, con otro margen) y juntando todas
+    las pasadas: {página: {columna: x}}. labels: [(columna, regex del
+    título)]. Una página sin títulos legibles no figura (sus montos van por
+    orden).
+    """
+    found = {}
+    for reading in readings:
+        for row in reading:
+            hits = {}
+            for word in row["words"]:
+                for name, pattern in labels:
+                    if name not in hits and re.fullmatch(pattern, word["text"], re.IGNORECASE):
+                        hits[name] = (word["x0"] + word["x1"]) / 2
+                        break
+            if len(hits) >= len(labels) - 1:
+                page = found.setdefault(row["page"], {name: [] for name, _ in labels})
+                for name, x in hits.items():
+                    page[name].append(x)
+    return {page: {name: _median(xs) for name, xs in names.items()}
+            for page, names in found.items() if all(names.values())}
+
+
+def _ticket_assign(words, columns, names):
+    """
+    Montos de un renglón por columna. Si vinieron justo tantos montos como
+    columnas, van en orden. Si falta o sobra alguno (el código de barras
+    dibujado, un monto ilegible), cada uno va a la columna cuyo título le
+    queda más cerca, descontando el corrimiento del renglón (la página
+    curvada corre los renglones de abajo respecto de los títulos); lo que
+    cae lejos de todas se descarta. Lo ilegible queda None.
+    """
+    tokens = [w for w in words if re.search(r"\d", w["text"])]
+    if len(tokens) == len(names):
+        return {name: _ticket_amount(w["text"]) for name, w in zip(names, tokens)}
+    values = {name: None for name in names}
+    if columns is None or not tokens:
+        return values
+    xs = sorted(columns[name] for name in names)
+    gap = min(b - a for a, b in zip(xs, xs[1:]))
+    centers = [(w["x0"] + w["x1"]) / 2 for w in tokens]
+    shift = _median([x - min(xs, key=lambda c: abs(c - x)) for x in centers])
+    distance = {}
+    for word, x in zip(tokens, centers):
+        name = min(names, key=lambda n: abs(columns[n] - (x - shift)))
+        off = abs(columns[name] - (x - shift))
+        if off <= gap * 0.5 and off < distance.get(name, float("inf")):
+            values[name], distance[name] = _ticket_amount(word["text"]), off
+    return values
+
+
+def _ticket_clusters(candidates, tolerance):
+    """
+    Junta los renglones de producto de todas las pasadas: dos lecturas son el
+    mismo renglón si están en la misma página y a menos de `tolerance` de
+    altura. Devuelve los grupos en orden de página y altura.
+    """
+    clusters = []
+    for cand in candidates:
+        for cluster in clusters:
+            if cluster[0]["page"] == cand["page"] and abs(cluster[0]["y"] - cand["y"]) <= tolerance:
+                cluster.append(cand)
+                break
+        else:
+            clusters.append([cand])
+    clusters.sort(key=lambda c: (c[0]["page"], c[0]["y"]))
+    return clusters
+
+
+def _ticket_votes(cluster, field):
+    counts = {}
+    for cand in cluster:
+        value = cand.get(field)
+        if value is not None:
+            counts[value] = counts.get(value, 0) + 1
+    return counts
+
+
+def _ticket_winner(counts):
+    """El valor más votado; None si no hay o si dos empatan arriba."""
+    if not counts:
+        return None
+    ranked = sorted(counts.items(), key=lambda kv: -kv[1])
+    if len(ranked) > 1 and ranked[0][1] == ranked[1][1]:
+        return None
+    return ranked[0][0]
+
+
+def _ticket_options(cluster, fields, close, derive, confusions, max_changed):
+    """
+    Combinaciones de lecturas que cierran el renglón, de la más votada a la
+    menos: [(votos, valores)]. close(valores) -> los valores con "net" y
+    "qty" si cierran, o None. Por niveles, y se pasa al siguiente solo si el
+    anterior no dio ninguna:
+    0) todos los montos tal como se leyeron;
+    1) hasta max_changed montos cambiados por otro a un dígito confundible
+       de lo leído ("3.26" por 3.25) -- los cambiados no suman votos. Este
+       nivel se calcula siempre y queda detrás del 0 como alternativa para
+       _ticket_fix_sum: en Red Bull "$64.70 / 3.25 / $61.45" se lee así en
+       todas las pasadas y cierra, pero lo impreso es $54.70 y $51.45;
+    2) un monto que ninguna pasada leyó bien sale de la cuenta del renglón
+       (derive: [(campo, función(valores, cantidad), exige la cantidad
+       leída)]); si el deducido es el total del renglón, ext_read=False y
+       después lo tiene que confirmar el conteo de cajas del pie.
+    La cantidad leída igual a la de la cuenta suma votos (qty_read). Cada
+    opción es (votos, valores, nivel), ordenadas por nivel y votos.
+    """
+    votes = {field: sorted(_ticket_votes(cluster, field).items(), key=lambda kv: -kv[1])[:3] for field in fields}
+    qty_votes = _ticket_votes(cluster, "qty")
+    tiers = ({}, {}, {})
+
+    def consider(tier, values, score, qty_needed=None, ext_read=True):
+        result = close(dict(values))
+        if result is None or (qty_needed is not None and result["qty"] != qty_needed):
+            return
+        n_qty = qty_votes.get(result["qty"], 0)
+        key = tuple(values[f] for f in fields)
+        total = score + n_qty
+        if key not in tiers[tier] or tiers[tier][key][0] < total:
+            tiers[tier][key] = (total, dict(result, qty_read=n_qty > 0, ext_read=ext_read), tier)
+
+    def combos(lists):
+        for choice in itertools.product(*lists):
+            yield {f: v for f, (v, _) in zip(fields, choice)}, sum(n for _, n in choice)
+
+    for values, score in combos([votes[f] for f in fields]):
+        consider(0, values, score)
+    for size in range(1, max_changed + 1):
+        for changed in itertools.combinations(fields, size):
+            lists = [[(v, 0) for read, _ in votes[f] for v in _ticket_variants(read, confusions)] if f in changed
+                     else votes[f] for f in fields]
+            for values, score in combos(lists):
+                consider(1, values, score)
+    if not tiers[0] and not tiers[1]:
+        for field, deduce, needs_qty in derive:
+            others = [f for f in fields if f != field]
+            for choice in itertools.product(*[votes[f] for f in others]):
+                values = {f: v for f, (v, _) in zip(others, choice)}
+                score = sum(n for _, n in choice)
+                for qty in [q for q in qty_votes if q > 0] if needs_qty else [None]:
+                    values[field] = round(deduce(values, qty), 2)
+                    consider(2, values, score, qty, ext_read=field != "ext")
+    for key in tiers[0]:
+        tiers[1].pop(key, None)
+    if tiers[0] or tiers[1]:
+        return sorted(tiers[0].values(), key=lambda o: -o[0]) + sorted(tiers[1].values(), key=lambda o: -o[0])
+    return sorted(tiers[2].values(), key=lambda o: -o[0])
+
+
+def _ticket_settled(options):
+    """Hay una combinación ganadora: la primera no empata en nivel y votos con otra distinta."""
+    return bool(options) and (len(options) == 1 or options[1][2] > options[0][2] or options[0][0] > options[1][0])
+
+
+def _ticket_fix_sum(rows, printed_values, label, supplier):
+    """
+    rows: [{"options": [(votos, valores)], "choice": índice}]. Si la suma de
+    los totales elegidos no da ninguno de los totales impresos leídos, prueba
+    cambiar UN renglón por otra de sus combinaciones que cierran, y si no
+    alcanza, dos o tres; vale solo si un único cambio da un total leído al
+    centavo. Devuelve el total impreso que cerró.
+    """
+    def ext(row, index):
+        return row["options"][index][1]["ext"]
+
+    current = round(sum(ext(r, r["choice"]) for r in rows), 2)
+    printed = {round(v, 2) for v in printed_values if v is not None}
+    if current in printed:
+        return current
+    # Para la suma solo importa el total del renglón: de cada renglón, un cambio
+    # por cada total distinto (el de la combinación mejor ubicada).
+    changes = []
+    for n, r in enumerate(rows):
+        seen = {ext(r, r["choice"])}
+        for alt in range(len(r["options"])):
+            if ext(r, alt) not in seen:
+                seen.add(ext(r, alt))
+                changes.append((n, alt, round(ext(r, alt) - ext(r, r["choice"]), 2)))
+    for size in (1, 2, 3):
+        if size == 3 and len(changes) > 80:
+            break
+        fixes = [combo for combo in itertools.combinations(changes, size)
+                 if len({n for n, _, _ in combo}) == size
+                 and round(current + sum(d for _, _, d in combo), 2) in printed]
+        if len(fixes) == 1:
+            for n, alt, _ in fixes[0]:
+                rows[n]["choice"] = alt
+            return round(current + sum(d for _, _, d in fixes[0]), 2)
+        if fixes:
+            break
+    shown = ", ".join(f"${v:,.2f}" for v in sorted(printed)) or "ilegible"
+    raise ValueError(f"los renglones de {supplier} suman ${current:,.2f} y el {label} leído es {shown}.")
+
+
+def _ticket_reread_row(images, cluster, parse, cache):
+    """
+    Relee solo la franja del renglón, enderezada por su cuenta (el ticket
+    viene curvado: arriba se tuerce más que abajo y un solo ángulo para toda
+    la página no alcanza), más agrandada y con varios arreglos de la imagen,
+    y suma esas lecturas al grupo. cache: las relecturas ya hechas en
+    pasadas anteriores, por página y altura.
+    """
+    page = cluster[0]["page"]
+    y = _median([c["y"] for c in cluster])
+    height = _median([c["height"] for c in cluster])
+    key = next((k for k in cache if k[0] == "row" and k[1] == page and abs(k[2] - y) <= height / 2),
+               ("row", page, y))
+    if key not in cache:
+        image = images[page]
+        top = max(0, int(y - 1.8 * height))
+        strip = _deskew(image.crop((0, top, image.width, min(image.height, int(y + 1.8 * height)))))
+        found = []
+        for config, scale, prep in (("--psm 6", 3, None), ("--psm 7", 3, None), ("--psm 6", 4, _sharpen),
+                                    ("--psm 6", 3, _otsu)):
+            for words in _ocr_rows(strip, config, scale=scale, prep=prep):
+                candidate = parse(_ticket_row(page, words, y=y, height=height))
+                if candidate is not None:
+                    candidate["upc_box"] = None  # posición de la franja, no de la página
+                    found.append(candidate)
+        cache[key] = found
+    return cluster + cache[key]
+
+
+def _ticket_reread_upc(images, cluster, cache):
+    """
+    UPC de un renglón que ninguna pasada leyó con dígito verificador válido:
+    se relee la celda sola, solo dígitos, donde la vieron las pasadas (hasta
+    dos lugares distintos). Vale si todas las relecturas válidas dan el mismo.
+    """
+    found = set()
+    boxes = []
+    for cand in cluster:
+        box = cand.get("upc_box")
+        if box is not None and not any(abs(box[0] - b[0]) < 4 and abs(box[1] - b[1]) < 4 for b in boxes):
+            boxes.append(box)
+    page = cluster[0]["page"]
+    for x0, top, x1, bottom in boxes[:2]:
+        key = ("upc", page, round(x0), round(top))
+        if key not in cache:
+            pad = (bottom - top) * 0.6
+            box = (x0 - pad, top - pad, x1 + pad, bottom + pad)
+            cache[key] = {_ticket_upc(re.sub(r"\D", "", _ocr_cell(images[page], box, psm=psm)))
+                          for psm in (7, 8)} - {None}
+        found |= cache[key]
+    return found.pop() if len(found) == 1 else None
+
+
+def _ticket_upc_variants(cluster, confusions, prefix=""):
+    """
+    UPC de un renglón que ni las pasadas ni la relectura leyeron válido: si
+    dos o más pasadas leyeron los mismos 12 dígitos (inválidos), se prueban
+    los cambios de UN dígito confundible ("611269113670" -> 611269113570, el
+    5 que en Red Bull sale 6), sin tocar el prefijo de la empresa si se
+    conoce; vale si exactamente uno pasa el dígito verificador.
+    """
+    found = set()
+    for raw, count in _ticket_votes(cluster, "upc_raw").items():
+        if count < 2 or not raw.startswith(prefix):
+            continue
+        for index, char in enumerate(raw):
+            if index < len(prefix):
+                continue
+            for other in confusions.get(char, ""):
+                candidate = raw[:index] + other + raw[index + 1:]
+                if _gtin_ok(candidate):
+                    found.add(candidate)
+    return found.pop() if len(found) == 1 else None
+
+
+def _ticket_raw_upc(digits):
+    """Los 12 dígitos leídos del UPC (con el 0 de adelante si se perdió), para _ticket_upc_variants."""
+    if len(digits) == 11:
+        digits = "0" + digits
+    return digits if len(digits) == 12 else None
+
+
+def _ticket_rows(clusters, images, cache, parse, supplier, rules):
+    """
+    Cada grupo de lecturas -> renglón con sus combinaciones que cierran, UPC y
+    descripción. rules: las cuentas y confusiones del proveedor (_GCE_RULES,
+    _RB_RULES).
+    """
+    rows = []
+    for line_no, cluster in enumerate(clusters, start=1):
+        options = _ticket_options(cluster, *rules["options"])
+        upc = _ticket_winner(_ticket_votes(cluster, "upc"))
+        if not _ticket_settled(options) or upc is None:
+            cluster = _ticket_reread_row(images, cluster, parse, cache)
+            options = _ticket_options(cluster, *rules["options"])
+            upc = (_ticket_winner(_ticket_votes(cluster, "upc")) or _ticket_reread_upc(images, cluster, cache)
+                   or _ticket_upc_variants(cluster, *rules["upc"]))
+        description = (_ticket_winner(_ticket_votes(cluster, "description"))
+                       or next((c["description"] for c in cluster if c.get("description")), ""))
+        if not options:
+            raise ValueError(f"el renglón {line_no} de {supplier} ({description}) no cierra: "
+                             "ninguna lectura da cantidad x precio = total.")
+        if not _ticket_settled(options):
+            raise ValueError(f"el renglón {line_no} de {supplier} ({description}) tiene dos lecturas "
+                             "posibles que cierran con los mismos votos.")
+        if upc is None:
+            raise ValueError(f"no se pudo leer el UPC del renglón {line_no} de {supplier} ({description}).")
+        rows.append({"options": options, "choice": 0, "cluster": cluster, "upc": upc,
+                     "description": re.sub(r"\s+", " ", description).strip(" |")})
+    return rows
+
+
+def _ticket_chosen(rows):
+    return [dict(r["options"][r["choice"]][1], upc=r["upc"], description=r["description"], cluster=r["cluster"])
+            for r in rows]
+
+
+def _ticket_check_qty(chosen, confirmed, supplier, label):
+    """
+    Si el pie confirma las cantidades (confirmed: la suma de cantidades da el
+    conteo de cajas impreso, o la de cantidad x unidades da el de unidades),
+    listo; si no, cada cantidad deducida del total (o cada total deducido de
+    la cantidad) tiene que haberla leído alguna pasada.
+    """
+    if confirmed:
+        return
+    unread = next((n for n, c in enumerate(chosen, 1) if c["qty"] and (not c["qty_read"] or not c["ext_read"])),
+                  None)
+    if unread is not None:
+        raise ValueError(f"la cantidad del renglón {unread} de {supplier} no se pudo leer con seguridad "
+                         f"(y el {label} del pie no la confirma).")
+
+
+def _ticket_top(values):
+    """
+    Las lecturas más votadas de un número del pie (empatadas, todas): una
+    lectura suelta que otras pasadas contradicen no cuenta -- con ella, la
+    suma de renglones mal leídos podía "cerrar" ($593.90 leído una vez
+    contra $553.90 en las otras cinco).
+    """
+    counts = _ticket_votes([{"v": v} for v in values], "v")
+    top = max(counts.values(), default=0)
+    return [v for v, n in counts.items() if n == top]
+
+
+def _ticket_most_voted(values):
+    """El valor que más se repite en una lista de lecturas del pie (None si no hay o empatan)."""
+    return _ticket_winner(_ticket_votes([{"v": v} for v in values], "v"))
+
+
+# --- Gold Coast Eagle --------------------------------------------------------
+# Ticket angosto de 1 o 2 páginas (a veces dos facturas del mismo reparto en
+# un PDF). Cada producto ocupa dos renglones:
+#   ITEM# QTY U.P.C. PRICE DISC D.PRICE DEP EXT
+#         Descripción con el pack al final ("Corona Extra 4/6/12 Ln")
+# Cuentas: PRICE - DISC = D.PRICE; QTY x (D.PRICE + DEP) = EXT; el UPC pasa el
+# dígito verificador; la suma de EXT = Total Sales; Total Sales - Total
+# Credits = Invoice Total (o el importe de la línea "Inv# ... $..."); la suma
+# de QTY = "Cases" y la de QTY x unidades = "Selling Units". La cantidad casi
+# nunca se lee limpia (queda pegada al Item # o sale "]", "=", "i"): se deduce
+# de EXT / D.PRICE y la confirma "Cases". Los renglones con EXT 0.00 son
+# productos sin stock ("-1 Out of Stock") y no se guardan.
+
+_GCE_FIELDS = ("price", "disc", "dprice", "dep", "ext")
+_GCE_HEADERS = (("price", r"PRICE"), ("disc", r"DISC\W?"), ("dprice", r"D\W?PRICE"), ("dep", r"DEP"),
+                ("ext", r"E[XA][TI1]"))
+_GCE_PACK = re.compile(r"(\d{1,2})\s*/\s*(\d{1,3}(?:\s?\.\s?\d{1,2})?)\s*(ml|l\b|liter|pk|oz)?"
+                       r"(?:\s*/\s*(\d{1,3}(?:\.\d)?))?", re.IGNORECASE)
+
+
+def _gce_units(description):
+    """
+    (unidades de venta del POS por caja, pack impreso) según el pack de la
+    descripción -- regla verificada contra "Selling Units" del pie y la lista
+    de productos del POS:
+    - tres niveles, "4/6/12": 4 paquetes (six-packs) por caja;
+    - dos niveles, "15/25", "12/32", "24/200ml": unidades sueltas;
+    - salvo envase de 16 oz o menos en caja de 15 o más ("24/12", "18/12",
+      "24/7", "15/16"): esa caja es el pack que vende el POS ("BUSCH 24PK
+      CANS", "18 PK CORONA", "BUDWEISER 15PK/16OZ" = 1 unidad).
+    """
+    matches = list(_GCE_PACK.finditer(description or ""))
+    if not matches:
+        return None, ""
+    match = matches[-1]
+    first = int(match.group(1))
+    size = description[match.start():].strip(" |.,")
+    if match.group(4):  # tres niveles
+        return first, size
+    try:
+        second = float(match.group(2).replace(" ", ""))
+    except ValueError:
+        return None, size
+    unit = (match.group(3) or "").lower()
+    if unit not in ("ml", "l", "liter") and second <= 16 and first >= 15:
+        return 1, size
+    return first, size
+
+
+def _gce_product(row, columns):
+    """Renglón de producto leído en una pasada (None lo ilegible), o None si no es un renglón de producto."""
+    words = row["words"]
+    texts = [w["text"] for w in words]
+    at = next((i for i, t in enumerate(texts[:5]) if len(re.sub(r"\D", "", _fix_digits(t))) >= 11), None)
+    if at is None or len([t for t in texts[at + 1:] if re.search(r"\d", t)]) < 3:
+        return None
+    item = qty_text = ""
+    before = [d for d in (re.sub(r"\D", "", _fix_digits(t)) for t in texts[:at]) if d]
+    if before and len(before[0]) >= 5:
+        item, qty_text = before[0][:5], before[0][5:] + "".join(before[1:])
+    elif len(before) > 1:
+        qty_text = "".join(before[1:])
+    word = words[at]
+    return dict(
+        _ticket_assign(words[at + 1:], columns.get(row["page"]), _GCE_FIELDS),
+        page=row["page"], y=row["y"], height=row["height"], item=item or None, description=None,
+        upc=_ticket_upc(re.sub(r"\D", "", _fix_digits(texts[at]))),
+        upc_raw=_ticket_raw_upc(re.sub(r"\D", "", _fix_digits(texts[at]))),
+        upc_box=(word["x0"], word["top"], word["x1"], word["bottom"]),
+        qty=int(qty_text) if qty_text and len(qty_text) <= 3 else None,
+    )
+
+
+def _gce_close(values):
+    price, disc, dprice, dep, ext = (values[f] for f in _GCE_FIELDS)
+    if abs(price - disc - dprice) > _TOLERANCE or dprice <= 0 or disc < 0 or not 0 <= dep < dprice or ext < 0:
+        return None
+    net = round(dprice + dep, 2)
+    qty = 0 if ext == 0 else _whole_qty(net, ext)
+    return None if qty is None else dict(values, net=net, qty=qty)
+
+
+_GCE_DERIVE = (
+    ("dprice", lambda v, qty: v["price"] - v["disc"], True),
+    ("disc", lambda v, qty: v["price"] - v["dprice"], False),
+    ("ext", lambda v, qty: qty * (v["dprice"] + v["dep"]), True),
+)
+# Confusiones en los dos sentidos (8/6, 9/0, 1/7, 3/8): hasta dos montos cambiados por renglón.
+_GCE_RULES = {
+    "options": (_GCE_FIELDS, _gce_close, _GCE_DERIVE, _TICKET_CONFUSIONS, 2),
+    "upc": (_TICKET_CONFUSIONS,),
+}
+
+
+def _gce_footer(text):
+    """Valores del pie que trae un renglón: {"cases"|"selling"|"sales"|"credits"|"total": valor}."""
+    found = {}
+    patterns = (
+        ("sales", r"Total\s*Sa\w*"), ("credits", r"Total\s*Cr\w*"), ("total", r"In\w{3,5}\s*T[o0]\w{2,3}"),
+    )
+    for key, label in patterns:
+        match = re.search(label + r"\W*(-?[\d,]+[.,]\d{2})(?!\d)", text)
+        if match:
+            found[key] = _ticket_amount(match.group(1))
+    match = re.match(r"^\W*Cases\s*\W?\s*(\d+)\s*$", text)
+    if match:
+        found["cases"] = int(match.group(1))
+    match = re.search(r"Selling\s*Un\w*\W*(\d+)\s*$", text)
+    if match:
+        found["selling"] = int(match.group(1))
+    return found
+
+
+def _gce_header_no(text):
+    """
+    N° de la factura en el renglón del encabezado ("Account: 33994 Invoice#:
+    777888 PO#:"; el OCR a veces lo parte en dos renglones), nunca en la
+    línea de confirmación del pie ("Inv# 777888 $1,373.70").
+    """
+    if "$" in text:
+        return None
+    match = re.search(r"(\d{6})\s*P[O0]\w?\W", text)
+    if match is None and "Account" in text:
+        match = re.search(r"Inv\w{0,6}\W{0,4}(\d{6})(?!\d)", text)
+    return match.group(1) if match else None
+
+
+def _gce_blocks(readings):
+    """
+    Arma las facturas del PDF con todas las pasadas hechas hasta ahora. Cada
+    factura termina en su renglón "Invoice Total" (o "Total Sales"): los
+    renglones de producto, el pie y el N° del encabezado van a la factura
+    cuyo cierre es el primero que viene después. Devuelve (facturas,
+    confirmación {N°: [importes]}, columnas).
+    """
+    all_rows = [row for reading in readings for row in reading]
+    tolerance = _median([row["height"] for row in all_rows]) if all_rows else 10
+    columns = _ticket_columns(readings, _GCE_HEADERS)
+    ends = [{"page": row["page"], "y": row["y"]} for row in all_rows
+            if {"total", "sales"} & set(_gce_footer(row["text"]))]
+    boundaries = [(c[0]["page"], max(e["y"] for e in c) + tolerance) for c in _ticket_clusters(ends, tolerance * 5)]
+    if not boundaries:
+        raise ValueError("no se encontró el pie (Invoice Total) de la factura de Gold Coast.")
+
+    def block_of(row):
+        return next((i for i, (page, y) in enumerate(boundaries) if (row["page"], row["y"]) <= (page, y)), None)
+
+    blocks = [{"products": [], "footer": {}, "numbers": {}} for _ in boundaries]
+    confirm = {}
+    for reading in readings:
+        for position, row in enumerate(reading):
+            match = re.search(r"Inv\w{0,4}\W{0,3}(\d{6})\s*\$?\s*([\d,]+[.,]\d{2})", row["text"])
+            if match:
+                confirm.setdefault(match.group(1), []).append(_ticket_amount(match.group(2)))
+                continue
+            index = block_of(row)
+            if index is None:
+                continue
+            block = blocks[index]
+            product = _gce_product(row, columns)
+            if product is not None:
+                # Descripción: el renglón siguiente de esta misma pasada, si no es
+                # otro producto, una nota ("-1 Out of Stock") ni el pie.
+                following = reading[position + 1] if position + 1 < len(reading) else None
+                if following is not None and _gce_product(following, columns) is None:
+                    text = following["text"].strip(" |")
+                    if (re.search(r"[A-Za-z]{3}", text) and not re.match(r"^\W*\d+\s+(Out|Picker)", text)
+                            and not _gce_footer(text)):
+                        product["description"] = text
+                block["products"].append(product)
+                continue
+            for key, value in _gce_footer(row["text"]).items():
+                block["footer"].setdefault(key, []).append(value)
+            number = _gce_header_no(row["text"])
+            if number and not block["products"]:
+                block["numbers"][number] = block["numbers"].get(number, 0) + 1
+    for block in blocks:
+        block["clusters"] = _ticket_clusters(block["products"], tolerance)
+    return blocks, confirm, columns
+
+
+def _gce_numbers(blocks, confirm, invoices):
+    """
+    N° de cada factura del PDF. Vale el del encabezado de esa factura si es
+    uno de los conocidos (los que leyó el encabezado de la app o la línea de
+    confirmación "Inv# ... $..."); si no se leyó o se leyó mal (8 por 0), la
+    factura se queda con el único N° conocido que no tiene otra -- el total
+    de la factura igual se controla contra el importe del encabezado.
+    """
+    known = {str(inv["invoice_no"]) for inv in (invoices or [])} | set(confirm)
+    numbers = []
+    for block in blocks:
+        ranked = sorted(block["numbers"].items(), key=lambda kv: -kv[1])
+        numbers.append(next((n for n, _ in ranked if n in known), None) if known else _ticket_winner(block["numbers"]))
+    for index, number in enumerate(numbers):
+        if number is not None and numbers.count(number) > 1:
+            numbers[index] = None  # dos facturas con el mismo N°: ninguna se lo queda
+    missing = [n for n in known if n not in numbers]
+    if numbers.count(None) == 1 and len(missing) == 1:
+        numbers[numbers.index(None)] = missing[0]
+    return numbers
+
+
+def _gce_resolve(block, number, images, cache, confirm, columns):
+    """Detalle de una factura de GCE ya armada, o ValueError si algo no cierra."""
+    rows = _ticket_rows(block["clusters"], images, cache, lambda row: _gce_product(row, columns), "Gold Coast",
+                        _GCE_RULES)
+    if not rows:
+        raise ValueError("no se encontró ningún renglón de producto en la factura de Gold Coast.")
+    footer = block["footer"]
+    sales = _ticket_fix_sum(rows, _ticket_top(footer.get("sales", [])), "Total Sales", "Gold Coast")
+    credit = _ticket_most_voted(footer.get("credits", [])) or 0.0
+    total = next((t for t in _ticket_top(footer.get("total", [])) + _ticket_top(confirm.get(number, []))
+                  if t is not None and abs(sales - credit - t) < 0.005), None)
+    if total is None:
+        raise ValueError(f"el Total Sales (${sales:,.2f}) menos los créditos no da el Invoice Total leído de Gold Coast.")
+    chosen = [c for c in _ticket_chosen(rows) if c["qty"]]  # EXT 0.00: sin stock, no se entregó
+    if not chosen:
+        raise ValueError("la factura de Gold Coast no tiene ningún producto entregado.")
+    for c in chosen:
+        packs = [_gce_units(cand.get("description")) for cand in c["cluster"]]
+        c["pack"] = _ticket_most_voted([p for p in packs if p[0]])
+        if c["pack"] is None:
+            raise ValueError(f"no se pudo leer el pack (unidades por caja) de {c['description'] or c['upc']} "
+                             "en Gold Coast.")
+    selling = sum(c["qty"] * c["pack"][0] for c in chosen)
+    selling_ok = selling in footer.get("selling", [])
+    _ticket_check_qty(chosen, selling_ok or sum(c["qty"] for c in chosen) in footer.get("cases", []),
+                      "Gold Coast", "total de cajas (Cases) o de unidades (Selling Units)")
+    if not selling_ok:
+        raise ValueError(f"las unidades de venta de Gold Coast ({selling}) no coinciden con el Selling Units del pie.")
+    lines = []
+    for c in chosen:
+        per_case, size = c["pack"]
+        lines.append(_line(
+            len(lines) + 1, upc=c["upc"], item_no=_ticket_winner(_ticket_votes(c["cluster"], "item")) or "",
+            description=c["description"], qty=c["qty"], pack=per_case, size=size, units=per_case,
+            price=c["price"], allowance=c["disc"] or None, net=c["net"], ext=c["ext"],
+        ))
+    return {"invoice_no": number, "lines": lines, "subtotal": sales, "total": total}
+
+
+def extract_gce_lines(pdf_path, invoices=None):
+    """
+    Renglones de una factura de Gold Coast Eagle. Con `invoices` (lo que la
+    app ya leyó del encabezado) se devuelve la factura del PDF que tiene ese
+    N°, y su Invoice Total tiene que coincidir con el importe leído.
+    """
+    images = _ticket_images(pdf_path)
+    if not images:
+        raise ValueError("no se encontró la imagen escaneada de la factura de Gold Coast.")
+    wanted = {str(inv["invoice_no"]): inv for inv in (invoices or [])}
+    readings, cache, error = [], {}, None
+    for passes_done in range(len(_TICKET_PASSES)):
+        readings.append(_ticket_readings(images, passes_done))
+        try:
+            blocks, confirm, columns = _gce_blocks(readings)
+            numbers = _gce_numbers(blocks, confirm, invoices)
+            targets = [i for i, n in enumerate(numbers) if n in wanted] if wanted else [0]
+            if not targets and len(blocks) == 1 and len(wanted) == 1:
+                # Una sola factura en el PDF y el N° del encabezado leído distinto
+                # (un dígito): es esa, con el N° del encabezado (el mismo con el que
+                # se guardó la factura); su total igual tiene que dar el importe.
+                targets, numbers = [0], list(wanted)
+            if not targets:
+                raise ValueError("no se encontró en el PDF la factura de Gold Coast que leyó el encabezado.")
+            detail = _gce_resolve(blocks[targets[0]], numbers[targets[0]], images, cache, confirm, columns)
+            if detail["invoice_no"] is None:
+                raise ValueError("no se pudo leer el N° de invoice de la factura de Gold Coast.")
+            header = wanted.get(detail["invoice_no"])
+            if header is not None and abs(header["amount"] - detail["total"]) >= 0.01:
+                # Dos facturas en el PDF con el N° mal asignado: vale la única
+                # factura del PDF cuyo total es el importe del encabezado (el
+                # encabezado lee N° e importe juntos, de "Inv# ... $...").
+                others = []
+                for index, block in enumerate(blocks):
+                    if index != targets[0]:
+                        try:
+                            other = _gce_resolve(block, header and str(header["invoice_no"]), images, cache, confirm,
+                                                 columns)
+                        except ValueError:
+                            continue
+                        if abs(other["total"] - header["amount"]) < 0.01:
+                            others.append(other)
+                if len(others) != 1:
+                    raise ValueError(
+                        f"el Invoice Total del detalle (${detail['total']:,.2f}) no coincide con el importe leído "
+                        f"del encabezado (${header['amount']:,.2f})."
+                    )
+                detail = others[0]
+            return detail
+        except ValueError as exc:
+            error = exc
+    raise error
+
+
+# --- Red Bull ------------------------------------------------------------------
+# Ticket de una página. Cada producto ocupa dos renglones:
+#   ID QTY UNITS DESCRIPTION PRICE DEP DISC SUGAR TOTAL
+#   UPC (y el código de barras dibujado, que el OCR mezcla con los montos)
+# Cuentas: TOTAL = QTY x (PRICE - DISC + DEP + SUGAR); UNITS = QTY x unidades
+# por caja; el UPC pasa el dígito verificador; la suma de TOTAL = INVOICE (o
+# "Subtotal", en el pie de jun-jul 2026); TOTAL DUE = eso más depósito,
+# impuestos y cargos; "Cases Delivered" = suma de QTY y "Units Delivered" =
+# suma de UNITS.
+
+_RB_FIELDS = ("price", "dep", "disc", "sugar", "ext")
+_RB_HEADERS = (("price", r"PRICE"), ("dep", r"DEP"), ("disc", r"DISC"), ("sugar", r"SUGA\w"), ("ext", r"TOTAL"))
+_RB_UPC = re.compile(r"\d{11,13}")
+
+
+def _rb_product(row, columns):
+    """Renglón ID/QTY/UNITS/.../TOTAL leído en una pasada, o None si no es un renglón de producto."""
+    words = [w for w in row["words"] if re.search(r"[0-9A-Za-z$]", w["text"])]
+    if len(words) < 6 or not re.fullmatch(r"[A-Za-z|]{0,3}\d{3,9}", _clean_token(words[0]["text"])):
+        return None
+    first = next((i for i, w in enumerate(words) if i >= 3 and re.match(r"^[«|]*[$S§]\d", w["text"])), None)
+    if first is None:
+        return None
+    # QTY y UNITS: los dos primeros números antes de la descripción.
+    numbers, start = [], 1
+    for index in range(1, first):
+        text = words[index]["text"]
+        if re.search(r"[A-Za-z]{2}", text) or len(numbers) == 2:
+            break
+        digits = re.sub(r"\D", "", _fix_digits(text))
+        if digits:
+            numbers.append(digits)
+        start = index + 1
+    money = [dict(w, text=re.sub(r"^[«|]*[S§](?=\d)", "$", w["text"])) for w in words[first:]]
+    return dict(
+        _ticket_assign([w for w in money if w["text"].startswith("$")], columns.get(row["page"]), _RB_FIELDS),
+        page=row["page"], y=row["y"], height=row["height"], upc=None, upc_box=None,
+        qty=int(numbers[0]) if numbers and len(numbers[0]) <= 2 else None,
+        units_total=int(numbers[1]) if len(numbers) > 1 and len(numbers[1]) <= 4 else None,
+        # Sin los pedazos del precio que perdió el "$" ("RED BULL 8.40ZLS 00").
+        description=re.sub(r"(\s+[\d.,$]+)+$", "", " ".join(w["text"] for w in words[start:first])),
+    )
+
+
+def _rb_close(values):
+    price, dep, disc, sugar, ext = (values[f] for f in _RB_FIELDS)
+    net = round(price - disc + dep + sugar, 2)
+    if net <= 0 or min(price, dep, disc, sugar) < 0 or dep + sugar >= price:
+        return None
+    qty = _whole_qty(net, ext)
+    return None if qty is None else dict(values, net=net, qty=qty)
+
+
+_RB_DERIVE = (
+    ("sugar", lambda v, qty: v["ext"] / qty - (v["price"] - v["disc"] + v["dep"]), True),
+    ("dep", lambda v, qty: v["ext"] / qty - (v["price"] - v["disc"] + v["sugar"]), True),
+    ("disc", lambda v, qty: v["price"] + v["dep"] + v["sugar"] - v["ext"] / qty, True),
+    ("ext", lambda v, qty: qty * (v["price"] - v["disc"] + v["dep"] + v["sugar"]), True),
+)
+# En Red Bull la confusión va en un solo sentido: un 5 impreso sale 6 (en
+# montos y en el UPC; nunca al revés), y a veces en tres campos del mismo
+# renglón ("$64.70 / 3.26 / 51.46" por $54.70 / 3.25 / 51.45). Como solo se
+# prueban los 6, se pueden cambiar hasta tres montos. Todos los UPC de Red
+# Bull empiezan con el prefijo de la empresa, 611269.
+_RB_CONFUSIONS = {"6": "5"}
+_RB_RULES = {
+    "options": (_RB_FIELDS, _rb_close, _RB_DERIVE, _RB_CONFUSIONS, 3),
+    "upc": (_RB_CONFUSIONS, "611269"),
+}
+
+
+def _rb_footer(text):
+    found = {}
+    patterns = (
+        ("subtotal", r"(?:INVOICE|Subtotal)"), ("total_due", r"TOTAL\s*DUE"),
+        ("deposit", r"(?:DEPOSIT|Can Deposit)"), ("tax", r"(?:TAX|Sales Tax)"), ("sugar", r"Sugar Tax"),
+        ("fees", r"Fees"),
+    )
+    for key, label in patterns:
+        match = re.search(label + r"\W*\$?\s*([\d,]+[.,]\d{2})(?!\d)", text)
+        if match:
+            found[key] = _ticket_amount(match.group(1))
+    for key, label in (("cases", r"Cases\s*Del\w*"), ("units", r"Un\w{2,3}\s*Del\w*"), ("skus", r"SKU\W{0,2}s")):
+        match = re.search(label + r"\W*(\d+)", text)
+        if match:
+            found[key] = int(match.group(1))
+    return found
+
+
+def _rb_collect(readings):
+    """Renglones de producto (agrupados entre pasadas), pie, N° de invoice leído y columnas."""
+    all_rows = [row for reading in readings for row in reading]
+    tolerance = _median([row["height"] for row in all_rows]) if all_rows else 10
+    columns = _ticket_columns(readings, _RB_HEADERS)
+    products, footer, numbers = [], {}, {}
+    for reading in readings:
+        for position, row in enumerate(reading):
+            product = _rb_product(row, columns)
+            if product is not None:
+                # UPC: en los dos renglones siguientes de esta pasada (antes del próximo producto).
+                for following in reading[position + 1:position + 3]:
+                    if _rb_product(following, columns) is not None:
+                        break
+                    word = next((w for w in following["words"]
+                                 if _RB_UPC.fullmatch(re.sub(r"\D", "", _fix_digits(w["text"])))), None)
+                    if word is not None:
+                        digits = re.sub(r"\D", "", _fix_digits(word["text"]))
+                        product["upc"], product["upc_raw"] = _ticket_upc(digits), _ticket_raw_upc(digits)
+                        product["upc_box"] = (word["x0"], word["top"], word["x1"], word["bottom"])
+                        break
+                products.append(product)
+                continue
+            for key, value in _rb_footer(row["text"]).items():
+                footer.setdefault(key, []).append(value)
+            match = re.search(r"\bInv\w{0,6}:\s*(\d{9,11})", row["text"])
+            if match:
+                numbers[match.group(1)] = numbers.get(match.group(1), 0) + 1
+    return _ticket_clusters(products, tolerance), footer, numbers, columns
+
+
+def _rb_resolve(clusters, footer, images, cache, columns):
+    """Detalle de una factura de Red Bull, o ValueError si algo no cierra."""
+    rows = _ticket_rows(clusters, images, cache, lambda row: _rb_product(row, columns), "Red Bull", _RB_RULES)
+    if not rows:
+        raise ValueError("no se encontró ningún renglón de producto en la factura de Red Bull.")
+    charges = sum(_ticket_most_voted(footer.get(key, [])) or 0.0 for key in ("deposit", "tax", "sugar", "fees"))
+    printed = _ticket_top(footer.get("subtotal", [])) + [round(t - charges, 2) for t in _ticket_top(footer.get("total_due", []))
+                                                         if t is not None]
+    subtotal = _ticket_fix_sum(rows, printed, "INVOICE/Subtotal", "Red Bull")
+    chosen = _ticket_chosen(rows)
+    for c in chosen:
+        c["per_case"] = _ticket_most_voted([cand["units_total"] // c["qty"] for cand in c["cluster"]
+                                            if cand.get("units_total") and cand["units_total"] % c["qty"] == 0])
+    # Un solo renglón con UNITS ilegible (pegado a la cantidad: "3s72"): sus
+    # unidades son el Units Delivered del pie menos las de los demás renglones,
+    # si eso da un número entero de unidades por caja.
+    missing = [c for c in chosen if c["per_case"] is None]
+    delivered = _ticket_most_voted(footer.get("units", []))
+    deduced = False
+    if len(missing) == 1 and delivered:
+        rest = delivered - sum(c["qty"] * c["per_case"] for c in chosen if c["per_case"] is not None)
+        if rest > 0 and rest % missing[0]["qty"] == 0:
+            missing[0]["per_case"], deduced = rest // missing[0]["qty"], True
+    for c in chosen:
+        if c["per_case"] is None:
+            raise ValueError(f"no se pudieron leer las unidades por caja de {c['description']} en Red Bull.")
+    units_sum = sum(c["qty"] * c["per_case"] for c in chosen)
+    units_ok = units_sum in footer.get("units", [])
+    # Con unas unidades deducidas del pie, el pie ya no puede confirmar las cantidades por unidades.
+    _ticket_check_qty(chosen, (units_ok and not deduced) or sum(c["qty"] for c in chosen) in footer.get("cases", []),
+                      "Red Bull", "Cases Delivered o Units Delivered")
+    if not units_ok:
+        raise ValueError(f"las unidades de Red Bull ({units_sum}) no coinciden con el Units Delivered del pie.")
+    lines = []
+    for c in chosen:
+        per_case = c["per_case"]
+        match = re.search(r"(\d{1,2}(?:\.\d)?)\s*[O0][Z2]", c["description"])
+        lines.append(_line(
+            len(lines) + 1, upc=c["upc"], description=c["description"],
+            qty=c["qty"], pack=per_case, size=f"{match.group(1)}OZ" if match else "", units=per_case,
+            price=c["price"], allowance=c["disc"] or None, net=c["net"], ext=c["ext"],
+        ))
+    total = next((t for t in _ticket_top(footer.get("total_due", []))
+                  if t is not None and abs(t - round(subtotal + charges, 2)) < 0.005), None)
+    if total is None:
+        raise ValueError(f"el subtotal de Red Bull (${subtotal:,.2f}) más los cargos no da el TOTAL DUE leído.")
+    return {"lines": lines, "subtotal": subtotal, "total": total}
+
+
+def extract_red_bull_lines(pdf_path, invoices=None):
+    """Renglones de una factura de Red Bull. Con `invoices`, el total tiene que coincidir con el del encabezado."""
+    images = _ticket_images(pdf_path)
+    if not images:
+        raise ValueError("no se encontró la imagen escaneada de la factura de Red Bull.")
+    readings, cache, error = [], {}, None
+    for passes_done in range(len(_TICKET_PASSES)):
+        readings.append(_ticket_readings(images, passes_done))
+        try:
+            clusters, footer, numbers, columns = _rb_collect(readings)
+            detail = _rb_resolve(clusters, footer, images, cache, columns)
+            number = _ticket_winner(numbers)
+            if invoices:
+                header = invoices[0]
+                if number is not None and number != str(header["invoice_no"]):
+                    raise ValueError("el N° de invoice del detalle no coincide con el de la factura de Red Bull.")
+                number = str(header["invoice_no"])
+                if all(abs(header["amount"] - v) >= 0.01 for v in (detail["subtotal"], detail["total"])):
+                    raise ValueError(
+                        f"el total del detalle (${detail['total']:,.2f}) no coincide con el importe leído "
+                        f"del encabezado (${header['amount']:,.2f})."
+                    )
+            if number is None:
+                raise ValueError("no se pudo leer el N° de invoice de la factura de Red Bull.")
+            detail["invoice_no"] = number
+            return detail
+        except ValueError as exc:
+            error = exc
+    raise error
+
+
 # supplier_key (el de SUPPLIER_REGISTRY en proveedores.py) -> extractor de renglones.
 LINE_EXTRACTORS = {
     "ht_hackney": extract_ht_hackney_lines,
     "cec": extract_cec_lines,
     "colonial": extract_colonial_lines,
+    "gce": extract_gce_lines,
+    "red_bull": extract_red_bull_lines,
 }
 
 
