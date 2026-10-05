@@ -24,6 +24,7 @@ INVOICE SUBTOTAL impreso, y subtotal + cargos = Total impreso. Si algo no
 cierra, ValueError y no se guarda ningún renglón (nunca un detalle a medias).
 """
 
+import hashlib
 import itertools
 import os
 import re
@@ -68,9 +69,37 @@ def normalize_upc(value):
     return digits.lstrip("0")
 
 
-def product_key(supplier_key, upc, item_no):
-    """Clave de producto: el UPC; sin UPC, el Item # propio del proveedor."""
-    return upc if upc else f"item-{supplier_key}-{item_no}"
+def product_key(supplier_key, upc, item_no, description=None):
+    """
+    Clave de producto: el UPC; sin UPC, el Item # propio del proveedor; en los
+    que se identifican por el nombre (NAME_KEYED_SUPPLIERS: J.J. Taylor no trae
+    código, el SKU de Midtown es de relleno a veces), el nombre normalizado.
+    """
+    if upc:
+        return upc
+    if supplier_key in NAME_KEYED_SUPPLIERS:
+        return _name_product_key(supplier_key, name_key(description))
+    return f"item-{supplier_key}-{item_no}"
+
+
+def _name_product_key(supplier_key, key):
+    return f"name-{supplier_key}-{hashlib.sha1(key.encode('utf-8')).hexdigest()[:12]}"
+
+
+def _container_alternatives(supplier_key, description):
+    """
+    Claves del mismo nombre con o sin la letra del envase del final ("... 1/24/16 C"):
+    en J.J. Taylor esa letra sale ilegible seguido. Solo para buscar la compra
+    anterior cuando el nombre exacto no aparece.
+    """
+    words = name_key(description).split(" ")
+    if words and words[-1] in ("B", "C"):
+        options = [" ".join(words[:-1])]
+    elif words and words[-1].isdigit():
+        options = [" ".join(words + [letter]) for letter in ("B", "C")]
+    else:
+        options = []
+    return [_name_product_key(supplier_key, option) for option in options]
 
 
 def _num(text):
@@ -3066,6 +3095,746 @@ def extract_frito_lay_lines(pdf_path, invoices=None):
     raise error
 
 
+# --- Productos sin UPC: el nombre como clave (2026-10-05) -------------------------
+# Pedido del usuario: los proveedores que se leen bien pero no traen el UPC del
+# POS (J.J. Taylor, Midtown) se comparan contra la factura anterior por el
+# NOMBRE. El nombre tiene que salir igual en cada factura: se arma con las
+# palabras en las que coinciden la mayoría de las lecturas de OCR (la tinta a
+# mano, las tildes de control, sale distinta en cada lectura; la letra
+# impresa, igual) y se compara exacto, sin parecidos aproximados ("White Claw
+# Black Cherry" y "White Claw Blackberry" son productos distintos). Un nombre
+# que no coincide con el de la factura anterior queda como producto "Nuevo",
+# nunca comparado contra otro.
+
+# Proveedores cuyos productos se identifican por el nombre (product_key).
+NAME_KEYED_SUPPLIERS = {"jj_taylor", "midtown"}
+
+
+def _name_consensus(texts):
+    """Nombre de un renglón con las palabras que leyeron igual la mayoría de las lecturas (todas, si son dos)."""
+    lists = [re.sub(r"\s+", " ", t).strip(" |").split(" ") for t in texts if t and t.strip(" |")]
+    if not lists:
+        return ""
+    need = len(lists) // 2 + 1
+    counts = {}
+    for words in lists:
+        for word in set(words):
+            counts[word] = counts.get(word, 0) + 1
+    kept = [[w for w in words if counts[w] >= need] for words in lists]
+    best = max(range(len(lists)), key=lambda i: (len(kept[i]), -i))
+    return " ".join(kept[best]) or " ".join(lists[0])
+
+
+def name_key(description):
+    """
+    Nombre normalizado para comparar productos sin UPC: mayúsculas, solo
+    letras y números, y en las palabras sin números las confusiones fijas de
+    la letra de J.J. Taylor plegadas a una sola forma ("Claw"/"Gaw",
+    "White"/"While", "Ice"/"Iee", "Smir"/"$mir"). Los números y el resto de
+    las letras tienen que coincidir exacto.
+    """
+    words = re.findall(r"[A-Z0-9$]+", (description or "").upper())
+    folded = []
+    for word in words:
+        if not re.search(r"\d", word):
+            word = word.replace("$", "S").replace("CL", "G").translate(str.maketrans("TIE", "LLC"))
+        folded.append(word.replace("$", ""))
+    return " ".join(w for w in folded if w)
+
+
+# --- J.J. Taylor (2026-10-05) --------------------------------------------------
+# Pedido del usuario (2026-10-05): sacar a J.J. Taylor de la pausa y comparar
+# sus productos contra la factura anterior por el NOMBRE (no trae UPC), para
+# pasarle al manager los que cambiaron de precio. Ticket de reparto escaneado:
+#   Date Invoice Load Sheet PO Number Route Deliveryman Salesman
+#   09/10/2026 6000658 199396 ...
+#   DEL PRODUCT                         PRICE  DISC  NET    TOTAL
+#   4   Hein 4/6/12 B                   $37.60       $37.60 $150.40
+# Cuentas: PRICE - DISC = NET; DEL x NET = TOTAL; la suma de TOTAL (más el
+# impuesto por galón de cerveza, cuando lo cobran) = Total; la suma de DEL =
+# "Total U without pick ups"; la de DEL x piezas = "Piece Count" (piezas de
+# una caja según el pack: "4/6/12" = 4 six-packs, "1/24/16" = 24 latas).
+# Todos los montos llevan "$": uno sin "$" puede ser el "$" leído como dígito
+# ("446.00" por $46.00) o el "$" perdido ("37.60"); se votan las dos lecturas.
+
+_JJ_FIELDS = ("price", "disc", "net", "ext")
+_JJ_AMOUNT = re.compile(r"[$S§]?-?\d{1,3}(?:,?\d{3})*[.,]\d{2}")
+_JJ_PACK = re.compile(r"(?<![\d.])(\d{1,2})\s*/\s*(\d{1,3})(?:\s*/\s*(\d{1,3}(?:\.\d{1,2})?))?")
+
+
+def _jj_amounts(text):
+    """
+    Lecturas posibles de un monto de J.J. Taylor: (la leída, la sin el primer
+    dígito si no tenía "$"). Los centavos sueltos del descuento ("$.80") salen
+    "$.80" o "$80".
+    """
+    raw = _clean_token(text)
+    match = re.fullmatch(r"[$S§](?:[.,])?(\d{2})|[.,](\d{2})", raw)
+    if match:
+        return float("0." + (match.group(1) or match.group(2))), None
+    if not _JJ_AMOUNT.fullmatch(raw):
+        return None, None
+    value = _ticket_amount(raw.lstrip("$S§"))
+    if raw[0] in "$S§":
+        return value, None
+    rest = raw[1:]
+    alt = _ticket_amount(rest) if raw[0] in "45689" and _TICKET_AMOUNT.fullmatch(rest) else None
+    return value, alt
+
+
+def _jj_units(description):
+    """
+    (piezas por caja, pack impreso) según el pack de la descripción --
+    regla verificada contra el "Piece Count" del pie: "4/6/12" = 4
+    (six-packs), "2/12/12" = 2 (twelve-packs), "1/24/16" = 24 (latas
+    sueltas), "1/12/19.2" = 12.
+    """
+    matches = list(_JJ_PACK.finditer(description or ""))
+    if not matches:
+        return None, ""
+    match = matches[-1]
+    first, second = int(match.group(1)), int(match.group(2))
+    size = description[match.start():].strip(" |.,")
+    return (second if first == 1 else first), size
+
+
+def _jj_product(row):
+    """
+    Renglón de producto leído en una pasada (lista de lecturas: la principal
+    y, si hay, una alternativa por cada monto sin "$"), o None. Antes de la
+    cantidad puede haber marcas sueltas del margen (";", "*,", "Bo"): la
+    cantidad es el número justo antes de la descripción.
+    """
+    words = [w for w in row["words"] if w["text"].strip("|!") != ""]
+    amounts = []
+    for word in reversed(words):
+        value, alt = _jj_amounts(word["text"])
+        if value is None:
+            break
+        amounts.insert(0, (value, alt))
+    if len(amounts) not in (3, 4):
+        return None
+    head = words[:len(words) - len(amounts)]
+    start = next((i for i, w in enumerate(head) if re.search(r"[A-Za-z]{2}", w["text"])), None)
+    if not start:
+        return None
+    # Entre la cantidad y la descripción puede quedar un guion o una coma sueltos ("2 - Mikes").
+    before = [w for w in head[:start] if re.search(r"[0-9A-Za-z]", w["text"])]
+    if not before:
+        return None
+    qty_text = _fix_digits(_clean_token(before[-1]["text"]))
+    if not re.fullmatch(r"\d{1,3}", qty_text):
+        return None
+    description_words = head[start:]
+    # Un monto ilegible ("$3590") no es parte de la descripción.
+    cut = next((i for i, w in enumerate(description_words) if re.fullmatch(r"[$S§]\d+", _clean_token(w["text"]))),
+               len(description_words))
+    description_words = description_words[:cut]
+    fields = ("price", "net", "ext") if len(amounts) == 3 else _JJ_FIELDS
+    main = {field: value for field, (value, _) in zip(fields, amounts)}
+    if len(amounts) == 3:
+        main["disc"] = 0.0
+    base = {"page": row["page"], "y": row["y"], "height": row["height"]}
+    found = [dict(base, **main, qty=int(qty_text),
+                  description=" ".join(w["text"] for w in description_words).strip(" |"))]
+    for field, (_, alt) in zip(fields, amounts):
+        if alt is not None:
+            found.append(dict(base, **{field: alt}))
+    return found
+
+
+def _jj_close(values):
+    price, disc, net, ext = (values[f] for f in _JJ_FIELDS)
+    if abs(price - disc - net) > _TOLERANCE or net <= 0 or disc < 0 or ext <= 0:
+        return None
+    qty = _whole_qty(net, ext)
+    return None if qty is None else dict(values, qty=qty)
+
+
+_JJ_DERIVE = (
+    ("net", lambda v, qty: v["price"] - v["disc"], True),
+    ("disc", lambda v, qty: v["price"] - v["net"], False),
+    ("ext", lambda v, qty: qty * v["net"], True),
+)
+# La letra del ticket es la de Red Bull: el 5 impreso sale 6 (46.00 por 45.00,
+# 28.96 por 28.95), hasta en los cuatro montos del renglón a la vez ("$35.90
+# $6.95 $28.95 $28.95" leído 36.90 / 6.96 / 28.96 / 28.96 en todas las pasadas).
+_JJ_CONFUSIONS = {"6": "5"}
+_JJ_RULES = {"options": (_JJ_FIELDS, _jj_close, _JJ_DERIVE, _JJ_CONFUSIONS, 4)}
+
+
+def _jj_fix_sum(rows, printed):
+    """
+    _ticket_fix_sum, y si no alcanza: con el 5 leído 6 en muchos renglones a
+    la vez (5 en 26 renglones de la factura 5431210), hasta 6 renglones
+    cambiados por su lectura con 5 -- vale solo si una única combinación da
+    un total impreso al centavo.
+    """
+    try:
+        return _ticket_fix_sum(rows, printed, "Total", "J.J. Taylor")
+    except ValueError as exc:
+        error = exc
+    ext = lambda r, i: r["options"][i][1]["ext"]
+    current = round(sum(ext(r, r["choice"]) for r in rows), 2)
+    changes = [(n, alt, round(ext(r, alt) - ext(r, r["choice"]), 2))
+               for n, r in enumerate(rows) for alt in range(len(r["options"]))
+               if r["options"][alt][2] == 1 and ext(r, alt) != ext(r, r["choice"])]
+    if len(changes) > 24:
+        raise error
+    for size in range(4, 7):
+        fixes = [combo for combo in itertools.combinations(changes, size)
+                 if len({n for n, _, _ in combo}) == size
+                 and round(current + sum(d for _, _, d in combo), 2) in printed]
+        if len(fixes) == 1:
+            for n, alt, _ in fixes[0]:
+                rows[n]["choice"] = alt
+            return round(current + sum(d for _, _, d in fixes[0]), 2)
+        if fixes:
+            break
+    raise error
+
+
+def _jj_footer(text):
+    """Valores del pie que trae un renglón: {"cases"|"pieces"|"total"|"charge": valor}."""
+    found = {}
+    match = re.search(r"Total\s*U\w*\s*with\w*\s*pick\s*ups?\W*(\d+)(?:\s+\$?([\d,]+[.,]\d{2}))?", text, re.IGNORECASE)
+    if match:
+        found["cases"] = int(match.group(1))
+        if match.group(2):
+            found["total"] = _ticket_amount(match.group(2))
+    elif re.search(r"Pick\s*up", text, re.IGNORECASE):
+        amounts = re.findall(r"\$\s*([\d,]+[.,]\d{2})", text)
+        if amounts:
+            found["total"] = _ticket_amount(amounts[-1])
+    match = re.search(r"Piece\s*Count\W*(\d+)", text, re.IGNORECASE)
+    if match:
+        found["pieces"] = int(match.group(1))
+    match = re.search(r"Gallons\W*\$?\s*([\d,]+[.,]\d{2})", text, re.IGNORECASE)
+    if match:
+        found["charge"] = _ticket_amount(match.group(1))
+    return found
+
+
+def _jj_documents(readings):
+    """
+    Documentos del PDF por página: cada ticket ocupa su página (además de la
+    factura pueden venir tickets de cambio, "SWAP", con Total $0.00); una
+    página sin encabezado ("Load Sheet") sigue al documento anterior.
+    Devuelve [{"pages", "clusters", "footer", "numbers", "dates"}].
+    """
+    pages = sorted({row["page"] for reading in readings for row in reading})
+    headed = {row["page"] for reading in readings for row in reading if re.search(r"Load\s*Sh\w*|PO\s*Num\w*", row["text"], re.IGNORECASE)}
+    groups = []
+    for page in pages:
+        if page in headed or not groups:
+            groups.append([page])
+        else:
+            groups[-1].append(page)
+    all_rows = [row for reading in readings for row in reading]
+    tolerance = _median([row["height"] for row in all_rows]) if all_rows else 10
+    documents = []
+    for group in groups:
+        products, footer, numbers, dates = [], {}, {}, {}
+        for reading in readings:
+            after_titles = in_footer = False
+            for row in reading:
+                if row["page"] not in group:
+                    continue
+                text = row["text"]
+                if after_titles:
+                    after_titles = False
+                    for number in re.findall(r"(?<![\d/])(\d{7})(?!\d)", text):
+                        numbers[number] = numbers.get(number, 0) + 1
+                    for month, day, year in re.findall(r"(\d{1,2})/(\d{1,2})/(20\d{2})", text):
+                        try:
+                            found = datetime(int(year), int(month), int(day))
+                            dates[found] = dates.get(found, 0) + 1
+                        except ValueError:
+                            pass
+                    continue
+                if re.search(r"Load\s*Sh\w*|PO\s*Num\w*", text, re.IGNORECASE):
+                    after_titles = True
+                    continue
+                footer_values = _jj_footer(text)
+                if footer_values or re.search(r"Gallons", text, re.IGNORECASE):
+                    in_footer = True
+                    for key, value in footer_values.items():
+                        footer.setdefault(key, []).append(value)
+                    continue
+                if not in_footer:
+                    found = _jj_product(row)
+                    if found:
+                        products.extend(found)
+        documents.append({"pages": group, "clusters": _ticket_clusters(products, tolerance),
+                          "footer": footer, "numbers": numbers, "dates": dates})
+    return documents
+
+
+def _jj_close_digits(read, printed):
+    """El leído puede ser el impreso: mismos dígitos salvo 6 donde dice 5 y, a lo sumo, otro dígito distinto."""
+    return len(read) == len(printed) and sum(a != b and not (a == "6" and b == "5") for a, b in zip(read, printed)) <= 1
+
+
+def _jj_number(numbers, filename):
+    """
+    N° de la factura: el del nombre del archivo si alguna pasada lo leyó igual
+    o con a lo sumo un dígito distinto (el 5 sale 6: "6431210" por 5431210);
+    sin N° en el nombre, el de 3+ pasadas unánimes. None si no.
+    """
+    named = _filename_numbers(filename, 7)
+    found = {name for name in named for number in numbers if _jj_close_digits(number, name)}
+    if len(found) == 1:
+        return found.pop()
+    if not named and len(numbers) == 1:
+        number, votes = next(iter(numbers.items()))
+        if votes >= 3:
+            return number
+    return None
+
+
+def _jj_date(dates, filename):
+    """Fecha: la del nombre del archivo si la leída difiere en a lo sumo un dígito (6 por 5); si no, la más votada con 2+ votos."""
+    named = _filename_dates(filename)
+    for read in sorted(dates, key=lambda d: -dates[d]):
+        for name in named:
+            if _jj_close_digits(read.strftime("%m%d%Y"), name.strftime("%m%d%Y")):
+                return name
+    found = _ticket_winner(dates)
+    return found if found is not None and dates[found] >= 2 else None
+
+
+# PRICE, NET y TOTAL son el mismo número cuando no hay descuento y la cantidad es 1.
+_JJ_FAMILIES = (("amount", ("price", "net", "ext")), ("disc", ("disc",)))
+
+
+def _jj_prefer_five(cluster):
+    """
+    El 5 impreso sale 6, nunca al revés: si en el renglón se leyó un monto con
+    5 y, en otra pasada o en la columna hermana (PRICE y NET son el mismo
+    número cuando no hay descuento), el mismo monto con 6 en ese lugar, vale
+    el del 5. Devuelve el grupo con las lecturas corregidas.
+    """
+    seen = {}
+    for cand in cluster:
+        for family, fields in _JJ_FAMILIES:
+            for field in fields:
+                if cand.get(field) is not None:
+                    seen.setdefault(family, set()).add(round(cand[field], 2))
+
+    def fixed(value, family):
+        text = f"{value:.2f}"
+        for index, char in enumerate(text):
+            if char == "6":
+                other = round(float(text[:index] + "5" + text[index + 1:]), 2)
+                if other in seen.get(family, ()):
+                    return fixed(other, family)
+        return value
+
+    result = []
+    for cand in cluster:
+        cand = dict(cand)
+        for family, fields in _JJ_FAMILIES:
+            for field in fields:
+                if cand.get(field) is not None:
+                    cand[field] = fixed(cand[field], family)
+        result.append(cand)
+    return result
+
+
+def _jj_rows(clusters, images, cache):
+    rows = []
+    for line_no, cluster in enumerate(clusters, start=1):
+        cluster = _jj_prefer_five(cluster)
+        options = _ticket_options(cluster, *_JJ_RULES["options"])
+        if not _ticket_settled(options) and images is not None:
+            parse = lambda row: (_jj_product(row) or [None])[0]
+            cluster = _jj_prefer_five(_ticket_reread_row(images, cluster, parse, cache))
+            options = _ticket_options(cluster, *_JJ_RULES["options"])
+        description = _name_consensus([c.get("description") for c in cluster])
+        if not options:
+            raise ValueError(f"el renglón {line_no} de J.J. Taylor ({description}) no cierra: "
+                             "ninguna lectura da cantidad x neto = total.")
+        if not _ticket_settled(options):
+            raise ValueError(f"el renglón {line_no} de J.J. Taylor ({description}) tiene dos lecturas "
+                             "posibles que cierran con los mismos votos.")
+        rows.append({"options": options, "choice": 0, "cluster": cluster,
+                     "description": re.sub(r"\s+", " ", description).strip(" |")})
+    return rows
+
+
+def _jj_resolve(clusters, footer, images, cache):
+    """Renglones de la factura de J.J. Taylor, o ValueError si algo no cierra."""
+    if not clusters:
+        raise ValueError("no se ven los renglones de producto de la factura de J.J. Taylor.")
+    rows = _jj_rows(clusters, images, cache)
+    # El Total leído, o el mismo con 5 donde se leyó 6 ($1,429.57 sale $1,429.67
+    # en todas las pasadas): vale el que da la suma de los renglones.
+    read = [t for t in _ticket_top(footer.get("total", [])) if t is not None]
+    totals = set(read)
+    for value in read:
+        text = f"{value:.2f}"
+        totals |= {round(float(text[:i] + "5" + text[i + 1:]), 2) for i, char in enumerate(text) if char == "6"}
+    charges = {0.0} | set(_ticket_top(footer.get("charge", [])))
+    printed = {round(t - c, 2) for t in totals for c in charges}
+    subtotal = _jj_fix_sum(rows, printed)
+    total = next(t for t in sorted(totals) if round(t - subtotal, 2) in charges)
+    chosen = [dict(r["options"][r["choice"]][1], description=r["description"], cluster=r["cluster"]) for r in rows]
+    for c in chosen:
+        packs = [_jj_units(cand.get("description")) for cand in c["cluster"] if cand.get("description")]
+        per_case = _ticket_most_voted([p[0] for p in packs if p[0]])
+        if per_case is None:
+            raise ValueError(f"no se pudo leer el pack (piezas por caja) de {c['description']}.")
+        sizes = [p[1] for p in packs if p[0] == per_case]
+        c["pack"] = (per_case, _ticket_most_voted(sizes) or sizes[0])
+    # Confirman las cantidades: la suma de cajas ("Total U without pick ups")
+    # o la de piezas ("Piece Count"). Las piezas no son un control exigido:
+    # J.J. Taylor no cuenta siempre igual los "2/12/12" (2 o 12 piezas).
+    pieces_ok = sum(c["qty"] * c["pack"][0] for c in chosen) in footer.get("pieces", [])
+    _ticket_check_qty(chosen, pieces_ok or sum(c["qty"] for c in chosen) in footer.get("cases", []),
+                      "J.J. Taylor", "total de cajas (Total U) o de piezas (Piece Count)")
+    lines = []
+    for c in chosen:
+        per_case, size = c["pack"]
+        lines.append(_line(
+            len(lines) + 1, description=c["description"], qty=c["qty"], pack=per_case, size=size, units=per_case,
+            price=c["price"], allowance=c["disc"] or None, net=c["net"], ext=c["ext"],
+        ))
+    return {"lines": lines, "subtotal": subtotal, "total": total}
+
+
+def _jj_swap(document):
+    """Ticket de cambio ("SWAP": se lleva un producto y se deja otro), con Total $0.00: no es una compra."""
+    totals = [t for t in _ticket_top(document["footer"].get("total", [])) if t is not None]
+    return totals == [0.0]
+
+
+def _jj_footer_total(document):
+    """
+    Total de una factura cuyos renglones no cerraron: vale si dos o más
+    pasadas lo leyeron igual, ninguna distinto, y no tiene ningún 6 (en esta
+    letra el 5 impreso sale 6: $1,429.57 se lee $1,429.67 en todas). None si no.
+    """
+    totals = _ticket_votes([{"v": v} for v in document["footer"].get("total", []) if v is not None], "v")
+    if len(totals) != 1:
+        return None
+    total, votes = next(iter(totals.items()))
+    return total if votes >= 2 and "6" not in f"{total:.2f}" else None
+
+
+def _jj_invoices(images, reading, filename, cache=None):
+    """
+    Las facturas de J.J. Taylor de un PDF (los tickets de cambio no cuentan):
+    [{"invoice_no", "date", "amount", "lines", "lines_error"} o {"error",
+    "invoice_no"}]. reading(n) -> las filas de la pasada n.
+    """
+    readings, cache = [], {} if cache is None else cache
+    results = {}
+    documents = []
+    for passes_done in range(len(_TICKET_PASSES)):
+        readings.append(reading(passes_done))
+        documents = _jj_documents(readings)
+        pending = False
+        for index, document in enumerate(documents):
+            if _jj_swap(document):
+                continue
+            if _jj_number(document["numbers"], filename) is None or _jj_date(document["dates"], filename) is None:
+                pending = True
+            if "lines" in results.get(index, {}):
+                continue
+            try:
+                results[index] = _jj_resolve(document["clusters"], document["footer"], images, cache)
+            except ValueError as exc:
+                results[index] = {"error": str(exc)}
+                pending = True
+        if not pending:
+            break
+    invoices = []
+    for index, document in enumerate(documents):
+        if _jj_swap(document):
+            continue
+        number = _jj_number(document["numbers"], filename)
+        if number is None:
+            invoices.append({"error": "no se pudo leer el N° de invoice con seguridad.", "invoice_no": None})
+            continue
+        date = _jj_date(document["dates"], filename)
+        if date is None and number in _filename_numbers(filename, 7):
+            # Sin fecha legible: la del nombre del archivo, que ya confirmó el N°.
+            date = next(iter(_filename_dates(filename)), None) if len(_filename_dates(filename)) == 1 else None
+        if date is None:
+            invoices.append({"error": "no se pudo leer la fecha de la factura.", "invoice_no": int(number)})
+            continue
+        result = results.get(index, {"error": "no se ven los renglones de producto de la factura."})
+        if "lines" in result:
+            invoices.append({"invoice_no": int(number), "date": date, "amount": result["total"],
+                             "lines": result["lines"], "lines_error": None})
+            continue
+        total = _jj_footer_total(document)
+        if total is None:
+            invoices.append({"error": f"no se pudo leer el Total con seguridad ({result['error']})",
+                             "invoice_no": int(number)})
+        else:
+            invoices.append({"invoice_no": int(number), "date": date, "amount": total,
+                             "lines": None, "lines_error": result["error"]})
+    return invoices
+
+
+def _jj_upright(images, first):
+    """
+    (imágenes, primera pasada) con cada ticket derecho: una página en la que
+    la primera pasada no ve ningún título del ticket vino al revés (la
+    detección de orientación de Tesseract no siempre lo nota en estos
+    tickets angostos) y se gira 180 grados. Si se giró alguna, first=None
+    (la primera pasada se rehace).
+    """
+    seen = {row["page"] for row in first
+            if re.search(r"PRODUCT|Piece\s*Count|Load\s*Sh\w*|PO\s*Num\w*|Pick\s*up", row["text"], re.IGNORECASE)}
+    if all(page in seen for page in range(len(images))):
+        return images, first
+    return [image if page in seen else image.transpose(Image.ROTATE_180) for page, image in enumerate(images)], None
+
+
+def read_jj_taylor_invoices(pdf_path):
+    """Encabezado y renglones de cada factura de J.J. Taylor de un PDF (como read_gce_invoices)."""
+    images = _ticket_images(pdf_path)
+    if not images:
+        raise ValueError("no se encontró la imagen escaneada de la factura de J.J. Taylor.")
+    images, first = _jj_upright(images, _ticket_readings(images, 0))
+
+    def reading(n):
+        return first if n == 0 and first is not None else _ticket_readings(images, n)
+
+    return _jj_invoices(images, reading, os.path.basename(pdf_path))
+
+
+# --- Midtown Wholesale (2026-10-05) ---------------------------------------------
+# Pedido del usuario (2026-10-05): comparar sus productos contra la factura
+# anterior por el NOMBRE (el SKU es propio y a veces de relleno, "123456").
+# Hoja completa, escaneo limpio, dos plantillas:
+# - SALESGENT (desde 2026): SKU, descripción con la caja ("[30/BX]"), SO Qty,
+#   Qty, Sold Price, Amount; pie "Total Quantity" y "Subtotal" (después
+#   vienen el descuento "Line Item (D/C)" y el Grand Total).
+# - SplitPOS (2025, "Receipt #"): descripción con la caja ("BX/50CT"), Qty,
+#   precio y monto; la descripción larga sigue en el renglón de arriba o de
+#   abajo; pie "Subtotal: 35 $958.67" (unidades y monto).
+# Cuentas: Qty x precio = monto; la suma de montos = Subtotal; la de Qty = las
+# unidades del pie. A la izquierda y entre la descripción y las cantidades
+# quedan las tildes de control a mano ("~~", "7", "Y"): no son parte del nombre.
+
+_MT_PASSES = (("--psm 6", 1, None), ("--psm 4", 1, None), ("--psm 6", 2, _sharpen), ("--psm 6", 1, _otsu))
+_MT_FIELDS = ("price", "ext")
+_MT_AMOUNT = re.compile(r"[$S§]\d{1,3}(?:,?\d{3})*[.,]\d{2}")
+
+
+def _mt_units(description):
+    """Unidades por caja según la descripción ("[30/BX]", "BX/50CT", "CS/24CT"); 1 si no dice."""
+    text = (description or "").upper()
+    match = re.search(r"\[\s*([0-9SOIl]{1,3})\s*/\s*B", text) or re.search(r"\b(?:BX|CS)\s*/\s*([0-9SOIl]{1,3})", text)
+    if match:
+        digits = _fix_digits(match.group(1))
+        if digits.isdigit() and int(digits) > 0:
+            return int(digits)
+    return 1
+
+
+def _mt_clean_description(words):
+    """Descripción sin las tildes de control a mano del final ni la basura del margen."""
+    texts = [w["text"] for w in words]
+    while texts and (len(texts[-1]) <= 1 or not re.search(r"[0-9A-Za-z]{2}", texts[-1])):
+        texts.pop()
+    while texts and not re.search(r"[A-Za-z]", texts[0]) and not re.fullmatch(r"\d{4,6}", texts[0]):
+        texts.pop(0)
+    return " ".join(texts)
+
+
+def _mt_product(row, new_template):
+    """
+    Renglón de producto leído en una pasada, o None. Al final, Sold Price y
+    Amount (SALESGENT de ago-2026 trae además una columna Tax en el medio);
+    antes, las cantidades: en SplitPOS la tilde a mano suele tapar la Qty
+    ("AV)", "V4"), y entonces la cantidad sale de monto / precio.
+    """
+    # Sin la basura suelta ("-", "|", "~~") y con los montos partidos unidos ("$1 56.75").
+    words = []
+    for word in row["words"]:
+        if not re.search(r"[0-9A-Za-z]", word["text"]):
+            continue
+        if (words and re.fullmatch(r"[$S§]\d{1,2}", _clean_token(words[-1]["text"]))
+                and re.fullmatch(r"\d{2,3}[.,]\d{2}", _clean_token(word["text"]))):
+            words[-1] = dict(words[-1], text=words[-1]["text"] + word["text"])
+            continue
+        words.append(word)
+    amounts = []
+    for position, word in enumerate(reversed(words)):
+        text = _clean_token(word["text"]).rstrip(".,:;")
+        if position == 0 and re.fullmatch(r"[$S§]\d{3,6}", text):
+            amounts.insert(0, None)  # el monto sin el punto ("$2339"): sale de cantidad x precio
+            continue
+        if not _MT_AMOUNT.fullmatch(text) or len(amounts) == 3:
+            break
+        amounts.insert(0, _ticket_amount(text.lstrip("$S§")))
+    consumed = len(amounts)
+    if len(amounts) == 3:
+        if amounts[1] not in (0, None):
+            return None  # con impuesto en el renglón: no visto todavía
+        amounts = [amounts[0], amounts[2]]
+    if len(amounts) != 2:
+        return None
+    price, ext = amounts
+    if price is None:
+        return None
+    head = words[:len(words) - consumed]
+    qty_values = []
+    while head and len(qty_values) < (2 if new_template else 1):
+        text = _fix_digits(_clean_token(head[-1]["text"]))
+        if not re.fullmatch(r"\d{1,3}", text):
+            break
+        qty_values.insert(0, int(text))
+        head = head[:-1]
+    sku = None
+    if new_template:
+        start = next((i for i, w in enumerate(head[:3]) if re.fullmatch(r"\d{4,6}", _clean_token(w["text"]))), None)
+        if start is not None:
+            sku, head = _clean_token(head[start]["text"]), head[start + 1:]
+    description = _mt_clean_description(head)
+    if not re.search(r"[A-Za-z]{2}", description):
+        return None
+    return {"page": row["page"], "y": row["y"], "height": row["height"], "sku": sku,
+            "description": description, "qty": qty_values[-1] if qty_values else None, "price": price, "ext": ext}
+
+
+def _mt_footer(text):
+    found = {}
+    match = re.search(r"Total\s*Quantity\W*(\d+)", text, re.IGNORECASE)
+    if match:
+        found["units"] = int(match.group(1))
+    match = re.search(r"Subtotal\W*(?:(\d+)\s+)?\$\s*([\d,]+[.,]\d{2})", text, re.IGNORECASE)
+    if match:
+        if match.group(1):
+            found["units"] = int(match.group(1))
+        found["subtotal"] = _ticket_amount(match.group(2))
+    match = (re.search(r"Grand\s*Total\W*\$\s*([\d,]+[.,]\d{2})", text, re.IGNORECASE)
+             or re.search(r"(?<![A-Za-z])Total\s*\$\s*([\d,]+[.,]\d{2})", text))  # SplitPOS: "Total $958.67"
+    if match:
+        found["grand"] = _ticket_amount(match.group(1))
+    match = re.search(r"Line\s*Item\W.{0,6}\$\s*([\d,]+[.,]\d{2})", text, re.IGNORECASE)
+    if match:
+        found["discount"] = _ticket_amount(match.group(1))
+    return found
+
+
+def _mt_collect(readings):
+    """Renglones de producto (agrupados entre pasadas) y pie, con la descripción partida en dos renglones unida."""
+    products, footer = [], {}
+    for reading in readings:
+        new_template = any(re.search(r"SALESGENT|Sold\s*Price|\bSKU\b", row["text"], re.IGNORECASE) for row in reading)
+        found = []
+        for position, row in enumerate(reading):
+            values = _mt_footer(row["text"])
+            for key, value in values.items():
+                footer.setdefault(key, []).append(value)
+            if "subtotal" in values:
+                footer.setdefault("subtotal_at", []).append({"page": row["page"], "y": row["y"], "value": values["subtotal"]})
+            product = None if values else _mt_product(row, new_template)
+            if product is not None:
+                found.append((position, product))
+        if not new_template:
+            # SplitPOS: la descripción larga sigue arriba o abajo del renglón con los montos.
+            taken = {position for position, _ in found}
+            for position, product in found:
+                parts = [(product["y"], product["description"])]
+                for near in (position - 1, position + 1):
+                    if 0 <= near < len(reading) and near not in taken:
+                        row = reading[near]
+                        if (row["page"] == product["page"] and abs(row["y"] - product["y"]) < 2.5 * product["height"]
+                                and re.search(r"[A-Za-z]{2}", row["text"]) and not _mt_footer(row["text"])
+                                and not re.search(r"Receipt|Billed|Notes|Thank|Powered", row["text"], re.IGNORECASE)):
+                            parts.append((row["y"], _mt_clean_description(row["words"])))
+                product["description"] = " ".join(text for _, text in sorted(parts))
+        products.extend(product for _, product in found)
+    all_rows = [row for reading in readings for row in reading]
+    tolerance = _median([row["height"] for row in all_rows]) if all_rows else 10
+    return _ticket_clusters(products, tolerance), footer
+
+
+def _mt_close(values):
+    price, ext = values["price"], values["ext"]
+    if price <= 0 or ext <= 0:
+        return None
+    qty = _whole_qty(price, ext)
+    return None if qty is None else dict(values, net=price, qty=qty)
+
+
+_MT_RULES = {"options": (_MT_FIELDS, _mt_close, (("ext", lambda v, qty: qty * v["price"], True),),
+                         _TICKET_CONFUSIONS, 1)}
+
+
+def _mt_resolve(clusters, footer):
+    """Renglones de la factura de Midtown, o ValueError si no cierran contra el Subtotal y las unidades del pie."""
+    if not clusters:
+        raise ValueError("no se ven los renglones de producto de la factura de Midtown.")
+    rows = []
+    for line_no, cluster in enumerate(clusters, start=1):
+        options = _ticket_options(cluster, *_MT_RULES["options"])
+        description = _name_consensus([c.get("description") for c in cluster])
+        if not options or not _ticket_settled(options):
+            raise ValueError(f"el renglón {line_no} de Midtown ({description}) no cierra: cantidad x precio = monto.")
+        rows.append({"options": options, "choice": 0, "cluster": cluster, "description": description})
+    # La suma de los montos da el Subtotal o, cuando el descuento ya está en
+    # un renglón (SALESGENT, "Line Item (D/C)"), el Grand Total.
+    printed = set(_ticket_top(footer.get("subtotal", []))) | set(_ticket_top(footer.get("grand", [])))
+    printed |= {round(s - d, 2) for s in _ticket_top(footer.get("subtotal", [])) for d in _ticket_top(footer.get("discount", []))}
+    # Un PDF puede traer dos recibos del mismo reparto: la suma de sus Subtotales.
+    receipts = [_ticket_winner(_ticket_votes(c, "value")) for c in _ticket_clusters(footer.get("subtotal_at", []), 40)]
+    if len(receipts) > 1 and None not in receipts:
+        printed.add(round(sum(receipts), 2))
+    subtotal = _ticket_fix_sum(rows, printed - {None}, "Subtotal", "Midtown")
+    chosen = [dict(r["options"][r["choice"]][1], description=r["description"], cluster=r["cluster"]) for r in rows]
+    _ticket_check_qty(chosen, sum(c["qty"] for c in chosen) in footer.get("units", []), "Midtown",
+                      "total de unidades (Total Quantity)")
+    lines = []
+    for c in chosen:
+        units = _ticket_most_voted([_mt_units(cand.get("description")) for cand in c["cluster"] if cand.get("description")]) or 1
+        lines.append(_line(
+            len(lines) + 1, item_no=_ticket_winner(_ticket_votes(c["cluster"], "sku")) or "",
+            description=c["description"], qty=c["qty"], pack=units, size="", units=units,
+            price=c["price"], net=c["price"], ext=c["ext"],
+        ))
+    return lines, subtotal
+
+
+def _mt_lines(images, reading):
+    """(renglones, subtotal) con las pasadas de _MT_PASSES de a una hasta que cierran; ValueError si no."""
+    readings, error = [], None
+    for passes_done in range(len(_MT_PASSES)):
+        readings.append(reading(passes_done))
+        if passes_done == 0:
+            continue  # el nombre sale del acuerdo entre al menos dos lecturas (_name_consensus)
+        try:
+            return _mt_resolve(*_mt_collect(readings))
+        except ValueError as exc:
+            error = exc
+    raise error
+
+
+def extract_midtown_lines(pdf_path, invoices=None):
+    """
+    Renglones de una factura de Midtown Wholesale (LINE_EXTRACTORS). La suma
+    tiene que dar el Subtotal impreso (el Grand Total le resta el descuento).
+    """
+    images = _ticket_images(pdf_path)
+    if not images:
+        raise ValueError("no se encontró la imagen escaneada de la factura de Midtown.")
+
+    def reading(n):
+        config, scale, prep = _MT_PASSES[n]
+        return [_ticket_row(page, words) for page in range(len(images))
+                for words in _ocr_rows(images[page], config, scale=scale, prep=prep)]
+
+    lines, subtotal = _mt_lines(images, reading)
+    wanted = str(invoices[0]["invoice_no"]) if invoices else None
+    return {"invoice_no": wanted, "lines": lines, "subtotal": subtotal, "total": subtotal}
+
+
 # supplier_key (el de SUPPLIER_REGISTRY en proveedores.py) -> extractor de renglones.
 LINE_EXTRACTORS = {
     "ht_hackney": extract_ht_hackney_lines,
@@ -3074,6 +3843,7 @@ LINE_EXTRACTORS = {
     "gce": extract_gce_lines,
     "red_bull": extract_red_bull_lines,
     "frito_lay": extract_frito_lay_lines,
+    "midtown": extract_midtown_lines,
 }
 
 
@@ -3107,7 +3877,7 @@ def _group_lines(lines):
     """{clave de producto: [renglones del más viejo al más nuevo]}."""
     by_product = {}
     for line in lines:
-        key = product_key(line["supplier_key"], line["upc"], line["item_no"])
+        key = product_key(line["supplier_key"], line["upc"], line["item_no"], line["description"])
         by_product.setdefault(key, []).append(line)
     return by_product
 
@@ -3204,8 +3974,15 @@ def _compare_supplier_invoices(supplier_lines):
         rows = []
         seen = {}
         for line in invoice_lines:
-            key = product_key(line["supplier_key"], line["upc"], line["item_no"])
+            key = product_key(line["supplier_key"], line["upc"], line["item_no"], line["description"])
             previous = last_by_product.get(key)
+            if previous is None and not line["upc"] and line["supplier_key"] in NAME_KEYED_SUPPLIERS:
+                # Sin la letra del envase (o con ella, si la anterior no la tenía): vale
+                # la compra anterior solo si hay una única con ese nombre.
+                found = [k for k in _container_alternatives(line["supplier_key"], line["description"])
+                         if k in last_by_product]
+                if len(found) == 1:
+                    key, previous = found[0], last_by_product[found[0]]
             change = round(line["unit_cost"] - previous["unit_cost"], 4) if previous else None
             if change is None:
                 state = "Nuevo"

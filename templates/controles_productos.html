@@ -73,7 +73,7 @@
 <div class="page-header">
   <span class="eyebrow">Control de precios</span>
   <h1>Productos de proveedores</h1>
-  <p class="page-subtitle">Una carpeta por proveedor cuyas facturas se leen bien renglón por renglón (hoy H.T. Hackney, CEC, Colonial, Gold Coast Eagle, Red Bull y Frito-Lay). Adentro, sus facturas por fecha: cada una compara el precio de cada producto contra su compra anterior <strong>por fecha de factura</strong>, no por el orden en que se subieron.</p>
+  <p class="page-subtitle">Una carpeta por proveedor cuyas facturas se leen bien renglón por renglón (hoy H.T. Hackney, CEC, Colonial, Gold Coast Eagle, Red Bull, Frito-Lay, J.J. Taylor y Midtown). Adentro, sus facturas por fecha: cada una compara el precio de cada producto contra su compra anterior <strong>por fecha de factura</strong>, no por el orden en que se subieron. J.J. Taylor y Midtown no traen el UPC del POS: sus productos se reconocen por el nombre, que tiene que ser igual al de la factura anterior (si no, el producto figura como nuevo).</p>
 </div>
 {% if folders %}
 <div class="pf-grid">
@@ -89,7 +89,7 @@
   {% endfor %}
 </div>
 {% else %}
-<div class="card"><p class="muted" style="margin:0;">Todavía no hay productos: se cargan solos al subir facturas de H.T. Hackney, CEC, Colonial, Gold Coast Eagle, Red Bull o Frito-Lay en <a href="{{ url_for('carga_datos_proveedores') }}">Proveedores</a>.</p></div>
+<div class="card"><p class="muted" style="margin:0;">Todavía no hay productos: se cargan solos al subir facturas de H.T. Hackney, CEC, Colonial, Gold Coast Eagle, Red Bull, Frito-Lay, J.J. Taylor o Midtown en <a href="{{ url_for('carga_datos_proveedores') }}">Proveedores</a>.</p></div>
 {% endif %}
 <p class="pf-actions"><a href="{{ url_for('controles_productos_lista') }}">Ver todos los productos en una sola lista (con costo y precio del POS) →</a></p>
 

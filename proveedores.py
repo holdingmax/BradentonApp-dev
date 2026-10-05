@@ -392,6 +392,20 @@ def _extract_gce_invoice(pdf_path):
     return _ticket_invoices(proveedores_productos.read_gce_invoices(pdf_path), pdf_path, "Gold Coast Eagle")
 
 
+def _extract_jj_taylor_invoice(pdf_path):
+    """
+    J.J. Taylor Dist. FL -- ticket de reparto escaneado (a veces al revés),
+    con tickets de cambio ("SWAP", Total $0.00) en otras páginas del mismo
+    PDF. Estaba en pausa a pedido del usuario; el 2026-10-05 pidió sumarlo
+    para comparar sus productos contra la factura anterior por el nombre.
+    Encabezado y renglones salen del lector de tickets
+    (proveedores_productos.read_jj_taylor_invoices), como Gold Coast y Red
+    Bull: N° y fecha confirmados por el nombre del archivo (el 5 impreso se
+    lee 6), importe por la suma de los renglones.
+    """
+    return _ticket_invoices(proveedores_productos.read_jj_taylor_invoices(pdf_path), pdf_path, "J.J. Taylor")
+
+
 def _parse_frito_lay_text_date(text):
     """
     "25 Mar 2026" -> datetime. El OCR suele confundir la primera letra del
@@ -2537,23 +2551,23 @@ SUPPLIER_REGISTRY = {
         "detect": lambda text: "pepsi" in text.lower(),
         "extract": _extract_pepsi_invoices,
     },
-    # Los dos siguientes NUNCA se detectan solos en un PDF (detect=False
-    # permanente) -- J.J. Taylor está pausado a pedido explícito del
-    # usuario (ver "Pendiente" más abajo en el archivo) y Slush Puppie
-    # es manuscrito, sin ningún ancla de OCR confiable (ver
-    # "Brandon Liu y Slush Puppies -- confirmado INVIABLES por OCR").
-    # Se agregan igual al registro (2026-09-22, pedido explícito del
-    # usuario junto con su logo) solo para que tengan su propio módulo en
-    # la grilla de "Guardado" y puedan vincularse A MANO desde el popover
-    # de Chase Bank -- nunca van a aparecer solos por una factura subida.
+    # J.J. Taylor: en pausa hasta el 2026-10-05 (el usuario pidió sumarlo).
+    # Las páginas de J.J. Taylor que vienen dentro de un PDF de LMT traen
+    # "Paylink - JT" (LMT se detecta por su propia página "Paylink - LMT").
     "jj_taylor": {
         "label": "J.J. Taylor Dist. FL, Inc.",
         "sheet_name": "JJ TAYLOR",
         "resumen_label": "JJ TAYLOR",
         "logo": "supplier_logos/jj_taylor.png",
-        "detect": lambda text: False,
-        "extract": _no_automatic_extraction,
+        "detect": lambda text: (re.search(r"TAYLOR\s*DIST|j[ijl]\s*[tl]aylor\s*\.?\s*com", text, re.IGNORECASE) is not None
+                                and "paylink" not in text.lower()),
+        "extract": _extract_jj_taylor_invoice,
     },
+    # Slush Puppie NUNCA se detecta solo (detect=False permanente): es
+    # manuscrito, sin ningún ancla de OCR confiable (ver "Brandon Liu y
+    # Slush Puppies -- confirmado INVIABLES por OCR"). Está en el registro
+    # (2026-09-22, pedido del usuario junto con su logo) solo para tener su
+    # módulo en la grilla y poder vincularse A MANO desde Chase Bank.
     "slush_puppie": {
         "label": "Slush Puppie (Tri-State, Inc.)",
         "sheet_name": "SLUSH PUPPIE",
@@ -2710,6 +2724,24 @@ def _detect_supplier(pdf_path):
                 for key, config in registry.items():
                     if config["detect"](rendered_text):
                         return key
+
+        # Último respaldo (2026-10-05): la detección de orientación de
+        # Tesseract no siempre nota un ticket angosto escaneado al revés
+        # (J.J. Taylor): se prueba cada página girada 180 grados.
+        for page in pdf.pages:
+            if (page.extract_text() or "").strip():
+                continue
+            try:
+                image = _extract_page_image(page)
+            except OSError:
+                image = None
+            if image is None:
+                continue
+            _ensure_pytesseract()
+            text = pytesseract.image_to_string(image.rotate(180))
+            for key, config in registry.items():
+                if config["detect"](text):
+                    return key
 
     raise ValueError(f"{os.path.basename(pdf_path)}: proveedor no reconocido.")
 
