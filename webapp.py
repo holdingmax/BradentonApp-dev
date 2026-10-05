@@ -6551,13 +6551,13 @@ def _run_carga_datos_proveedores_job(job_id, paths):
 
             # Detalle de productos (proveedores_productos.py, pedido explícito
             # del usuario 2026-09-28): solo proveedores con extractor de
-            # renglones (hoy H.T. Hackney). Corre también si la factura ya
+            # renglones (H.T. Hackney, CEC y Colonial). Corre también si la factura ya
             # estaba cargada -- volver a subirla completa su detalle sin
             # duplicar nada. Si el detalle no cierra contra la factura no se
             # guarda ningún renglón, pero la factura en sí queda guardada.
             if valid_invoices and supplier_key in proveedores_productos.LINE_EXTRACTORS:
                 try:
-                    detail = proveedores_productos.extract_lines(supplier_key, path)
+                    detail = proveedores_productos.extract_lines(supplier_key, path, invoices=valid_invoices)
                     invoice = next(
                         (inv for inv in valid_invoices if str(inv["invoice_no"]) == detail["invoice_no"]), None
                     )
