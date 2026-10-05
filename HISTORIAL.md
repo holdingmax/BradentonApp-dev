@@ -2163,3 +2163,41 @@ Pedido: "los productos que se pueden leer bien en proveedores pero que no tienen
 
 ### Punta a punta
 - Copia de `proveedores.db`: J.J. Taylor 6000658 (escaneada al revés) y 6032572, Midtown 1069, 1545 y 556 -> 5 facturas guardadas, 4 con detalle ("Sin detalle de productos (los renglones no cerraban): factura de Midtown Wholesale LLC (556)"); en la factura más nueva de cada uno, los productos repetidos salen comparados contra la anterior (J.J. Taylor: 5 "Igual"; Midtown: 1) y el Excel de cambios se arma. Pantallas de Productos con la base real: OK.
+
+## Sesión 2026-10-05, chat 19: reglas de viáticos, botonera de controles rápidos, descargas sin recargar, reportes, Lottery y EFT
+
+Commits `33aa8eb`..`5877cba` (uno por tema) más la documentación. Validado siempre contra datos reales del Drive y de las bases; en las bases reales solo se escribió `chase.db` (recategorización por las reglas nuevas, respaldo previo `reportes_data/respaldos/chase_2026-10-05_antes_reglas_movilidad.db`).
+
+### Chase: MOVILIDAD Y VIATICOS (pedido: "investigues en los extractos donde dice MOVILIDAD Y VIATICOS... guardalos como reglas")
+- Los gastos de viaje del jefe (Uber, comida, hoteles) se categorizaban a mano. En la base de la app había uno solo; la fuente fueron los Excel de Chase del Drive (`Book keeping/{año}/{mes}/CHASE MM-AAAA.xlsx`, columna Detalle): 99 movimientos marcados "MOVILIDAD Y VIATICOS" (también escrito "MOV Y VIATICO", "VIATICOS Y MOVILIDAD") en 2024-2026.
+- 53 reglas **Personalizadas** (`chase_rules.json`) con detalle MOVILIDAD Y VIATICOS: transporte (UBER cubre "UBER * PENDING", "UBR* PENDING.UBER.COM" y "UBER TECHNOLOGIES"; MIA PARKING, PARKONE, CITYOFOAKS, HRS MGMT, FT LAUD HOLLYWOOD, SAFE WRAP, COMMERCIAL PAY VACUUM, AVENTURA FINEST CAR), pasajes y hoteles (SUDAMERIA, BOOKING, RAMADA, DOUBLETREE, DAYS INN), aeropuertos de afuera (CALLAO, LIMA AIRPORT, TOCUMEN), combustible en viaje (SHELL OIL, MARATHON, WAWA, 7-ELEVEN, REFUEL), supermercados (PUBLIX, WHOLEFDS, 365 MARKET), comida (cadenas y los restaurantes de los viajes) y WAL-MART #3235 (North Miami).
+- Simulación sobre ~19,600 filas del historial: solo pasan a MOVILIDAD Y VIATICOS movimientos sin categoría, ninguno con otra. Aplicado a la base: 20 movimientos de agosto-septiembre 2026 (los mismos que el Excel).
+- Afuera a propósito: CHEVRON 0379897 BRADENTON (la estación propia; el usuario: "por las dudas no"), Deluxe Bus Sys (compra de cheques), el pago a FDEP, Apple Store y ASE Communications (una sola vez, nombre genérico). El Walmart del 31/08 en el Excel decía "GASTOS MARTIN SALAS"; el usuario lo pidió como viáticos.
+
+### Botonera de controles rápidos (pedido del jefe)
+- `base.html`: botón redondo abajo a la derecha (rayito) que abre Tarjetas, Caja y Precios a revisar; cada uno pide `/controles/rapidos/<tipo>` (HTML de `_controles_rapidos.html`) y lo muestra en un cuadro flotante. Se cierra tocando afuera, con Escape o la ×. Cálculo en `controles_rapidos.py`.
+- Tarjetas: pendiente de acreditar al último día con Store Info contra el límite de $15,000 y la semana. Caja: el Saldo de Caja al último día con Reporte Diario ("efectivo que debería haber"), la semana con efectivo/depósito/saldo y el último depósito en Chase. Precios: productos de la última factura de cada proveedor con el mismo UPC en el CMV (sin ceros adelante) y otro costo, ordenados por aumento; "¿pack?" si el costo da más del doble o menos de la mitad (los cigarros de H.T. por caja). Con los datos reales: H.T. 913338 del 25/09, 28 de 46 productos con otro costo, varios cigarrillos con margen negativo (Lucky Strike: POS $6.91, factura $7.31 el paquete).
+- Mismo día, pedido del usuario: **solo el mes actual** (lo anterior se mira en Controles). Si el mes no tiene nada cargado, el cuadro lo dice y linkea a Controles. Hoy (octubre) los tres dicen eso: Reporte Diario cargado hasta el 12/09.
+- Bug encontrado al verlo: el botón heredaba el padding global de `button` (20 px a cada lado) y el ícono quedaba de 2 px de ancho.
+
+### Descargas sin recargar (pedido: "que sin recargar le salga la notificación de que no se puede")
+- `base.html`: todo link o form GET a una ruta de descarga (`/pdf`, `/excel`, `/exportar`, `/descargar`, `/download`, `.pdf`, `.xlsx`) se pide por fetch con `X-Download-Check`. Archivo: se descarga con su nombre (o, el "Ver" con target `_blank`, se abre en otra pestaña después de confirmar que existe). Error: aviso flotante. El botón del form dice "Generando…" mientras tanto. Un link de descarga ya no dispara el "¿Salir igual?" de cambios sin guardar.
+- `webapp._download_error_as_message` (after_request): con ese encabezado, el flash+redirect de una ruta de descarga se cambia por `{"error"}` 409 (y saca el flash de la sesión, así no reaparece en la página siguiente). Sesión vencida: "La sesión venció: volvé a entrar.". Sin el encabezado todo igual que antes.
+- **Reportes mensuales sin datos** (`_report_without_data`): EFT y Cupones (ni EFT ni cupón en el mes), Reporte Diario, Lottery, Caja (mes futuro viene en 0: se mira que haya algún monto), Proveedores y Gettel PDF/Excel (también un mes futuro, que arrastraba el pendiente del anterior). Antes bajaban un PDF vacío.
+- Verificado con la app real en 127.0.0.1 (runner del scratchpad con la sesión de admin puesta, sin contraseña): enero sin datos → aviso sin recargar; agosto → descarga; "Ver" de un día sin PDF guardado → aviso, sin pestaña nueva.
+
+### Caja: resumen sin Tarjeta/Crédito
+- `caja.build_caja_pdf_resumen` ya no tiene la fila (lo de tarjeta no pasa por la caja). Era el único lugar: ni el PDF día por día ni el Excel la tenían.
+
+### Lottery: ONLINE/SKOFF del Reporte Diario (pedido: "ajustá los PDF de reporte diario de la lottery... de forma precisa")
+- Ya usaban la lectura por votación del 2026-10-04 (son departamentos de Ventas por Departamento). Contra los Excel de Lottery del Drive: los 35 días guardados coinciden; los 6 días vacíos (04/08, 02-06/09) se cargaron antes de ese cambio y con el código actual se leen exactos (6 de 6). Ojo: el Excel de septiembre no tiene la columna C "TOTAL" (todo corrido una columna a la izquierda).
+- Arreglo: `extract_lottery_department_fields_from_pdf` ya no tira error si un valor sale dudoso o falta el departamento; devuelve None y `missing`. `lottery_db.upsert_department_fields` con COALESCE (un None no pisa lo guardado). La carga de Reporte Diario avisa "Lottery: ventas que el OCR no pudo leer con seguridad (DD/MM: SKOFF)" y los archivos sin fecha o página legible.
+- Los "Daily Sales Summary" del portal (página de retailer) tienen texto real: no se tocaron.
+
+### Reporte de EFT y Cupones (pedido: "un resumen de la cantidad de cupones... para así no mezclar los números")
+- `eft_db.coupon_month_summary(year, month)`: cada cupón cuenta según su fecha (mes anterior / este mes; uno más viejo solo si un EFT del mes lo pagó). Aplicado en el mes = alguna línea de un EFT con fecha del mes lo pagó; pendiente al cierre = ningún EFT con fecha hasta fin de mes. En lo aplicado el monto es lo pagado por el EFT; en el resto, el Net (batch sin resolver: saldo del batch una vez).
+- PDF: EFT del mes (igual) + Resumen de cupones + Cupones aplicados en cada EFT (del mes anterior / de este mes / total) + Pendientes al cierre agrupados por fecha. Los renglones de EFT sin N° de cupón van aparte, así el total aplicado coincide con el Net de los EFT.
+- Agosto 2026: de julio llegaron 17 sin aplicar ($44,672.31), los pagaron los EFT del 03/08 (13) y 10/08 (4); de agosto 57, 48 aplicados y 9 pasan ($26,008.95), que son los 9 "del mes anterior" de septiembre. Total aplicado 68 / $189,200.88 = Net de los EFT (incluye 3 renglones sin N° del 24/08, $180). Enero 2026 muestra 48 cupones de diciembre "siguen pendientes": faltan los EFT que los pagaron, no es un error del cálculo.
+- `pdf_export.build_multi_section_pdf`: "footnote" debajo de una tabla y sin el espacio final que armaba una hoja en blanco.
+
+**Pendientes que deja el chat:** cargar ONLINE/SKOFF de los 6 días vacíos de Lottery desde el Drive (solo campos vacíos, con respaldo; falta el sí del usuario); un monto de alerta para Caja en la botonera; decidir si Precios usa la última compra de cada producto en vez de la última factura.
