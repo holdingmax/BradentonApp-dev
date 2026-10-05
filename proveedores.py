@@ -15,6 +15,7 @@ import io
 import os
 import re
 import tempfile
+from collections import Counter
 from copy import copy
 from datetime import datetime
 
@@ -25,10 +26,10 @@ except ImportError:  # pragma: no cover - environment guard
 
 try:
     import pytesseract
-    from PIL import Image
+    from PIL import Image, ImageOps
 except ImportError:  # pragma: no cover - environment guard
     pytesseract = None  # type: ignore[assignment]
-    Image = None  # type: ignore[assignment]
+    Image = ImageOps = None  # type: ignore[assignment]
 
 try:
     import cv2
@@ -190,6 +191,17 @@ def _extract_cec_invoice(pdf_path):
     subtotal_match = re.search(r"Subtotal:?\s*\$?\s*([\d,]+\.\d{2})", text)
 
     if not (invoice_match and date_match and subtotal_match):
+        # 2026-10-04: en 8 de 83 facturas reales esta lectura (psm 3) pierde el
+        # N° o el Subtotal; leyendo la página como un solo bloque (psm 6) salen,
+        # y en las 8 coinciden con el N° del nombre y con la suma de renglones.
+        text6 = pytesseract.image_to_string(image, config="--psm 6")
+        invoice_match = invoice_match or re.search(
+            r"Inv\s*#?\s*(\d{7})\b", re.sub(r"(?<=\d) (?=\d)", "", text6)
+        )
+        date_match = date_match or re.search(r"Order taken on\s*(\d{1,2}/\d{1,2}/\d{4})", text6)
+        subtotal_match = subtotal_match or re.search(r"Subtotal:?\s*\$?\s*([\d,]+\.\d{2})", text6)
+
+    if not (invoice_match and date_match and subtotal_match):
         raise ValueError(
             f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total "
             "del PDF de CEC (Chinook)."
@@ -199,6 +211,82 @@ def _extract_cec_invoice(pdf_path):
     invoice_date = datetime.strptime(date_match.group(1), "%m/%d/%Y")
     amount = float(subtotal_match.group(1).replace(",", ""))
     return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
+
+
+_COLONIAL_AMOUNT_RE = re.compile(r"^\$?\s*(\d{1,3}(?:,\d{3})+|\d{1,6})\.(\d{2})$")
+_COLONIAL_DELIVERY_FEES = ("7.99", "9.99", "11.99")
+
+
+def _colonial_amount(text):
+    m = _COLONIAL_AMOUNT_RE.match(text)
+    return float(m.group(1).replace(",", "") + "." + m.group(2)) if m else None
+
+
+def _colonial_balance_cell(image):
+    """
+    (recorte, lectura) del importe de BALANCE DUE de una página, o None.
+    Ese importe va abajo a la derecha, en la fila del pie (ORD, SHIP,
+    DELIVERY FEE, BALANCE DUE) justo sobre "Customer Signature". Se ubica por
+    el rótulo; si el OCR no lo ve (letra chica dentro de la grilla), por el
+    delivery fee de esa misma fila o por la línea de la firma.
+    """
+    data = pytesseract.image_to_data(image, config="--psm 11", output_type=pytesseract.Output.DICT)
+    words = [(data["text"][i].strip(), data["left"][i], data["top"][i], data["width"][i], data["height"][i])
+             for i in range(len(data["text"])) if data["text"][i].strip()]
+    height, width = image.height, image.width
+    low = [w for w in words if w[2] > height * 0.45]
+    amounts = [w for w in low if _colonial_amount(w[0]) is not None and w[1] > width * 0.55]
+
+    def found(word):
+        _, left, top, w, h = word
+        box = (max(0, int(left - 0.6 * w)), max(0, int(top - 0.8 * h)), min(width, int(left + 1.6 * w)), int(top + 1.8 * h))
+        return image.crop(box), _colonial_amount(word[0])
+
+    labels = [w for w in low if re.fullmatch(r"BALANCE\W*", w[0], re.IGNORECASE)]
+    if labels:
+        _, left, top, label_w, _ = max(labels, key=lambda w: w[2])
+        below = [w for w in amounts if top < w[2] < top + 0.08 * height and w[1] + w[3] > left - label_w]
+        if below:
+            return found(min(below, key=lambda w: w[2]))
+    for fee in sorted((w for w in low if w[0] in _COLONIAL_DELIVERY_FEES and w[1] < width * 0.5), key=lambda w: -w[2]):
+        same_row = [w for w in amounts if abs(w[2] - fee[2]) < fee[4] * 1.2]
+        if same_row:
+            return found(max(same_row, key=lambda w: w[1]))
+    signatures = [w for w in low if re.fullmatch(r"Customer", w[0], re.IGNORECASE)]
+    if signatures:
+        signature = max(signatures, key=lambda w: w[2])
+        above = [w for w in amounts if signature[2] - 0.06 * height < w[2] < signature[2]]
+        if above:
+            return found(max(above, key=lambda w: w[2]))
+    return None
+
+
+def _colonial_balance_due(pages):
+    """
+    BALANCE DUE de la factura Colonial, o None si no se puede leer con
+    seguridad. Se busca de la última página hacia atrás (con muchos ítems
+    el total cae en la 2da o 3ra) y el importe se lee cuatro veces: la del
+    OCR de página completa y tres relecturas del recorte de esa celda
+    (agrandado, solo dígitos). Vale si al menos dos coinciden y le ganan
+    por el doble a cualquier otra lectura.
+    """
+    for image in reversed(pages):
+        cell = _colonial_balance_cell(image)
+        if cell is None:
+            continue
+        crop, first = cell
+        big = ImageOps.grayscale(crop.resize((crop.width * 3, crop.height * 3), Image.LANCZOS))
+        readings = [first] if first is not None else []
+        for img, config in ((big, "--psm 7"), (big, "--psm 6"), (big.point(lambda v: 255 if v > 140 else 0), "--psm 7")):
+            text = pytesseract.image_to_string(img, config=config + " -c tessedit_char_whitelist=0123456789.,$")
+            value = _colonial_amount(text.strip().replace(" ", ""))
+            if value is not None:
+                readings.append(value)
+        counts = Counter(readings).most_common()
+        if counts and counts[0][1] >= 2 and counts[0][1] >= 2 * (counts[1][1] if len(counts) > 1 else 0):
+            return counts[0][0]
+        return None
+    return None
 
 
 def _extract_colonial_invoice(pdf_path):
@@ -228,6 +316,16 @@ def _extract_colonial_invoice(pdf_path):
     que empezó en agosto, Colonial viene fallando en la mayoría de sus
     facturas desde siempre por calidad de escaneo real, no por esto en
     particular. Mismo tipo de límite ya aceptado para AZ Southeast.
+
+    2026-10-04: ese recorte angosto (página 1, abajo a la derecha, sin
+    ancla) además leía importes de productos como si fueran el total: 11
+    de las 80 facturas reales del Drive (2025-2026) quedaban guardadas con
+    un monto distinto del Ledger ($1.94, $1.29, $114.75...). Ahora el
+    BALANCE DUE se busca en la celda de la fila del pie, de la última
+    página hacia atrás, y se lee cuatro veces (ver _colonial_balance_due):
+    47 de 80 coinciden con el Ledger (antes 20); las 6 que no coinciden
+    son el BALANCE DUE impreso, que el Ledger registró neto de una
+    devolución o nota de crédito; las demás dan error y van a mano.
     """
     _ensure_pdfplumber()
     _ensure_pytesseract()
@@ -243,24 +341,9 @@ def _extract_colonial_invoice(pdf_path):
     invoice_match = re.search(r"\b(\d{7})\b", top_text)
     date_match = re.search(r"(\d{1,2}/\d{1,2}/\d{2,4})", top_text)
 
-    bottom_text = pytesseract.image_to_string(_crop_relative(pages[0], 0.50, 0.90, 1.0, 1.0))
-    balance_match = re.search(r"([\d,]+\.\d{2})", bottom_text)
+    amount = _colonial_balance_due(pages)
 
-    if balance_match is None:
-        for image in pages:
-            for top in (0.76, 0.78, 0.80, 0.82, 0.84, 0.86):
-                wide_crop = _crop_relative(image, 0.0, top, 1.0, 1.0)
-                wide_crop = wide_crop.resize((wide_crop.width * 3, wide_crop.height * 3))
-                wide_text = pytesseract.image_to_string(_remove_grid_lines(wide_crop))
-                balance_match = re.search(
-                    r"BALANCE\s*DUE\.?\s*\n*\s*\$?\s*([\d,]+\.\d{2})", wide_text, re.IGNORECASE
-                )
-                if balance_match:
-                    break
-            if balance_match:
-                break
-
-    if not (invoice_match and date_match and balance_match):
+    if not (invoice_match and date_match and amount is not None):
         raise ValueError(
             f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total del PDF de "
             "Colonial (si tiene una corrección a mano, cargue esta factura manualmente)."
@@ -268,7 +351,6 @@ def _extract_colonial_invoice(pdf_path):
 
     invoice_no = int(invoice_match.group(1))
     invoice_date = _parse_mmdd_year_flexible(date_match.group(1))
-    amount = float(balance_match.group(1).replace(",", ""))
     return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
 
 
