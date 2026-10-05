@@ -92,7 +92,18 @@
             {{ fmt(row.deposit) }}
             {% if row.is_gettel %}<span class="historial-badge historial-badge-manual caja-gettel-tag">Gettel</span>{% endif %}
           </td>
-          <td>{{ fmt(row.expenses_cash) }}</td>
+          <td>
+            {% set day_items = expense_items.get(row.date) %}
+            {% if day_items %}
+            <button type="button" class="popover-trigger" data-popover-target="caja-gastos-pop-{{ row.date }}">{{ fmt(row.expenses_cash) }}</button>
+            <div class="popover-panel totals-breakdown-popover" id="caja-gastos-pop-{{ row.date }}">
+              <div class="totals-breakdown-title">Gastos del {{ "%02d"|format(row.day) }}</div>
+              {% for item in day_items %}
+              <div class="totals-breakdown-row"><span>{{ item.detail or 'sin detalle' }}</span><span>{{ fmt(item.amount) }}</span></div>
+              {% endfor %}
+            </div>
+            {% else %}{{ fmt(row.expenses_cash) }}{% endif %}
+          </td>
           <td>{{ fmt(row.cuenta_final) }}</td>
           <td>{{ totals_popover('caja-dif-pop-' + row.date, 'Dif Efect (Cash − Depósitos + Other − Gastos − Lottery Cuenta Final)', row.dif_efect, row.dif_efect_breakdown, 'chase-amount-neg' if row.dif_efect < 0 else 'chase-amount-pos') }}</td>
           <td><strong>{{ totals_popover('caja-saldo-pop-' + row.date, 'Saldo (Saldo día anterior + Dif Efect)', row.saldo, row.saldo_breakdown) }}</strong></td>
@@ -155,7 +166,7 @@
   <form method="post" action="{{ url_for('carga_datos_caja_gastos_subir') }}" enctype="multipart/form-data" class="background-job-form caja-upload-form" data-resume-job="{{ resume_job_id or '' }}">
     <input type="hidden" name="year" value="{{ year }}">
     <input type="hidden" name="month" value="{{ month }}">
-    <label class="muted" for="caja-gastos-input">O subí los comprobantes escaneados (PDF o foto): se lee el ticket "Paid Out" de la caja abrochado a cada uno (fecha y monto) y el detalle sale del nombre del archivo. Lo que ya está cargado no se duplica.</label>
+    <label class="muted" for="caja-gastos-input">Comprobantes escaneados (PDF o foto)</label>
     <input type="file" name="gasto_files" id="caja-gastos-input" multiple accept="application/pdf,image/jpeg,image/png" class="accumulate-files" required>
     <div class="form-actions">
       <button type="submit">Leer y cargar</button>
