@@ -152,6 +152,50 @@
     <button type="submit">Agregar</button>
   </form>
 
+  <form method="post" action="{{ url_for('carga_datos_caja_gastos_subir') }}" enctype="multipart/form-data" class="background-job-form caja-upload-form" data-resume-job="{{ resume_job_id or '' }}">
+    <input type="hidden" name="year" value="{{ year }}">
+    <input type="hidden" name="month" value="{{ month }}">
+    <label class="muted" for="caja-gastos-input">O subí los comprobantes escaneados (PDF o foto): se lee el ticket "Paid Out" de la caja abrochado a cada uno (fecha y monto) y el detalle sale del nombre del archivo. Lo que ya está cargado no se duplica.</label>
+    <input type="file" name="gasto_files" id="caja-gastos-input" multiple accept="application/pdf,image/jpeg,image/png" class="accumulate-files" required>
+    <div class="form-actions">
+      <button type="submit">Leer y cargar</button>
+      <button type="button" class="btn-secondary clear-file-btn" data-target="caja-gastos-input">Limpiar</button>
+    </div>
+  </form>
+
+  {% if pending_expenses %}
+  <div class="caja-pending">
+    <h3>Para confirmar</h3>
+    <p class="muted">Comprobantes sin el ticket "Paid Out" de la caja (o con el ticket dudoso): no se cargaron solos. Revisá la fecha y el monto contra el papel y agregalos si fueron en efectivo; si no (un cheque, una tarjeta), descartalos.</p>
+    {% for p in pending_expenses %}
+    <div class="caja-pending-row">
+      <form method="post" action="{{ url_for('carga_datos_caja_gastos_pendiente_agregar', pending_id=p.id) }}" class="caja-expense-form">
+        <input type="hidden" name="year" value="{{ year }}">
+        <input type="hidden" name="month" value="{{ month }}">
+        <div>
+          <label class="muted">Fecha</label>
+          <input type="date" name="date" value="{{ p.date or '' }}" required class="{{ 'caja-detail-missing' if not p.date }}">
+        </div>
+        <div>
+          <label class="muted">Monto</label>
+          <input type="number" step="0.01" name="amount" value="{{ '%.2f'|format(p.amount) if p.amount is not none else '' }}" placeholder="no se leyó" required class="{{ 'caja-detail-missing' if p.amount is none }}">
+        </div>
+        <div style="flex: 1 1 220px;">
+          <label class="muted">Detalle <span class="caja-pending-file">({{ p.filename }})</span></label>
+          <input type="text" name="detail" value="{{ p.detail or '' }}">
+        </div>
+        <button type="submit">Agregar</button>
+      </form>
+      <form method="post" action="{{ url_for('carga_datos_caja_gastos_pendiente_descartar', pending_id=p.id) }}">
+        <input type="hidden" name="year" value="{{ year }}">
+        <input type="hidden" name="month" value="{{ month }}">
+        <button type="submit" class="btn-secondary">Descartar</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
   {% set has_items = expense_items.values()|list %}
   {% if has_items %}
   <div class="historial-table-wrap" style="margin-top: 16px;">
@@ -163,7 +207,15 @@
           <tr>
             <td>{{ day }}</td>
             <td>${{ fmt(item.amount) }}</td>
-            <td>{{ item.detail or "—" }}</td>
+            <td>
+              <form method="post" action="{{ url_for('carga_datos_caja_gastos_detalle', item_id=item.id) }}" class="caja-detail-form">
+                <input type="hidden" name="year" value="{{ year }}">
+                <input type="hidden" name="month" value="{{ month }}">
+                <input type="text" name="detail" value="{{ item.detail or '' }}" placeholder="falta el detalle" class="{{ 'caja-detail-missing' if not item.detail }}">
+                <button type="submit" class="btn-secondary">Guardar</button>
+                {% if item.source == 'ocr' %}<span class="historial-badge historial-badge-manual" title="Fecha y monto leídos del ticket Paid Out de la caja">ticket</span>{% endif %}
+              </form>
+            </td>
             <td class="historial-col-action">
               <form method="post" action="{{ url_for('carga_datos_caja_gastos_eliminar', item_id=item.id) }}" style="display:inline;">
                 <input type="hidden" name="year" value="{{ year }}">
@@ -246,6 +298,18 @@
   .caja-expense-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; }
   .caja-expense-form > div { display: flex; flex-direction: column; gap: 4px; }
   .caja-expense-form input { padding: 6px 8px; }
+  .caja-pending { margin-top: 16px; padding: 12px 14px; border: 1px solid var(--warning, #D97706); border-radius: 10px; background: color-mix(in srgb, var(--warning, #D97706) 6%, transparent); }
+  .caja-pending h3 { margin: 0 0 4px; font-size: 14px; }
+  .caja-pending-row { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; padding: 10px 0; border-top: 1px solid var(--border); }
+  .caja-pending-row:first-of-type { border-top: none; }
+  .caja-pending-row > form:first-child { flex: 1 1 auto; min-width: 0; }
+  .caja-pending-row button { margin-top: 0; }
+  .caja-pending-file { font-size: 11px; }
+  .caja-upload-form { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+  .caja-detail-form { display: flex; align-items: center; gap: 8px; }
+  .caja-detail-form input[type=text] { padding: 4px 8px; min-width: 220px; }
+  .caja-detail-form button { margin-top: 0; padding: 4px 10px; font-size: 12px; }
+  .caja-detail-form input.caja-detail-missing { border-color: var(--warning, #D97706); }
   .historial-col-action { text-align: right; white-space: nowrap; }
   .historial-col-action form button { margin-top: 0; padding: 5px 10px; font-size: 12px; }
 </style>

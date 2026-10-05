@@ -16,6 +16,16 @@ reportes_data/caja.db (mismo directorio gitignored que las demás bases):
   Excel que ya lleva cada celda de la columna M real. Reemplaza el modelo
   viejo (un solo monto por día, sin detalle) -- no había ningún dato real
   cargado todavía, así que no hizo falta migrar nada.
+  Columnas agregadas el 2026-10-04 (carga por OCR de los comprobantes,
+  ver gastos_caja.py): `source` ("ocr" si salió del ticket "Paid Out" del
+  POS; vacío = tipeado a mano) y `trans_no` (el N° de transacción de ese
+  ticket, para no cargar dos veces el mismo gasto).
+- caja_expense_pending (2026-10-04): comprobantes subidos que NO traen el
+  ticket "Paid Out" de la caja -- pueden ser de caja igual (una compra con
+  débito que se repuso de la caja) o no (un cheque). No se cargan solos:
+  quedan con la fecha y el total que se pudieron leer para que el usuario
+  los confirme o los descarte. `year`/`month` = el mes que se estaba viendo
+  al subirlos (ahí se muestran).
 - caja_months: Saldo Inicial (editable) y un override opcional de Saldo
   Final por mes -- si no hay override, el Saldo Final "real" es el último
   Saldo corrido que calcula caja.py, nunca algo que se guarde acá aparte.
@@ -72,10 +82,28 @@ def _ensure_schema(conn):
         )
         """
     )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS caja_expense_pending (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            year INTEGER NOT NULL,
+            month INTEGER NOT NULL,
+            date TEXT,
+            amount REAL,
+            detail TEXT,
+            filename TEXT,
+            created_at TEXT
+        )
+        """
+    )
     # Índices por fecha -- pensado para escalar a años de gastos/documentos
     # sin que "los del mes tal" se vuelva un recorrido completo de la tabla
     # (ver CLAUDE.md, "pensar en una base de datos grande y confiable").
     conn.execute("CREATE INDEX IF NOT EXISTS idx_caja_expense_items_date ON caja_expense_items (date)")
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(caja_expense_items)")}
+    for column in ("source", "trans_no"):
+        if column not in existing:
+            conn.execute(f"ALTER TABLE caja_expense_items ADD COLUMN {column} TEXT")
     conn.commit()
 
 
@@ -89,17 +117,95 @@ def _date_key(value):
     return str(value)
 
 
-def add_expense_item(report_date, amount, detail):
+def add_expense_item(report_date, amount, detail, source=None, trans_no=None):
     key = _date_key(report_date)
     now = _now()
     conn = _connect()
     try:
         cur = conn.execute(
-            "INSERT INTO caja_expense_items (date, amount, detail, created_at) VALUES (?, ?, ?, ?)",
-            (key, amount, (detail or "").strip() or None, now),
+            "INSERT INTO caja_expense_items (date, amount, detail, created_at, source, trans_no) VALUES (?, ?, ?, ?, ?, ?)",
+            (key, amount, (detail or "").strip() or None, now, source, trans_no),
         )
         conn.commit()
         return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def find_same_expense(report_date, amount, trans_no=None):
+    """
+    El gasto ya cargado que es este mismo, o None: el del mismo N° de
+    transacción del POS ese día, o -- si se tipeó a mano, sin N° -- uno del
+    mismo día y el mismo monto. Así una carga por OCR no duplica lo que el
+    usuario ya había cargado (ni lo que ya se subió antes).
+    """
+    key = _date_key(report_date)
+    conn = _connect()
+    try:
+        if trans_no:
+            row = conn.execute(
+                "SELECT * FROM caja_expense_items WHERE date = ? AND trans_no = ?", (key, str(trans_no))
+            ).fetchone()
+            if row:
+                return dict(row)
+        # Con N° de ticket, el mismo monto solo cuenta si el otro no tiene N°
+        # (dos tickets distintos del mismo día pueden ser del mismo monto).
+        row = conn.execute(
+            "SELECT * FROM caja_expense_items WHERE date = ? AND ABS(amount - ?) < 0.005"
+            + (" AND (trans_no IS NULL OR trans_no = '')" if trans_no else ""),
+            (key, amount),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def update_expense_detail(item_id, detail):
+    conn = _connect()
+    try:
+        conn.execute(
+            "UPDATE caja_expense_items SET detail = ? WHERE id = ?", ((detail or "").strip() or None, item_id)
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def add_pending_expense(year, month, report_date, amount, detail, filename):
+    """Un comprobante sin ticket de caja, para confirmar a mano. None si ese archivo ya estaba pendiente en el mes."""
+    conn = _connect()
+    try:
+        if conn.execute(
+            "SELECT 1 FROM caja_expense_pending WHERE year = ? AND month = ? AND filename = ?", (year, month, filename)
+        ).fetchone():
+            return None
+        cur = conn.execute(
+            "INSERT INTO caja_expense_pending (year, month, date, amount, detail, filename, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (year, month, _date_key(report_date) if report_date else None, amount, detail, filename, _now()),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
+
+
+def get_month_pending_expenses(year, month):
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM caja_expense_pending WHERE year = ? AND month = ? ORDER BY date IS NULL, date, id", (year, month)
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(row) for row in rows]
+
+
+def delete_pending_expense(pending_id):
+    conn = _connect()
+    try:
+        conn.execute("DELETE FROM caja_expense_pending WHERE id = ?", (pending_id,))
+        conn.commit()
     finally:
         conn.close()
 
@@ -127,7 +233,7 @@ def get_month_expense_items(year, month):
     by_date = {}
     for row in rows:
         by_date.setdefault(row["date"], []).append(
-            {"id": row["id"], "amount": row["amount"], "detail": row["detail"]}
+            {"id": row["id"], "amount": row["amount"], "detail": row["detail"], "source": row["source"]}
         )
     return by_date
 

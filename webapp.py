@@ -53,6 +53,7 @@ from chase_rules import (
     list_display_rules as list_chase_display_rules,
 )
 import caja_db
+import gastos_caja
 from caja import (
     build_caja_export_pdf,
     build_caja_export_workbook,
@@ -4934,9 +4935,11 @@ def carga_datos_caja():
     Caja del lado Carga de Datos -- pedido explícito del usuario
     (2026-09-12): "que esta vez se completaria automaticamente con los
     datos que haya guardado en el chase de tal mes... tendria que verse
-    como el cuadro del excel exactamente igual". No hay nada que subir acá
-    -- Chase y Lottery ya se cargan por sus propios módulos, este reporte
-    solo cruza lo que ya está guardado (ver caja.build_month_report_from_db).
+    como el cuadro del excel exactamente igual". Chase y Lottery se cargan
+    por sus propios módulos, este reporte solo cruza lo que ya está
+    guardado (ver caja.build_month_report_from_db). Lo único que se sube
+    acá son los comprobantes de los gastos en efectivo (2026-10-04, ver
+    carga_datos_caja_gastos_subir).
     """
     today = date.today()
     year = request.args.get("year", type=int) or today.year
@@ -4948,10 +4951,13 @@ def carga_datos_caja():
     prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
     next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
 
+    _active_job = jobs.get_active_job("caja_gastos")
     return render_template(
         "carga_datos_caja_historial.html",
         report=report,
         expense_items=caja_db.get_month_expense_items(year, month),
+        pending_expenses=caja_db.get_month_pending_expenses(year, month),
+        resume_job_id=(_active_job["id"] if _active_job else None),
         year=year,
         month=month,
         month_name=_MONTH_NAMES_ES[month - 1],
@@ -5041,6 +5047,139 @@ def carga_datos_caja_gastos_agregar():
     caja_db.add_expense_item(report_date, amount, detail)
     flash("Gasto agregado.", "success")
     return redirect(url_for("carga_datos_caja", year=year, month=month))
+
+
+@app.route("/carga-datos/caja/gastos/subir", methods=["POST"])
+def carga_datos_caja_gastos_subir():
+    """
+    Gastos de Caja leídos de los comprobantes escaneados -- pedido del
+    usuario (2026-10-04): "implementemos un sistema de OCR para subir los
+    gastos del mes hechos con caja, así aunque no sean proveedores ya
+    escaneados, que sea un intento de cargar de forma automática gastos del
+    mes". Lo que se lee es el ticket "Paid Out" del POS que va abrochado a
+    cada comprobante (ver gastos_caja.py).
+    """
+    uploads = request.files.getlist("gasto_files")
+    if not uploads or not any(u.filename for u in uploads):
+        return _error_response("Seleccioná uno o más comprobantes (PDF o foto).")
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    paths = _save_uploads_to_workspace(uploads)
+    job_id = jobs.create_job(len(paths), kind="caja_gastos")
+    threading.Thread(target=_run_caja_gastos_job, args=(job_id, paths, year, month), daemon=True).start()
+    return jsonify({"job_id": job_id, "total": len(paths)})
+
+
+def _run_caja_gastos_job(job_id, paths, year, month):
+    """
+    Aislado por archivo, como los demás jobs. Nunca guarda un ticket con la
+    fecha o el monto dudoso; un comprobante sin ticket de caja queda
+    pendiente de confirmar (caja_db.add_pending_expense), no se carga solo.
+    """
+    try:
+        saved = duplicates = failed = without_detail = 0
+        other_months, no_slip, doubtful = [], [], []
+        for index, path in enumerate(paths, start=1):
+            try:
+                filename = os.path.basename(path)
+                result = gastos_caja.extract_cash_expenses(path, filename, default_year=year)
+                name = result["detail"] or "un comprobante sin nombre"
+                proposal = result["proposal"]
+                if proposal is not None:
+                    already = (proposal["date"] and proposal["amount"] is not None
+                               and caja_db.find_same_expense(proposal["date"], proposal["amount"]))
+                    if already:
+                        duplicates += 1
+                    elif caja_db.add_pending_expense(year, month, proposal["date"], proposal["amount"],
+                                                     result["detail"], filename):
+                        no_slip.append(name)
+                    else:  # ese archivo ya estaba en "Para confirmar"
+                        duplicates += 1
+                # Ticket encontrado pero con la fecha o el monto dudoso: también
+                # va a "Para confirmar", con lo que sí se pudo leer.
+                for number, slip in enumerate(result["doubtful"], start=1):
+                    pending_date = slip["date"] or gastos_caja.date_from_filename(filename, year)
+                    if caja_db.add_pending_expense(year, month, pending_date, slip["amount"], result["detail"],
+                                                   filename if number == 1 else f"{filename} (ticket {number})"):
+                        doubtful.append(name)
+                    else:
+                        duplicates += 1
+                for slip in result["slips"]:
+                    if caja_db.find_same_expense(slip["date"], slip["amount"], slip["trans"]):
+                        duplicates += 1
+                        continue
+                    caja_db.add_expense_item(slip["date"], slip["amount"], result["detail"],
+                                             source="ocr", trans_no=slip["trans"])
+                    saved += 1
+                    without_detail += not result["detail"]
+                    if year and month and (slip["date"].year, slip["date"].month) != (year, month):
+                        other_months.append(slip["date"].strftime("%d/%m/%Y"))
+            except Exception as exc:
+                print(f"[carga-datos/caja/gastos] {path}: {exc}")
+                failed += 1
+            jobs.update_job(job_id, done=index, total=len(paths))
+
+        parts = []
+        if saved:
+            parts.append(f"{saved} gasto(s) cargado(s) desde el ticket de la caja.")
+        if other_months:
+            parts.append(f"{len(other_months)} con fecha de otro mes ({', '.join(other_months)}): quedaron en su mes.")
+        if duplicates:
+            parts.append(f"{duplicates} ya estaban cargados y se omitieron.")
+        if without_detail:
+            parts.append(f"{without_detail} sin detalle (el nombre del archivo no dice a quién se le pagó): completalo en la tabla.")
+        if doubtful:
+            parts.append("Ticket de caja con la fecha o el monto dudoso (" + "; ".join(doubtful) + "): quedó abajo, "
+                         "en \"Para confirmar\" -- revisalo contra el papel antes de agregarlo.")
+        if no_slip:
+            parts.append("Sin el ticket \"Paid Out\" de la caja (" + "; ".join(no_slip) + "): quedaron abajo, "
+                         "en \"Para confirmar\", con la fecha y el total que se pudieron leer -- agregalos si "
+                         "fueron en efectivo o descartalos.")
+        if failed:
+            parts.append(f"{failed} archivo(s) no se pudieron leer.")
+        if saved:
+            level = "warning" if (doubtful or no_slip or failed or without_detail or other_months) else "success"
+        else:
+            level = "warning" if (duplicates or no_slip or doubtful) and not failed else "error"
+        jobs.update_job(
+            job_id, status="done", done=len(paths), total=len(paths),
+            notice=" ".join(parts) or "No se encontró ningún gasto.", notice_level=level,
+            redirect_url=f"/carga-datos/caja?year={year}&month={month}" if year and month else "/carga-datos/caja",
+        )
+    except Exception as exc:
+        jobs.update_job(job_id, status="error", error=f"Error: {exc}")
+
+
+@app.route("/carga-datos/caja/gastos/pendiente/<int:pending_id>/agregar", methods=["POST"])
+def carga_datos_caja_gastos_pendiente_agregar(pending_id):
+    """Confirma un comprobante sin ticket de caja: pasa a ser un gasto con lo que el usuario dejó en el form."""
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    try:
+        amount = float((request.form.get("amount") or "").strip())
+        parsed_date = datetime.strptime(request.form.get("date") or "", "%Y-%m-%d").date()
+    except ValueError:
+        flash("Completá la fecha y el monto del gasto antes de agregarlo.", "error")
+        return redirect(url_for("carga_datos_caja", year=year, month=month))
+    caja_db.add_expense_item(parsed_date, amount, request.form.get("detail"), source="comprobante")
+    caja_db.delete_pending_expense(pending_id)
+    if year and month and (parsed_date.year, parsed_date.month) != (year, month):
+        flash(f"Gasto agregado en {parsed_date:%d/%m/%Y}, que es de otro mes.", "info")
+    return redirect(url_for("carga_datos_caja", year=year, month=month))
+
+
+@app.route("/carga-datos/caja/gastos/pendiente/<int:pending_id>/descartar", methods=["POST"])
+def carga_datos_caja_gastos_pendiente_descartar(pending_id):
+    caja_db.delete_pending_expense(pending_id)
+    return redirect(url_for("carga_datos_caja", year=request.form.get("year", type=int),
+                            month=request.form.get("month", type=int)))
+
+
+@app.route("/carga-datos/caja/gastos/<int:item_id>/detalle", methods=["POST"])
+def carga_datos_caja_gastos_detalle(item_id):
+    caja_db.update_expense_detail(item_id, request.form.get("detail"))
+    return redirect(url_for("carga_datos_caja", year=request.form.get("year", type=int),
+                            month=request.form.get("month", type=int)))
 
 
 @app.route("/carga-datos/caja/gastos/<int:item_id>/eliminar", methods=["POST"])
