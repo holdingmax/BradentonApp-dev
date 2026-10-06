@@ -20,6 +20,7 @@ reportes_data/eft.db (gitignored, mismo directorio que las demás bases):
 """
 
 import calendar
+import hashlib
 import os
 import sqlite3
 from datetime import date, datetime, timedelta
@@ -92,6 +93,37 @@ def _ensure_schema(conn):
             reported_group_total REAL,
             source_filename TEXT,
             updated_at TEXT
+        )
+        """
+    )
+    # Detalle de cupones (pedido del usuario, 2026-10-06, ver
+    # cupones_detalle.py): un grupo por depósito (fila del reporte mensual de
+    # cupones), con los DDC que lo forman si se conocen, y sus batches con la
+    # fecha real de venta. `signature` (los batches ordenados) evita cargar
+    # dos veces el mismo grupo.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cupon_detail_groups (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            signature TEXT NOT NULL UNIQUE,
+            gross REAL, fees REAL, net REAL,
+            first_date TEXT, last_date TEXT,
+            coupons TEXT,
+            coupons_source TEXT,
+            source_filename TEXT,
+            updated_at TEXT
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS cupon_detail_batches (
+            group_id INTEGER NOT NULL REFERENCES cupon_detail_groups(id),
+            idx INTEGER NOT NULL,
+            batch_date TEXT NOT NULL,
+            batch TEXT NOT NULL,
+            gross REAL, fees REAL, net REAL,
+            PRIMARY KEY (group_id, idx)
         )
         """
     )
@@ -731,6 +763,251 @@ def get_coupon_gross_by_date():
     return result
 
 
+def get_cupones_detail_by_date():
+    """
+    {fecha ISO: {"gross", "fees", "net", "coupons": [DDC], "unknown"}} de los
+    cupones cargados (cruce con el reporte mensual de J.H.). `unknown` cuenta
+    los DDC de un grupo que todavía no tienen monto propio (en 0 hasta que
+    un EFT los paga): ese día suma de menos.
+    """
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT coupon_id, date, gross, fees, net, reported_group_text FROM cupones").fetchall()
+    finally:
+        conn.close()
+    result = {}
+    for row in rows:
+        parsed = _parse_cupon_date(row["date"])
+        if parsed is None:
+            continue
+        day = result.setdefault(parsed.date().isoformat(), {"gross": 0.0, "fees": 0.0, "net": 0.0, "coupons": [], "unknown": 0})
+        for key in ("gross", "fees", "net"):
+            day[key] = round(day[key] + (row[key] or 0.0), 2)
+        day["coupons"].append(row["coupon_id"])
+        if row["reported_group_text"] and not any(row[key] for key in ("gross", "fees", "net")):
+            day["unknown"] += 1
+    return result
+
+
+def insert_new_cupones(records, source_filename=None):
+    """
+    Agrega a Cupones solo los DDC que no estaban (records como los de
+    cupones_append.expand_monthly_records_for_storage): lo ya cargado no se
+    toca (pedido del usuario, 2026-10-06, para el Credit Card Daily Summary
+    en PDF). Después completa como upsert_cupones (EFT, DDC por monto,
+    detalle de cupones). Devuelve (agregados, ya estaban).
+    """
+    conn = _connect()
+    inserted = skipped = regrouped = 0
+    now = datetime.utcnow().isoformat()
+    try:
+        with conn:
+            for rec in records:
+                coupon_id = (rec.get("coupon") or "").strip().upper()
+                if not coupon_id:
+                    continue
+                cur = conn.execute(
+                    "INSERT OR IGNORE INTO cupones (coupon_id, date, gross, fees, net, reported_group_text, reported_group_total, source_filename, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    (coupon_id, rec.get("date"), rec.get("gross"), rec.get("fees"), rec.get("net"),
+                     rec.get("reported_group_text"), rec.get("reported_group_total"), source_filename, now),
+                )
+                if cur.rowcount:
+                    inserted += 1
+                    continue
+                skipped += 1
+                # Un DDC que quedó cargado solo y ahora el reporte lo trae en
+                # un grupo: se le pone el grupo (los montos no se tocan), así
+                # el que falta del grupo sale por diferencia y se enlaza con
+                # su línea de EFT (autolink_missing_ddc_by_amount).
+                if rec.get("reported_group_text"):
+                    regrouped += conn.execute(
+                        "UPDATE cupones SET reported_group_text = ?, reported_group_total = ? "
+                        "WHERE coupon_id = ? AND reported_group_text IS NULL",
+                        (rec["reported_group_text"], rec.get("reported_group_total"), coupon_id),
+                    ).rowcount
+    finally:
+        conn.close()
+    if inserted or regrouped:
+        backfill_grouped_cupones_from_eft()
+        autolink_missing_ddc_by_amount()
+        identify_detail_groups()
+    return inserted, skipped
+
+
+# ---------------------------------------------------------------------------
+# Detalle de cupones (pedido del usuario, 2026-10-06; lectura en
+# cupones_detalle.py, control día por día en control_tarjetas.py)
+# ---------------------------------------------------------------------------
+
+# Un grupo se identifica con la fila del reporte mensual de cupones cuya
+# fecha cae entre su último batch y estos días después (en agosto-septiembre
+# 2026 fue siempre el mismo día del último batch).
+_DETAIL_MATCH_DAYS = 3
+
+
+def _detail_signature(batches):
+    lines = sorted(f'{b["batch_date"]}|{b["batch"]}|{b["gross"]:.2f}|{b["fees"]:.2f}|{b["net"]:.2f}' for b in batches)
+    return hashlib.sha1("\n".join(lines).encode("utf-8")).hexdigest()
+
+
+def save_coupon_detail(groups, source_filename=None):
+    """
+    Guarda los grupos leídos (cupones_detalle.extract_detail_groups). Un
+    grupo ya cargado (mismos batches) no se duplica; si ahora trae los DDC
+    (el PDF de un solo cupón los imprime), se completan. Los DDC de los que
+    no los traen se buscan después con identify_detail_groups.
+    Devuelve [{"id", "status": new|repeated, "first_date", "last_date", "gross", "coupons"}].
+    """
+    conn = _connect()
+    results = []
+    now = datetime.utcnow().isoformat()
+    try:
+        with conn:
+            for group in groups:
+                batches = group["batches"]
+                signature = _detail_signature(batches)
+                dates = sorted(b["batch_date"] for b in batches)
+                coupons = ",".join(group["coupons"]) if group.get("coupons") else None
+                existing = conn.execute("SELECT id, coupons FROM cupon_detail_groups WHERE signature = ?", (signature,)).fetchone()
+                if existing is not None:
+                    if coupons and existing["coupons"] != coupons:
+                        conn.execute(
+                            "UPDATE cupon_detail_groups SET coupons = ?, coupons_source = 'pdf', updated_at = ? WHERE id = ?",
+                            (coupons, now, existing["id"]),
+                        )
+                    status, group_id = "repeated", existing["id"]
+                else:
+                    totals = group["totals"]
+                    cur = conn.execute(
+                        "INSERT INTO cupon_detail_groups (signature, gross, fees, net, first_date, last_date, coupons, coupons_source, source_filename, updated_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (signature, totals["gross"], totals["fees"], totals["net"], dates[0], dates[-1],
+                         coupons, "pdf" if coupons else None, source_filename, now),
+                    )
+                    for idx, b in enumerate(batches):
+                        conn.execute(
+                            "INSERT INTO cupon_detail_batches (group_id, idx, batch_date, batch, gross, fees, net) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                            (cur.lastrowid, idx, b["batch_date"], b["batch"], b["gross"], b["fees"], b["net"]),
+                        )
+                    status, group_id = "new", cur.lastrowid
+                results.append({"id": group_id, "status": status, "first_date": dates[0], "last_date": dates[-1],
+                                "gross": group["totals"]["gross"], "coupons": coupons})
+    finally:
+        conn.close()
+    return results
+
+
+def identify_detail_groups(report_rows=()):
+    """
+    Pone los DDC a los grupos de detalle que no los traen: el grupo es una
+    fila del reporte mensual de cupones, así que se busca esa fila con la
+    misma fecha (o hasta _DETAIL_MATCH_DAYS días después del último batch)
+    y los mismos Gross, Fees y Net. Se busca en Cupones (los DDC de un mismo
+    `reported_group_text`, o un DDC solo; si sus montos individuales todavía
+    están en 0, con el total del grupo) y en `report_rows`, las filas del
+    Credit Card Daily Summary en PDF (jh_mensual_db.get_coupon_rows). Solo
+    si hay una sola coincidencia. Se corre al cargar detalle, el reporte
+    mensual de Cupones o el Credit Card Daily Summary.
+    """
+    conn = _connect()
+    try:
+        pending = conn.execute(
+            "SELECT id, gross, fees, net, last_date FROM cupon_detail_groups WHERE coupons IS NULL"
+        ).fetchall()
+        if not pending:
+            return 0
+        candidates = {}
+        for r in conn.execute("SELECT coupon_id, date, gross, fees, net, reported_group_text, reported_group_total FROM cupones"):
+            parsed = _parse_cupon_date(r["date"])
+            if parsed is None:
+                continue
+            group_text = r["reported_group_text"]
+            c = candidates.setdefault(group_text or r["coupon_id"], {
+                # Los DDC del grupo son los que nombra el reporte, aunque
+                # alguno haya quedado cargado aparte de una carga anterior.
+                "members": sorted({d.strip().upper() for d in group_text.split(",") if d.strip()}) if group_text else [r["coupon_id"]],
+                "coupons": [], "gross": 0.0, "fees": 0.0, "net": 0.0, "complete": True,
+                "group_total": r["reported_group_total"], "day": parsed.date(),
+            })
+            c["coupons"].append(r["coupon_id"])
+            for key in ("gross", "fees", "net"):
+                c[key] += r[key] or 0.0
+            if not any(r[key] for key in ("gross", "fees", "net")):
+                c["complete"] = False
+        # El mismo depósito puede estar en Cupones y en el reporte en PDF:
+        # cuenta una sola vez (por sus DDC).
+        candidates = {",".join(c["members"]): c for c in candidates.values()}
+        for r in report_rows:
+            coupons = ",".join(sorted(r["coupons"]))
+            if coupons not in candidates or not candidates[coupons]["complete"]:
+                candidates[coupons] = {
+                    "members": sorted(r["coupons"]), "gross": r["gross"], "fees": r["fees"], "net": r["net"],
+                    "complete": True, "group_total": None, "day": date.fromisoformat(r["date"]),
+                }
+        identified = 0
+        for g in pending:
+            last = date.fromisoformat(g["last_date"])
+            matches = []
+            for c in candidates.values():
+                if not (last <= c["day"] <= last + timedelta(days=_DETAIL_MATCH_DAYS)):
+                    continue
+                if c["complete"]:
+                    same = all(abs(c[k] - (g[k] or 0.0)) < 0.005 for k in ("gross", "fees", "net"))
+                else:
+                    # reported_group_total es el neto del grupo (ver cupones_append).
+                    same = c["group_total"] is not None and abs(c["group_total"] - (g["net"] or 0.0)) < 0.005
+                if same:
+                    matches.append(c)
+            if len(matches) == 1:
+                conn.execute(
+                    "UPDATE cupon_detail_groups SET coupons = ?, coupons_source = 'monto' WHERE id = ?",
+                    (",".join(matches[0]["members"]), g["id"]),
+                )
+                identified += 1
+        if identified:
+            conn.commit()
+        return identified
+    finally:
+        conn.close()
+
+
+def get_detail_groups():
+    """Los grupos de detalle cargados, con sus batches: [{"id", "coupons" (lista o None), "gross", "fees", "net", "first_date", "last_date", "batches"}]."""
+    conn = _connect()
+    try:
+        groups = [dict(g) for g in conn.execute("SELECT * FROM cupon_detail_groups ORDER BY last_date, id")]
+        batches = conn.execute(
+            "SELECT group_id, batch_date, batch, gross, fees, net FROM cupon_detail_batches ORDER BY batch_date, idx"
+        ).fetchall()
+    finally:
+        conn.close()
+    by_group = {}
+    for b in batches:
+        by_group.setdefault(b["group_id"], []).append({k: b[k] for k in ("batch_date", "batch", "gross", "fees", "net")})
+    for g in groups:
+        g["coupons"] = g["coupons"].split(",") if g["coupons"] else None
+        g["batches"] = by_group.get(g["id"], [])
+    return groups
+
+
+def get_detail_batches_between(start, end):
+    """Batches del detalle con fecha de venta entre start y end (ISO), cada uno con los DDC de su grupo."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            """
+            SELECT b.batch_date, b.batch, b.gross, b.fees, b.net, g.coupons
+            FROM cupon_detail_batches b JOIN cupon_detail_groups g ON g.id = b.group_id
+            WHERE b.batch_date BETWEEN ? AND ? ORDER BY b.batch_date, b.idx
+            """,
+            (start, end),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(r) for r in rows]
+
+
 def eft_month_and_year(eft_date):
     """(año, mes) del EFT que pagó este cupón, o None si no hay cruce/fecha parseable."""
     parsed = _parse_eft_date(eft_date)
@@ -896,6 +1173,7 @@ def upsert_cupones(records, source_filename=None):
         conn.close()
     backfill_grouped_cupones_from_eft()
     autolink_missing_ddc_by_amount()
+    identify_detail_groups()
     return inserted, updated, repeated
 
 
@@ -1059,6 +1337,145 @@ def coupon_month_summary(year, month):
             for day, (count, amount) in sorted(pending_by_day.items())
         ],
         "per_eft": per_eft,
+    }
+
+
+def cupones_month_view(year, month):
+    """
+    El historial de Cupones de un mes (pedido del usuario, 2026-10-06:
+    "también va a ir por meses... para poder seguir un control de los
+    cupones que quedaron pendientes un mes, el límite debería ser el mes que
+    se selecciona"). Mismo criterio que coupon_month_summary:
+
+    - "applied": los cupones que pagó un EFT con fecha de este mes, juntos
+      por EFT con su total (order_cupones_by_eft); `prev_month` marca los
+      que son de un mes anterior.
+    - "pending": los cupones de este mes o del anterior que ningún EFT con
+      fecha hasta fin de mes pagó (ver _pending_rows), con su total y
+      subtotal por mes del cupón; `later` es el EFT que los pagó después.
+    - "next_month": los depósitos posteriores al cierre con ventas de este
+      mes (el detalle de cupones da el día de venta de cada batch): lo que
+      se vendió con tarjeta en el mes y entró como cupón el mes siguiente.
+    """
+    first, last, prev_first = _month_bounds(year, month)
+    cupones = get_cupones_flat()
+    applied, pending, coupon_info = [], [], {}
+    for cp in cupones:
+        match = cp.get("match")
+        eft_day = _parse_eft_date(match.get("eft_date")) if match else None
+        eft_day = eft_day.date() if eft_day else None
+        cp_day = _parse_cupon_date(cp.get("date"))
+        cp_day = cp_day.date() if cp_day else None
+        coupon_info[cp["coupon_id"]] = (cp_day, match)
+        if eft_day and first <= eft_day <= last:
+            cp["prev_month"] = bool(cp_day and cp_day < first)
+            applied.append(cp)
+        elif cp_day and prev_first <= cp_day <= last and not (eft_day and eft_day <= last):
+            cp["later"] = {"rcv": match.get("rcv_number"), "eft_date": eft_day} if eft_day else None
+            pending.append(cp)
+    applied = order_cupones_by_eft(applied)
+    detail_groups = get_detail_groups()
+    pending_rows = _pending_rows(pending, cupones, detail_groups)
+    pending_totals = _sum_rows(pending_rows)
+    pending_by_month = {}
+    for row in pending_rows:
+        pending_by_month.setdefault((row["day"].year, row["day"].month), []).append(row)
+
+    next_month = []
+    for group in detail_groups:
+        own = [b for b in group["batches"] if first.isoformat() <= b["batch_date"] <= last.isoformat()]
+        if not own:
+            continue
+        # Fecha del depósito: la de sus DDC en Cupones; sin DDC identificados,
+        # el último batch (el depósito sale ese día o uno o dos después).
+        days = [coupon_info[c][0] for c in group["coupons"] or [] if c in coupon_info and coupon_info[c][0]]
+        deposit = min(days) if days else None
+        if (deposit or date.fromisoformat(group["last_date"])) <= last:
+            continue
+        efts = sorted({coupon_info[c][1]["rcv_number"] for c in group["coupons"] or []
+                       if c in coupon_info and coupon_info[c][1]})
+        next_month.append({
+            "coupons": group["coupons"], "deposit": deposit,
+            "from": min(b["batch_date"] for b in own), "to": max(b["batch_date"] for b in own),
+            "gross": round(sum(b["gross"] or 0.0 for b in own), 2),
+            "net": round(sum(b["net"] or 0.0 for b in own), 2),
+            "group_gross": group["gross"], "efts": efts,
+        })
+    next_month.sort(key=lambda g: (g["deposit"] or date.fromisoformat(g["to"]), g["from"]))
+
+    return {
+        "applied": applied,
+        "applied_count": len(applied),
+        "applied_net": round(sum(cp.get("net") or 0.0 for cp in applied), 2),
+        "eft_count": sum(1 for cp in applied if cp.get("eft_block_total")),
+        "pending": pending_rows,
+        "pending_count": len(pending),
+        "pending_totals": pending_totals,
+        "pending_by_month": [
+            {"year": y, "month": m, **_sum_rows(rows)} for (y, m), rows in sorted(pending_by_month.items())
+        ] if len(pending_by_month) > 1 else [],
+        "next_month": next_month,
+        "next_month_gross": round(sum(g["gross"] for g in next_month), 2),
+    }
+
+
+def _pending_rows(pending, cupones, detail_groups):
+    """
+    Los pendientes al cierre como renglones que se pueden sumar (pedido del
+    usuario, 2026-10-06: "que te diga cuánto queda para saberlo a simple
+    vista y no tener que sumarlo al ojo"). Un DDC con monto propio es un
+    renglón; los de un mismo grupo que todavía están en 0 (hasta que un EFT
+    los paga) van juntos en uno, con lo que le falta al grupo: el Net de
+    `group_remaining` y el Gross/Fee del depósito en el detalle de cupones
+    menos lo de los DDC del grupo que ya tienen monto (None si no hay
+    detalle). [{"day", "date_display", "coupons", "gross", "fees", "net",
+    "laters": [{"coupon", "rcv", "eft_date"}]}]
+    """
+    detail_by_coupons = {",".join(sorted(g["coupons"])): g for g in detail_groups if g["coupons"]}
+    by_group_text = {}
+    for cp in cupones:
+        if cp.get("reported_group_text"):
+            by_group_text.setdefault(cp["reported_group_text"], []).append(cp)
+
+    rows, group_rows = [], {}
+    for cp in pending:
+        later = cp.get("later")
+        laters = [{"coupon": cp["coupon_id"], **later}] if later else []
+        own = any(cp.get(key) for key in ("gross", "fees", "net"))
+        group_text = cp.get("reported_group_text")
+        if own or not group_text or cp.get("group_remaining") is None:
+            rows.append({
+                "day": _parse_cupon_date(cp.get("date")).date(), "date_display": cp.get("date_display"),
+                "coupons": [cp["coupon_id"]], "gross": cp.get("gross") or 0.0, "fees": cp.get("fees") or 0.0,
+                "net": cp.get("net") or 0.0, "laters": laters,
+            })
+            continue
+        row = group_rows.get(group_text)
+        if row is None:
+            members = by_group_text.get(group_text, [])
+            resolved = [m for m in members if any(m.get(key) for key in ("gross", "fees", "net"))]
+            detail = detail_by_coupons.get(",".join(sorted(m["coupon_id"] for m in members)))
+            row = {
+                "day": _parse_cupon_date(cp.get("date")).date(), "date_display": cp.get("date_display"),
+                "coupons": [], "net": cp["group_remaining"], "laters": [],
+                "gross": round(detail["gross"] - sum(m.get("gross") or 0.0 for m in resolved), 2) if detail else None,
+                "fees": round(detail["fees"] - sum(m.get("fees") or 0.0 for m in resolved), 2) if detail else None,
+            }
+            group_rows[group_text] = row
+            rows.append(row)
+        row["coupons"].append(cp["coupon_id"])
+        row["laters"].extend(laters)
+    return rows
+
+
+def _sum_rows(rows):
+    """Gross/Fee/Net sumados; `incomplete` si algún grupo no tiene Gross/Fee (sin detalle de cupones)."""
+    return {
+        "count": sum(len(r["coupons"]) for r in rows),
+        "gross": round(sum(r["gross"] or 0.0 for r in rows), 2),
+        "fees": round(sum(r["fees"] or 0.0 for r in rows), 2),
+        "net": round(sum(r["net"] or 0.0 for r in rows), 2),
+        "incomplete": any(r["gross"] is None or r["fees"] is None for r in rows),
     }
 
 

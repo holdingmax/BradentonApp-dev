@@ -20,7 +20,7 @@ import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from urllib.parse import quote, urlsplit
 
 from flask import Flask, abort, flash, jsonify, redirect, render_template, request, send_file, session, url_for
@@ -42,6 +42,9 @@ import control_cierre
 import reporte_mensual
 import reporte_mensual_db
 import control_tarjetas
+import cupones_detalle
+import jh_mensual
+import jh_mensual_db
 import lottery_mensual
 import controles_rapidos
 from cheques import check_number_from_chase_description, extract_checks_from_pdf
@@ -684,7 +687,7 @@ CONTROLES_SECTIONS = [
         "icon": _ICON_EXCHANGE,
         "label": "Tarjetas y Cupones",
         "url": "/controles/tarjetas",
-        "description": "Lo cobrado con tarjeta en el C-store contra los cupones que acredita JH: lo pendiente (unos 3 días, por las 72 hs) no debería pasar de $15,000.",
+        "description": "Lo cobrado con tarjeta en el C-store contra los cupones que acredita JH (lo pendiente no debería pasar de $15,000) y los reportes mensuales de J.H. (EFT, facturas y cupones) contra lo cargado y Chase.",
         "accent": "#3B5BDB",
         "accent_soft": "#DDE3FA",
     },
@@ -745,7 +748,7 @@ CARGA_DATOS_TOOLS = [
         "icon": _ICON_EXCHANGE,
         "label": "EFT y Cupones",
         "url": "/carga-datos/eft",
-        "description": "Subí el PDF de EFT y el reporte mensual de Cupones — se cruzan solos por DDC.",
+        "description": "Subí el PDF de EFT y el reporte mensual de Cupones — se cruzan solos por DDC — y los reportes mensuales de J.H. (EFT, facturas y cupones).",
         "accent": "#3B5BDB",
         "accent_soft": "#DDE3FA",
     },
@@ -4854,11 +4857,177 @@ def carga_datos_eft():
     reporte mensual, sin ningún Excel. Ver eft_db.py.
     """
     _active_job = jobs.get_active_job("eft")
+    _jh_job = jobs.get_active_job("jh_mensual")
+    _batch_job = jobs.get_active_job("cupones_detalle")
     return render_template(
         "carga_datos_eft.html",
         resume_job_id=(_active_job["id"] if _active_job else None),
+        resume_jh_job_id=(_jh_job["id"] if _jh_job else None),
+        resume_batch_job_id=(_batch_job["id"] if _batch_job else None),
         **THEME_BY_KEY["carga_eft"],
     )
+
+
+@app.route("/carga-datos/eft/cupones-detalle/subir", methods=["POST"])
+def carga_datos_eft_cupones_detalle_subir():
+    """
+    Detalle de cupones (pedido del usuario, 2026-10-06): el "Credit Card
+    Batch Detail" que se imprime de cada cupón en el portal de J.H. Cada
+    cupón queda con su monto exacto y las fechas reales de sus batches.
+    Lectura en cupones_detalle.py, guardado en eft_db.save_coupon_batches.
+    """
+    uploads = request.files.getlist("batch_files")
+    if not uploads or not any(u.filename for u in uploads):
+        return _error_response("Seleccioná los PDF del detalle de cupones (Credit Card Batch Detail).")
+    paths = _save_uploads_to_workspace(uploads)
+    job_id = jobs.create_job(len(paths), kind="cupones_detalle")
+    threading.Thread(target=_run_cupones_detalle_job, args=(job_id, paths), daemon=True).start()
+    return jsonify({"job_id": job_id, "total": len(paths)})
+
+
+def _run_cupones_detalle_job(job_id, paths):
+    """Aislado por archivo: un PDF roto no frena a los demás."""
+    try:
+        results, problems = [], []
+        batches = 0
+        for index, path in enumerate(paths, start=1):
+            try:
+                groups = cupones_detalle.extract_detail_groups(path)
+                results.extend(eft_db.save_coupon_detail(groups, os.path.basename(path)))
+                batches += sum(len(g["batches"]) for g in groups)
+                eft_db.identify_detail_groups(jh_mensual_db.get_coupon_rows())
+            except ValueError as exc:
+                problems.append(str(exc))
+            except Exception as exc:
+                print(f"[carga-datos/eft/cupones-detalle] {path}: {exc}")
+                problems.append("Un archivo no se pudo leer.")
+            jobs.update_job(job_id, done=index, total=len(paths))
+        parts = []
+        if results:
+            new = [r for r in results if r["status"] == "new"]
+            first = min(r["first_date"] for r in results)
+            last = max(r["last_date"] for r in results)
+            line = (f"Detalle de cupones cargado: {len(new)} depósito{'s' if len(new) != 1 else ''} nuevo{'s' if len(new) != 1 else ''}"
+                    f" ({batches} batches), ventas del {_fmt_ddmmyyyy(first)[:5]} al {_fmt_ddmmyyyy(last)[:5]}")
+            if len(results) > len(new):
+                line += f"; {len(results) - len(new)} ya estaba{'n' if len(results) - len(new) != 1 else ''} cargado{'s' if len(results) - len(new) != 1 else ''}"
+            parts.append(line + ".")
+            ids = {r["id"] for r in results}
+            unidentified = sum(1 for g in eft_db.get_detail_groups() if g["id"] in ids and not g["coupons"])
+            if unidentified:
+                parts.append(
+                    f"{unidentified} todavía sin DDC: se identifican solos cuando se cargue el reporte mensual de cupones "
+                    "(Credit Card Daily Summary) que los trae."
+                )
+        parts.extend(problems)
+        level = "success" if results and not problems else ("warning" if results else "error")
+        jobs.update_job(
+            job_id, status="done", done=len(paths), total=len(paths),
+            notice=" ".join(parts), notice_level=level, redirect_url="/controles/tarjetas",
+        )
+    except Exception as exc:
+        jobs.update_job(job_id, status="error", error=f"Error: {exc}")
+
+
+def _save_jh_monthly_report(path):
+    """
+    Un reporte de J.H. de cualquier extensión, mes por mes: lo ya cargado se
+    deja como está y se suma lo nuevo (jh_mensual_db.merge_report).
+    """
+    report = jh_mensual.extract_report(path, jh_mensual_db.get_rows)
+    kind_label = jh_mensual.KIND_LABELS[report["kind"]]
+    parts, warnings, last = [], [], None
+    for month_report in report["months"]:
+        result = jh_mensual_db.merge_report(report["kind"], month_report, os.path.basename(path))
+        label = f"{_MONTH_NAMES_ES[month_report['month'] - 1].lower()} {month_report['year']}"
+        news = []
+        if result["added"]:
+            news.append(f"{result['added']} nuevo{'s' if result['added'] != 1 else ''}")
+        if result["updated"]:
+            news.append(f"{result['updated']} actualizado{'s' if result['updated'] != 1 else ''}")
+        parts.append(f"{label} ({', '.join(news) if news else 'ya estaba'})")
+        if result["conflicts"]:
+            keys = [_fmt_ddmmyyyy(k)[:5] if report["kind"] == "coupons" else k for k in result["conflicts"]]
+            warnings.append(
+                f"{kind_label} de {label}: {', '.join(keys)} {'vienen' if len(keys) != 1 else 'viene'} con otro importe "
+                "que lo ya cargado (se dejó lo cargado)."
+            )
+        last = (month_report["year"], month_report["month"])
+    if report["kind"] == "coupons":
+        # El mismo reporte que se sube en Excel en "Cupones": carga también
+        # Cupones, solo los DDC que faltan (pedido del usuario, 2026-10-06).
+        raw = [
+            {"coupon": ",".join(r["coupons"]), "gross": r["gross"], "fees": r["fees"], "net": r["net"],
+             "date": "{d.month}/{d.day}/{d.year}".format(d=date.fromisoformat(r["date"]))}
+            for month_report in report["months"] for r in month_report["rows"]
+        ]
+        inserted, _ = eft_db.insert_new_cupones(expand_monthly_records_for_storage(raw), os.path.basename(path))
+        if inserted:
+            parts.append(f"{inserted} {'cupones nuevos' if inserted != 1 else 'cupón nuevo'} en Cupones")
+        eft_db.identify_detail_groups(jh_mensual_db.get_coupon_rows())
+    parts.extend(report["notes"])
+    return f"{kind_label}: {', '.join(parts)}", last, warnings
+
+
+@app.route("/carga-datos/eft/jh/subir", methods=["POST"])
+def carga_datos_eft_jh_subir():
+    """
+    Reportes mensuales de J.H. (pedido del usuario, 2026-10-06): EFT History,
+    Invoice History y Credit Card Daily Summary, en PDF; cada uno se reconoce
+    solo y se cruza en Controles → Tarjetas y Cupones.
+    """
+    uploads = request.files.getlist("jh_files")
+    if not uploads or not any(u.filename for u in uploads):
+        return _error_response("Seleccioná los PDF de los reportes mensuales de J.H.")
+    paths = _save_uploads_to_workspace(uploads)
+    job_id = jobs.create_job(len(paths), kind="jh_mensual")
+    threading.Thread(
+        target=_run_monthly_upload_job,
+        args=(job_id, paths, _save_jh_monthly_report, "Reportes de J.H. cargados",
+              lambda y, m: f"/carga-datos/eft/jh?year={y}&month={m}", "/carga-datos/eft/jh"),
+        daemon=True,
+    ).start()
+    return jsonify({"job_id": job_id, "total": len(paths)})
+
+
+@app.route("/carga-datos/eft/jh")
+def carga_datos_eft_jh():
+    """Los reportes mensuales de J.H. guardados de un mes, para verlos y eliminarlos."""
+    year, month = _cierre_month()
+    reports = jh_mensual_db.get_reports(year, month)
+    return render_template(
+        "carga_datos_eft_jh.html",
+        reports=reports,
+        kinds=jh_mensual.KINDS,
+        kind_labels=jh_mensual.KIND_LABELS,
+        **_month_nav(year, month),
+        **THEME_BY_KEY["carga_eft"],
+    )
+
+
+@app.route("/carga-datos/eft/jh/eliminar", methods=["POST"])
+def carga_datos_eft_jh_eliminar():
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    kind = request.form.get("kind")
+    if year and month and kind in jh_mensual.KINDS:
+        jh_mensual_db.delete_report(kind, year, month)
+    return redirect(url_for("carga_datos_eft_jh", year=year, month=month))
+
+
+def _jh_month_checks(year, month, detail_groups=()):
+    """Los cruces de los reportes mensuales de J.H. del mes (None el que no está cargado)."""
+    reports = jh_mensual_db.get_reports(year, month)
+    checks = {"reports": reports}
+    checks["eft"] = jh_mensual.eft_check(reports["eft"], year, month) if "eft" in reports else None
+    checks["invoices"] = (
+        jh_mensual.invoice_check(reports["invoices"], year, month, jh_mensual_db.get_all_invoice_numbers())
+        if "invoices" in reports else None
+    )
+    checks["coupons"] = (
+        jh_mensual.coupon_check(reports["coupons"], year, month, detail_groups) if "coupons" in reports else None
+    )
+    return checks
 
 
 @app.route("/carga-datos/eft/subir", methods=["POST"])
@@ -5117,13 +5286,12 @@ def carga_datos_eft_historial():
 @app.route("/carga-datos/eft/cupones/historial")
 def carga_datos_eft_cupones_historial():
     """
-    Historial COMPLETO de Cupones -- histórico desde inicios de 2026, nunca
-    filtrado por mes, en su propio apartado separado de los EFT (ver el
-    comentario de carga_datos_eft_historial más arriba). Rediseñado a
-    pedido explícito del usuario (2026-09-16): columnas Fecha/DDC/Gross/
-    Fee/Net Amount/Diferencia/EFT/Mes EFT, orden ascendente (más antiguo
-    arriba, más nuevo abajo -- ver eft_db.get_cupones_flat) y la pantalla
-    arranca scrolleada al final (el JS de la plantilla lo hace, no acá).
+    Cupones por mes (pedido del usuario, 2026-10-06; antes era el historial
+    completo agrupado por año): los que aplicaron los EFT del mes, juntos
+    por EFT con su total, los que quedaron pendientes al cierre del mes
+    elegido y las ventas del mes que entraron en cupones del mes siguiente
+    (eft_db.cupones_month_view). Columnas Fecha/DDC/Gross/Fee/Net Amount/
+    Diferencia/EFT/Fecha EFT como antes (pedido del usuario, 2026-09-16).
     """
     try:
         backfilled = eft_db.backfill_grouped_cupones_from_eft()
@@ -5135,38 +5303,43 @@ def carga_datos_eft_cupones_historial():
     except Exception as exc:
         print(f"[cupones] no se pudo completar cupones agrupados desde EFT: {exc}")
 
-    # Ordenados por EFT: los aplicados en un mismo EFT quedan juntos y los
-    # pendientes al final de cada año (ver eft_db.order_cupones_by_eft).
-    cupones = eft_db.order_cupones_by_eft(eft_db.get_cupones_flat())
-    for cp in cupones:
-        match = cp.get("match")
-        my = eft_db.eft_month_and_year(match["eft_date"]) if match else None
-        cp["eft_month_label"] = f"{_MONTH_NAMES_ES[my[1] - 1]} {my[0]}" if my else None
+    year, month = _cierre_month()
+    view = eft_db.cupones_month_view(year, month)
+    # Días de venta de cada DDC, del detalle de cupones (el del depósito que lo trae).
+    sale_days = {}
+    for group in eft_db.get_detail_groups():
+        for coupon in group["coupons"] or []:
+            sale_days[coupon] = (group["first_date"], group["last_date"], len(group["coupons"]))
+    for cp in view["applied"] + view["pending"]:
+        days = sale_days.get(cp["coupon_id"] if "coupon_id" in cp else cp["coupons"][0])
+        cp["sale_days"] = (
+            {"from": _fmt_ddmmyyyy(days[0])[:5], "to": _fmt_ddmmyyyy(days[1])[:5], "group": days[2]} if days else None
+        )
+    for cp in view["applied"]:
+        if cp["prev_month"]:
+            parsed = eft_db._parse_cupon_date(cp.get("date"))
+            cp["prev_month_label"] = _MONTH_NAMES_ES[parsed.month - 1].lower()
+    for row in view["pending"]:
+        for later in row["laters"]:
+            later["label"] = f"{later['eft_date'].strftime('%d/%m/%Y')} ({_MONTH_NAMES_ES[later['eft_date'].month - 1].lower()})"
+    for sub in view["pending_by_month"]:
+        sub["label"] = _MONTH_NAMES_ES[sub["month"] - 1].lower()
+    for group in view["next_month"]:
+        group["deposit_label"] = group["deposit"].strftime("%d/%m/%Y") if group["deposit"] else None
+        group["from_label"] = _fmt_ddmmyyyy(group["from"])[:5]
+        group["to_label"] = _fmt_ddmmyyyy(group["to"])[:5]
 
-    # Agrupado por año, cada uno con su propio desplegable (pedido
-    # explícito del usuario, 2026-09-17: "separar con un tipo desplegable
-    # los años... así no tenga que usar tanto el scroll") -- la lista ya
-    # viene ordenada ascendente (get_cupones_flat), así que agrupar
-    # preservando el orden de inserción alcanza, no hace falta reordenar.
-    # Un cupón sin fecha parseable (rarísimo, ver el docstring de
-    # get_cupones_flat) cae en su propio grupo "year=None" -- la plantilla
-    # lo rotula "Sin fecha" y, como esos ya ordenaban primero en la vista
-    # plana, ese grupo queda primero acá también.
-    groups_by_year = {}
-    for cp in cupones:
-        groups_by_year.setdefault(cp.get("group_year"), []).append(cp)
-    cupones_by_year = [
-        {"year": year, "cupones": items, "count": len(items)}
-        for year, items in groups_by_year.items()
-    ]
-    latest_year = max((g["year"] for g in cupones_by_year if g["year"] is not None), default=None)
-
+    nav = _month_nav(year, month)
+    following = _MONTH_NAMES_ES[nav["next_month"] - 1].lower()
+    years = eft_db.get_cupones_years()
     return render_template(
         "carga_datos_eft_cupones_historial.html",
-        cupones_by_year=cupones_by_year,
-        latest_year=latest_year,
-        delete_month_years=eft_db.get_cupones_years(),
+        view=view,
+        following_name=following,
+        today=date.today(),
+        delete_month_years=years if year in years else sorted(set(years) | {year}),
         month_names=_MONTH_NAMES_ES,
+        **nav,
         **THEME_BY_KEY["carga_eft"],
     )
 
@@ -5194,7 +5367,7 @@ def carga_datos_eft_cupones_borrar_mes():
         flash(f"{deleted} cupón(es) de {_MONTH_NAMES_ES[month - 1]} {year} borrado(s).", "success")
     else:
         flash(f"No había ningún cupón guardado en {_MONTH_NAMES_ES[month - 1]} {year}.", "warning")
-    return redirect(url_for("carga_datos_eft_cupones_historial"))
+    return redirect(url_for("carga_datos_eft_cupones_historial", year=year, month=month))
 
 
 @app.route("/carga-datos/eft/coupon/<int:eft_coupon_id>/editar", methods=["POST"])
@@ -6500,12 +6673,29 @@ def controles_tarjetas():
     )
     for row in control["rows"]:
         row["date_display"] = _fmt_ddmmyyyy(row["date"])
+    detail_groups = eft_db.get_detail_groups()
+    covered = sorted(g["last_date"] for g in detail_groups)
+    month_first = date(year, month, 1)
+    detail = control_tarjetas.build_detail_by_day(
+        year, month, reportes_db.get_card_sales_by_date(),
+        eft_db.get_detail_batches_between(
+            (month_first - timedelta(days=10)).isoformat(),
+            (month_first + timedelta(days=45)).isoformat(),
+        ),
+        covered[0] if covered else None, covered[-1] if covered else None, today=today,
+    )
+    if detail:
+        for row in detail["rows"]:
+            row["date_display"] = _fmt_ddmmyyyy(row["date"])
     prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
     next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
     return render_template(
         "controles_tarjetas.html",
         control=control,
         missing_days_display=[_fmt_ddmmyyyy(d) for d in control["missing_days"]],
+        detail=detail,
+        jh=_jh_month_checks(year, month, detail_groups),
+        jh_labels=jh_mensual.KIND_LABELS,
         year=year,
         month=month,
         month_name=_MONTH_NAMES_ES[month - 1],

@@ -25,6 +25,7 @@ sábado).
 """
 
 import calendar
+import re
 from datetime import date, timedelta
 
 ALERT_THRESHOLD = 15000.0
@@ -107,3 +108,122 @@ def latest_status(card_sales, coupons, today=None):
         return None
     last_day = date.fromisoformat(max(card_sales))
     return _running(card_sales, coupons, last_day).get(last_day.isoformat())
+
+
+# ---------------------------------------------------------------------------
+# Por día de venta, con el detalle de cupones (pedido del usuario, 2026-10-06,
+# chat 21; lectura en cupones_detalle.py). Validado con agosto-septiembre
+# 2026: los batches del POS (número de 4 dígitos) de un día suman lo vendido
+# con tarjeta de Store Info ese día, salvo un batch que cruza la medianoche y
+# deja la misma diferencia, al revés, en el día de al lado. Los demás batches
+# ("slri…", de 7 dígitos, entre $5 y $150 por día) no están en Store Info:
+# se muestran aparte.
+# ---------------------------------------------------------------------------
+
+# Un día cuyos batches pueden no haberse depositado todavía: los cupones de
+# un día llegan en depósitos de hasta 4 días después (fin de semana).
+DETAIL_SETTLE_DAYS = 4
+# Días siguientes con los que una diferencia puede compensarse (en
+# septiembre 2026, una del 07/09 se compensó recién el 10/09).
+COMPENSATE_DAYS = 3
+
+
+def in_store_info(batch):
+    """Batch del POS (número de 4 dígitos, 0xxx/82xx/92xx): está en lo vendido con tarjeta de Store Info."""
+    return bool(re.fullmatch(r"\d{4}", batch or ""))
+
+
+def build_detail_by_day(year, month, card_sales, batches, covered_from, covered_to, today=None):
+    """
+    Una fila por día del mes (hasta hoy): vendido con tarjeta (Store Info)
+    contra los batches del POS de ese día, y los otros batches aparte.
+    `batches`: eft_db.get_detail_batches_between, del mes con unos días de
+    margen; `covered_from`/`covered_to`: el primer y el último depósito con
+    detalle cargado (un día antes del primero no tiene todos sus batches).
+
+    Una diferencia que vuelve a cero sumándola con los días siguientes (el
+    batch que cruza la medianoche) queda "compensated"; los últimos días,
+    cuyos cupones pueden no haberse depositado todavía, "pending"; el resto,
+    "diff". Devuelve None si no hay detalle cargado que toque el mes.
+    """
+    if not covered_from or not covered_to:
+        return None
+    today = today or date.today()
+    first = date(year, month, 1)
+    month_end = date(year, month, calendar.monthrange(year, month)[1])
+    covered_from, covered_to = date.fromisoformat(covered_from), date.fromisoformat(covered_to)
+    if covered_to < first or covered_from > month_end:
+        return None
+    pos, other = {}, {}
+    for b in batches:
+        target = pos if in_store_info(b["batch"]) else other
+        target[b["batch_date"]] = round(target.get(b["batch_date"], 0.0) + (b["gross"] or 0.0), 2)
+
+    window_start = max(covered_from, first - timedelta(days=DETAIL_SETTLE_DAYS))
+    window_end = min(covered_to, month_end + timedelta(days=DETAIL_SETTLE_DAYS))
+    rows = []
+    day = window_start
+    while day <= window_end:
+        key = day.isoformat()
+        sold = card_sales.get(key)
+        row = {"date": key, "sold": sold, "pos": pos.get(key, 0.0), "other": other.get(key, 0.0),
+               "diff": None, "status": "no_sales" if sold is None else None}
+        if sold is not None:
+            row["diff"] = round(row["pos"] - sold, 2)
+            if abs(row["diff"]) < 0.005:
+                row["status"] = "ok"
+        rows.append(row)
+        day += timedelta(days=1)
+
+    # Una diferencia se compensa si suma cero con los días siguientes (hasta
+    # COMPENSATE_DAYS): el batch que cruzó la medianoche. Si no, y el día de
+    # al lado no se puede comparar (sin Store Info o antes del detalle), no se
+    # puede saber ("edge"); los últimos días con menos batches que ventas
+    # todavía no se depositaron enteros ("pending").
+    recent = covered_to - timedelta(days=DETAIL_SETTLE_DAYS)
+    for i, row in enumerate(rows):
+        if row["status"] is not None:
+            continue
+        total = 0.0
+        for j in range(i, min(i + COMPENSATE_DAYS + 1, len(rows))):
+            if rows[j]["diff"] is None:
+                break
+            total = round(total + rows[j]["diff"], 2)
+            if j > i and abs(total) < 0.005:
+                for r in rows[i:j + 1]:
+                    if r["status"] is None:
+                        r["status"] = "compensated"
+                break
+        if row["status"] is not None:
+            continue
+        before = rows[i - 1]["diff"] if i > 0 else None
+        after = rows[i + 1]["diff"] if i + 1 < len(rows) else None
+        if date.fromisoformat(row["date"]) > recent and row["diff"] < 0:
+            row["status"] = "pending"
+        elif before is None or after is None:
+            row["status"] = "edge"
+        else:
+            row["status"] = "diff"
+
+    until = min(month_end, today, covered_to)
+    shown = [r for r in rows if first.isoformat() <= r["date"] <= until.isoformat()]
+    if covered_from > first:
+        missing_from = first.isoformat()
+    else:
+        missing_from = None
+    with_sales = [r for r in shown if r["sold"] is not None]
+    return {
+        "rows": shown,
+        "covered_from": covered_from.isoformat(),
+        "covered_to": covered_to.isoformat(),
+        "missing_before": missing_from,
+        "sold_total": round(sum(r["sold"] for r in with_sales), 2),
+        "pos_total": round(sum(r["pos"] for r in with_sales), 2),
+        "other_total": round(sum(r["other"] for r in shown), 2),
+        "diff_total": round(sum(r["diff"] for r in with_sales), 2),
+        "bad": [r for r in shown if r["status"] == "diff"],
+        "pending": [r for r in shown if r["status"] == "pending"],
+        "edge": [r for r in shown if r["status"] == "edge"],
+        "with_sales": len(with_sales),
+        "ok": not any(r["status"] == "diff" for r in shown),
+    }

@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ url_for('carga_datos_eft') }}">EFT y Cupones</a><span class="current">Reportes de J.H.</span></nav>
+{% endblock %}
+{% block head_extra %}
+<style>
+  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .historial-nav-btn { text-decoration: none; display: inline-block; }
+  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
+  .jh-report { margin-top: 18px; padding: 14px 16px; border-radius: 10px; border: 1px solid var(--border); }
+  .jh-report.none { background: var(--surface-alt); }
+  .jh-report-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .jh-report-title { font-weight: 700; }
+  .jh-report p { margin: 6px 0 0; font-size: 13px; color: var(--text-soft); }
+  .jh-report details { margin-top: 10px; }
+  .jh-report summary { font-size: 13px; }
+  .jh-table-wrap { overflow-x: auto; margin-top: 10px; border: 1px solid var(--border); border-radius: 10px; }
+  .jh-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .jh-table th, .jh-table td { padding: 6px 10px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .jh-table th.jh-left, .jh-table td.jh-left { text-align: left; }
+  .jh-table thead th { background: var(--accent-soft); font-weight: 700; }
+  .jh-table tfoot td { font-weight: 700; background: var(--accent-soft); }
+  .jh-wrap { white-space: normal !important; min-width: 180px; }
+  .jh-delete { margin: 0; }
+</style>
+{% endblock %}
+{% block content %}
+{% from "_month_jump.html" import month_jump %}
+{% macro money(x) -%}{%- if x is none -%}—{%- elif x < 0 -%}-${{ "{:,.2f}".format(-x) }}{%- else -%}${{ "{:,.2f}".format(x) }}{%- endif -%}{%- endmacro %}
+{% macro dmy(iso) -%}{{ iso[8:10] }}/{{ iso[5:7] }}/{{ iso[:4] }}{%- endmacro %}
+<div class="page-header">
+  <h1>Reportes mensuales de J.H.</h1>
+  <p class="page-subtitle">Los tres reportes del portal de J.H. de un mes, tal cual. Se cargan en <a href="{{ url_for('carga_datos_eft') }}">Carga de Datos → EFT y Cupones</a> y se cruzan en <a href="{{ url_for('controles_tarjetas', year=year, month=month) }}">Controles → Tarjetas y Cupones</a>.</p>
+</div>
+
+<div class="card">
+  <div class="historial-nav">
+    <a href="{{ url_for('carga_datos_eft_jh', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
+    <div class="historial-nav-title">
+      {{ month_jump('carga_datos_eft_jh', year, month) }}
+      {% if year == today.year and month == today.month %}
+      <span class="muted">Mes actual</span>
+      {% else %}
+      <a href="{{ url_for('carga_datos_eft_jh') }}" class="muted">Ir al mes actual</a>
+      {% endif %}
+    </div>
+    <a href="{{ url_for('carga_datos_eft_jh', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
+  </div>
+
+  {% for kind in kinds %}
+  {% set report = reports.get(kind) %}
+  <div class="jh-report {{ '' if report else 'none' }}">
+    <div class="jh-report-head">
+      <span class="jh-report-title">{{ kind_labels[kind] }}</span>
+      {% if report %}
+      <form method="post" action="{{ url_for('carga_datos_eft_jh_eliminar') }}" class="jh-delete" onsubmit="return confirm('¿Eliminar el {{ kind_labels[kind] }} de {{ month_name }} {{ year }}? Lo demás no se toca.');">
+        <input type="hidden" name="year" value="{{ year }}">
+        <input type="hidden" name="month" value="{{ month }}">
+        <input type="hidden" name="kind" value="{{ kind }}">
+        <button type="submit" class="btn-secondary">Eliminar</button>
+      </form>
+      {% endif %}
+    </div>
+    {% if not report %}
+    <p>Sin cargar para {{ month_name }} {{ year }}.</p>
+    {% else %}
+    <p>Del {{ dmy(report.from_date) }} al {{ dmy(report.to_date) }}: {{ report.rows|length }} renglón{{ 'es' if report.rows|length != 1 }}. Cargado el {{ report.updated_at[8:10] }}/{{ report.updated_at[5:7] }} a las {{ report.updated_at[11:16] }}.</p>
+    <details>
+      <summary>Ver los renglones</summary>
+      <div class="jh-table-wrap">
+        <table class="jh-table">
+          {% if kind == 'eft' %}
+          <thead><tr><th class="jh-left">Fecha</th><th class="jh-left">EFT</th><th class="jh-left">Estado</th><th>Importe</th></tr></thead>
+          <tbody>{% for r in report.rows %}<tr><td class="jh-left">{{ dmy(r.date) }}</td><td class="jh-left">{{ r.reference }}</td><td class="jh-left">{{ r.status }}</td><td>{{ money(r.amount) }}</td></tr>{% endfor %}</tbody>
+          <tfoot><tr><td class="jh-left" colspan="3">Total</td><td>{{ money(report.totals.amount) }}</td></tr></tfoot>
+          {% elif kind == 'invoices' %}
+          <thead><tr><th class="jh-left">Fecha</th><th class="jh-left">Factura</th><th class="jh-left">BOL</th><th>Importe</th><th>Saldo</th></tr></thead>
+          <tbody>{% for r in report.rows %}<tr><td class="jh-left">{{ dmy(r.date) }}</td><td class="jh-left">{{ r.invoice }}</td><td class="jh-left">{{ r.bol or '—' }}</td><td>{{ money(r.amount) }}</td><td>{{ money(r.balance) }}</td></tr>{% endfor %}</tbody>
+          <tfoot><tr><td class="jh-left" colspan="3">Total</td><td>{{ money(report.totals.amount) }}</td><td>{{ money(report.totals.balance) }}</td></tr></tfoot>
+          {% else %}
+          <thead><tr><th class="jh-left">Fecha</th><th class="jh-left">DDC</th><th>Gross</th><th>Fees</th><th>Neto</th></tr></thead>
+          <tbody>{% for r in report.rows %}<tr><td class="jh-left">{{ dmy(r.date) }}</td><td class="jh-left jh-wrap">{{ r.coupons|join(', ') }}</td><td>{{ money(r.gross) }}</td><td>{{ money(r.fees) }}</td><td>{{ money(r.net) }}</td></tr>{% endfor %}</tbody>
+          <tfoot><tr><td class="jh-left" colspan="2">Total</td><td>{{ money(report.totals.gross) }}</td><td>{{ money(report.totals.fees) }}</td><td>{{ money(report.totals.net) }}</td></tr></tfoot>
+          {% endif %}
+        </table>
+      </div>
+    </details>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% endblock %}

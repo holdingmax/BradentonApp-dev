@@ -5,7 +5,7 @@
 {% block content %}
 <div class="page-header">
   <h1>EFT y Cupones</h1>
-  <p class="page-subtitle">Subí el PDF de EFT y/o el reporte mensual de Cupones — cada cupón queda cruzado solo contra el EFT que lo pagó, por su número DDC. Ver <a href="{{ url_for('carga_datos_eft_historial') }}">los EFT guardados</a> o <a href="{{ url_for('carga_datos_eft_cupones_historial') }}">el histórico de Cupones</a>.</p>
+  <p class="page-subtitle">Subí el PDF de EFT y/o el reporte mensual de Cupones — cada cupón queda cruzado solo contra el EFT que lo pagó, por su número DDC. Ver <a href="{{ url_for('carga_datos_eft_historial') }}">los EFT guardados</a> o <a href="{{ url_for('carga_datos_eft_cupones_historial') }}">los Cupones por mes</a>.</p>
 </div>
 
 <div class="card">
@@ -30,6 +30,32 @@
     <div class="form-actions">
       <button type="submit">Guardar</button>
       <button type="button" class="btn-secondary clear-file-btn" data-target="cupones-report-input">Limpiar</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Detalle de cupones (Credit Card Detail)</h2>
+  <p class="muted">El PDF que se imprime desde el portal de J.H. con uno o varios cupones seleccionados: cada depósito con sus batches y la fecha real de venta de cada uno. Los DDC se identifican solos por el total contra el reporte mensual de Cupones (si todavía no está cargado, apenas se cargue). Lo que ya estaba cargado no se duplica. Se controla día por día en <a href="{{ url_for('controles_tarjetas') }}">Controles → Tarjetas y Cupones</a>.</p>
+  <form method="post" action="{{ url_for('carga_datos_eft_cupones_detalle_subir') }}" enctype="multipart/form-data" class="background-job-form" data-resume-job="{{ resume_batch_job_id or '' }}">
+    <label class="muted">PDF del detalle de cupones (uno o más)</label>
+    <input type="file" name="batch_files" id="cupones-detalle-input" multiple accept="application/pdf" class="accumulate-files" required>
+    <div class="form-actions">
+      <button type="submit">Guardar</button>
+      <button type="button" class="btn-secondary clear-file-btn" data-target="cupones-detalle-input">Limpiar</button>
+    </div>
+  </form>
+</div>
+
+<div class="card">
+  <h2>Reportes mensuales de J.H. Williams (PDF)</h2>
+  <p class="muted">Los tres del portal de J.H. para un mes: EFT History, Invoice History (facturas de combustible y otras) y Credit Card Daily Summary (cupones). Se pueden elegir juntos y abarcar varios meses: cada uno se reconoce solo y se reparte por mes; lo que ya estaba cargado no se toca y se suma lo nuevo. El Credit Card Daily Summary además identifica los DDC del detalle de cupones. Se cruzan con lo cargado y con Chase en <a href="{{ url_for('controles_tarjetas') }}">Controles → Tarjetas y Cupones</a>. <a href="{{ url_for('carga_datos_eft_jh') }}">Ver los reportes guardados</a>.</p>
+  <form method="post" action="{{ url_for('carga_datos_eft_jh_subir') }}" enctype="multipart/form-data" class="background-job-form" data-resume-job="{{ resume_jh_job_id or '' }}">
+    <label class="muted">PDF de los reportes mensuales de J.H.</label>
+    <input type="file" name="jh_files" id="jh-reportes-input" multiple accept="application/pdf" class="accumulate-files" required>
+    <div class="form-actions">
+      <button type="submit">Guardar y cruzar</button>
+      <button type="button" class="btn-secondary clear-file-btn" data-target="jh-reportes-input">Limpiar</button>
     </div>
   </form>
 </div>
