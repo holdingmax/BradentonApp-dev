@@ -2201,3 +2201,35 @@ Commits `33aa8eb`..`5877cba` (uno por tema) más la documentación. Validado sie
 - `pdf_export.build_multi_section_pdf`: "footnote" debajo de una tabla y sin el espacio final que armaba una hoja en blanco.
 
 **Pendientes que deja el chat:** cargar ONLINE/SKOFF de los 6 días vacíos de Lottery desde el Drive (solo campos vacíos, con respaldo; falta el sí del usuario); un monto de alerta para Caja en la botonera; decidir si Precios usa la última compra de cada producto en vez de la última factura.
+
+## Sesión 2026-10-06, chat 20: control Cierre, reporte mensual, "Guardado" y agosto completo
+
+### Caja: detalle de los gastos (commit `dfd5588`)
+- Click en el monto de Gastos de un día del cuadro abre el popover con cada gasto (detalle y monto). El texto de la carga de comprobantes quedó "Comprobantes escaneados (PDF o foto)". El usuario probó la carga de tickets con un mes real: falló uno, que quedó en "Para confirmar".
+
+### Control Cierre (pedido: "cambiar el control de caja por uno que diga Control Cierre")
+- `control_cierre.py` + `/controles/cierre` (`controles_cierre.html`). Reemplaza a "Caja" (Depósitos) en `CONTROLES_SECTIONS`; `/controles/depositos` sigue andando por URL.
+- Asientos de la hoja Store Info del Excel Cierre (O47:T64), fórmulas leídas del Cierre 08-26 (fila 33 = totales del mes): Caja = S33−L33+U33 (Cash − LOTTO + Other); J.H. WILIAMS-RECAUD A LIQ = T33−M33 (TC − VS); Cuenta Corriente a Cobrar-Gettel KIA = V33; a Venta Combustible = H33; Car Wash e ICE = 0; a Venta C-Store = O35−L33 (Non Fuel + desc otros + Tax − VS − LOTTO). Debajo, los totales sumando LOTTO (S57/T57), la nota de Lottery y la diferencia. Segundo asiento: J.H. Williams a Gettel KIA por VS, "por lo cobrado al" último día. LOTTO y VS salen de Ventas por Departamento (`category_amounts`); `_build_store_info_rows` suma `has_departments`.
+- Exportar: PDF (membrete, gris/rojo como el Excel; página 2 con el cruce si hay reporte mensual) y Excel (el de Reportes + fila de totales "Ventas" + asientos en O-T con las fórmulas reales, `add_entries_to_store_info_workbook`). Los botones dicen solo "PDF" y "Excel".
+- El control avisa días sin Store Info, días sin departamentos y campos de Store Info vacíos (`empty_fields`).
+- Validación: con LOTTO y VS del Excel, todas las líneas daban igual; la única diferencia ($0.02) era un importe de tarjeta del 04/08 mal cargado en la app (2,494.29 por 2,494.27), que el usuario corrigió.
+
+### Datos de agosto completados (pedido: "carga los días que faltan de agosto")
+- Respaldos en `reportes_data/respaldos/` (`reportes_diarios.db.antes-deptos-agosto-*`, `.antes-other-0408-*`, `.antes-revenue-1908-*`).
+- Ventas por Departamento de 18 días sin departamentos (04, 09-14, 18, 22-31/08), leídas de los PDF del Drive con `extract_department_sales_for_day`: los 18 cierran contra el total impreso. Solo departamentos (Store Info y Lottery sin tocar).
+- 02/08 releído (estaba mal de una carga vieja; ahora = impreso = Excel). 19/08: 12 departamentos corregidos a mano leyendo el PDF en alta resolución (ICECREAM 538.00 → 5.98, FLOWERS 351.97 → 51.97, etc.); cierra contra el impreso ($10,790.75) y contra el Excel; quedan como "manual".
+- 04/08: Other estaba vacío (cargado a mano el 02/10 sin Other) → 0.00, del PDF. 19/08: Network/Total Revenue tenían lo que el OCR lee mal (14,422.25 / 16,013.35) → 11,442.26 / 16,019.36, confirmado a 300 dpi y con las sumas.
+- Resultado: las 6 categorías de los 31 días = Excel; asiento = Excel Cierre (Debe = Haber = $233,637.95).
+
+### Reportes Diario/Mensual (pedido: "un módulo para cargar el reporte mensual... que se cruce con el asiento")
+- El "Resumen Ventas" mensual (escaneado, 7 págs.): Store Sales Summary (1-2), Department Sales (3), Method of Payment (4-6, no se usa), ticket de inventario de tanques (7, no se usa). Se lee con `extract_store_info_from_pdf(start_page_index=0, strict=False)` y `parse_elistar_daily_pdf_page(page_index=max(pages_used))`; "LOCAL ACCT" sale como "GETTEL/TOYOTA" y se renombra (igual que el diario). Si el período no es un mes completo, ValueError.
+- `reporte_mensual_db.py` (`reporte_mensual.db`: `monthly_reports` + `monthly_report_departments`). `reporte_mensual.py`: lectura, `report_totals` (mismos totales que `control_cierre.month_totals`), `store_info_comparison` (Total Sales sin VS; Volume con tolerancia de redondeo de 0.005 por día), `category_comparison`, `department_comparison` (por nombre ignorando signos: el OCR del mensual se come el "&" de "HOT DOGS & SANDWICH").
+- `control_cierre.cross_check`: cada renglón del asiento armado con los días contra el armado con el mensual, más los datos de base (Cash, TC, Other, Local Account, combustible, Non Fuel, Desc. Otros, Tax, LOTTO, VS).
+- Pantallas: la carga está en Carga de Datos → "Reportes Diario/Mensual" (abajo de los diarios; pedido del usuario: un solo módulo); `/carga-datos/reporte-mensual` es solo para ver el cruce y eliminar (barra lateral → "Reporte mensual"). Store Info: filas "Reporte mensual" y "Diferencia" bajo el total. Ventas por Departamento: columnas del mensual en las 6 categorías y en cada departamento (cantidades distintas en ámbar). Controles → Cierre: sección "Cruce con el reporte mensual".
+- Agosto: asiento y datos al centavo. Lo que encontró fuera del asiento fueron el 19/08 (ya corregido) y Volume 0.04 (redondeo). Cantidades distintas (no montos) en MAJ PAK, SODA, TAXABLE y WATER.
+
+### Aviso "Guardado" (pedido: "una alerta rápida que diga Guardado y que se vaya rápido")
+- `base.html` (`flashSaved`): cápsula oscura abajo al centro, ~1.6 s, sin clic; solo si la respuesta es OK y no trae error/advertencia (ni vuelve al login).
+
+### Excel de Store Info: datos que faltan en 0 (pedido: "mejor que aparezca como 0 y que luego te diga si hay diferencias")
+- `build_store_info_export_workbook`: en un día con Store Info, un campo vacío va como 0 y las fórmulas (Total Fuel, Total Ventas, Total Revenue) se escriben siempre. Un día sin ningún Store Info sigue en blanco. Reemplaza el criterio del 2026-09-19 (fórmula solo con todos los componentes).
