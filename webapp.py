@@ -715,7 +715,7 @@ CARGA_DATOS_TOOLS = [
         "icon": _ICON_CALENDAR,
         "label": "Reportes Diario/Mensual",
         "url": "/carga-datos/reporte-diario",
-        "description": "Subí los PDF de cierre diario (Departamentos y Store Info, día por día) y el reporte mensual, que se cruza con lo cargado y con el asiento de cierre.",
+        "description": "Subí los PDF de cierre diario (Departamentos y Store Info, día por día) y el reporte mensual, que se cruza con la suma de los reportes diarios del mes.",
         "accent": "#0284C7",
         "accent_soft": "#D7EFFB",
     },
@@ -1932,14 +1932,15 @@ def fisico_lectura_real():
 def carga_datos_reporte_mensual():
     """
     Reporte Mensual (pedido del usuario, 2026-10-06): se sube el resumen de
-    ventas del mes del POS y se cruza con lo cargado día por día y con el
-    asiento de cierre. Lectura y cruce en reporte_mensual.py.
+    ventas del mes del POS y se cruza con la suma de los reportes diarios del
+    mes (pedido del usuario, chat 21: no llamarlo asiento). Lectura y cruce
+    en reporte_mensual.py.
     """
     year, month = _cierre_month()
     store_info_rows = _build_store_info_rows(year, month)
     entries = control_cierre.build_month_entries(store_info_rows, year, month)
     report, cross = _monthly_cross(year, month, entries)
-    # Lo que no coincide fuera del asiento (no lo cambia, pero hay que corregirlo).
+    # Lo que no coincide fuera de los importes del cruce (hay que corregirlo igual).
     other_store_info, other_departments = [], []
     if cross:
         days_loaded = sum(1 for r in store_info_rows if r.get("store_info_source"))

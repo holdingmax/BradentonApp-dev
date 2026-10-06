@@ -160,21 +160,21 @@
     {% if cross %}
     <div class="ci-status {{ 'ok' if cross.ok else 'bad-strong' }}">
       <div class="ci-status-title">
-        {% if cross.ok %}Bien: el asiento y todos sus datos coinciden al centavo con el reporte mensual del POS.
+        {% if cross.ok %}Bien: la suma de los reportes diarios del mes coincide al centavo con el reporte mensual del POS.
         {% else %}No coincide con el reporte mensual: {{ (cross.differences + cross.unread)|join(", ") }}.{% endif %}
       </div>
       {% if monthly_report.warnings %}{% for warning in monthly_report.warnings %}<p>Reporte mensual: {{ warning }}</p>{% endfor %}{% endif %}
-      <p>Cada importe del asiento armado con los días, contra el mismo importe armado con el reporte mensual (<a href="{{ url_for('carga_datos_reporte_mensual', year=year, month=month) }}">Reporte Mensual</a>). Abajo, los datos de los que sale cada renglón: si un renglón no da, el dato que no coincide dice dónde buscar (Store Info o Ventas por Departamento del mes).</p>
+      <p>Cada importe con la suma de los reportes diarios del mes, contra el mismo importe con el reporte mensual (<a href="{{ url_for('carga_datos_reporte_mensual', year=year, month=month) }}">Reporte Mensual</a>). Abajo, los datos de los que sale cada renglón: si un renglón no da, el dato que no coincide dice dónde buscar (Store Info o Ventas por Departamento del mes).</p>
     </div>
     <div class="ci-cross-wrap">
       <table class="ci-cross-table">
-        <thead><tr><th>Concepto</th><th>Asiento (días)</th><th>Reporte mensual</th><th>Diferencia</th></tr></thead>
+        <thead><tr><th>Concepto</th><th>Reportes por Día</th><th>Reporte mensual</th><th>Diferencia</th></tr></thead>
         <tbody>
           {% for row in cross.lines %}
           <tr><td>{{ row.label }}</td><td>{{ money(row.days) }}</td><td>{{ money(row.report) }}</td>
             <td class="{{ 'ci-ok' if row.ok else 'ci-bad' }}">{{ money(row.diff) }}</td></tr>
           {% endfor %}
-          <tr class="ci-cross-section"><td colspan="4">Datos del asiento</td></tr>
+          <tr class="ci-cross-section"><td colspan="4">Datos de los que sale cada importe</td></tr>
           {% for row in cross.bases %}
           <tr><td>{{ row.label }}</td><td>{{ money(row.days) }}</td><td>{{ money(row.report) }}</td>
             <td class="{{ 'ci-ok' if row.ok else 'ci-bad' }}">{{ money(row.diff) }}</td></tr>
@@ -185,7 +185,7 @@
     {% else %}
     <div class="ci-status none">
       <div class="ci-status-title">Sin reporte mensual de {{ month_name }} {{ year }}.</div>
-      <p>Cargalo en <a href="{{ url_for('carga_datos_reporte_diario') }}">Carga de Datos → Reportes Diario/Mensual</a> para cruzar el asiento contra lo que imprime el POS para el mes entero.</p>
+      <p>Cargalo en <a href="{{ url_for('carga_datos_reporte_diario') }}">Carga de Datos → Reportes Diario/Mensual</a> para cruzar la suma de los reportes diarios contra lo que imprime el POS para el mes entero.</p>
     </div>
     {% endif %}
   </div>

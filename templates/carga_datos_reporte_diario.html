@@ -21,7 +21,7 @@
 </div>
 <div class="card" style="margin-top: 18px;">
   <h2>Reporte mensual</h2>
-  <p class="muted">El "Resumen Ventas" del mes escaneado. Queda guardado en su mes (sale del propio PDF; si ya había uno de ese mes, se reemplaza) y se cruza con lo cargado día por día y con el asiento de cierre. <a href="{{ url_for('carga_datos_reporte_mensual') }}">Ver el reporte mensual</a>.</p>
+  <p class="muted">El "Resumen Ventas" del mes escaneado. Queda guardado en su mes (sale del propio PDF; si ya había uno de ese mes, se reemplaza) y se cruza con la suma de los reportes diarios del mes. <a href="{{ url_for('carga_datos_reporte_mensual') }}">Ver el reporte mensual</a>.</p>
   <form method="post" action="{{ url_for('carga_datos_reporte_mensual_subir') }}" enctype="multipart/form-data" class="background-job-form" data-resume-job="{{ resume_monthly_job_id or '' }}">
     <label class="muted">PDF del reporte mensual</label>
     <input type="file" name="reporte_files" id="reporte-mensual-input" multiple accept="application/pdf" class="accumulate-files" required>

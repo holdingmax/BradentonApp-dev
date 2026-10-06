@@ -192,7 +192,7 @@ def cross_check(entries, report_t):
 
     lines = [dict(row(line["account"], line["amount"], other["amount"]), side=line["side"])
              for line, other in zip(entries["lines"], entry_lines(report_t))]
-    lines.append(dict(row("Cobrado a Gettel KIA (2.º asiento)", entries["collected"], report_t["vs"]), side="debit"))
+    lines.append(dict(row("Cobrado a Gettel KIA", entries["collected"], report_t["vs"]), side="debit"))
     bases = [row(label, entries["totals"][key], report_t[key]) for key, label in BASE_LABELS]
     bad = [r for r in lines + bases if not r["ok"]]
     return {
@@ -304,7 +304,7 @@ def build_entries_pdf(entries, title, period_label, dest_path, cross=None):
         elements.append(PageBreak())
         elements.append(Paragraph(f"Cruce con el reporte mensual — {period_label}", styles["Heading3"]))
         if cross["ok"]:
-            verdict = "Todo coincide al centavo con el reporte mensual."
+            verdict = "La suma de los reportes diarios del mes coincide al centavo con el reporte mensual."
         else:
             verdict = "No coincide: " + ", ".join(cross["differences"] + [f"{u} (no se leyó)" for u in cross["unread"]]) + "."
         result_style = ParagraphStyle(
@@ -313,12 +313,12 @@ def build_entries_pdf(entries, title, period_label, dest_path, cross=None):
         )
         elements.append(Paragraph(verdict, result_style))
         elements.append(Spacer(1, 6))
-        data = [["Concepto", "Asiento (días)", "Reporte mensual", "Diferencia"]]
+        data = [["Concepto", "Reportes por Día", "Reporte mensual", "Diferencia"]]
         rows = cross["lines"] + [None] + cross["bases"]
         bad_rows, section_row = [], None
         for row in rows:
             if row is None:
-                data.append(["Datos del asiento", "", "", ""])
+                data.append(["Datos de los que sale cada importe", "", "", ""])
                 section_row = len(data) - 1
                 continue
             data.append([row["label"], _money(row["days"]), _money(row["report"]), _money(row["diff"])])
