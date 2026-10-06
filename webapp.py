@@ -38,6 +38,9 @@ import chase_db
 import cheques_db
 import depositos
 import depositos_db
+import control_cierre
+import reporte_mensual
+import reporte_mensual_db
 import control_tarjetas
 import controles_rapidos
 from cheques import check_number_from_chase_description, extract_checks_from_pdf
@@ -651,14 +654,16 @@ CONTROLS = [
 # ni aparecen en la búsqueda.
 _ICON_DEPOSIT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/></svg>'
 
+# "Cierre" reemplazó a "Caja" (Depósitos contra Chase) en la lista (pedido
+# del usuario, 2026-10-06); /controles/depositos sigue andando por URL.
 CONTROLES_SECTIONS = [
     {
-        "key": "control_depositos",
-        "code": "DP",
-        "icon": _ICON_DEPOSIT,
-        "label": "Caja",
-        "url": "/controles/depositos",
-        "description": "Los depósitos de Caja (los que salen de Chase) contra los recibos de depósito en PDF, hasta el último día cargado de Chase.",
+        "key": "control_cierre",
+        "code": "CI",
+        "icon": _ICON_SCALE,
+        "label": "Cierre",
+        "url": "/controles/cierre",
+        "description": "Los dos asientos de cierre del mes (los de la hoja Store Info del Excel Cierre), con su PDF y el Excel de Store Info que los incluye.",
         "accent": "#16A34A",
         "accent_soft": "#DCF3E3",
     },
@@ -697,9 +702,9 @@ CARGA_DATOS_TOOLS = [
         "key": "carga_reporte",
         "code": "RD",
         "icon": _ICON_CALENDAR,
-        "label": "Reportes Diarios",
+        "label": "Reportes Diario/Mensual",
         "url": "/carga-datos/reporte-diario",
-        "description": "Subí el PDF de cierre diario — Departamentos y Store Info quedan guardados solos, día por día.",
+        "description": "Subí los PDF de cierre diario (Departamentos y Store Info, día por día) y el reporte mensual, que se cruza con lo cargado y con el asiento de cierre.",
         "accent": "#0284C7",
         "accent_soft": "#D7EFFB",
     },
@@ -1912,6 +1917,100 @@ def fisico_lectura_real():
     return redirect(url_for("fisico_view", year=year, month=month))
 
 
+@app.route("/carga-datos/reporte-mensual")
+def carga_datos_reporte_mensual():
+    """
+    Reporte Mensual (pedido del usuario, 2026-10-06): se sube el resumen de
+    ventas del mes del POS y se cruza con lo cargado día por día y con el
+    asiento de cierre. Lectura y cruce en reporte_mensual.py.
+    """
+    year, month = _cierre_month()
+    store_info_rows = _build_store_info_rows(year, month)
+    entries = control_cierre.build_month_entries(store_info_rows, year, month)
+    report, cross = _monthly_cross(year, month, entries)
+    # Lo que no coincide fuera del asiento (no lo cambia, pero hay que corregirlo).
+    other_store_info, other_departments = [], []
+    if cross:
+        days_loaded = sum(1 for r in store_info_rows if r.get("store_info_source"))
+        comparison = reporte_mensual.store_info_comparison(_store_info_totals(store_info_rows), report, days_loaded)
+        other_store_info = [c for c in comparison.values() if not c["ok"]]
+        departments = reporte_mensual.department_comparison(reportes_db.get_month_department_totals(year, month), report)
+        other_departments = [d for d in departments or [] if not d["ok"]]
+    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+    return render_template(
+        "carga_datos_reporte_mensual.html",
+        report=report,
+        entries=entries,
+        cross=cross,
+        other_store_info=other_store_info,
+        other_departments=other_departments,
+        notice=control_cierre.missing_notice(entries) if entries else None,
+        year=year,
+        month=month,
+        month_name=_MONTH_NAMES_ES[month - 1],
+        prev_year=prev_year,
+        prev_month=prev_month,
+        next_year=next_year,
+        next_month=next_month,
+        **THEME_BY_KEY["reporte"],
+    )
+
+
+@app.route("/carga-datos/reporte-mensual/subir", methods=["POST"])
+def carga_datos_reporte_mensual_subir():
+    uploads = request.files.getlist("reporte_files")
+    if not uploads or not any(u.filename for u in uploads):
+        return _error_response("Seleccioná el PDF del reporte mensual.")
+    paths = _save_uploads_to_workspace(uploads)
+    job_id = jobs.create_job(len(paths), kind="reporte_mensual")
+    threading.Thread(target=_run_reporte_mensual_job, args=(job_id, paths), daemon=True).start()
+    return jsonify({"job_id": job_id, "total": len(paths)})
+
+
+def _run_reporte_mensual_job(job_id, paths):
+    """Aislado por archivo: cada PDF es el reporte de un mes y reemplaza el de ese mes."""
+    try:
+        loaded, problems, last = [], [], None
+        for index, path in enumerate(paths, start=1):
+            try:
+                report = reporte_mensual.extract_monthly_report(path)
+                reporte_mensual_db.save_report(report, os.path.basename(path))
+                label = f"{_MONTH_NAMES_ES[report['month'] - 1]} {report['year']}"
+                loaded.append(label)
+                last = (report["year"], report["month"])
+                problems.extend(f"{label}: {warning}" for warning in report["warnings"])
+            except ValueError as exc:
+                problems.append(str(exc))
+            except Exception as exc:
+                print(f"[carga-datos/reporte-mensual] {path}: {exc}")
+                problems.append("Un archivo no se pudo leer.")
+            jobs.update_job(job_id, done=index, total=len(paths))
+
+        parts = []
+        if loaded:
+            parts.append("Reporte mensual cargado: " + ", ".join(loaded) + ".")
+        parts.extend(problems)
+        level = "success" if loaded and not problems else ("warning" if loaded else "error")
+        jobs.update_job(
+            job_id, status="done", done=len(paths), total=len(paths),
+            notice=" ".join(parts), notice_level=level,
+            redirect_url=(f"/carga-datos/reporte-mensual?year={last[0]}&month={last[1]}" if last
+                          else "/carga-datos/reporte-mensual"),
+        )
+    except Exception as exc:
+        jobs.update_job(job_id, status="error", error=f"Error: {exc}")
+
+
+@app.route("/carga-datos/reporte-mensual/eliminar", methods=["POST"])
+def carga_datos_reporte_mensual_eliminar():
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    if year and month:
+        reporte_mensual_db.delete_report(year, month)
+    return redirect(url_for("carga_datos_reporte_mensual", year=year, month=month))
+
+
 @app.route("/carga-datos/reporte-diario")
 def carga_datos_reporte_diario():
     """
@@ -1919,11 +2018,17 @@ def carga_datos_reporte_diario():
     ningún campo de Excel (pedido explícito del usuario 2026-09-11, parte del
     plan de dejar este lado autosuficiente para subir datos sin depender de
     Herramientas). Ver carga_datos_reporte_diario_subir más abajo.
+
+    "Reportes Diario/Mensual" (pedido del usuario, 2026-10-06): abajo, en la
+    misma página, se carga el reporte mensual (carga_datos_reporte_mensual_
+    subir); su página propia queda solo para verlo y eliminarlo.
     """
     _active_job = jobs.get_active_job("reporte_diario")
+    _monthly_job = jobs.get_active_job("reporte_mensual")
     return render_template(
         "carga_datos_reporte_diario.html",
         resume_job_id=(_active_job["id"] if _active_job else None),
+        resume_monthly_job_id=(_monthly_job["id"] if _monthly_job else None),
         **THEME_BY_KEY["reporte"],
     )
 
@@ -4083,6 +4188,8 @@ def reporte_historial():
     department_groups, department_unmatched = group_department_sales(department_totals)
     prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
     next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+    # Reporte mensual del POS, si está cargado: columnas para comparar.
+    monthly = reporte_mensual_db.get_report(year, month)
 
     return render_template(
         "reporte_historial.html",
@@ -4090,6 +4197,8 @@ def reporte_historial():
         department_totals=department_totals,
         department_groups=department_groups,
         department_unmatched=department_unmatched,
+        monthly_categories=reporte_mensual.category_comparison(department_groups, monthly) if monthly else None,
+        monthly_departments=reporte_mensual.department_comparison(department_totals, monthly) if monthly else None,
         year=year,
         month=month,
         month_name=_MONTH_NAMES_ES[month - 1],
@@ -4161,6 +4270,8 @@ def _build_store_info_rows(year, month):
         groups, _unmatched = group_department_sales(detail)
         gettel_amount = next((g["amount"] for g in groups if g["label"] == "Gettel"), 0.0)
         row["gettel_amount"] = gettel_amount
+        # Sin departamentos ese día, LOTTO y VS quedan en 0 (el control Cierre lo avisa).
+        row["has_departments"] = bool(detail)
         # Categorías crudas (TABACCO/SODA/BEER-WINE/LOTERY-LOTTO/Gettel/
         # RESTO) -- hace falta puertas adentro para la exportación a Excel
         # (columnas I-N de la hoja real, ver build_store_info_export_workbook),
@@ -4274,13 +4385,20 @@ def reporte_store_info_historial():
         month = today.month
 
     store_info_rows = _build_store_info_rows(year, month)
+    store_info_totals = _store_info_totals(store_info_rows)
     prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
     next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+    # Reporte mensual del POS, si está cargado: filas para comparar con el total.
+    monthly = reporte_mensual_db.get_report(year, month)
+    days_loaded = sum(1 for r in store_info_rows if r.get("store_info_source"))
 
     return render_template(
         "reporte_store_info_historial.html",
         store_info_rows=store_info_rows,
-        store_info_totals=_store_info_totals(store_info_rows),
+        store_info_totals=store_info_totals,
+        monthly_store_info=(
+            reporte_mensual.store_info_comparison(store_info_totals, monthly, days_loaded) if monthly else None
+        ),
         year=year,
         month=month,
         month_name=_MONTH_NAMES_ES[month - 1],
@@ -6293,6 +6411,98 @@ def controles_tarjetas():
         next_month=next_month,
         **THEME_BY_KEY["carga_eft"],
     )
+
+
+def _cierre_month():
+    today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not (1 <= month <= 12):
+        month = today.month
+    return year, month
+
+
+def _cierre_period_label(entries):
+    first, last = entries["first_day"], entries["last_day"]
+    return f"Período: {_fmt_ddmmyyyy(first)} al {_fmt_ddmmyyyy(last)}"
+
+
+def _monthly_cross(year, month, entries):
+    """(reporte mensual guardado, cruce contra el asiento), o None donde falte."""
+    report = reporte_mensual_db.get_report(year, month)
+    if not report or not entries:
+        return report, None
+    return report, control_cierre.cross_check(entries, reporte_mensual.report_totals(report))
+
+
+@app.route("/controles/cierre")
+def controles_cierre():
+    """
+    Control Cierre (pedido del usuario, 2026-10-06): los dos asientos de
+    cierre del mes de la hoja Store info del Excel Cierre, con los totales
+    ya guardados. Cálculo en control_cierre.py.
+    """
+    year, month = _cierre_month()
+    entries = control_cierre.build_month_entries(_build_store_info_rows(year, month), year, month)
+    monthly_report, cross = _monthly_cross(year, month, entries)
+    section = next(s for s in CONTROLES_SECTIONS if s["key"] == "control_cierre")
+    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+    return render_template(
+        "controles_cierre.html",
+        entries=entries,
+        monthly_report=monthly_report,
+        cross=cross,
+        notice=control_cierre.missing_notice(entries) if entries else None,
+        period_label=_cierre_period_label(entries) if entries else None,
+        entry_title=control_cierre.ENTRY_TITLE,
+        account_jh=control_cierre.ACCOUNT_JH,
+        account_gettel=control_cierre.ACCOUNT_GETTEL,
+        lottery_note=control_cierre.LOTTERY_NOTE,
+        year=year,
+        month=month,
+        month_name=_MONTH_NAMES_ES[month - 1],
+        prev_year=prev_year,
+        prev_month=prev_month,
+        next_year=next_year,
+        next_month=next_month,
+        accent=section["accent"],
+        accent_soft=section["accent_soft"],
+    )
+
+
+@app.route("/controles/cierre/exportar/pdf")
+def controles_cierre_pdf():
+    """PDF de los dos asientos del mes (control_cierre.build_entries_pdf)."""
+    year, month = _cierre_month()
+    entries = control_cierre.build_month_entries(_build_store_info_rows(year, month), year, month)
+    if not entries:
+        flash("No hay ningún Store Info guardado ese mes: no hay asientos para exportar.", "error")
+        return redirect(url_for("controles_cierre", year=year, month=month))
+    dest_path = os.path.join(tempfile.mkdtemp(prefix="cierre_pdf_"), f"Asientos de cierre {month:02d}-{year}.pdf")
+    control_cierre.build_entries_pdf(
+        entries, f"Asientos de cierre — {_MONTH_NAMES_ES[month - 1]} {year}", _cierre_period_label(entries), dest_path,
+        cross=_monthly_cross(year, month, entries)[1],
+    )
+    return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
+
+
+@app.route("/controles/cierre/exportar")
+def controles_cierre_excel():
+    """
+    El mismo Excel de Store Info de Reportes (build_store_info_export_
+    workbook), más la fila de totales del mes y los dos asientos debajo.
+    """
+    year, month = _cierre_month()
+    store_info_rows = _build_store_info_rows(year, month)
+    entries = control_cierre.build_month_entries(store_info_rows, year, month)
+    if not entries:
+        flash("No hay ningún Store Info guardado ese mes para exportar.", "error")
+        return redirect(url_for("controles_cierre", year=year, month=month))
+    dest_path = os.path.join(tempfile.mkdtemp(prefix="cierre_excel_"), f"Store Info {month:02d}-{year} con asientos.xlsx")
+    build_store_info_export_workbook(store_info_rows, year, month, dest_path)
+    control_cierre.add_entries_to_store_info_workbook(dest_path, entries)
+    return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
 
 
 @app.route("/controles/rapidos/<kind>")

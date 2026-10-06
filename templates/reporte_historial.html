@@ -89,7 +89,8 @@
   <div class="historial-table-wrap">
     <table class="historial-table">
       <thead>
-        <tr><th>Categoría</th><th>Cantidad</th><th>Monto</th></tr>
+        <tr><th>Categoría</th><th>Cantidad</th><th>Monto</th>
+          {% if monthly_categories %}<th><a href="{{ url_for('carga_datos_reporte_mensual', year=year, month=month) }}">Reporte mensual</a></th><th>Diferencia</th>{% endif %}</tr>
       </thead>
       <tbody>
         {% for g in department_groups %}
@@ -97,6 +98,10 @@
           <td>{{ g.label }}</td>
           <td>{{ g.count }}</td>
           <td>${{ "{:,.2f}".format(g.amount) }}</td>
+          {% if monthly_categories %}{% set c = monthly_categories[g.label] %}
+          <td class="monthly-col">${{ "{:,.2f}".format(c.report) }}</td>
+          <td class="{{ 'monthly-ok' if c.ok else 'monthly-bad' }}">{{ "{:,.2f}".format(c.diff) }}</td>
+          {% endif %}
         </tr>
         {% endfor %}
       </tbody>
@@ -105,6 +110,12 @@
           <td>Total</td>
           <td>{{ department_groups|sum(attribute='count') }}</td>
           <td>${{ "{:,.2f}".format(department_groups|sum(attribute='amount')) }}</td>
+          {% if monthly_categories %}
+          {% set month_total = monthly_categories.values()|sum(attribute='report') %}
+          {% set diff_total = (department_groups|sum(attribute='amount')) - month_total %}
+          <td>${{ "{:,.2f}".format(month_total) }}</td>
+          <td class="{{ 'monthly-ok' if diff_total|abs < 0.005 else 'monthly-bad' }}">{{ "{:,.2f}".format(diff_total) }}</td>
+          {% endif %}
         </tr>
       </tfoot>
     </table>
@@ -117,7 +128,40 @@
 <div class="card" style="margin-top: 18px;">
   <h2>Total del mes por departamento</h2>
   <p class="muted">Suma de Cantidad/Monto de todos los días ya cargados — igual que la autosuma que tenía la hoja "CARGA AQUI".</p>
-  {% if department_totals %}
+  {% if monthly_departments %}
+  <div class="historial-table-wrap">
+    <table class="historial-table">
+      <thead>
+        <tr><th>Departamento</th><th>Cantidad</th><th>Monto</th>
+          <th><a href="{{ url_for('carga_datos_reporte_mensual', year=year, month=month) }}">Reporte mensual</a>: cantidad</th><th>Reporte mensual: monto</th><th>Diferencia</th></tr>
+      </thead>
+      <tbody>
+        {% for d in monthly_departments %}
+        <tr>
+          <td>{{ d.department }}</td>
+          <td>{{ d.days_count if d.days_count is not none else '—' }}</td>
+          <td>${{ "{:,.2f}".format(d.days) }}</td>
+          <td class="monthly-col {{ '' if d.count_ok else 'monthly-count-off' }}" {% if not d.count_ok %}title="La cantidad no coincide (no afecta los montos)"{% endif %}>{{ d.report_count if d.report_count is not none else '—' }}</td>
+          <td class="monthly-col">${{ "{:,.2f}".format(d.report) }}</td>
+          <td class="{{ 'monthly-ok' if d.ok else 'monthly-bad' }}">{{ "{:,.2f}".format(d.diff) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+      <tfoot>
+        {% set days_total = monthly_departments|sum(attribute='days') %}
+        {% set month_total = monthly_departments|sum(attribute='report') %}
+        <tr class="reporte-totals-row">
+          <td>Total</td>
+          <td>{{ department_totals|sum(attribute='count') }}</td>
+          <td>${{ "{:,.2f}".format(days_total) }}</td>
+          <td>{{ monthly_departments|map(attribute='report_count')|select|sum }}</td>
+          <td>${{ "{:,.2f}".format(month_total) }}</td>
+          <td class="{{ 'monthly-ok' if (days_total - month_total)|abs < 0.005 else 'monthly-bad' }}">{{ "{:,.2f}".format(days_total - month_total) }}</td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+  {% elif department_totals %}
   <div class="historial-table-wrap">
     <table class="historial-table">
       <thead>
@@ -230,5 +274,10 @@
   .historial-table td.historial-col-day { text-align: center; }
 
   .reporte-totals-row td { font-weight: 700; background: var(--surface-alt); border-top: 2px solid var(--border); }
+  /* Reporte mensual del POS (2026-10-06): columnas para comparar. */
+  .monthly-col { background: var(--accent-soft); }
+  .monthly-ok { color: var(--success); }
+  .monthly-bad { color: var(--error); font-weight: 700; }
+  .monthly-count-off { color: #B45309; }
 </style>
 {% endblock %}

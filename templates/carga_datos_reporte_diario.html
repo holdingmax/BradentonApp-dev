@@ -1,13 +1,12 @@
 {% extends "base.html" %}
 {% block crumbs %}
-<nav class="crumbs"><span class="current">Reporte Diario</span></nav>
+<nav class="crumbs"><span class="current">Reportes Diario/Mensual</span></nav>
 {% endblock %}
 {% block content %}
 <div class="page-header">
-  <h1>Reporte Diario</h1>
-  <p class="page-subtitle">Subí uno o más PDF de cierre diario — se guardan solos. <a href="{{ url_for('reporte_historial') }}">Ver lo ya guardado</a>.</p>
+  <h1>Reportes Diario/Mensual</h1>
+  <p class="page-subtitle">Subí los PDF de cierre diario y, una vez por mes, el reporte mensual — se guardan solos. <a href="{{ url_for('reporte_historial') }}">Ver lo ya guardado</a>.</p>
 </div>
-
 <div class="card">
   <h2>PDF de cierre diario</h2>
   <p class="muted">Completa Ventas por Departamento y Store Info — y, del mismo PDF, las columnas ONLINE/SKOFF de Lottery.</p>
@@ -17,6 +16,18 @@
     <div class="form-actions">
       <button type="submit">Guardar</button>
       <button type="button" class="btn-secondary clear-file-btn" data-target="reporte-diario-pdf-input">Limpiar</button>
+    </div>
+  </form>
+</div>
+<div class="card" style="margin-top: 18px;">
+  <h2>Reporte mensual</h2>
+  <p class="muted">El "Resumen Ventas" del mes escaneado. Queda guardado en su mes (sale del propio PDF; si ya había uno de ese mes, se reemplaza) y se cruza con lo cargado día por día y con el asiento de cierre. <a href="{{ url_for('carga_datos_reporte_mensual') }}">Ver el reporte mensual</a>.</p>
+  <form method="post" action="{{ url_for('carga_datos_reporte_mensual_subir') }}" enctype="multipart/form-data" class="background-job-form" data-resume-job="{{ resume_monthly_job_id or '' }}">
+    <label class="muted">PDF del reporte mensual</label>
+    <input type="file" name="reporte_files" id="reporte-mensual-input" multiple accept="application/pdf" class="accumulate-files" required>
+    <div class="form-actions">
+      <button type="submit">Guardar y cruzar</button>
+      <button type="button" class="btn-secondary clear-file-btn" data-target="reporte-mensual-input">Limpiar</button>
     </div>
   </form>
 </div>

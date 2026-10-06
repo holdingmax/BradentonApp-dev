@@ -102,6 +102,24 @@
           <td>{{ "{:,.2f}".format(store_info_totals.total_revenue) if store_info_totals.total_revenue is not none else '—' }}</td>
           <td></td>
         </tr>
+        {% if monthly_store_info %}
+        {% set monthly_keys = ('volume', 'sales_fuel', 'desc_comb', 'total_fuel', 'non_fuel_total', 'desc_otros', 'tax_collect', 'total_sales', 'cash', 'tc', 'local_accounts', 'other_amount', 'network_revenue', 'total_revenue') %}
+        <tr class="monthly-row">
+          <td colspan="2"><a href="{{ url_for('carga_datos_reporte_mensual', year=year, month=month) }}">Reporte mensual</a></td>
+          {% for key in monthly_keys %}{% set c = monthly_store_info[key] %}
+          <td>{{ "{:,.2f}".format(c.report) if c.report is not none else '—' }}</td>
+          {% endfor %}
+          <td></td>
+        </tr>
+        <tr class="monthly-row monthly-diff-row">
+          <td colspan="2">Diferencia</td>
+          {% for key in monthly_keys %}{% set c = monthly_store_info[key] %}
+          <td class="{{ 'monthly-ok' if c.ok and not c.rounding else ('monthly-rounding' if c.ok else 'monthly-bad') }}"
+              {% if c.rounding %}title="Redondeo: los cierres diarios imprimen el Volume con 2 decimales"{% elif key == 'total_sales' %}title="Sin VS (LOCAL ACCT), igual que la columna"{% endif %}>{{ "{:,.2f}".format(c.diff) if c.diff is not none else '—' }}</td>
+          {% endfor %}
+          <td></td>
+        </tr>
+        {% endif %}
       </tfoot>
     </table>
   </div>
@@ -159,6 +177,12 @@
   .historial-col-day { font-weight: 700; width: 40px; }
   .historial-col-action { text-align: right; white-space: nowrap; }
   .reporte-totals-row td { font-weight: 700; background: var(--surface-alt); border-top: 2px solid var(--border); }
+  /* Reporte mensual del POS (2026-10-06): debajo del total, para comparar. */
+  .monthly-row td { font-weight: 600; background: var(--accent-soft); }
+  .monthly-diff-row td { font-weight: 400; }
+  .monthly-ok { color: var(--success); }
+  .monthly-rounding { color: var(--text-soft); }
+  .monthly-bad { color: var(--error); font-weight: 700 !important; }
   .historial-badge {
     display: inline-block;
     padding: 3px 9px;

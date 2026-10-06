@@ -1,0 +1,106 @@
+{% extends "base.html" %}
+{% block crumbs %}
+<nav class="crumbs"><span class="current">Reporte Mensual</span></nav>
+{% endblock %}
+{% block head_extra %}
+<style>
+  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .historial-nav-btn { text-decoration: none; display: inline-block; }
+  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
+  .rm-status { margin-top: 18px; padding: 14px 16px; border-radius: 10px; border: 1px solid var(--border); }
+  .rm-status.ok { background: #F0FDF4; border-color: #BBF7D0; }
+  .rm-status.bad { background: #FEF2F2; border-color: #FECACA; }
+  .rm-status.warn { background: #FFFBEB; border-color: #FDE68A; }
+  .rm-status.none { background: var(--surface-alt); }
+  .rm-status-title { font-weight: 700; }
+  .rm-status p { margin: 6px 0 0; font-size: 13px; color: var(--text-soft); }
+  .rm-links { margin-top: 10px; display: flex; gap: 16px; flex-wrap: wrap; font-size: 13px; }
+  .rm-table-wrap { overflow-x: auto; margin-top: 16px; border: 1px solid var(--border); border-radius: 10px; }
+  .rm-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  .rm-table th, .rm-table td { padding: 7px 12px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .rm-table th:first-child, .rm-table td:first-child { text-align: left; }
+  .rm-table thead th { background: var(--accent-soft); font-weight: 700; }
+  .rm-table tr.rm-section td { background: var(--surface-alt); font-weight: 700; text-align: left; }
+  .rm-bad { color: var(--error); font-weight: 700; }
+  .rm-ok { color: var(--success); }
+  .rm-actions { margin-top: 14px; display: flex; justify-content: flex-end; }
+</style>
+{% endblock %}
+{% block content %}
+{% from "_month_jump.html" import month_jump %}
+{% macro money(x) -%}{%- if x is none -%}—{%- elif x < 0 -%}-${{ "{:,.2f}".format(-x) }}{%- else -%}${{ "{:,.2f}".format(x) }}{%- endif -%}{%- endmacro %}
+<div class="page-header">
+  <h1>Reporte Mensual</h1>
+  <p class="page-subtitle">El resumen de ventas del mes que imprime el POS, cruzado con lo cargado día por día (Store Info y Ventas por Departamento) y con el asiento de cierre: todo tiene que coincidir al centavo. Se carga en <a href="{{ url_for('carga_datos_reporte_diario') }}">Carga de Datos → Reportes Diario/Mensual</a>.</p>
+</div>
+
+<div class="card">
+  <div class="historial-nav">
+    <a href="{{ url_for('carga_datos_reporte_mensual', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
+    <div class="historial-nav-title">
+      {{ month_jump('carga_datos_reporte_mensual', year, month) }}
+      {% if year == today.year and month == today.month %}
+      <span class="muted">Mes actual</span>
+      {% else %}
+      <a href="{{ url_for('carga_datos_reporte_mensual') }}" class="muted">Ir al mes actual</a>
+      {% endif %}
+    </div>
+    <a href="{{ url_for('carga_datos_reporte_mensual', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
+  </div>
+
+  {% if not report %}
+  <div class="rm-status none">
+    <div class="rm-status-title">Todavía no hay reporte mensual de {{ month_name }} {{ year }}.</div>
+    <p>Cargalo en <a href="{{ url_for('carga_datos_reporte_diario') }}">Carga de Datos → Reportes Diario/Mensual</a> para cruzarlo con lo cargado.</p>
+  </div>
+  {% elif not cross %}
+  <div class="rm-status warn">
+    <div class="rm-status-title">Reporte mensual cargado, pero no hay Store Info de {{ month_name }} {{ year }} para cruzarlo.</div>
+  </div>
+  {% else %}
+  {% set others = other_store_info or other_departments %}
+  <div class="rm-status {{ 'ok' if cross.ok and not notice and not report.warnings and not others else ('bad' if not cross.ok else 'warn') }}">
+    <div class="rm-status-title">
+      {% if cross.ok %}Bien: el asiento y todos sus datos coinciden al centavo con el reporte mensual.
+      {% else %}No coincide: {{ (cross.differences + cross.unread)|join(", ") }}.{% endif %}
+    </div>
+    {% if other_store_info %}<p>Fuera del asiento, en <a href="{{ url_for('reporte_store_info_historial', year=year, month=month) }}">Store Info</a> no coincide{{ 'n' if other_store_info|length > 1 }}: {% for c in other_store_info %}{{ c.label }} ({{ money(c.diff) if c.diff is not none else 'no se leyó' }}){{ ', ' if not loop.last else '.' }}{% endfor %} No cambia{{ 'n' if other_store_info|length > 1 }} el asiento, pero hay un día mal cargado: en la fila "Diferencia" de Store Info se ve la columna.</p>{% endif %}
+    {% if other_departments %}<p>En <a href="{{ url_for('reporte_historial', year=year, month=month) }}">Ventas por Departamento</a> no coincide{{ 'n' if other_departments|length > 1 }}: {% for d in other_departments %}{{ d.department }} ({{ money(d.diff) }}){{ ', ' if not loop.last else '.' }}{% endfor %}</p>{% endif %}
+    {% if notice %}<p>Ojo, lo cargado día por día está incompleto: {{ notice }}</p>{% endif %}
+    {% for warning in report.warnings %}<p>Reporte mensual: {{ warning }}</p>{% endfor %}
+    <p>Reporte del {{ report.from_date[8:10] }}/{{ report.from_date[5:7] }} al {{ report.to_date[8:10] }}/{{ report.to_date[5:7] }}/{{ report.to_date[:4] }}, cargado el {{ report.updated_at[8:10] }}/{{ report.updated_at[5:7] }} a las {{ report.updated_at[11:16] }}.</p>
+    <div class="rm-links">
+      <a href="{{ url_for('controles_cierre', year=year, month=month) }}">Ver el asiento en Controles → Cierre</a>
+      <a href="{{ url_for('reporte_store_info_historial', year=year, month=month) }}">Store Info del mes</a>
+      <a href="{{ url_for('reporte_historial', year=year, month=month) }}">Ventas por Departamento del mes</a>
+    </div>
+  </div>
+
+  <div class="rm-table-wrap">
+    <table class="rm-table">
+      <thead><tr><th>Concepto</th><th>Asiento (días)</th><th>Reporte mensual</th><th>Diferencia</th></tr></thead>
+      <tbody>
+        {% for row in cross.lines %}
+        <tr><td>{{ row.label }}</td><td>{{ money(row.days) }}</td><td>{{ money(row.report) }}</td>
+          <td class="{{ 'rm-ok' if row.ok else 'rm-bad' }}">{{ money(row.diff) }}</td></tr>
+        {% endfor %}
+        <tr class="rm-section"><td colspan="4">Datos del asiento</td></tr>
+        {% for row in cross.bases %}
+        <tr><td>{{ row.label }}</td><td>{{ money(row.days) }}</td><td>{{ money(row.report) }}</td>
+          <td class="{{ 'rm-ok' if row.ok else 'rm-bad' }}">{{ money(row.diff) }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% if report %}
+  <form method="post" action="{{ url_for('carga_datos_reporte_mensual_eliminar') }}" class="rm-actions" onsubmit="return confirm('¿Eliminar el reporte mensual de {{ month_name }} {{ year }}? Lo cargado día por día no se toca.');">
+    <input type="hidden" name="year" value="{{ year }}">
+    <input type="hidden" name="month" value="{{ month }}">
+    <button type="submit" class="btn-secondary">Eliminar el reporte de este mes</button>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}
