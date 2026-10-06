@@ -2354,30 +2354,27 @@ def build_store_info_export_workbook(rows, year, month, dest_path):
         cat = row.get("category_amounts") or {}
         credit_amounts = row.get("credit_terms") or []
 
-        # Las 3 fórmulas (Total Fuel/Total Ventas/Total Revenue) solo se
-        # escriben si TODOS sus componentes reales están cargados -- bug
-        # real encontrado en una revisión de bugs (2026-09-19): un día sin
-        # Store Info (o con algún campo suelto sin cargar) igual escribía
-        # la fórmula, y Excel trata una celda vacía como 0 al sumar -- el
-        # día terminaba mostrando "$0.00" en vez de en blanco, dando a
-        # entender que ese día tuvo $0 de ventas en vez de "sin cargar".
-        # Confirmado contra agosto-2026 real: 7 de 31 días sin ningún dato
-        # quedaban así. Mismo criterio de siempre: nunca un valor de baja
-        # confianza en silencio.
-        has_total_fuel = row.get("sales_fuel") is not None and row.get("desc_comb") is not None
-        has_total_ventas = has_total_fuel and None not in (
-            row.get("non_fuel_total"), row.get("desc_otros"), row.get("tax_collect"),
-        )
-        has_total_revenue = None not in (row.get("cash"), row.get("other_amount"), row.get("local_accounts"))
+        # Un día sin ningún Store Info queda en blanco (no tuvo $0 de ventas,
+        # está sin cargar). En un día cargado, un dato que falta va como 0 y
+        # las fórmulas se escriben igual -- pedido del usuario (2026-10-06):
+        # "es mejor que aparezca como 0 y que luego te diga si hay
+        # diferencias antes que no muestre nada". Las diferencias las avisan
+        # el control Cierre (datos vacíos) y el cruce con el reporte mensual.
+        has_store_info = bool(row.get("store_info_source"))
+        has_total_fuel = has_total_ventas = has_total_revenue = has_store_info
+
+        def num(key):
+            value = row.get(key)
+            return 0.0 if value is None and has_store_info else value
 
         values = {
             1: col_a_date,
             2: _parse_hhmm(row.get("from_time")),
             3: col_c_date,
             4: _parse_hhmm(row.get("to_time")),
-            5: row.get("volume"),
-            6: row.get("sales_fuel"),
-            7: row.get("desc_comb"),
+            5: num("volume"),
+            6: num("sales_fuel"),
+            7: num("desc_comb"),
             8: f"=SUM(F{r}:G{r})" if has_total_fuel else None,
             9: cat.get(CATEGORY_LABELS[0], 0.0),
             10: cat.get(CATEGORY_LABELS[1], 0.0),
@@ -2385,16 +2382,16 @@ def build_store_info_export_workbook(rows, year, month, dest_path):
             12: cat.get(CATEGORY_LABELS[3], 0.0),
             13: cat.get(CATEGORY_LABELS[4], 0.0),
             14: cat.get(CATEGORY_LABELS[5], 0.0),
-            15: row.get("non_fuel_total"),
-            16: row.get("desc_otros"),
-            17: row.get("tax_collect"),
+            15: num("non_fuel_total"),
+            16: num("desc_otros"),
+            17: num("tax_collect"),
             18: f"=+H{r}+O{r}+P{r}+Q{r}-M{r}" if has_total_ventas else None,
-            19: row.get("cash"),
-            20: _build_credit_terms_formula(credit_amounts),
-            21: row.get("other_amount"),
-            22: row.get("local_accounts"),
+            19: num("cash"),
+            20: _build_credit_terms_formula(credit_amounts) if (credit_amounts or has_store_info) else None,
+            21: num("other_amount"),
+            22: num("local_accounts"),
             23: f"=SUM(S{r}:V{r})" if has_total_revenue else None,
-            24: row.get("network_revenue"),
+            24: num("network_revenue"),
         }
         for col, value in values.items():
             cell = sheet.cell(row=r, column=col, value=value)
