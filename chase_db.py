@@ -433,6 +433,16 @@ def has_detalle_on_date(fecha, detalle):
         conn.close()
 
 
+def get_last_posting_date():
+    """Fecha del último movimiento guardado (date), o None: hasta dónde está cargado Chase."""
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT MAX(posting_date) AS last FROM chase_transactions").fetchone()
+    finally:
+        conn.close()
+    return date.fromisoformat(row["last"]) if row and row["last"] else None
+
+
 def get_uncategorized_count(year, month):
     """Cuántos movimientos del mes quedaron sin ninguna regla que matcheara -- útil para avisar."""
     rows = get_month_transactions(year, month)

@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ url_for('carga_datos_lottery') }}">Lottery</a><span class="current">Reporte mensual</span></nav>
+{% endblock %}
+{% block head_extra %}
+<style>
+  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .historial-nav-btn { text-decoration: none; display: inline-block; }
+  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
+  .rm-status { margin-top: 18px; padding: 14px 16px; border-radius: 10px; border: 1px solid var(--border); }
+  .rm-status.ok { background: #F0FDF4; border-color: #BBF7D0; }
+  .rm-status.bad { background: #FEF2F2; border-color: #FECACA; }
+  .rm-status.warn { background: #FFFBEB; border-color: #FDE68A; }
+  .rm-status.none { background: var(--surface-alt); }
+  .rm-status-title { font-weight: 700; }
+  .rm-status p { margin: 6px 0 0; font-size: 13px; color: var(--text-soft); }
+  .rm-table-wrap { overflow-x: auto; margin-top: 16px; border: 1px solid var(--border); border-radius: 10px; max-width: 620px; }
+  .rm-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  .rm-table td { padding: 6px 12px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .rm-table td:first-child { text-align: left; }
+  .rm-table tr.rm-section td { background: var(--accent-soft); font-weight: 700; text-align: left; }
+  .rm-actions { margin-top: 14px; display: flex; justify-content: flex-end; }
+</style>
+{% endblock %}
+{% block content %}
+{% from "_month_jump.html" import month_jump %}
+<div class="page-header">
+  <h1>Lottery — Reporte mensual</h1>
+  <p class="page-subtitle">El Monthly Sales Report del portal de Florida Lottery, tal cual lo imprime. Se carga en <a href="{{ url_for('carga_datos_lottery') }}">Carga de Datos → Lottery</a> y se cruza con la suma de los reportes diarios en <a href="{{ url_for('controles_lottery', year=year, month=month) }}">Controles → Lottery</a>.</p>
+</div>
+
+<div class="card">
+  <div class="historial-nav">
+    <a href="{{ url_for('carga_datos_lottery_mensual', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
+    <div class="historial-nav-title">
+      {{ month_jump('carga_datos_lottery_mensual', year, month) }}
+      {% if year == today.year and month == today.month %}
+      <span class="muted">Mes actual</span>
+      {% else %}
+      <a href="{{ url_for('carga_datos_lottery_mensual') }}" class="muted">Ir al mes actual</a>
+      {% endif %}
+    </div>
+    <a href="{{ url_for('carga_datos_lottery_mensual', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
+  </div>
+
+  {% if not report %}
+  <div class="rm-status none">
+    <div class="rm-status-title">Todavía no hay reporte mensual de Lottery de {{ month_name }} {{ year }}.</div>
+    <p>Subilo en <a href="{{ url_for('carga_datos_lottery') }}">Carga de Datos → Lottery</a>.</p>
+  </div>
+  {% else %}
+  <div class="rm-status {{ 'ok' if cross.ok and not cross.missing_days else ('bad' if not cross.ok else 'warn') }}">
+    <div class="rm-status-title">
+      {% if cross.ok %}Coincide al centavo con la suma de los reportes diarios del mes.
+      {% else %}No coincide con la suma de los reportes diarios del mes: {{ (cross.differences + cross.unread)|join(", ") }}.{% endif %}
+    </div>
+    {% if cross.missing_days %}<p>Faltan {{ cross.missing_days|length }} reporte{{ 's' if cross.missing_days|length != 1 }} diario{{ 's' if cross.missing_days|length != 1 }} del mes.</p>{% endif %}
+    {% for warning in report.warnings %}<p>{{ warning }}</p>{% endfor %}
+    <p>Reporte del {{ report.from_date[8:10] }}/{{ report.from_date[5:7] }} al {{ report.to_date[8:10] }}/{{ report.to_date[5:7] }}/{{ report.to_date[:4] }}, cargado el {{ report.updated_at[8:10] }}/{{ report.updated_at[5:7] }} a las {{ report.updated_at[11:16] }}. <a href="{{ url_for('controles_lottery', year=year, month=month) }}">Ver el cruce en Controles → Lottery</a>.</p>
+  </div>
+
+  <div class="rm-table-wrap">
+    <table class="rm-table">
+      <tbody>
+        {% for line in report.lines %}
+        {% if line.section %}
+        <tr class="rm-section"><td colspan="2">{{ line.section }}</td></tr>
+        {% else %}
+        <tr><td>{{ line.label }}</td><td>{{ line.value }}</td></tr>
+        {% endif %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <form method="post" action="{{ url_for('carga_datos_lottery_mensual_eliminar') }}" class="rm-actions" onsubmit="return confirm('¿Eliminar el reporte mensual de Lottery de {{ month_name }} {{ year }}? Los reportes diarios no se tocan.');">
+    <input type="hidden" name="year" value="{{ year }}">
+    <input type="hidden" name="month" value="{{ month }}">
+    <button type="submit" class="btn-secondary">Eliminar el reporte de este mes</button>
+  </form>
+  {% endif %}
+</div>
+{% endblock %}

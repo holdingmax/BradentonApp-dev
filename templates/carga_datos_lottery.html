@@ -5,7 +5,7 @@
 {% block content %}
 <div class="page-header">
   <h1>Lottery</h1>
-  <p class="page-subtitle">Subí el Daily Sales Report del portal de Florida Lottery — se guarda solo. ONLINE/SKOFF ya se completan solos al subir el PDF de Reporte Diario. <a href="{{ url_for('carga_datos_lottery_historial') }}">Ver lo ya guardado</a>.</p>
+  <p class="page-subtitle">Subí el Daily Sales Report del portal de Florida Lottery y, una vez por mes, el Monthly Sales Report — se guardan solos. ONLINE/SKOFF ya se completan solos al subir el PDF de Reporte Diario. <a href="{{ url_for('carga_datos_lottery_historial') }}">Ver lo ya guardado</a>.</p>
 </div>
 
 <div class="card">
@@ -16,6 +16,19 @@
     <div class="form-actions">
       <button type="submit">Guardar</button>
       <button type="button" class="btn-secondary clear-file-btn" data-target="lottery-pdf-input">Limpiar</button>
+    </div>
+  </form>
+</div>
+
+<div class="card" style="margin-top: 18px;">
+  <h2>Monthly Sales Report</h2>
+  <p class="muted">El reporte del mes entero del mismo portal. Queda guardado en su mes (sale del propio PDF; si ya había uno de ese mes, se reemplaza) y se cruza con la suma de los reportes diarios en <a href="{{ url_for('controles_lottery') }}">Controles → Lottery</a>. <a href="{{ url_for('carga_datos_lottery_mensual') }}">Ver el reporte mensual</a>.</p>
+  <form method="post" action="{{ url_for('carga_datos_lottery_mensual_subir') }}" enctype="multipart/form-data" class="background-job-form" data-resume-job="{{ resume_monthly_job_id or '' }}">
+    <label class="muted">PDF del Monthly Sales Report</label>
+    <input type="file" name="monthly_files" id="lottery-mensual-input" multiple accept="application/pdf" class="accumulate-files" required>
+    <div class="form-actions">
+      <button type="submit">Guardar y cruzar</button>
+      <button type="button" class="btn-secondary clear-file-btn" data-target="lottery-mensual-input">Limpiar</button>
     </div>
   </form>
 </div>

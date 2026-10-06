@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ url_for('controles') }}">Controles</a><span class="current">Lottery</span></nav>
+{% endblock %}
+{% block head_extra %}
+<style>
+  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .historial-nav-btn { text-decoration: none; display: inline-block; }
+  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
+  .lt-section { margin-top: 26px; padding-top: 16px; border-top: 1px solid var(--border); }
+  .lt-section:first-of-type { border-top: 0; padding-top: 0; }
+  .lt-section h2 { margin: 0; }
+  .lt-status { margin-top: 12px; padding: 14px 16px; border-radius: 10px; border: 1px solid var(--border); }
+  .lt-status.ok { background: #F0FDF4; border-color: #BBF7D0; }
+  .lt-status.warn { background: #FFFBEB; border-color: #FDE68A; }
+  .lt-status.bad { background: #FEF2F2; border-color: #FECACA; }
+  .lt-status.none { background: var(--surface-alt); }
+  .lt-status-title { font-weight: 700; }
+  .lt-status p { margin: 6px 0 0; font-size: 13px; color: var(--text-soft); }
+  .lt-table-wrap { overflow-x: auto; margin-top: 14px; border: 1px solid var(--border); border-radius: 10px; }
+  .lt-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  .lt-table th, .lt-table td { padding: 7px 12px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .lt-table th:first-child, .lt-table td:first-child, .lt-table td.lt-left, .lt-table th.lt-left { text-align: left; }
+  .lt-table thead th { background: var(--accent-soft); font-weight: 700; }
+  .lt-sub { display: block; font-size: 11.5px; color: var(--text-soft); }
+  .lt-ok { color: var(--success); }
+  .lt-bad { color: var(--error); font-weight: 700; }
+  .lt-badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .lt-badge-ok { background: #DCFCE7; color: #166534; }
+  .lt-badge-bad { background: #FEE2E2; color: #991B1B; }
+  .lt-badge-off { background: var(--surface-alt); color: var(--text-soft); border: 1px solid var(--border); }
+</style>
+{% endblock %}
+{% block content %}
+{% from "_month_jump.html" import month_jump %}
+{% macro money(x) -%}{%- if x is none -%}—{%- elif x < 0 -%}-${{ "{:,.2f}".format(-x) }}{%- else -%}${{ "{:,.2f}".format(x) }}{%- endif -%}{%- endmacro %}
+{% macro value(x, is_count) -%}{%- if is_count and x is not none -%}{{ "{:,.0f}".format(x) }}{%- else -%}{{ money(x) }}{%- endif -%}{%- endmacro %}
+{% macro ddmm(iso) -%}{{ iso[8:10] }}/{{ iso[5:7] }}{%- endmacro %}
+<div class="page-header">
+  <span class="eyebrow">Control de Lottery</span>
+  <h1>Lottery</h1>
+  <p class="page-subtitle">El reporte mensual del portal de Florida Lottery contra la suma de los reportes diarios del mes, y lo que se debita cada semana contra el pago real en Chase.</p>
+</div>
+
+<div class="card">
+  <div class="historial-nav">
+    <a href="{{ url_for('controles_lottery', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
+    <div class="historial-nav-title">
+      {{ month_jump('controles_lottery', year, month) }}
+      {% if year == today.year and month == today.month %}
+      <span class="muted">Mes actual</span>
+      {% else %}
+      <a href="{{ url_for('controles_lottery') }}" class="muted">Ir al mes actual</a>
+      {% endif %}
+    </div>
+    <a href="{{ url_for('controles_lottery', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
+  </div>
+
+  <div class="lt-section" style="margin-top: 18px;">
+    <h2>Reporte mensual</h2>
+    {% if cross %}
+    <div class="lt-status {{ 'ok' if cross.ok and not cross.missing_days else ('bad' if not cross.ok else 'warn') }}">
+      <div class="lt-status-title">
+        {% if cross.ok %}Bien: la suma de los reportes diarios del mes coincide al centavo con el reporte mensual.
+        {% else %}No coincide con el reporte mensual: {{ (cross.differences + cross.unread)|join(", ") }}.{% endif %}
+      </div>
+      {% if cross.missing_days %}<p>Faltan {{ cross.missing_days|length }} reporte{{ 's' if cross.missing_days|length != 1 }} diario{{ 's' if cross.missing_days|length != 1 }}: {% for d in cross.missing_days %}{{ ddmm(d) }}{{ ', ' if not loop.last else '.' }}{% endfor %} Cargalos en <a href="{{ url_for('carga_datos_lottery') }}">Carga de Datos → Lottery</a>.</p>{% endif %}
+      {% for warning in report.warnings %}<p>Reporte mensual: {{ warning }}</p>{% endfor %}
+      <p>La comisión de Terminal se compara entera (Comis + Premios FP): el reporte diario la parte con la tasa fija del 6 %. <a href="{{ url_for('carga_datos_lottery_mensual', year=year, month=month) }}">Ver el reporte mensual completo</a>.</p>
+    </div>
+    <div class="lt-table-wrap">
+      <table class="lt-table">
+        <thead><tr><th>Concepto</th><th>Reportes por Día</th><th>Reporte mensual</th><th>Diferencia</th></tr></thead>
+        <tbody>
+          {% for row in cross.lines %}
+          <tr>
+            <td>{{ row.label }}<span class="lt-sub">{{ row.pdf_label }}</span></td>
+            <td>{{ value(row.days, row.is_count) }}</td>
+            <td>{{ value(row.report, row.is_count) }}</td>
+            <td class="{{ 'lt-ok' if row.ok else 'lt-bad' }}">{{ value(row.diff, row.is_count) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="lt-status none">
+      <div class="lt-status-title">Todavía no hay reporte mensual de {{ month_name }} {{ year }}.</div>
+      <p>Subí el Monthly Sales Report del portal en <a href="{{ url_for('carga_datos_lottery') }}">Carga de Datos → Lottery</a> para cruzarlo con la suma de los reportes diarios.</p>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="lt-section">
+    <h2>Pagos contra Chase</h2>
+    {% set bad_rows = payments.rows|selectattr('status', 'in', ['diff', 'no_chase', 'incomplete'])|list %}
+    {% set waiting = payments.rows|selectattr('status', 'equalto', 'chase_not_loaded')|list %}
+    {% if payments.rows or payments.extra %}
+    <div class="lt-status {{ 'ok' if payments.ok else ('bad' if bad_rows or payments.extra else 'warn') }}">
+      <div class="lt-status-title">
+        {% if payments.ok %}Bien: cada semana que se paga en {{ month_name|lower }} coincide al centavo con su pago en Chase.
+        {% elif bad_rows or payments.extra %}No coincide{{ 'n' if (bad_rows|length + payments.extra|length) > 1 }} {{ bad_rows|length + payments.extra|length }} pago{{ 's' if (bad_rows|length + payments.extra|length) > 1 }} con Chase.
+        {% else %}Lo cargado coincide; falta Chase para {{ waiting|length }} semana{{ 's' if waiting|length > 1 }}.{% endif %}
+      </div>
+      <p>El Debito de cada bloque (lunes a domingo, con el cargo fijo de $10) contra el pago a Florida Lottery en Chase de esa fecha (hasta 3 días de diferencia). Cada bloque cuenta en el mes en que se paga. Chase está cargado hasta el {{ payments.last_chase[8:10] ~ '/' ~ payments.last_chase[5:7] ~ '/' ~ payments.last_chase[:4] if payments.last_chase else '—' }}.</p>
+    </div>
+    <div class="lt-table-wrap">
+      <table class="lt-table">
+        <thead><tr><th>Semana</th><th>Fecha de pago</th><th>Reportes por Día (Debito)</th><th>Chase</th><th>Diferencia</th><th class="lt-left">Estado</th></tr></thead>
+        <tbody>
+          {% for row in payments.rows %}
+          <tr>
+            <td>{{ ddmm(row.start) }} al {{ ddmm(row.end) }}</td>
+            <td>{{ ddmm(row.pay_date) }}<span class="lt-sub">{{ 'confirmada' if row.confirmed else 'sugerida' }}</span></td>
+            <td>{{ money(row.debit) }}{% if row.missing_days %}<span class="lt-sub">faltan {{ row.missing_days|length }} día{{ 's' if row.missing_days|length != 1 }}</span>{% endif %}</td>
+            <td>{{ money(row.chase_amount) }}{% if row.chase_date %}<span class="lt-sub">{{ ddmm(row.chase_date) }}</span>{% endif %}</td>
+            <td class="{{ 'lt-ok' if row.status == 'ok' else ('lt-bad' if row.diff is not none else '') }}">{{ money(row.diff) }}</td>
+            <td class="lt-left">
+              {% if row.status == 'ok' %}<span class="lt-badge lt-badge-ok">OK</span>
+              {% elif row.status == 'incomplete' %}<span class="lt-badge lt-badge-bad">Faltan días</span>
+              {% elif row.status == 'diff' %}<span class="lt-badge lt-badge-bad">No coincide</span>
+              {% elif row.status == 'no_chase' %}<span class="lt-badge lt-badge-bad">Sin pago en Chase</span>
+              {% else %}<span class="lt-badge lt-badge-off">Chase sin cargar</span>{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+          {% for p in payments.extra %}
+          <tr>
+            <td>—</td><td>—</td><td>—</td>
+            <td>{{ money(p.amount) }}<span class="lt-sub">{{ ddmm(p.date) }}</span></td>
+            <td></td>
+            <td class="lt-left"><span class="lt-badge lt-badge-bad">Pago sin semana</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div class="lt-status none">
+      <div class="lt-status-title">Sin semanas ni pagos de Lottery para controlar en {{ month_name }} {{ year }}.</div>
+    </div>
+    {% endif %}
+  </div>
+
+  <div class="lt-section">
+    <h2>Asiento del mes</h2>
+    <div class="lt-status none">
+      <div class="lt-status-title">Pendiente.</div>
+      <p>El asiento de Lottery, como el de Cierre, se agrega cuando esté definido.</p>
+    </div>
+  </div>
+</div>
+{% endblock %}

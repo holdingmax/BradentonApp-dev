@@ -674,6 +674,11 @@ def _blocks_paid_in_month(year, month, confirmed_only=False):
     return result
 
 
+def blocks_paid_in_month(year, month):
+    """Los bloques que se pagan en el mes (fecha confirmada o sugerida): control de pagos contra Chase."""
+    return _blocks_paid_in_month(year, month)
+
+
 def monthly_debit_total(year, month):
     """
     Suma de V (Debito) de cada bloque cuya fecha de Chase Bank -- la real,
@@ -1563,3 +1568,78 @@ def compute_month_closing(year, month):
     )
     result["com_diferencia"] = round(result["com_debe_total"] - result["com_haber_total"], 2)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Reporte mensual (Monthly Sales Report del portal; pedido del usuario,
+# 2026-10-06, chat 21): uno por mes, con los importes que se cruzan contra la
+# suma de los reportes diarios y todos los renglones tal cual los imprime el
+# portal. Lectura y cruce en lottery_mensual.py.
+# ---------------------------------------------------------------------------
+
+def _ensure_monthly_table(conn):
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS lottery_monthly_reports (
+            year INTEGER NOT NULL,
+            month INTEGER NOT NULL,
+            from_date TEXT, to_date TEXT,
+            values_json TEXT, lines_json TEXT, warnings_json TEXT,
+            filename TEXT, updated_at TEXT,
+            PRIMARY KEY (year, month)
+        )
+        """
+    )
+
+
+def save_monthly_report(report, filename=None):
+    """Reemplaza el reporte mensual del mes con lo recién leído (lottery_mensual.extract_monthly_report)."""
+    conn = _connect()
+    try:
+        _ensure_monthly_table(conn)
+        with conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO lottery_monthly_reports "
+                "(year, month, from_date, to_date, values_json, lines_json, warnings_json, filename, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (report["year"], report["month"], report["from_date"], report["to_date"],
+                 json.dumps(report["values"]), json.dumps(report["lines"]), json.dumps(report.get("warnings") or []),
+                 filename, _now()),
+            )
+    finally:
+        conn.close()
+
+
+def get_monthly_report(year, month):
+    """El reporte mensual guardado del mes, o None."""
+    conn = _connect()
+    try:
+        _ensure_monthly_table(conn)
+        row = conn.execute(
+            "SELECT * FROM lottery_monthly_reports WHERE year = ? AND month = ?", (year, month)
+        ).fetchone()
+    finally:
+        conn.close()
+    if row is None:
+        return None
+    return {
+        "year": row["year"],
+        "month": row["month"],
+        "from_date": row["from_date"],
+        "to_date": row["to_date"],
+        "values": json.loads(row["values_json"] or "{}"),
+        "lines": json.loads(row["lines_json"] or "[]"),
+        "warnings": json.loads(row["warnings_json"] or "[]"),
+        "filename": row["filename"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def delete_monthly_report(year, month):
+    conn = _connect()
+    try:
+        _ensure_monthly_table(conn)
+        with conn:
+            conn.execute("DELETE FROM lottery_monthly_reports WHERE year = ? AND month = ?", (year, month))
+    finally:
+        conn.close()

@@ -42,6 +42,7 @@ import control_cierre
 import reporte_mensual
 import reporte_mensual_db
 import control_tarjetas
+import lottery_mensual
 import controles_rapidos
 from cheques import check_number_from_chase_description, extract_checks_from_pdf
 from chase_rules import (
@@ -668,6 +669,16 @@ CONTROLES_SECTIONS = [
         "accent_soft": "#DCF3E3",
     },
     {
+        "key": "control_lottery",
+        "code": "LT",
+        "icon": _ICON_TICKET,
+        "label": "Lottery",
+        "url": "/controles/lottery",
+        "description": "El reporte mensual del portal de Florida Lottery contra la suma de los reportes diarios, y cada pago semanal contra Chase.",
+        "accent": "#EA580C",
+        "accent_soft": "#FDE3D3",
+    },
+    {
         "key": "control_tarjetas",
         "code": "TC",
         "icon": _ICON_EXCHANGE,
@@ -714,7 +725,7 @@ CARGA_DATOS_TOOLS = [
         "icon": _ICON_TICKET,
         "label": "Lottery",
         "url": "/carga-datos/lottery",
-        "description": "Subí el Daily Sales Report — bloques de 7 días con Subtotal y Debito calculados solos, igual que el Excel.",
+        "description": "Subí el Daily Sales Report (bloques de 7 días con Subtotal y Debito calculados solos, igual que el Excel) y el Monthly Sales Report del mes.",
         "accent": "#0284C7",
         "accent_soft": "#D7EFFB",
     },
@@ -2279,9 +2290,11 @@ def carga_datos_reporte_diario_subir():
 def carga_datos_lottery():
     """Carga directa de Lottery (Daily Sales Report) del lado Carga de Datos -- solo PDF."""
     _active_job = jobs.get_active_job("lottery")
+    _monthly_job = jobs.get_active_job("lottery_mensual")
     return render_template(
         "carga_datos_lottery.html",
         resume_job_id=(_active_job["id"] if _active_job else None),
+        resume_monthly_job_id=(_monthly_job["id"] if _monthly_job else None),
         **THEME_BY_KEY["lottery"],
     )
 
@@ -2361,6 +2374,96 @@ def _run_carga_datos_lottery_job(job_id, pdf_paths):
         )
     except Exception as exc:
         jobs.update_job(job_id, status="error", error=f"Error: {exc}")
+
+
+def _run_monthly_upload_job(job_id, paths, read_and_save, done_prefix, redirect_for, fallback_url):
+    """
+    Carga de reportes mensuales (Lottery, J.H.), aislada por archivo: cada PDF
+    reemplaza el reporte de su mes. `read_and_save(path)` lo lee, lo guarda y
+    devuelve (etiqueta, (año, mes), avisos ya completos); un ValueError es un
+    aviso corto.
+    """
+    try:
+        loaded, problems, last = [], [], None
+        for index, path in enumerate(paths, start=1):
+            try:
+                label, last, warnings = read_and_save(path)
+                loaded.append(label)
+                problems.extend(warnings)
+            except ValueError as exc:
+                problems.append(str(exc))
+            except Exception as exc:
+                print(f"[{done_prefix}] {path}: {exc}")
+                problems.append("Un archivo no se pudo leer.")
+            jobs.update_job(job_id, done=index, total=len(paths))
+        parts = [f"{done_prefix}: " + ", ".join(loaded) + "."] if loaded else []
+        parts.extend(problems)
+        level = "success" if loaded and not problems else ("warning" if loaded else "error")
+        jobs.update_job(
+            job_id, status="done", done=len(paths), total=len(paths),
+            notice=" ".join(parts), notice_level=level,
+            redirect_url=redirect_for(*last) if last else fallback_url,
+        )
+    except Exception as exc:
+        jobs.update_job(job_id, status="error", error=f"Error: {exc}")
+
+
+def _save_lottery_monthly_report(path):
+    report = lottery_mensual.extract_monthly_report(path)
+    lottery_db.save_monthly_report(report, os.path.basename(path))
+    label = f"{_MONTH_NAMES_ES[report['month'] - 1]} {report['year']}"
+    return label, (report["year"], report["month"]), [f"{label}: {warning}" for warning in report["warnings"]]
+
+
+@app.route("/carga-datos/lottery/mensual/subir", methods=["POST"])
+def carga_datos_lottery_mensual_subir():
+    """Monthly Sales Report de Lottery (pedido del usuario, 2026-10-06): se cruza en Controles → Lottery."""
+    uploads = request.files.getlist("monthly_files")
+    if not uploads or not any(u.filename for u in uploads):
+        return _error_response("Seleccioná el PDF del Monthly Sales Report.")
+    paths = _save_uploads_to_workspace(uploads)
+    job_id = jobs.create_job(len(paths), kind="lottery_mensual")
+    threading.Thread(
+        target=_run_monthly_upload_job,
+        args=(job_id, paths, _save_lottery_monthly_report, "Reporte mensual de Lottery cargado",
+              lambda y, m: f"/carga-datos/lottery/mensual?year={y}&month={m}", "/carga-datos/lottery/mensual"),
+        daemon=True,
+    ).start()
+    return jsonify({"job_id": job_id, "total": len(paths)})
+
+
+@app.route("/carga-datos/lottery/mensual")
+def carga_datos_lottery_mensual():
+    """El Monthly Sales Report guardado de un mes, tal cual lo imprime el portal, para verlo y eliminarlo."""
+    year, month = _cierre_month()
+    report = lottery_db.get_monthly_report(year, month)
+    cross = lottery_mensual.cross_check(report, year, month) if report else None
+    return render_template(
+        "carga_datos_lottery_mensual.html",
+        report=report,
+        cross=cross,
+        **_month_nav(year, month),
+        **THEME_BY_KEY["carga_lottery"],
+    )
+
+
+@app.route("/carga-datos/lottery/mensual/eliminar", methods=["POST"])
+def carga_datos_lottery_mensual_eliminar():
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    if year and month:
+        lottery_db.delete_monthly_report(year, month)
+    return redirect(url_for("carga_datos_lottery_mensual", year=year, month=month))
+
+
+def _month_nav(year, month):
+    """year/month, el nombre del mes y los vecinos, para las páginas con navegación de mes."""
+    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+    return {
+        "year": year, "month": month, "month_name": _MONTH_NAMES_ES[month - 1],
+        "prev_year": prev_year, "prev_month": prev_month, "next_year": next_year, "next_month": next_month,
+    }
 
 
 # Etiquetas de las 11 columnas que suma la fila Subtotal -- pedido
@@ -6410,6 +6513,29 @@ def controles_tarjetas():
         next_year=next_year,
         next_month=next_month,
         **THEME_BY_KEY["carga_eft"],
+    )
+
+
+@app.route("/controles/lottery")
+def controles_lottery():
+    """
+    Control Lottery (pedido del usuario, 2026-10-06, chat 21): el Monthly
+    Sales Report del portal contra la suma de los reportes diarios del mes, y
+    el Debito de cada bloque semanal que se paga en el mes contra el pago en
+    Chase. El asiento del mes queda pendiente (el usuario lo pasa después).
+    Cálculo en lottery_mensual.py.
+    """
+    year, month = _cierre_month()
+    report = lottery_db.get_monthly_report(year, month)
+    section = next(s for s in CONTROLES_SECTIONS if s["key"] == "control_lottery")
+    return render_template(
+        "controles_lottery.html",
+        report=report,
+        cross=lottery_mensual.cross_check(report, year, month) if report else None,
+        payments=lottery_mensual.payments_check(year, month),
+        **_month_nav(year, month),
+        accent=section["accent"],
+        accent_soft=section["accent_soft"],
     )
 
 
