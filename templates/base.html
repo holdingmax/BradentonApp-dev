@@ -2500,7 +2500,26 @@
         setTimeout(function () { URL.revokeObjectURL(link.href); link.remove(); }, 1000);
       }
 
-      function swapPage(html, url, state) {
+      // Aviso corto "Guardado" (pedido del usuario, 2026-10-06): sin él no se
+      // notaba que el guardado había funcionado. Se va solo y no tapa nada
+      // (abajo al centro, no se puede tocar).
+      function flashSaved() {
+        var toast = document.createElement('div');
+        toast.textContent = 'Guardado';
+        toast.setAttribute('role', 'status');
+        toast.style.cssText = 'position:fixed;left:50%;bottom:28px;transform:translate(-50%,6px);' +
+          'background:#1F2937;color:#fff;font-size:13px;font-weight:600;padding:7px 18px;border-radius:999px;' +
+          'box-shadow:0 4px 14px rgba(0,0,0,.18);opacity:0;transition:opacity .18s ease,transform .18s ease;' +
+          'pointer-events:none;z-index:10000;';
+        document.body.appendChild(toast);
+        void toast.offsetWidth;  // arranca la transición sin esperar un cuadro
+        toast.style.opacity = '1';
+        toast.style.transform = 'translate(-50%,0)';
+        setTimeout(function () { toast.style.opacity = '0'; }, 1300);
+        setTimeout(function () { toast.remove(); }, 1600);
+      }
+
+      function swapPage(html, url, state, ok) {
         var finalUrl = new URL(url || window.location.href, window.location.href);
         var samePage = finalUrl.pathname === window.location.pathname;
         // La URL se ajusta ANTES de escribir la página nueva: sus scripts la
@@ -2534,6 +2553,9 @@
         } else {
           window.scrollTo(0, 0);
         }
+        var problem = notices.some(function (n) { return n.kind === 'error' || n.kind === 'warning'; }) ||
+          document.querySelector('[data-flash="error"], [data-flash="warning"]');
+        if (ok && !problem && finalUrl.pathname !== '/login') flashSaved();
         if (notices.length && typeof showNotice === 'function') {
           var kind = notices.some(function (n) { return n.kind === 'error'; }) ? 'error'
             : (notices.some(function (n) { return n.kind === 'warning'; }) ? 'warning' : 'info');
@@ -2579,7 +2601,7 @@
             if (/attachment/i.test(disposition)) {
               return resp.blob().then(function (blob) { busy = false; downloadBlob(blob, disposition); });
             }
-            return resp.text().then(function (html) { swapPage(html, resp.url, state); });
+            return resp.text().then(function (html) { swapPage(html, resp.url, state, resp.ok); });
           })
           .catch(function () {
             busy = false;
