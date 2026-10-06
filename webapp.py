@@ -4220,6 +4220,15 @@ def job_status(job_id):
     )
 
 
+@app.route("/jobs/<job_id>/cancel", methods=["POST"])
+def job_cancel(job_id):
+    """Botón "Cancelar carga" de la barra de progreso (ver jobs.cancel_job)."""
+    job = jobs.cancel_job(job_id)
+    if job is None:
+        return jsonify({"status": "not_found"})
+    return jsonify({"status": job["status"], "done": job["done"], "total": job["total"]})
+
+
 @app.route("/jobs/<job_id>/ack", methods=["POST"])
 def job_ack(job_id):
     """
@@ -8440,6 +8449,39 @@ def balance_mensual_procesar():
     )
 
 
+def _defer_reload_while_jobs_run():
+    """
+    Con el reloader de debug, guardar un .py reinicia el servidor y corta la
+    carga en segundo plano que esté corriendo: pasó el 2026-10-06 con 30
+    Reportes Diarios de septiembre ("se cortaba la carga y tenía que volverla
+    a empezar diciéndome que el servidor se había caído"). Acá el reinicio
+    espera a que no quede ninguna carga corriendo (jobs.has_running_jobs);
+    mientras tanto la página sigue andando con el código de antes. Toca una
+    parte interna de Werkzeug (ReloaderLoop.trigger_reload): si cambia en
+    otra versión, se avisa y se reinicia como siempre.
+    """
+    try:
+        from werkzeug import _reloader
+
+        loops = {_reloader.ReloaderLoop, *_reloader.reloader_loops.values()}
+    except (ImportError, AttributeError) as exc:
+        print(f"[webapp] el reinicio por cambios de código no espera a las cargas ({exc})")
+        return
+
+    def waiting(original):
+        def trigger_reload(self, filename):
+            if jobs.has_running_jobs():
+                print(f" * Cambió {os.path.basename(filename)}: el servidor se reinicia cuando termine la carga en curso.")
+                while jobs.has_running_jobs():
+                    time.sleep(2)
+            original(self, filename)
+        return trigger_reload
+
+    for loop in loops:
+        if "trigger_reload" in vars(loop):
+            loop.trigger_reload = waiting(vars(loop)["trigger_reload"])
+
+
 if __name__ == "__main__":
     # Render (y cualquier plataforma similar) fija la variable de entorno
     # PORT y espera que el proceso escuche en 0.0.0.0 -- escuchar solo en
@@ -8483,4 +8525,6 @@ if __name__ == "__main__":
             threading.Thread(target=_ipv6_server.serve_forever, daemon=True, name="ipv6-loopback").start()
         except OSError as exc:
             print(f"[webapp] sin escucha en ::1 ({exc}); localhost va a responder más lento")
+    if debug_mode and os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        _defer_reload_while_jobs_run()
     app.run(debug=debug_mode, host=host, port=port, threaded=True)

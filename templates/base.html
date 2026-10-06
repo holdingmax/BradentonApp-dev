@@ -997,6 +997,7 @@
       color: var(--text-soft);
       margin-top: 6px;
     }
+    .upload-cancel-btn { margin-top: 8px; padding: 5px 12px; font-size: 12.5px; }
 
     /* Selector rápido de mes/año, estilo calendario -- pedido explícito del
        usuario (2026-09-16, segunda tanda), con capturas de referencia de un
@@ -1935,6 +1936,7 @@
       var progressFill = progressWrap.querySelector('.upload-progress-fill');
       var progressLabel = progressWrap.querySelector('.upload-progress-label');
       return {
+        wrap: progressWrap,
         set: function (pct, text, indeterminate) {
           progressWrap.classList.add('active');
           progressWrap.classList.toggle('indeterminate', !!indeterminate);
@@ -2146,14 +2148,92 @@
         var pollTimer = null;
         var submitBtn = form.querySelector('button[type=submit]');
         var originalLabel = submitBtn ? submitBtn.textContent : null;
+        // Carga que se está siguiendo (subida en curso o job en el servidor):
+        // un sondeo de una carga que ya no es la actual se ignora.
+        var currentJobId = null;
+        var currentUpload = null;
+
+        // "Cancelar carga" (pedido del usuario, 2026-10-06: "por si te faltó
+        // algo o te arrepentís no tenés que esperar"): durante la subida
+        // corta el envío; con la carga ya en el servidor, la da por terminada
+        // al toque (jobs.cancel_job) y el servidor corta al terminar el
+        // archivo que está leyendo. Lo que ya se guardó queda.
+        var cancelBtn = document.createElement('button');
+        cancelBtn.type = 'button';
+        cancelBtn.className = 'btn-secondary upload-cancel-btn';
+        cancelBtn.textContent = 'Cancelar carga';
+        cancelBtn.hidden = true;
+        progress.wrap.appendChild(cancelBtn);
 
         function finish() {
           if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+          currentJobId = null;
+          currentUpload = null;
+          cancelBtn.hidden = true;
+          cancelBtn.disabled = false;
           if (submitBtn) {
             submitBtn.disabled = false;
             submitBtn.textContent = originalLabel;
           }
         }
+
+        // Pide al servidor cortar la carga `jobId` y avisa.
+        function cancelJob(jobId) {
+          cancelBtn.disabled = true;
+          if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
+          currentJobId = null;
+          var xhr = new XMLHttpRequest();
+          xhr.open('POST', '/jobs/' + jobId + '/cancel', true);
+          xhr.onload = function () {
+            var data = {};
+            try { data = JSON.parse(xhr.responseText); } catch (parseErr) {}
+            if (data.status === 'done' || data.status === 'error') {
+              // Terminó justo antes: se muestra su resultado como siempre.
+              cancelBtn.disabled = false;
+              poll(jobId);
+              return;
+            }
+            progress.reset();
+            if (data.status === 'cancelled') {
+              showNotice(
+                'Carga cancelada. ' + (data.done
+                  ? 'Iban ' + data.done + ' de ' + data.total + ' archivos: lo ya guardado queda (y el que se estaba leyendo, si llega a terminar).'
+                  : 'Si el primer archivo llega a terminar de leerse, queda guardado; el resto no se carga.'),
+                'warning'
+              );
+            }
+            finish();
+          };
+          xhr.onerror = function () {
+            cancelBtn.disabled = false;
+            alert('No se pudo cancelar: la carga sigue.');
+            poll(jobId);
+          };
+          xhr.send();
+        }
+
+        var cancelOnStart = false;
+        cancelBtn.addEventListener('click', function () {
+          if (currentUpload && !currentUpload.uploadComplete) {
+            var upload = currentUpload;
+            currentUpload = null;
+            upload.abort();
+            progress.reset();
+            showNotice('Carga cancelada: no se llegó a subir nada.', 'warning');
+            finish();
+            return;
+          }
+          if (!confirm('¿Cancelar la carga? Lo que ya se guardó queda guardado; el resto no se carga.')) return;
+          if (currentUpload) {
+            // Ya se subió todo y el servidor está arrancando la carga: se
+            // cancela apenas devuelva su número.
+            cancelOnStart = true;
+            cancelBtn.disabled = true;
+            progress.set(0, 'Cancelando...', true);
+            return;
+          }
+          if (currentJobId) cancelJob(currentJobId);
+        });
 
         function ack(jobId) {
           // Fire-and-forget -- ver jobs.acknowledge_job. El peor caso si
@@ -2167,9 +2247,12 @@
         }
 
         function poll(jobId) {
+          currentJobId = jobId;
+          cancelBtn.hidden = false;
           var xhr = new XMLHttpRequest();
           xhr.open('GET', '/jobs/' + jobId + '/status', true);
           xhr.onload = function () {
+            if (jobId !== currentJobId) return;  // se canceló mientras se consultaba
             if (xhr.status !== 200) {
               progress.set(0, 'No se pudo consultar el progreso.', true);
               pollTimer = setTimeout(function () { poll(jobId); }, 2000);
@@ -2235,12 +2318,16 @@
               progress.reset();
               alert('Se perdió el seguimiento de esta carga (el servidor se reinició). Revisá en "Ver guardado" si algo quedó cargado, y volvé a intentar si hace falta.');
               finish();
+            } else if (data.status === 'cancelled') {
+              progress.reset();
+              finish();
             } else {
               progress.reset();
               finish();
             }
           };
           xhr.onerror = function () {
+            if (jobId !== currentJobId) return;
             pollTimer = setTimeout(function () { poll(jobId); }, 2000);
           };
           xhr.send();
@@ -2279,6 +2366,9 @@
           }
 
           var startXhr = new XMLHttpRequest();
+          currentUpload = startXhr;
+          cancelOnStart = false;
+          cancelBtn.hidden = false;
           startXhr.open('POST', form.action, true);
           startXhr.setRequestHeader('X-Ajax-Request', '1');
           startXhr.upload.addEventListener('progress', function (e) {
@@ -2290,14 +2380,18 @@
             progress.set(pct, 'Subiendo... ' + pct + '%.');
           });
           startXhr.upload.addEventListener('load', function () {
-            progress.set(0, 'Subida completa -- arrancando en el servidor...', true);
+            startXhr.uploadComplete = true;
+            if (!cancelOnStart) progress.set(0, 'Subida completa -- arrancando en el servidor...', true);
           });
           startXhr.onerror = function () {
+            if (currentUpload !== startXhr) return;  // cancelada
             progress.reset();
             alert('Error de red al procesar.');
             finish();
           };
           startXhr.onload = function () {
+            if (currentUpload !== startXhr) return;
+            currentUpload = null;
             if (startXhr.status < 200 || startXhr.status >= 300) {
               progress.reset();
               try {
@@ -2310,6 +2404,11 @@
               return;
             }
             var started = JSON.parse(startXhr.responseText);
+            if (cancelOnStart) {
+              cancelOnStart = false;
+              cancelJob(started.job_id);
+              return;
+            }
             poll(started.job_id);
           };
           startXhr.send(new FormData(form));

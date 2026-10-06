@@ -40,6 +40,33 @@ import uuid
 _jobs = {}
 _lock = threading.Lock()
 
+
+class JobCancelled(BaseException):
+    """
+    La carga se canceló desde la página (cancel_job). La levanta update_job
+    (o increment_done) en el hilo de la carga, así corta en su próximo aviso
+    de avance sin que cada _run_*_job tenga que chequear nada. Es
+    BaseException, como KeyboardInterrupt, para que los `except Exception`
+    que aíslan cada archivo no la frenen; el hilo termina con ella y
+    _ignore_cancelled_jobs la deja pasar en silencio.
+    """
+
+    def __init__(self, job_id):
+        super().__init__(job_id)
+        self.job_id = job_id
+
+
+_previous_excepthook = threading.excepthook
+
+
+def _ignore_cancelled_jobs(args):
+    if isinstance(args.exc_value, JobCancelled):
+        return
+    _previous_excepthook(args)
+
+
+threading.excepthook = _ignore_cancelled_jobs
+
 # Los jobs terminados (done/error) y ya reconocidos (acknowledged, ver
 # acknowledge_job) se podan pasada esta antigüedad -- nada más para no
 # crecer sin límite en un server de mucho uptime, no hace falta más
@@ -95,21 +122,75 @@ def create_job(total, kind=None):
             # usuario reabre la página, para siempre).
             "acknowledged": False,
             "created_at": time.time(),
+            # Último aviso de avance (has_running_jobs) y cancelación pedida
+            # desde la página (cancel_job): `stopping` sigue en True hasta
+            # que el hilo efectivamente corta.
+            "updated_at": time.time(),
+            "cancel_requested": False,
+            "stopping": False,
         }
     return job_id
+
+
+def _touch_locked(job):
+    """Se llama con _lock tomado: corta la carga si se canceló (ver JobCancelled)."""
+    if job["cancel_requested"]:
+        job["stopping"] = False
+        raise JobCancelled(job["id"])
+    job["updated_at"] = time.time()
 
 
 def update_job(job_id, **fields):
     with _lock:
         if job_id in _jobs:
+            _touch_locked(_jobs[job_id])
             _jobs[job_id].update(fields)
 
 
 def increment_done(job_id, done, total):
     with _lock:
         if job_id in _jobs:
+            _touch_locked(_jobs[job_id])
             _jobs[job_id]["done"] = done
             _jobs[job_id]["total"] = total
+
+
+def cancel_job(job_id):
+    """
+    Cancela una carga en curso (pedido del usuario, 2026-10-06: "un botón de
+    cancelar carga para así por si te faltó algo o te arrepentís no tenés que
+    esperar"). Para la página queda terminada al toque (status "cancelled",
+    ya reconocida); el hilo corta en su próximo aviso de avance, o sea al
+    terminar el archivo que está leyendo. Lo que ya se guardó queda
+    guardado. Devuelve una copia del job, o None si no existe.
+    """
+    with _lock:
+        job = _jobs.get(job_id)
+        if job is None:
+            return None
+        if job["status"] == "running":
+            job.update(status="cancelled", cancel_requested=True, stopping=True, acknowledged=True)
+        return dict(job)
+
+
+# Una carga sin avisar avance en este tiempo se da por trabada: no frena el
+# reinicio del servidor (has_running_jobs).
+_MAX_IDLE_SECONDS = 30 * 60
+
+
+def has_running_jobs():
+    """
+    True si alguna carga está trabajando (o terminando el archivo que leía
+    antes de cancelarse). Con el reloader de debug, webapp.py espera a que
+    esto dé False antes de reiniciar el servidor por un cambio de código.
+    """
+    now = time.time()
+    with _lock:
+        return any(
+            (job["status"] == "running" or job.get("stopping"))
+            and now - job.get("updated_at", job["created_at"]) < _MAX_IDLE_SECONDS
+            for job in _jobs.values()
+        )
 
 
 def get_job(job_id):
