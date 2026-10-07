@@ -15,11 +15,6 @@
   .ice-status-title { font-weight: 700; }
   .ice-status ul { margin: 8px 0 0; padding-left: 20px; font-size: 13px; }
   .ice-status p { margin: 6px 0 0; font-size: 13px; color: var(--text-soft); }
-  .ice-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 14px; }
-  .ice-card { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
-  .ice-card span { display: block; font-size: 12px; color: var(--text-soft); }
-  .ice-card strong { font-size: 17px; font-variant-numeric: tabular-nums; }
-  .ice-card.total { background: var(--accent-soft); border-color: var(--accent); }
   .ice-section { margin-top: 22px; }
   .ice-section h2 { font-size: 16px; margin: 0 0 4px; }
   .ice-section > p { margin: 0 0 8px; font-size: 13px; color: var(--text-soft); }
@@ -102,15 +97,6 @@
     </table>
   </div>
   {% if control.pending_after %}<p class="muted" style="font-size: 12.5px; margin: 6px 0 0;">Lo posterior al {{ dm(control.chase_last_date) }} (último día cargado de Chase) no entra en el cuadro.</p>{% endif %}
-
-  {% set ice = control.ice %}
-  <div class="ice-cards">
-    <div class="ice-card"><span>Ventas con tarjeta (Gross)</span><strong>{{ money(ice.gross) }}</strong></div>
-    <div class="ice-card"><span>Fees de Cantaloupe</span><strong>{{ money(ice.process_fees + ice.service_fees) }}</strong></div>
-    <div class="ice-card"><span>Net acreditado</span><strong>{{ money(ice.net) }}</strong></div>
-    <div class="ice-card"><span>Efectivo depositado</span><strong>{{ money(ice.cash) }}</strong></div>
-    <div class="ice-card total"><span>Venta de hielo (Net + efectivo)</span><strong>{{ money(ice.total) }}</strong></div>
-  </div>
   {% endif %}
 
   <div class="ice-section">

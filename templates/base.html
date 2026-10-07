@@ -645,6 +645,8 @@
     body.rail-pinned a.app-rail-panel-link:hover { background: rgba(255, 255, 255, 0.08); }
     a.app-rail-panel-link.app-rail-panel-link-upload { color: var(--accent, #0B6FAE); }
     body.rail-pinned a.app-rail-panel-link.app-rail-panel-link-upload { color: #7dd3fc; }
+    .app-rail-panel-section { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-soft); padding: 10px 8px 2px; border-top: 1px solid var(--border); margin-top: 6px; }
+    body.rail-pinned .app-rail-panel-section { color: rgba(255, 255, 255, 0.45); border-top-color: rgba(255, 255, 255, 0.1); padding: 10px 8px 2px; }
     .app-rail-soon { display: flex; align-items: center; gap: 6px; padding: 8px; font-size: 13px; color: var(--text-soft); }
     body.rail-pinned .app-rail-soon { color: rgba(255, 255, 255, 0.35); padding: 6px 8px; }
     .app-rail-soon-tag {
@@ -1251,6 +1253,10 @@
         <div class="app-rail-panel">
           <div class="app-rail-panel-title">Caja</div>
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_caja') }}">Cuadro del mes</a>
+          {# Depósitos dentro de Caja (pedido del usuario, 2026-10-07). #}
+          <div class="app-rail-panel-section">Depósitos</div>
+          <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('carga_datos_depositos') }}">Cargar depósitos</a>
+          <a class="app-rail-panel-link" href="{{ url_for('controles_depositos') }}">Control Depósitos</a>
         </div>
       </div>
       <div class="app-rail-item" data-rail-key="gettel">
