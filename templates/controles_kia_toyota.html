@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% block crumbs %}
+<nav class="crumbs"><span class="current">Kia y Toyota</span></nav>
+{% endblock %}
+{% block head_extra %}
+<style>
+  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .historial-nav-btn { text-decoration: none; display: inline-block; }
+  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
+  .kt-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin-top: 4px; }
+  .kt-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+  .kt-card h3 { margin: 0 0 6px; font-size: 15px; }
+  .kt-card .kt-balance { font-size: 24px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .kt-card p { margin: 4px 0 0; font-size: 12.5px; color: var(--text-soft); }
+  .kt-card.late { border-color: #FECACA; background: #FEF2F2; }
+  .kt-status { margin-top: 16px; padding: 12px 16px; border-radius: 10px; border: 1px solid #FDE68A; background: #FFFBEB; font-size: 13px; }
+  .kt-status ul { margin: 0; padding-left: 18px; }
+  .kt-section { margin-top: 24px; }
+  .kt-section h2 { font-size: 16px; margin: 0 0 4px; }
+  .kt-section > p { margin: 0 0 8px; font-size: 13px; color: var(--text-soft); }
+  .kt-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
+  .kt-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .kt-table th, .kt-table td { padding: 6px 10px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .kt-table th:first-child, .kt-table td:first-child { text-align: left; }
+  .kt-table thead th { background: var(--accent-soft); font-weight: 700; }
+  .kt-table thead tr.kt-sub th { font-weight: 600; font-size: 12px; }
+  .kt-table .kt-sep { border-left: 1px solid var(--border); }
+  .kt-table tr.kt-empty td { color: var(--text-soft); }
+  .kt-table tfoot td { font-weight: 700; background: var(--surface-alt); }
+  .kt-bad { color: var(--error); font-weight: 700; }
+  .kt-soft { color: var(--text-soft); }
+  .kt-assign { display: inline-flex; gap: 6px; margin: 0; }
+  .kt-assign button { margin: 0; padding: 4px 12px; font-size: 12.5px; }
+  .kt-upload { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+  .kt-upload button { margin: 0; }
+  details.kt-history summary { cursor: default; font-weight: 700; font-size: 16px; }
+</style>
+{% endblock %}
+{% block content %}
+{% from "_month_jump.html" import month_jump %}
+{% macro money(x) -%}{%- if x is none -%}—{%- elif x < 0 -%}-${{ "{:,.2f}".format(-x) }}{%- else -%}${{ "{:,.2f}".format(x) }}{%- endif -%}{%- endmacro %}
+{% macro dmy(iso) -%}{{ iso[8:10] }}/{{ iso[5:7] }}/{{ iso[:4] }}{%- endmacro %}
+{% macro diff(x) -%}{%- if x is none -%}<td class="kt-soft">—</td>{%- elif x|abs < 0.01 -%}<td class="kt-soft">✓</td>{%- else -%}<td class="kt-bad">{{ money(x) }}</td>{%- endif -%}{%- endmacro %}
+<div class="page-header">
+  <h1>Kia y Toyota</h1>
+  <p class="page-subtitle">Cuánto debe cada concesionaria. Sus autos cargan nafta con un vale y no pagan en el momento (Local Account); se les cobra (vales − ${{ "%.2f"|format(rebate) }} por galón) + {{ (card_charge * 100)|round|int }}% del recargo de la tarjeta, y cada una o dos semanas paga lo que debe. Acá se ve cuánto deben, cuánto fueron pagando y con qué saldo quedan día a día.</p>
+</div>
+
+<div class="card">
+  <div class="kt-cards">
+    {% for company in companies %}{% set st = ledger.status[company] %}
+    <div class="kt-card{{ ' late' if st.late }}">
+      <h3>{{ company }}{% if company == 'Kia' %} <span class="kt-soft" style="font-weight:400;">(Gettel)</span>{% endif %}</h3>
+      <div class="kt-balance">{{ money(st.balance) }}</div>
+      <p>Saldo a cobrar hoy{% if ledger.unassigned_groups %} (sin contar los pagos sin empresa){% endif %}.</p>
+      {% if st.last_payment %}<p>Último pago: {{ dmy(st.last_payment) }}, {{ money(st.last_amount) }} (hace {{ st.days_since }} día{{ '' if st.days_since == 1 else 's' }}).</p>{% endif %}
+    </div>
+    {% endfor %}
+    <div class="kt-card">
+      <h3>Las dos juntas</h3>
+      <div class="kt-balance">{{ money(ledger.total_balance) }}</div>
+      <p>Todo lo cargado menos todo lo pagado, con o sin empresa.</p>
+    </div>
+  </div>
+
+  {% if ledger.issues %}
+  <div class="kt-status"><ul>{% for issue in ledger.issues %}<li>{{ issue }}</li>{% endfor %}</ul></div>
+  {% endif %}
+
+  {% if ledger.unassigned_groups %}
+  <div class="kt-section">
+    <h2>Pagos sin empresa</h2>
+    <p>Los recibos de estos pagos no dicen de quién son (el nombre está escrito a mano). Mirá el recibo: cada una paga con su tarjeta (Kia: 3924, 5145, 5449; Toyota: 0953, 1363, 9451). La empresa elegida se aplica a todos los cobros del pago. "Cobrado en el POS sin recibo" es lo que la caja cobró como LOCAL ACCT ese día sin recibo anotado: el pago existió, falta el papel.</p>
+    <div class="kt-table-wrap">
+      <table class="kt-table">
+        <thead><tr><th>Fecha</th><th>Cobros (N° de transacción)</th><th>Importe</th><th></th></tr></thead>
+        <tbody>
+        {% for g in ledger.unassigned_groups %}
+          <tr><td>{{ dmy(g.date) }}</td><td class="kt-soft" style="text-align:left;">{% if g.pos_only %}<strong class="kt-bad">Cobrado en el POS sin recibo</strong>{% else %}{{ g.transcs|join(", ") }}{% endif %}</td><td>{{ money(g.amount) }}</td>
+            <td>{% if g.ids or g.pos_only %}<form method="post" action="{{ url_for('controles_kia_toyota_asignar') }}" class="kt-assign">
+              {% if g.pos_only %}<input type="hidden" name="pos_date" value="{{ g.date }}">{% else %}<input type="hidden" name="ids" value="{{ g.ids|join(',') }}">{% endif %}
+              {% for company in companies %}<button type="submit" name="company" value="{{ company }}" class="btn-secondary">{{ company }}</button>{% endfor %}
+              <button type="submit" name="company" value="{{ voided }}" class="btn-secondary" title="El recibo dice VOID o el POS no lo cobró">Anulado</button>
+            </form>{% endif %}</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="kt-section">
+    <div class="historial-nav">
+      <a href="{{ url_for('controles_kia_toyota', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
+      <div class="historial-nav-title">
+        {{ month_jump('controles_kia_toyota', year, month) }}
+        {% if year == today.year and month == today.month %}<span class="muted">Mes actual</span>
+        {% else %}<a href="{{ url_for('controles_kia_toyota') }}" class="muted">Ir al mes actual</a>{% endif %}
+      </div>
+      <a href="{{ url_for('controles_kia_toyota', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
+    </div>
+    {% if month_summary %}
+    <div class="kt-table-wrap" style="margin-top: 12px;">
+      <table class="kt-table">
+        <thead><tr><th>{{ month_name }} {{ year }}</th><th>Saldo inicial</th><th>Vales</th><th>Galones</th><th>A cobrar</th><th>Pagado</th><th>Saldo final</th></tr></thead>
+        <tbody>
+        {% for company in companies %}{% set c = month_summary.companies[company] %}
+          <tr><td>{{ company }}</td><td>{{ money(c.opening) }}</td><td>{{ money(c.vouchers) }}</td><td>{{ "{:,.2f}".format(c.gallons) }}</td>
+            <td>{{ money(c.charged) }}</td><td>{{ money(c.paid) }}</td><td><strong>{{ money(c.closing) }}</strong></td></tr>
+        {% endfor %}
+        {% if month_summary.unassigned %}<tr><td>Pagos sin empresa</td><td colspan="4"></td><td>{{ money(month_summary.unassigned) }}</td><td></td></tr>{% endif %}
+        </tbody>
+      </table>
+    </div>
+
+    <h2 style="font-size: 15px; margin: 18px 0 4px;">Día por día</h2>
+    <p class="muted" style="margin: 0 0 8px; font-size: 12.5px;">Lo que cargó cada una ese día (a cobrar: vales − rebate + 3%), lo que pagó y con qué saldo quedó.</p>
+    <div class="kt-table-wrap">
+      <table class="kt-table">
+        <thead>
+          <tr><th rowspan="2">Fecha</th>{% for company in companies %}<th colspan="3" class="kt-sep">{{ company }}</th>{% endfor %}<th rowspan="2" class="kt-sep">Pagos sin empresa</th></tr>
+          <tr class="kt-sub">{% for company in companies %}<th class="kt-sep">Cargó</th><th>Pagó</th><th>Saldo</th>{% endfor %}</tr>
+        </thead>
+        <tbody>
+        {% for d in days %}{% set paid = d.paid or {} %}
+          <tr class="{{ '' if d.vouchers_total or d.paid_total else 'kt-empty' }}">
+            <td>{{ d.date[8:10] }}/{{ d.date[5:7] }}</td>
+            {% for company in companies %}{% set c = d[company] or {} %}
+            <td class="kt-sep">{{ money(c.charged) if c.charged else '' }}</td>
+            <td>{{ money(paid[company]) if paid[company] else '' }}</td>
+            <td><strong>{{ money(d.balance[company]) }}</strong></td>
+            {% endfor %}
+            <td class="kt-sep">{{ money(paid['?']) if paid['?'] else '' }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="muted" style="margin-top: 12px;">Sin movimientos de Kia ni Toyota en {{ month_name }} {{ year }}.</p>
+    {% endif %}
+  </div>
+
+  <div class="kt-section">
+    <details class="kt-history">
+      <summary>Historial mes a mes</summary>
+      <div class="kt-table-wrap" style="margin-top: 10px;">
+        <table class="kt-table">
+          <thead>
+            <tr><th rowspan="2">Mes</th>{% for company in companies %}<th colspan="3" class="kt-sep">{{ company }}</th>{% endfor %}<th rowspan="2" class="kt-sep">Sin empresa</th></tr>
+            <tr class="kt-sub">{% for company in companies %}<th class="kt-sep">A cobrar</th><th>Pagado</th><th>Saldo</th>{% endfor %}</tr>
+          </thead>
+          <tbody>
+          {% for m in ledger.monthly|reverse %}
+            <tr><td><a href="{{ url_for('controles_kia_toyota', year=m.month[:4]|int, month=m.month[5:7]|int) }}">{{ month_names[m.month[5:7]|int - 1] }} {{ m.month[:4] }}</a></td>
+              {% for company in companies %}{% set c = m.companies[company] %}
+              <td class="kt-sep">{{ money(c.charged) }}</td><td>{{ money(c.paid) }}</td><td><strong>{{ money(c.closing) }}</strong></td>
+              {% endfor %}
+              <td class="kt-sep">{{ money(m.unassigned) if m.unassigned else '' }}</td></tr>
+          {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  </div>
+
+  <div class="kt-section">
+    <h2>Cargar desde el Excel de Cierre</h2>
+    <p>Las hojas de Gettel-Toyota del Excel de Cierre (cargas por día y empresa, pagos) y Store Info (Local Account y VS). Se pueden subir varios meses juntos; subir otra vez el mismo mes solo completa lo que falta y nunca pisa la empresa elegida a mano.</p>
+    <form method="post" action="{{ url_for('controles_kia_toyota_subir') }}" enctype="multipart/form-data" class="kt-upload">
+      <input type="file" name="files" accept=".xlsx" multiple required>
+      <button type="submit" class="btn-accent">Subir Excel</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

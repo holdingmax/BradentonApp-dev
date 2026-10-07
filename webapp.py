@@ -39,6 +39,8 @@ import cheques_db
 import depositos
 import depositos_db
 import control_cmv
+import cuenta_kia_toyota
+import cuenta_kia_toyota_db
 import control_cmv_db
 import control_depositos
 import ice_machine
@@ -723,6 +725,16 @@ CONTROLES_SECTIONS = [
         "description": "Las ventas de cada departamento: reportes diarios, reporte mensual, Elistar y CMV.",
         "accent": "#7C3AED",
         "accent_soft": "#E9E0FC",
+    },
+    {
+        "key": "control_kia_toyota",
+        "code": "KT",
+        "icon": _ICON_CAR,
+        "label": "Kia y Toyota",
+        "url": "/controles/kia-toyota",
+        "description": "Cuánto debe cada concesionaria: lo que cargan a cuenta menos lo que pagan.",
+        "accent": "#0D9488",
+        "accent_soft": "#D6F1EE",
     },
     {
         "key": "control_productos",
@@ -7267,6 +7279,128 @@ def controles_cmv_subir():
 def controles_cmv_eliminar(year, month, kind):
     control_cmv_db.delete_report(year, month, kind)
     return redirect(url_for("controles_cmv", year=year, month=month))
+
+
+# ---------------------------------------------------------------------------
+# Cuenta corriente de Kia y Toyota (pedido del usuario, 2026-10-07): lo que
+# cargan a cuenta (vales) menos lo que pagan con la Amex, por empresa. El
+# historial sale de las hojas de Gettel-Toyota de los Excel de Cierre; lo que
+# la app ya tiene (Store Info, LOCAL ACCT, cupones y pagos de Gettel/Toyota)
+# completa y manda. Cálculo en cuenta_kia_toyota.py.
+# ---------------------------------------------------------------------------
+
+def _kia_toyota_ledger():
+    charges = cuenta_kia_toyota_db.get_charges()
+    payments = cuenta_kia_toyota_db.get_payments()
+    pos = {d: {"la": r["la"], "vs": r["vs"]} for d, r in cuenta_kia_toyota_db.get_pos_days().items()}
+    first = min(list(charges) + [p["date"] for p in payments] or [date.today().isoformat()])
+    year, month = int(first[:4]), int(first[5:7])
+    today = date.today()
+    seen = {(p["date"], p["transc"], round(p["amount"], 2)) for p in payments}
+    while (year, month) <= (today.year, today.month):
+        # Cupones del módulo Gettel/Toyota para los días que el Excel no trae.
+        for d in gettel_db.get_month_days(year, month):
+            if d["date"] not in charges and (d.get("gettel_amount") or d.get("toyota_amount")):
+                charges[d["date"]] = {"la": None, "kia": d.get("gettel_amount"), "kia_gal": d.get("gettel_gallons"),
+                                      "toyota": d.get("toyota_amount"), "toyota_gal": d.get("toyota_gallons")}
+        for p in gettel_db.get_month_pagos(year, month):
+            key = (p["fecha"], str(p["transc_n"]), round(p["total_cupon"] or 0, 2))
+            if key not in seen and p["total_cupon"]:
+                seen.add(key)
+                company = {"kia": cuenta_kia_toyota.KIA, "gettel": cuenta_kia_toyota.KIA,
+                           "toyota": cuenta_kia_toyota.TOYOTA}.get((p.get("empresa") or "").strip().lower())
+                payments.append({"date": p["fecha"], "transc": str(p["transc_n"]), "amount": p["total_cupon"],
+                                 "company": company})
+        # Store Info y LOCAL ACCT de los reportes diarios mandan sobre el Excel.
+        local_acct = {}
+        for day, rows in reportes_db.get_month_departments_by_date(year, month).items():
+            local_acct[day] = round(sum(r["amount"] or 0 for r in rows if r["department"] == "LOCAL ACCT"), 2)
+        for r in reportes_db.get_month_store_info(year, month):
+            if r.get("local_accounts") is not None:
+                pos[r["date"]] = {"la": r["local_accounts"], "vs": local_acct.get(r["date"], 0.0)}
+        year, month = (year + 1, 1) if month == 12 else (year, month + 1)
+    # Lo que cobró el POS (LOCAL ACCT) sin recibo anotado también es un pago.
+    extra, over = cuenta_kia_toyota.pos_only_payments(
+        payments, pos, cuenta_kia_toyota_db.get_pos_only_assignments())
+    ledger = cuenta_kia_toyota.build_ledger(charges, payments + extra, pos)
+    for o in over:
+        ledger["issues"].append(f"El {o['date'][8:10]}/{o['date'][5:7]}/{o['date'][:4]} hay ${o['amount']:,.2f} "
+                                f"de recibos anotados de más contra lo que cobró el POS.")
+    return ledger
+
+
+@app.route("/controles/kia-toyota")
+def controles_kia_toyota():
+    year, month = _cierre_month()
+    ledger = _kia_toyota_ledger()
+    month_key = f"{year:04d}-{month:02d}"
+    month_summary = next((m for m in ledger["monthly"] if m["month"] == month_key), None)
+    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+    return render_template(
+        "controles_kia_toyota.html",
+        ledger=ledger,
+        companies=cuenta_kia_toyota.COMPANIES,
+        voided=cuenta_kia_toyota.VOIDED,
+        month_summary=month_summary,
+        days=cuenta_kia_toyota.month_days(ledger, year, month),
+        rebate=cuenta_kia_toyota.REBATE_PER_GALLON,
+        card_charge=cuenta_kia_toyota.CARD_CHARGE,
+        late_days=cuenta_kia_toyota.LATE_PAYMENT_DAYS,
+        year=year,
+        month=month,
+        month_name=_MONTH_NAMES_ES[month - 1],
+        month_names=_MONTH_NAMES_ES,
+        prev_year=prev_year,
+        prev_month=prev_month,
+        next_year=next_year,
+        next_month=next_month,
+        **THEME_BY_KEY["carga_gettel"],
+    )
+
+
+@app.route("/controles/kia-toyota/subir", methods=["POST"])
+def controles_kia_toyota_subir():
+    uploads = [u for u in request.files.getlist("files") if u and u.filename]
+    if not uploads:
+        return _error_response("Seleccioná los Excel de Cierre.")
+    read, errors = [], []
+    for upload in uploads:
+        filename = os.path.basename(upload.filename)
+        tmp_dir = tempfile.mkdtemp(prefix="kia_toyota_")
+        path = os.path.join(tmp_dir, filename)
+        upload.save(path)
+        try:
+            data = cuenta_kia_toyota.read_control_workbook(path)
+            if not data["days"] and not data["payments"]:
+                errors.append(f"{filename}: no tiene hojas de Gettel-Toyota.")
+                continue
+            new_days, new_payments = cuenta_kia_toyota_db.save_import(data, filename)
+            read.append((len(data["days"]), new_payments))
+        except Exception as exc:
+            print(f"[controles/kia-toyota] {filename}: {exc}")
+            errors.append(f"{filename}: no se pudo leer (tiene que ser un Excel de Cierre).")
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+    if read:
+        flash(f"Leídos {len(read)} Excel: {sum(n for _, n in read)} pago(s) nuevo(s).", "success")
+    for message in errors:
+        flash(message, "error")
+    return redirect(request.referrer or url_for("controles_kia_toyota"))
+
+
+@app.route("/controles/kia-toyota/asignar", methods=["POST"])
+def controles_kia_toyota_asignar():
+    company = request.form.get("company")
+    ids = [int(x) for x in request.form.get("ids", "").split(",") if x.strip().isdigit()]
+    pos_date = request.form.get("pos_date") or ""
+    if company not in cuenta_kia_toyota.COMPANIES + (cuenta_kia_toyota.VOIDED,) or not (ids or pos_date):
+        return _error_response("Elegí Kia o Toyota.")
+    if pos_date:
+        cuenta_kia_toyota_db.assign_pos_only(pos_date, company)
+    else:
+        cuenta_kia_toyota_db.assign_company(ids, company)
+    return redirect(request.referrer or url_for("controles_kia_toyota"))
 
 
 @app.route("/controles/ice-food-truck")
