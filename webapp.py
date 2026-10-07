@@ -38,6 +38,8 @@ import chase_db
 import cheques_db
 import depositos
 import depositos_db
+import ice_machine
+import ice_machine_db
 import control_cierre
 import reporte_mensual
 import reporte_mensual_db
@@ -775,6 +777,16 @@ CARGA_DATOS_TOOLS = [
         "description": "Subí el Excel o PDF de cupones de Gettel/Toyota — Monto y Galones por día quedan guardados solos.",
         "accent": "#0D9488",
         "accent_soft": "#D6F1EE",
+    },
+    {
+        "key": "carga_ice",
+        "code": "IC",
+        "icon": _ICON_TRUCK,
+        "label": "Ice Machine y Food Truck",
+        "url": "/carga-datos/ice-food-truck",
+        "description": "Subí los Payment Summary de la máquina de hielo y los recibos de depósito de Ice, Food Truck y Vaccumms — se controlan solos contra Chase.",
+        "accent": "#0891B2",
+        "accent_soft": "#D5F0F6",
     },
     {
         # Nunca aparece en la grilla de Herramientas (ver el filtro de
@@ -7046,6 +7058,127 @@ def controles_rapidos_alertas():
         "tarjetas": bool(tarjetas and tarjetas["last"]["status"] == "alert"),
         "caja": bool(caja_data and caja_data["alert"]),
     })
+
+
+# ---------------------------------------------------------------------------
+# Ice Machine y Food Truck (pedido del usuario, 2026-10-07): se suben los
+# Payment Summary de Cantaloupe y los recibos de depósito de Ice Machine,
+# Food Truck y Vaccumms, y el mes se controla contra Chase. Lectura y control
+# en ice_machine.py; los recibos se guardan en Depósitos (import_deposit_pdf).
+# ---------------------------------------------------------------------------
+
+@app.route("/carga-datos/ice-food-truck")
+def carga_datos_ice():
+    year, month = _cierre_month()
+    deposits = []
+    for d in depositos_db.list_month(year, month):
+        kind = ice_machine.deposit_kind(d.get("kind"))
+        if kind:
+            deposits.append(dict(d, kind=kind))
+    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+    # Un resumen que termina a fin de mes (o en un feriado) se acredita los
+    # primeros días del mes siguiente: el cruce mira también esa semana.
+    chase_rows = chase_db.get_month_transactions(year, month) + [
+        r for r in chase_db.get_month_transactions(next_year, next_month) if r["posting_date"][8:10] <= "07"
+    ]
+    control = ice_machine.build_month_control(
+        year, month, ice_machine_db.list_month(year, month), deposits,
+        chase_rows, chase_db.get_last_posting_date(),
+        known_references=[s["reference"] for s in ice_machine_db.list_month(prev_year, prev_month)],
+    )
+    _active_job = jobs.get_active_job("ice")
+    return render_template(
+        "carga_datos_ice.html",
+        control=control,
+        kinds=ice_machine.DEPOSIT_KINDS,
+        year=year,
+        month=month,
+        month_name=_MONTH_NAMES_ES[month - 1],
+        prev_year=prev_year,
+        prev_month=prev_month,
+        next_year=next_year,
+        next_month=next_month,
+        resume_job_id=(_active_job["id"] if _active_job else None),
+        **THEME_BY_KEY["carga_ice"],
+    )
+
+
+@app.route("/carga-datos/ice-food-truck/subir", methods=["POST"])
+def carga_datos_ice_subir():
+    uploads = [u for u in request.files.getlist("pdf_files") if u and u.filename]
+    if not uploads:
+        return _error_response("Seleccioná los Payment Summary o los recibos de depósito.")
+    pdf_paths = _save_uploads_to_workspace(uploads)
+    fallback = (request.form.get("year", type=int) or date.today().year,
+                request.form.get("month", type=int) or date.today().month)
+    job_id = jobs.create_job(len(pdf_paths), kind="ice")
+    threading.Thread(target=_run_ice_job, args=(job_id, pdf_paths, fallback), daemon=True).start()
+    return jsonify({"job_id": job_id, "total": len(pdf_paths)})
+
+
+def _pdf_text(pdf_path):
+    import pdfplumber
+    with pdfplumber.open(pdf_path) as pdf:
+        return "\n".join((page.extract_text() or "") for page in pdf.pages)
+
+
+def _run_ice_job(job_id, pdf_paths, fallback_period):
+    """Cada PDF es un Payment Summary (con texto) o un PDF de recibos de depósito (fotos); aislado por archivo."""
+    try:
+        summaries = replaced = deposits = incomplete = duplicates = failed = 0
+        problems, last_period = [], None
+        for index, pdf_path in enumerate(pdf_paths, start=1):
+            filename = os.path.basename(pdf_path)
+            try:
+                text = _pdf_text(pdf_path)
+                if ice_machine.is_payment_summary_text(text):
+                    summary = ice_machine.read_payment_summary_text(text)
+                    replaced += ice_machine_db.save_summary(summary, filename)
+                    summaries += 1
+                    last_period = ice_machine.month_of(summary["to_date"])
+                else:
+                    s, i, d, period = import_deposit_pdf(pdf_path, filename, fallback_period)
+                    deposits, incomplete, duplicates = deposits + s, incomplete + i, duplicates + d
+                    last_period = period or last_period
+            except ValueError as exc:
+                problems.append(str(exc))
+            except Exception as exc:
+                print(f"[carga-datos/ice] {pdf_path}: {exc}")
+                failed += 1
+            jobs.update_job(job_id, done=index, total=len(pdf_paths))
+
+        parts = []
+        if summaries:
+            parts.append(f"{summaries} Payment Summary guardado(s)" + (f" ({replaced} ya estaban y se actualizaron)" if replaced else "") + ".")
+        if deposits:
+            parts.append(f"{deposits} recibo(s) de depósito guardado(s).")
+        if incomplete:
+            parts.append(f"{incomplete} recibo(s) con algún dato sin leer: completalo en Depósitos.")
+        if duplicates:
+            parts.append(f"{duplicates} recibo(s) ya estaban cargados.")
+        parts.extend(problems)
+        if failed:
+            parts.append(f"{failed} archivo(s) no se pudieron leer.")
+        done = summaries or deposits
+        level = "success" if done and not (incomplete or problems or failed) else ("warning" if done or duplicates else "error")
+        year, month = last_period or fallback_period
+        jobs.update_job(
+            job_id, status="done", done=len(pdf_paths), total=len(pdf_paths),
+            notice=" ".join(parts) or "No se encontró nada para cargar.", notice_level=level,
+            redirect_url=f"/carga-datos/ice-food-truck?year={year}&month={month}",
+        )
+    except Exception as exc:
+        jobs.update_job(job_id, status="error", error=f"Error: {exc}")
+
+
+@app.route("/carga-datos/ice-food-truck/resumen/<summary_no>/eliminar", methods=["POST"])
+def carga_datos_ice_resumen_eliminar(summary_no):
+    to_date = ice_machine_db.delete_summary(summary_no)
+    if to_date:
+        year, month = ice_machine.month_of(to_date)
+        return redirect(url_for("carga_datos_ice", year=year, month=month))
+    return redirect(url_for("carga_datos_ice"))
 
 
 @app.route("/controles/depositos")

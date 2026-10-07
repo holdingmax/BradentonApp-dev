@@ -1251,6 +1251,19 @@
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_caja') }}">Cuadro del mes</a>
         </div>
       </div>
+      <div class="app-rail-item" data-rail-key="ice">
+        <div class="app-rail-item-row" onclick="toggleAppRailItem(this)">
+          <span class="app-rail-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="7" width="13" height="10" rx="1"/><path d="M14 10h4l3 3v4h-7z"/><circle cx="6" cy="18.5" r="1.6"/><circle cx="17.5" cy="18.5" r="1.6"/></svg>
+          </span>
+          <span class="app-rail-label">Ice y Food Truck</span>
+          <svg class="app-rail-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 6 15 12 9 18"/></svg>
+        </div>
+        <div class="app-rail-panel">
+          <div class="app-rail-panel-title">Ice Machine y Food Truck</div>
+          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_ice') }}">Control del mes</a>
+        </div>
+      </div>
       <div class="app-rail-item" data-rail-key="gettel">
         <div class="app-rail-item-row" onclick="toggleAppRailItem(this)">
           <span class="app-rail-icon">
