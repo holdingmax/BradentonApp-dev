@@ -6664,6 +6664,20 @@ def _chase_kind_for(deposit_date, amount):
     return None
 
 
+def _card_detail_by_day(year, month, detail_groups, today=None):
+    """Lo vendido con tarjeta por día contra los batches del POS del detalle de cupones de J.H. (o None)."""
+    covered = sorted(g["last_date"] for g in detail_groups)
+    month_first = date(year, month, 1)
+    return control_tarjetas.build_detail_by_day(
+        year, month, reportes_db.get_card_sales_by_date(),
+        eft_db.get_detail_batches_between(
+            (month_first - timedelta(days=10)).isoformat(),
+            (month_first + timedelta(days=45)).isoformat(),
+        ),
+        covered[0] if covered else None, covered[-1] if covered else None, today=today or date.today(),
+    )
+
+
 @app.route("/controles/tarjetas")
 def controles_tarjetas():
     """
@@ -6683,16 +6697,7 @@ def controles_tarjetas():
     for row in control["rows"]:
         row["date_display"] = _fmt_ddmmyyyy(row["date"])
     detail_groups = eft_db.get_detail_groups()
-    covered = sorted(g["last_date"] for g in detail_groups)
-    month_first = date(year, month, 1)
-    detail = control_tarjetas.build_detail_by_day(
-        year, month, reportes_db.get_card_sales_by_date(),
-        eft_db.get_detail_batches_between(
-            (month_first - timedelta(days=10)).isoformat(),
-            (month_first + timedelta(days=45)).isoformat(),
-        ),
-        covered[0] if covered else None, covered[-1] if covered else None, today=today,
-    )
+    detail = _card_detail_by_day(year, month, detail_groups, today)
     if detail:
         for row in detail["rows"]:
             row["date_display"] = _fmt_ddmmyyyy(row["date"])
@@ -6771,6 +6776,14 @@ def controles_cierre():
     year, month = _cierre_month()
     entries = control_cierre.build_month_entries(_build_store_info_rows(year, month), year, month)
     monthly_report, cross = _monthly_cross(year, month, entries)
+    jh_cards = None
+    if entries:
+        # Las tarjetas del asiento contra J.H. (pedido del usuario, 2026-10-06).
+        detail_groups = eft_db.get_detail_groups()
+        jh_cards = control_cierre.jh_cards_check(
+            entries, _card_detail_by_day(year, month, detail_groups),
+            _jh_month_checks(year, month, detail_groups)["coupons"],
+        )
     section = next(s for s in CONTROLES_SECTIONS if s["key"] == "control_cierre")
     prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
     next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
@@ -6779,6 +6792,9 @@ def controles_cierre():
         entries=entries,
         monthly_report=monthly_report,
         cross=cross,
+        jh_cards=jh_cards,
+        fmt_ddmm=lambda iso: f"{iso[8:10]}/{iso[5:7]}",
+        fmt_days=lambda days: ", ".join(f"{iso[8:10]}/{iso[5:7]}" for iso in days),
         notice=control_cierre.missing_notice(entries) if entries else None,
         period_label=_cierre_period_label(entries) if entries else None,
         entry_title=control_cierre.ENTRY_TITLE,

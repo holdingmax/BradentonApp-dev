@@ -204,6 +204,60 @@ def cross_check(entries, report_t):
     }
 
 
+def jh_cards_check(entries, detail, coupons):
+    """
+    Las tarjetas del asiento (TC de Store Info, de donde sale J.H. Williams)
+    contra lo que informa J.H. (pedido del usuario, 2026-10-06: "que el
+    control de las tarjetas se hace en contra de lo que sale de la página de
+    J.H."). Dos fuentes de J.H., las mismas de Controles → Tarjetas y Cupones:
+
+    - `detail` (control_tarjetas.build_detail_by_day): los batches del POS
+      del detalle de cupones del portal, por día de venta, contra lo vendido
+      con tarjeta ese día. Lo que el detalle todavía no cubre queda "sin
+      controlar" (no es una diferencia).
+    - `coupons` (jh_mensual.coupon_check): el Credit Card Daily Summary del
+      mes contra los cupones cargados y los EFT que los aplicaron.
+    """
+    tc = entries["totals"]["tc"]
+    result = {"tc": tc, "detail": None, "coupons": None}
+    if detail:
+        days = [r["date"] for r in detail["rows"] if r["sold"] is not None]
+        result["detail"] = {
+            "sold": detail["sold_total"],
+            "jh": detail["pos_total"],
+            "diff": detail["diff_total"],
+            "unchecked": round(tc - detail["sold_total"], 2),
+            "from": min(days, default=None),
+            "until": max(days, default=None),
+            "bad": [r["date"] for r in detail["bad"]],
+            "pending": [r["date"] for r in detail["pending"]],
+            "edge": [r["date"] for r in detail["edge"]],
+            # De qué se compone la diferencia: lo que es error de verdad y lo
+            # que todavía no se depositó (los últimos días, 72 hs).
+            "diff_bad": round(sum(r["diff"] for r in detail["bad"]), 2),
+            "diff_pending": round(sum(r["diff"] for r in detail["pending"]), 2),
+            "diff_edge": round(sum(r["diff"] for r in detail["edge"]), 2),
+            "ok": detail["ok"],
+        }
+    if coupons:
+        result["coupons"] = {
+            "gross": coupons["totals"]["gross"],
+            "net": coupons["totals"]["net"],
+            "ddc_count": coupons["ddc_count"],
+            "bad": [r["date"] for r in coupons["bad"]],
+            "open": coupons["open"],
+            "ok": coupons["ok"],
+        }
+    parts = [part for part in (result["detail"], result["coupons"]) if part]
+    if not parts:
+        result["status"] = "missing"
+    elif all(part["ok"] for part in parts):
+        result["status"] = "ok" if len(parts) == 2 else "partial"
+    else:
+        result["status"] = "bad"
+    return result
+
+
 def _money(value):
     if value is None:
         return "—"

@@ -41,6 +41,9 @@
   .ci-cross-table th:first-child, .ci-cross-table td:first-child { text-align: left; }
   .ci-cross-table thead th { background: var(--accent-soft); font-weight: 700; }
   .ci-cross-table tr.ci-cross-section td { background: var(--surface-alt); font-weight: 700; text-align: left; }
+  .ci-jh-tag { font-size: 11.5px; font-style: normal; font-weight: 600; margin-left: 8px; text-decoration: none; color: var(--text-soft); }
+  .ci-jh-tag.ok, .ci-jh-tag.partial { color: var(--success); }
+  .ci-jh-tag.bad { color: var(--error); }
   .ci-ok { color: var(--success); }
   .ci-bad { color: var(--error); font-weight: 700; }
   .totals-breakdown-popover { min-width: 260px; }
@@ -106,7 +109,8 @@
           {% for line in entries.lines %}
           <tr class="ci-box {{ 'ci-red' if line.red }}">
             {% if line.side == 'debit' %}
-            <td colspan="2" class="ci-account">{{ line.account }}</td>
+            <td colspan="2" class="ci-account">{{ line.account }}
+              {%- if line.account == account_jh and jh_cards %} <a class="ci-jh-tag {{ jh_cards.status }}" href="#ci-jh">{% if jh_cards.status == 'ok' %}✓ controlado contra J.H.{% elif jh_cards.status == 'bad' %}≠ no coincide con J.H.{% elif jh_cards.status == 'partial' %}✓ controlado en parte contra J.H.{% else %}sin datos de J.H.{% endif %}</a>{% endif %}</td>
             <td class="ci-amount">{{ amount_cell(line, loop.index) }}</td>
             <td class="ci-amount"></td>
             {% else %}
@@ -154,6 +158,53 @@
       </table>
     </div>
   </div>
+
+  {% if jh_cards %}
+  {% set d, c = jh_cards.detail, jh_cards.coupons %}
+  <div class="ci-cross" id="ci-jh">
+    <h2>Tarjetas contra J.H. Williams</h2>
+    <div class="ci-status {{ {'ok': 'ok', 'partial': 'ok', 'bad': 'bad-strong'}.get(jh_cards.status, 'none') }}">
+      <div class="ci-status-title">
+        {% if jh_cards.status == 'ok' %}Bien: lo vendido con tarjeta coincide con lo que informa J.H.
+        {% elif jh_cards.status == 'partial' %}Coincide con lo que hay de J.H., pero falta {{ 'el Credit Card Daily Summary del mes' if not c else 'el detalle de cupones' }}.
+        {% elif jh_cards.status == 'bad' %}Hay diferencias entre lo vendido con tarjeta y lo que informa J.H.
+        {% else %}Todavía no hay datos de J.H. de {{ month_name }} {{ year }}.{% endif %}
+      </div>
+      <p>El renglón {{ account_jh }} sale de las tarjetas de Store Info (TC {{ money(jh_cards.tc) }}). Acá se controla contra la página de J.H.: el detalle de cupones (los batches del POS, por día de venta) y el Credit Card Daily Summary del mes. Día por día en <a href="{{ url_for('controles_tarjetas', year=year, month=month) }}">Controles → Tarjetas y Cupones</a>.</p>
+    </div>
+    <div class="ci-cross-wrap">
+      <table class="ci-cross-table">
+        <thead><tr><th>Concepto</th><th>Store Info</th><th>J.H.</th><th>Diferencia</th></tr></thead>
+        <tbody>
+          <tr class="ci-cross-section"><td colspan="4">Detalle de cupones de J.H.: batches del POS por día de venta</td></tr>
+          {% if d %}
+          <tr><td>Vendido con tarjeta {% if d.from %}del {{ fmt_ddmm(d.from) }} al {{ fmt_ddmm(d.until) }}{% endif %}</td>
+            <td>{{ money(d.sold) }}</td><td>{{ money(d.jh) }}</td>
+            <td class="{{ 'ci-ok' if d.diff|abs < 0.005 else ('ci-bad' if d.bad else '') }}">{{ money(d.diff) }}</td></tr>
+          {% if d.unchecked|abs >= 0.005 %}
+          <tr><td>Sin controlar todavía (días que el detalle de J.H. no cubre)</td><td>{{ money(d.unchecked) }}</td><td>—</td><td>—</td></tr>
+          {% endif %}
+          {% if d.bad %}<tr><td class="ci-bad">De días con diferencia: {{ fmt_days(d.bad) }}</td><td></td><td></td><td class="ci-bad">{{ money(d.diff_bad) }}</td></tr>{% endif %}
+          {% if d.pending %}<tr><td>De días todavía sin depositar enteros (72 hs): {{ fmt_days(d.pending) }}</td><td></td><td></td><td>{{ money(d.diff_pending) }}</td></tr>{% endif %}
+          {% if d.edge %}<tr><td>De días que no se pueden comparar (falta el día de al lado): {{ fmt_days(d.edge) }}</td><td></td><td></td><td>{{ money(d.diff_edge) }}</td></tr>{% endif %}
+          {% if (d.diff - d.diff_bad - d.diff_pending - d.diff_edge)|abs >= 0.005 %}<tr><td class="muted">De batches que cruzan la medianoche (se compensan con el día siguiente)</td><td></td><td></td><td>{{ money(d.diff - d.diff_bad - d.diff_pending - d.diff_edge) }}</td></tr>{% endif %}
+          {% else %}
+          <tr><td colspan="4" style="text-align:left" class="muted">Sin detalle de cupones de J.H. que toque el mes (se sube en Carga de Datos → EFT y Cupones).</td></tr>
+          {% endif %}
+          <tr class="ci-cross-section"><td colspan="4">Credit Card Daily Summary de J.H. del mes</td></tr>
+          {% if c %}
+          <tr><td>{{ c.ddc_count }} DDC, Gross / Neto</td><td colspan="2">{{ money(c.gross) }} / {{ money(c.net) }}</td>
+            <td class="{{ 'ci-ok' if c.ok else 'ci-bad' }}">{{ 'Coincide con Cupones' if c.ok else 'No coincide' }}</td></tr>
+          {% if c.bad %}<tr><td colspan="4" class="ci-bad" style="text-align:left">Días que no coinciden con los cupones cargados o con lo aplicado en los EFT: {{ fmt_days(c.bad) }}</td></tr>{% endif %}
+          {% if c.open.days %}<tr><td>Sin aplicar todavía en un EFT ({{ c.open.days }} día(s), pasa al mes siguiente por las 72 hs)</td><td colspan="2">{{ money(c.open.gross) }} / {{ money(c.open.net) }}</td><td>—</td></tr>{% endif %}
+          {% else %}
+          <tr><td colspan="4" style="text-align:left" class="muted">Sin Credit Card Daily Summary del mes (se sube en Carga de Datos → EFT y Cupones).</td></tr>
+          {% endif %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
 
   <div class="ci-cross">
     <h2>Cruce con el reporte mensual</h2>
