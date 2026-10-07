@@ -417,6 +417,23 @@ def get_month_department_totals(year, month):
     return [{"department": row["department"], "count": row["count"], "amount": row["amount"]} for row in rows]
 
 
+def get_month_departments_by_date(year, month):
+    """{fecha: [{department, count, amount}]} de los días del mes con Ventas por Departamento (Control CMV)."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT date, department, count, amount FROM daily_report_departments WHERE date LIKE ? ORDER BY date",
+            (f"{year:04d}-{month:02d}-%",),
+        ).fetchall()
+    finally:
+        conn.close()
+    result = {}
+    for row in rows:
+        result.setdefault(row["date"], []).append(
+            {"department": row["department"], "count": row["count"], "amount": row["amount"]})
+    return result
+
+
 def get_day(report_date):
     """{"date", "departments": [...], "store_info": {...} | None} para /reporte/dia/<date>."""
     key = _date_key(report_date)

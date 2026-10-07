@@ -38,6 +38,8 @@ import chase_db
 import cheques_db
 import depositos
 import depositos_db
+import control_cmv
+import control_cmv_db
 import control_depositos
 import ice_machine
 import ice_machine_db
@@ -711,6 +713,16 @@ CONTROLES_SECTIONS = [
         "description": "Los depósitos del mes contra Chase.",
         "accent": "#0891B2",
         "accent_soft": "#D5F0F6",
+    },
+    {
+        "key": "control_cmv",
+        "code": "CV",
+        "icon": _ICON_COINS,
+        "label": "Control CMV",
+        "url": "/controles/cmv",
+        "description": "Las ventas de cada departamento: reportes diarios, reporte mensual, Elistar y CMV.",
+        "accent": "#7C3AED",
+        "accent_soft": "#E9E0FC",
     },
     {
         "key": "control_productos",
@@ -7162,6 +7174,99 @@ def controles_depositos():
         next_month=next_month,
         **THEME_BY_KEY["carga_depositos"],
     )
+
+
+# ---------------------------------------------------------------------------
+# Control CMV (pedido del usuario, 2026-10-07): las ventas de cada
+# departamento del mes en los reportes diarios, el reporte mensual del POS,
+# la página de Elistar (Depts Report o P & L, se suben acá) y las ventas
+# cargadas en CMV. Cálculo en control_cmv.py.
+# ---------------------------------------------------------------------------
+
+def _cmv_month_control(year, month):
+    reports = control_cmv_db.get_month(year, month)
+    elistar = reports.get("depts") or reports.get("pl")
+    monthly = reporte_mensual_db.get_report(year, month)
+    fuel_by_date = {
+        r["date"]: round((r["sales_fuel"] or 0.0) + (r["desc_comb"] or 0.0), 2)
+        for r in reportes_db.get_month_store_info(year, month) if r["sales_fuel"] is not None
+    }
+    fuel_monthly = None
+    if monthly and monthly["store_info"].get("sales_fuel") is not None:
+        fuel_monthly = round(monthly["store_info"]["sales_fuel"] + (monthly["store_info"].get("desc_comb") or 0.0), 2)
+    control = control_cmv.build_control(
+        reportes_db.get_month_department_totals(year, month),
+        monthly["departments"] if monthly and monthly.get("departments") else None,
+        cmv_db.get_month_department_totals(year, month),
+        elistar,
+        reportes_db.get_month_departments_by_date(year, month),
+        fuel_by_date,
+        fuel_monthly,
+    )
+    return control, reports, elistar
+
+
+@app.route("/controles/cmv")
+def controles_cmv():
+    year, month = _cierre_month()
+    control, reports, elistar = _cmv_month_control(year, month)
+    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+    return render_template(
+        "controles_cmv.html",
+        control=control,
+        reports=reports,
+        elistar=elistar,
+        year=year,
+        month=month,
+        month_name=_MONTH_NAMES_ES[month - 1],
+        prev_year=prev_year,
+        prev_month=prev_month,
+        next_year=next_year,
+        next_month=next_month,
+        **THEME_BY_KEY["carga_cmv"],
+    )
+
+
+@app.route("/controles/cmv/subir", methods=["POST"])
+def controles_cmv_subir():
+    uploads = [u for u in request.files.getlist("files") if u and u.filename]
+    if not uploads:
+        return _error_response("Seleccioná el Depts Report o el P & L de Elistar.")
+    saved, errors, last = [], [], None
+    for upload in uploads:
+        filename = os.path.basename(upload.filename)
+        tmp_dir = tempfile.mkdtemp(prefix="elistar_")
+        path = os.path.join(tmp_dir, filename)
+        upload.save(path)
+        try:
+            report = control_cmv.read_elistar_report(path)
+        except ValueError as exc:
+            errors.append(str(exc))
+            continue
+        except Exception as exc:
+            print(f"[controles/cmv] {filename}: {exc}")
+            errors.append("Un archivo no se pudo leer: tiene que ser el .xls que baja Elistar (Depts Report o P & L).")
+            continue
+        finally:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        control_cmv_db.save_report(report, filename)
+        last = (report["year"], report["month"])
+        saved.append(f"{'Depts Report' if report['kind'] == 'depts' else 'P & L'} de "
+                     f"{_MONTH_NAMES_ES[report['month'] - 1]} {report['year']}")
+    if saved:
+        flash("Guardado: " + ", ".join(saved) + ".", "success")
+    for message in errors:
+        flash(message, "error")
+    if last:
+        return redirect(url_for("controles_cmv", year=last[0], month=last[1]))
+    return redirect(request.referrer or url_for("controles_cmv"))
+
+
+@app.route("/controles/cmv/<int:year>/<int:month>/<kind>/eliminar", methods=["POST"])
+def controles_cmv_eliminar(year, month, kind):
+    control_cmv_db.delete_report(year, month, kind)
+    return redirect(url_for("controles_cmv", year=year, month=month))
 
 
 @app.route("/controles/ice-food-truck")
