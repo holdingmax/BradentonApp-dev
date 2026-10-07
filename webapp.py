@@ -107,6 +107,7 @@ from proveedores_dynamic_extractors import (
 )
 from reporte_diario import (
     DEPARTMENT_GROUPS,
+    DepartmentPagePrefetch,
     build_store_info_export_pdf,
     build_store_info_export_workbook,
     build_store_info_pdf_resumen,
@@ -2061,7 +2062,12 @@ def _run_carga_datos_reporte_diario_job(job_id, pdf_paths):
     que cualquier otro form mientras el servidor trabajaba; ahora reporta
     el avance real (PDF ya procesados/total) por polling, igual que ya hacía
     el lado Herramientas de este mismo módulo.
+
+    Los PDF siguientes se leen por adelantado en otros hilos mientras se
+    guarda el actual (reporte_diario.DepartmentPagePrefetch, 2026-10-06): la
+    misma lectura, más rápida en un lote.
     """
+    prefetch = DepartmentPagePrefetch(pdf_paths)
     try:
         days_complete = set()
         days_partial = set()
@@ -2077,6 +2083,7 @@ def _run_carga_datos_reporte_diario_job(job_id, pdf_paths):
         first_date = None
 
         for index, pdf_path in enumerate(pdf_paths, start=1):
+            prefetch.wait(index - 1)
             filename = os.path.basename(pdf_path)
             filename_day_month = _reporte_filename_day_month(filename)
             day_date = None
@@ -2261,6 +2268,8 @@ def _run_carga_datos_reporte_diario_job(job_id, pdf_paths):
         )
     except Exception as exc:
         jobs.update_job(job_id, status="error", error=f"Error: {exc}")
+    finally:
+        prefetch.close()
 
 
 @app.route("/carga-datos/reporte-diario/subir", methods=["POST"])

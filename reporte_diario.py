@@ -2040,8 +2040,68 @@ def parse_elistar_daily_pdf_page(pdf_path, page_index=DEFAULT_PDF_PAGE_INDEX):
     (`copy.deepcopy`) para que ningún caller pueda mutar el resultado
     cacheado de otro por accidente.
     """
-    records, diagnostics = _parse_elistar_daily_pdf_page_cached(os.path.abspath(pdf_path), page_index)
+    key = (os.path.abspath(pdf_path), page_index)
+    if key in _PREFETCH_ERRORS:
+        raise _PREFETCH_ERRORS[key]
+    records, diagnostics = _parse_elistar_daily_pdf_page_cached(*key)
     return copy.deepcopy(records), copy.deepcopy(diagnostics)
+
+
+# Lectura por adelantado (pedido del usuario, 2026-10-06: "que los reportes
+# diarios se carguen más velozmente sin perder calidad"). Casi todo el tiempo
+# de un Reporte Diario es el OCR de Ventas por Departamento (unas 26 llamadas
+# a Tesseract, una detrás de otra), y la carga leía los PDF de a uno. Ahora,
+# mientras se guarda uno, los siguientes ya se están leyendo en otros hilos
+# (Tesseract corre en su propio proceso, así que usa los otros núcleos). La
+# lectura es exactamente la misma -- mismas pasadas, misma votación, mismo
+# cierre contra el total --; solo cambia cuándo se hace: el resultado queda
+# en la caché de parse_elistar_daily_pdf_page y la carga lo toma de ahí, en
+# el orden de siempre. Un error también se guarda, para no leer dos veces un
+# PDF que no se puede leer.
+_PREFETCH_ERRORS = {}
+
+
+def _prefetch_workers():
+    # Medido con 6 PDFs de septiembre en la PC de la oficina (4 núcleos): en
+    # serie 219 s, 2 hilos 140 s, 3 hilos 148 s (Tesseract ya usa más de un
+    # núcleo por lectura), con resultados idénticos. La mitad de los núcleos.
+    return max(1, min((os.cpu_count() or 2) // 2, _MAX_CONCURRENT_PDF_WORKERS))
+
+
+class DepartmentPagePrefetch:
+    def __init__(self, pdf_paths, workers=None):
+        self._keys = [(os.path.abspath(p), DEFAULT_PDF_PAGE_INDEX) for p in pdf_paths]
+        workers = min(workers or _prefetch_workers(), len(self._keys))
+        self._ahead = workers * 2  # nunca más adelante que lo que entra en la caché (64)
+        self._executor = ThreadPoolExecutor(max_workers=workers) if len(self._keys) > 1 else None
+        self._futures = {}
+        self._submitted = 0
+        self._fill(0)
+
+    @staticmethod
+    def _warm(key):
+        try:
+            _parse_elistar_daily_pdf_page_cached(*key)
+        except Exception as exc:
+            _PREFETCH_ERRORS[key] = exc
+
+    def _fill(self, current):
+        while self._executor and self._submitted < len(self._keys) and self._submitted <= current + self._ahead:
+            self._futures[self._submitted] = self._executor.submit(self._warm, self._keys[self._submitted])
+            self._submitted += 1
+
+    def wait(self, index):
+        """Espera a que el PDF `index` (desde 0) esté leído y encola los siguientes."""
+        self._fill(index)
+        future = self._futures.pop(index, None)
+        if future is not None:
+            future.result()
+
+    def close(self):
+        if self._executor:
+            self._executor.shutdown(wait=False, cancel_futures=True)
+        for key in self._keys:
+            _PREFETCH_ERRORS.pop(key, None)
 
 
 def extract_department_sales_for_day(pdf_path):
