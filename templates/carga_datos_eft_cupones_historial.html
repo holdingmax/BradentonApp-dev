@@ -5,6 +5,10 @@
 {% endblock %}
 {% block head_extra %}
 <style>
+  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .historial-nav-btn { text-decoration: none; display: inline-block; }
+  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
   .cupones-section { margin-top: 18px; }
   .cupones-section h2 { margin: 0 0 4px; font-size: 17px; }
   .cupones-section-sub { margin: 0 0 12px; font-size: 13px; }
@@ -191,24 +195,32 @@
   <div class="cupones-scroll">
     <table class="historial-table cupones-table">
       <thead>
-        <tr><th>Fecha del cupón</th><th>DDC</th><th>Días de venta del mes</th><th>Gross de esos días</th><th>Gross del depósito</th><th>EFT</th></tr>
+        <tr><th>Fecha del cupón</th><th>DDC</th><th>Gross</th><th>Fee</th><th>Net Amount</th></tr>
       </thead>
       <tbody>
         {% for g in view.next_month %}
+        {% set days = g.from_label ~ ((' al ' ~ g.to_label) if g.to_label != g.from_label else '') %}
+        {% for r in g.ddc_rows %}
+        <tr>
+          <td class="historial-col-day">{{ r.date_display or g.deposit_label or '—' }}</td>
+          <td>{{ r.coupon }}{% if loop.first %}<span class="cupon-batch-days" title="Del detalle de cupones: batches de este mes en el depósito (Gross del depósito ${{ '{:,.2f}'.format(g.group_gross or 0) }})">{% if g.ddc_rows|length > 1 %}depósito con {{ g.ddc_rows|map(attribute='coupon')|reject('equalto', r.coupon)|join(', ') }} · {% endif %}ventas {{ days }}: ${{ "{:,.2f}".format(g.gross) }}</span>{% endif %}</td>
+          <td>{{ "${:,.2f}".format(r.gross) if r.gross is not none else '—' }}</td>
+          <td>{{ "${:,.2f}".format(r.fees) if r.fees is not none else '—' }}</td>
+          <td>{{ "${:,.2f}".format(r.net) if r.net is not none else '—' }}</td>
+        </tr>
+        {% else %}
         <tr>
           <td class="historial-col-day">{{ g.deposit_label or '—' }}</td>
-          <td>{{ g.coupons|join(', ') if g.coupons else 'Sin DDC todavía' }}</td>
-          <td>{{ g.from_label }}{% if g.to_label != g.from_label %} al {{ g.to_label }}{% endif %}</td>
-          <td>${{ "{:,.2f}".format(g.gross) }}</td>
-          <td>${{ "{:,.2f}".format(g.group_gross or 0) }}</td>
-          <td>
-            {% for rcv in g.efts %}<span class="historial-badge historial-badge-ocr">{{ rcv }}</span> {% else %}<span class="historial-badge historial-badge-manual">Pendiente</span>{% endfor %}
-          </td>
+          <td>Sin DDC todavía<span class="cupon-batch-days">ventas {{ days }}: ${{ "{:,.2f}".format(g.gross) }}</span></td>
+          <td>—</td><td>—</td><td>—</td>
         </tr>
+        {% endfor %}
         {% endfor %}
       </tbody>
       <tfoot>
-        <tr><td colspan="3">Total vendido en {{ month_name|lower }} que entró en {{ following_name }}</td><td colspan="3">${{ "{:,.2f}".format(view.next_month_gross) }}</td></tr>
+        {% set t = view.next_month_totals %}
+        <tr><td colspan="2">Total de los cupones{% if view.next_month_incomplete %}<span class="cupon-batch-days">sin los DDC que todavía no tienen monto</span>{% endif %}</td><td>${{ "{:,.2f}".format(t.gross) }}</td><td>${{ "{:,.2f}".format(t.fees) }}</td><td>${{ "{:,.2f}".format(t.net) }}</td></tr>
+        <tr><td colspan="2">De eso, vendido en {{ month_name|lower }}</td><td>${{ "{:,.2f}".format(view.next_month_gross) }}</td><td colspan="2"></td></tr>
       </tfoot>
     </table>
   </div>

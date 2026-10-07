@@ -1356,10 +1356,14 @@ def cupones_month_view(year, month):
     - "next_month": los depósitos posteriores al cierre con ventas de este
       mes (el detalle de cupones da el día de venta de cada batch): lo que
       se vendió con tarjeta en el mes y entró como cupón el mes siguiente.
+      Cada DDC del depósito va en su renglón con su Gross/Fee/Net de Cupones
+      (completados por el EFT que lo pagó), sin decir qué EFT lo aplicó
+      (pedido del usuario, 2026-10-06).
     """
     first, last, prev_first = _month_bounds(year, month)
     cupones = get_cupones_flat()
     applied, pending, coupon_info = [], [], {}
+    cupon_by_id = {cp["coupon_id"]: cp for cp in cupones}
     for cp in cupones:
         match = cp.get("match")
         eft_day = _parse_eft_date(match.get("eft_date")) if match else None
@@ -1392,14 +1396,22 @@ def cupones_month_view(year, month):
         deposit = min(days) if days else None
         if (deposit or date.fromisoformat(group["last_date"])) <= last:
             continue
-        efts = sorted({coupon_info[c][1]["rcv_number"] for c in group["coupons"] or []
-                       if c in coupon_info and coupon_info[c][1]})
+        ddc_rows = []
+        for c in group["coupons"] or []:
+            cp = cupon_by_id.get(c, {})
+            has_amount = any(cp.get(key) for key in ("gross", "fees", "net"))
+            ddc_rows.append({
+                "coupon": c, "date_display": cp.get("date_display"),
+                "gross": cp.get("gross") if has_amount else None,
+                "fees": cp.get("fees") if has_amount else None,
+                "net": cp.get("net") if has_amount else None,
+            })
         next_month.append({
-            "coupons": group["coupons"], "deposit": deposit,
+            "coupons": group["coupons"], "deposit": deposit, "ddc_rows": ddc_rows,
             "from": min(b["batch_date"] for b in own), "to": max(b["batch_date"] for b in own),
             "gross": round(sum(b["gross"] or 0.0 for b in own), 2),
             "net": round(sum(b["net"] or 0.0 for b in own), 2),
-            "group_gross": group["gross"], "efts": efts,
+            "group_gross": group["gross"],
         })
     next_month.sort(key=lambda g: (g["deposit"] or date.fromisoformat(g["to"]), g["from"]))
 
@@ -1416,6 +1428,11 @@ def cupones_month_view(year, month):
         ] if len(pending_by_month) > 1 else [],
         "next_month": next_month,
         "next_month_gross": round(sum(g["gross"] for g in next_month), 2),
+        "next_month_totals": {
+            key: round(sum(r[key] or 0.0 for g in next_month for r in g["ddc_rows"]), 2)
+            for key in ("gross", "fees", "net")
+        },
+        "next_month_incomplete": any(r["net"] is None for g in next_month for r in g["ddc_rows"]),
     }
 
 
