@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block crumbs %}
-<nav class="crumbs"><span class="current">Caja</span></nav>
+<nav class="crumbs"><span class="current">Control Depósitos</span></nav>
 {% endblock %}
 {% block head_extra %}
 <style>
@@ -8,55 +8,52 @@
   .historial-nav-btn { text-decoration: none; display: inline-block; }
   .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
   .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
-  .dep-upload { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--border); }
-  .dep-table-wrap { overflow-x: auto; margin-top: 18px; border: 1px solid var(--border); border-radius: 10px; }
-  .dep-table { width: 100%; min-width: 720px; border-collapse: collapse; font-size: 13.5px; }
-  .dep-table th, .dep-table td { padding: 9px 12px; border-bottom: 1px solid var(--border); text-align: center; vertical-align: middle; }
-  .dep-table thead th { background: var(--accent-soft); font-weight: 700; white-space: nowrap; }
-  /* Mismo color para todos los depósitos del mismo día, alternando día a día. */
-  .dep-table tbody tr.dep-day-alt { background: color-mix(in srgb, var(--accent) 8%, var(--surface)); }
-  .dep-table tbody tr.dep-highlight { background: var(--accent-soft); }
-  .dep-table td.dep-desc { text-align: left; }
-  .dep-table td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .dep-table tfoot td { font-weight: 700; background: var(--accent-soft); }
-  .dep-control { margin-top: 18px; padding: 14px 16px; border-radius: 10px; border: 1px solid var(--border); }
-  .dep-control.ok { background: #F0FDF4; border-color: #BBF7D0; }
-  .dep-control.bad { background: #FFFBEB; border-color: #FDE68A; }
-  .dep-control-title { font-weight: 700; margin-bottom: 8px; }
-  .dep-control-grid { display: flex; gap: 28px; flex-wrap: wrap; font-size: 13.5px; }
-  .dep-control-grid strong { font-variant-numeric: tabular-nums; }
-  .dep-control-days { margin: 10px 0 0; padding-left: 18px; font-size: 13px; }
-  .dep-special td { color: var(--muted); }
-  .dep-missing { color: #B91C1C; font-weight: 600; }
-  .dep-badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; }
-  .dep-badge-ok { background: #DCFCE7; color: #166534; }
-  .dep-badge-pending { background: #FEF3C7; color: #92400E; }
-  .dep-badge-later { background: var(--surface-alt); color: var(--text-soft); border: 1px solid var(--border); }
-  .dep-cutoff { margin: 14px 0 0; font-size: 13px; color: var(--text-soft); }
-  .dep-actions { display: inline-flex; gap: 4px; align-items: center; }
-  .dep-actions > form { margin: 0; display: inline-flex; }
-  .dep-icon-btn, a.dep-icon-btn, button.dep-icon-btn.popover-trigger {
-    display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px;
-    padding: 0; margin: 0; border-radius: 7px; border: 1px solid var(--border); background: var(--surface);
-    color: var(--text); text-decoration: none;
-  }
-  .dep-icon-btn:hover, button.dep-icon-btn.popover-trigger:hover { border-color: var(--accent); color: var(--accent); }
-  .dep-icon-btn.danger:hover { border-color: #DC2626; color: #DC2626; }
-  .dep-icon-btn svg { width: 15px; height: 15px; }
-  .dep-table .popover-panel { color: var(--text); }
-  .dep-edit-form { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; min-width: 340px; text-align: left; }
-  .dep-edit-form label { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 3px; }
-  .dep-edit-form input { margin: 0; padding: 5px 8px; font-size: 13px; }
-  .dep-edit-form .full { grid-column: 1 / -1; }
-  .dep-edit-form button { margin: 0; padding: 6px 14px; }
+  .ice-status { margin-top: 18px; padding: 14px 16px; border-radius: 10px; border: 1px solid var(--border); }
+  .ice-status.ok { background: #F0FDF4; border-color: #BBF7D0; }
+  .ice-status.bad { background: #FEF2F2; border-color: #FECACA; }
+  .ice-status.none { background: var(--surface-alt); }
+  .ice-status-title { font-weight: 700; }
+  .ice-status ul { margin: 8px 0 0; padding-left: 20px; font-size: 13px; }
+  .ice-status p { margin: 6px 0 0; font-size: 13px; color: var(--text-soft); }
+  .ice-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 14px; }
+  .ice-card { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; }
+  .ice-card span { display: block; font-size: 12px; color: var(--text-soft); }
+  .ice-card strong { font-size: 17px; font-variant-numeric: tabular-nums; }
+  .ice-card.total { background: var(--accent-soft); border-color: var(--accent); }
+  .ice-section { margin-top: 22px; }
+  .ice-section h2 { font-size: 16px; margin: 0 0 4px; }
+  .ice-section > p { margin: 0 0 8px; font-size: 13px; color: var(--text-soft); }
+  .ice-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
+  .ice-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .ice-table th, .ice-table td { padding: 7px 10px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .ice-table th:first-child, .ice-table td:first-child { text-align: left; }
+  .ice-table thead th { background: var(--accent-soft); font-weight: 700; }
+  .ice-table tfoot td { font-weight: 700; background: var(--surface-alt); }
+  .ice-table td.left { text-align: left; }
+  .ice-ok { color: var(--success); font-weight: 600; }
+  .ice-bad { color: var(--error); font-weight: 700; }
+  .ice-soft { color: var(--text-soft); }
+  .ice-tag { display: inline-block; margin-left: 6px; padding: 0 7px; border-radius: 999px; background: var(--warning-soft); color: var(--warning); font-size: 11px; font-weight: 600; }
+  .ice-del { margin: 0; background: none; border: none; padding: 0; color: var(--text-soft); font-size: 12px; cursor: default; }
+  .ice-del:hover { color: var(--error); }
+  .ice-orphan td { background: #FEF2F2; }
+  .ice-empty { padding: 12px; font-size: 13px; color: var(--text-soft); }
 </style>
 {% endblock %}
 {% block content %}
 {% from "_month_jump.html" import month_jump %}
+{% macro money(x) -%}{%- if x is none -%}—{%- elif x < 0 -%}-${{ "{:,.2f}".format(-x) }}{%- else -%}${{ "{:,.2f}".format(x) }}{%- endif -%}{%- endmacro %}
+{% macro dm(iso) -%}{%- if iso -%}{{ iso[8:10] }}/{{ iso[5:7] }}{%- else -%}—{%- endif -%}{%- endmacro %}
+{% macro chase_cell(row) -%}
+  {%- if row.status == "ok" -%}<span class="ice-ok">En Chase {{ dm(row.chase.date) }}</span>
+  {%- elif row.status == "diff" -%}<span class="ice-bad">Chase: {{ money(row.chase.amount) }}</span>
+  {%- elif row.status == "missing" -%}<span class="ice-bad">No está en Chase</span>
+  {%- elif row.status == "incomplete" -%}<span class="ice-bad">Falta fecha o importe</span>
+  {%- else -%}<span class="ice-soft">Chase cargado hasta el {{ dm(control.chase_last_date) }}</span>{%- endif -%}
+{%- endmacro %}
 <div class="page-header">
-  <span class="eyebrow">Control de depósitos</span>
-  <h1>Caja</h1>
-  <p class="page-subtitle">Los depósitos de Caja (los que salen de Chase) contra los recibos de depósito en PDF. Subí los PDF de depósitos del banco: cada recibo queda como una fila propia, con su fecha, monto y descripción leídos solos (los podés corregir con el lápiz){% if guardar_documentos %} y su propio PDF{% endif %}.</p>
+  <h1>Control Depósitos</h1>
+  <p class="page-subtitle">Todos los depósitos del mes contra Chase: cada recibo (normal, Ice Machine, Food Truck, Vaccumms) con su depósito, cada pago de Cantaloupe (la tarjeta de la máquina de hielo) con su Payment Summary, y al revés lo de Chase que no tiene su papel. Se carga en <a href="{{ url_for('carga_datos_depositos', year=year, month=month) }}">Carga de Datos → Depósitos</a>.</p>
 </div>
 
 <div class="card">
@@ -73,112 +70,103 @@
     <a href="{{ url_for('controles_depositos', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
   </div>
 
-  <form method="post" action="{{ url_for('controles_depositos_subir') }}" enctype="multipart/form-data" class="background-job-form dep-upload" data-resume-job="{{ resume_job_id or '' }}">
-    <input type="hidden" name="year" value="{{ year }}">
-    <input type="hidden" name="month" value="{{ month }}">
-    <label class="muted">Subir depósito(s) — podés elegir varios PDF a la vez</label>
-    <input type="file" name="pdf_files" id="depositos-pdf-input" accept="application/pdf" multiple class="accumulate-files" required>
-    <div class="form-actions">
-      <button type="submit">Subir</button>
-      <button type="button" class="btn-secondary clear-file-btn" data-target="depositos-pdf-input">Limpiar</button>
-    </div>
-  </form>
-
-  {% if rows %}
-  <p class="dep-cutoff">
-    {% if chase_cutoff %}Chase está cargado hasta el <strong>{{ chase_cutoff }}</strong>: se controlan los depósitos hasta ese día.{% if after_cutoff_count %} {{ after_cutoff_count }} depósito(s) con fecha posterior quedan fuera del control hasta que se cargue Chase.{% endif %}
-    {% else %}Chase todavía no tiene movimientos cargados este mes: el control contra Chase y Caja aparece cuando se cargue el extracto.{% endif %}
-  </p>
-  {% endif %}
-  {% if caja_control and rows %}
-  <div class="dep-control {{ 'ok' if caja_control.ok else 'bad' }}">
-    <div class="dep-control-title">{% if caja_control.ok %}✓ Coincide con Caja{% else %}No coincide con Caja{% endif %}</div>
-    <div class="dep-control-grid">
-      <span>Depósitos normales (acá): <strong>${{ '{:,.2f}'.format(caja_control.docs) }}</strong></span>
-      <span>Depósitos en Caja: <strong>${{ '{:,.2f}'.format(caja_control.caja) }}</strong></span>
-      <span>Diferencia: <strong>${{ '{:,.2f}'.format(caja_control.diff) }}</strong></span>
-    </div>
-    {% if caja_control.days %}
-    <ul class="dep-control-days">
-      {% for d in caja_control.days %}
-      <li>{{ d.date }}: acá ${{ '{:,.2f}'.format(d.docs) }} — Caja ${{ '{:,.2f}'.format(d.caja) }} (diferencia ${{ '{:,.2f}'.format(d.diff) }})</li>
-      {% endfor %}
-    </ul>
-    {% endif %}
-    <p class="muted" style="margin:8px 0 0; font-size:12px;">Los depósitos con aclaración (Food Truck, Ice Machine, etc.) no entran en esta suma — se ven en gris en el cuadro.</p>
-  </div>
-  {% endif %}
-
-  {% if rows %}
-  <div class="dep-table-wrap">
-    <table class="dep-table">
-      <thead>
-        <tr>
-          <th>Fecha</th>
-          <th>Descripción</th>
-          <th>Monto</th>
-          <th>Chase</th>
-          <th>{% if guardar_documentos %}PDF{% endif %}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% set day = namespace(last=none, alt=true) %}
-        {% for r in rows %}
-        {% if r.deposit_date != day.last %}{% set day.alt = not day.alt %}{% set day.last = r.deposit_date %}{% endif %}
-        {% set panel_id = 'dep-edit-' ~ r.id %}
-        <tr id="deposito-{{ r.id }}" class="{{ 'dep-day-alt' if day.alt else '' }}{{ ' dep-special' if r.is_special else '' }}">
-          <td>{% if r.date_display %}{{ r.date_display }}{% else %}<span class="dep-missing">Sin fecha</span>{% endif %}</td>
-          <td class="dep-desc">{{ r.description or '—' }}</td>
-          <td class="num">{% if r.amount is not none %}${{ '{:,.2f}'.format(r.amount) }}{% else %}<span class="dep-missing">Sin monto</span>{% endif %}</td>
-          <td>
-            {% if r.in_chase %}<span class="dep-badge dep-badge-ok">En Chase</span>
-            {% elif r.after_cutoff %}<span class="dep-badge dep-badge-later" title="Chase está cargado hasta el {{ chase_cutoff }}">Después del Chase</span>
-            {% elif chase_loaded %}<span class="dep-badge dep-badge-pending">No aparece</span>
-            {% else %}<span class="muted">—</span>{% endif %}
-          </td>
-          <td>
-            <span class="dep-actions">
-              {% if guardar_documentos and r.pdf_path %}
-              <a class="dep-icon-btn" href="{{ url_for('controles_deposito_pdf', deposit_id=r.id) }}" target="_blank" rel="noopener" title="Ver PDF"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></a>
-              <a class="dep-icon-btn" href="{{ url_for('controles_deposito_pdf', deposit_id=r.id, mode='download') }}" title="Descargar PDF"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg></a>
-              {% endif %}
-              <button type="button" class="dep-icon-btn popover-trigger" data-popover-target="{{ panel_id }}" title="Editar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z"/></svg></button>
-              <div class="popover-panel" id="{{ panel_id }}">
-                <form method="post" action="{{ url_for('controles_deposito_guardar', deposit_id=r.id) }}" class="dep-edit-form">
-                  <label>Fecha<input type="date" name="deposit_date" value="{{ r.deposit_date or '' }}"></label>
-                  <label>Monto<input type="text" name="amount" inputmode="decimal" value="{{ '%.2f'|format(r.amount) if r.amount is not none else '' }}"></label>
-                  <label class="full">Descripción<input type="text" name="description" value="{{ r.description or '' }}" title="Una aclaración entre paréntesis al final — ej. (Food Truck) o (Ice Machine) — lo saca del control contra Caja."></label>
-                  <div class="full"><button type="submit">Guardar</button></div>
-                </form>
-              </div>
-              <form method="post" action="{{ url_for('controles_deposito_eliminar', deposit_id=r.id) }}" onsubmit="return confirm('¿Eliminar este depósito?');">
-                <button type="submit" class="dep-icon-btn danger" title="Eliminar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"/></svg></button>
-              </form>
-            </span>
-          </td>
-        </tr>
-        {% endfor %}
-      </tbody>
-      <tfoot>
-        <tr>
-          <td colspan="2" style="text-align:left;">Total del mes ({{ rows|length }} depósito{{ '' if rows|length == 1 else 's' }})</td>
-          <td class="num">${{ '{:,.2f}'.format(total) }}</td>
-          <td colspan="2"></td>
-        </tr>
-      </tfoot>
-    </table>
+  {% set loaded = control.overview_total.count or control.overview_total.chase or control.issues %}
+  {% if not loaded %}
+  <div class="ice-status none">
+    <div class="ice-status-title">{{ month_name }} {{ year }} no tiene nada cargado todavía.</div>
+    <p>Ni recibos de depósito ni Payment Summary, y en Chase no hay depósitos ni pagos de Cantaloupe.</p>
   </div>
   {% else %}
-  <p class="muted" style="margin-top: 18px;">Todavía no hay ningún depósito cargado este mes.</p>
+  <div class="ice-status {{ 'ok' if control.ok else 'bad' }}">
+    <div class="ice-status-title">
+      {% if control.ok %}Bien: todos los depósitos y pagos de {{ month_name }} están en Chase, y todo lo de Chase tiene su papel.
+      {% else %}Hay {{ control.issues|length }} cosa{{ 's' if control.issues|length > 1 }} para revisar:{% endif %}
+    </div>
+    {% if control.issues %}<ul>{% for issue in control.issues %}<li>{{ issue }}</li>{% endfor %}</ul>{% endif %}
+    {% if control.uncategorized %}<p>En Chase quedaron sin la categoría de su tipo: {% for d in control.uncategorized %}{{ control.group_labels[d.group] }} {{ money(d.amount) }} del {{ dm(d.deposit_date) }}{{ ', ' if not loop.last else '.' }}{% endfor %} Conviene categorizarlos en Chase.</p>{% endif %}
+    {% if control.pending_after %}<p>{{ control.pending_after|length }} todavía no se pueden controlar: Chase está cargado hasta el {{ dm(control.chase_last_date) }}.</p>{% endif %}
+  </div>
+
+  <div class="ice-table-wrap" style="margin-top: 14px;">
+    <table class="ice-table">
+      <thead><tr><th>Todo junto</th><th>Papeles</th><th>Según los papeles</th><th>Entró a Chase</th><th>Diferencia</th></tr></thead>
+      <tbody>
+      {% for r in control.overview %}
+        <tr><td>{{ r.label }}</td><td>{{ r.count }}</td><td>{{ money(r.papers) }}</td><td>{{ money(r.chase) }}</td>
+          <td class="{{ 'ice-ok' if r.ok else 'ice-bad' }}">{{ money(r.diff) if r.diff else ('$0.00' if r.ok else 'revisar') }}</td></tr>
+      {% endfor %}
+      </tbody>
+      {% set t = control.overview_total %}
+      <tfoot><tr><td>{{ t.label }}</td><td>{{ t.count }}</td><td>{{ money(t.papers) }}</td><td>{{ money(t.chase) }}</td>
+        <td class="{{ 'ice-ok' if t.ok else 'ice-bad' }}">{{ money(t.diff) if t.diff else ('$0.00' if t.ok else 'revisar') }}</td></tr></tfoot>
+    </table>
+  </div>
+  {% if control.pending_after %}<p class="muted" style="font-size: 12.5px; margin: 6px 0 0;">Lo posterior al {{ dm(control.chase_last_date) }} (último día cargado de Chase) no entra en el cuadro.</p>{% endif %}
+
+  {% set ice = control.ice %}
+  <div class="ice-cards">
+    <div class="ice-card"><span>Ventas con tarjeta (Gross)</span><strong>{{ money(ice.gross) }}</strong></div>
+    <div class="ice-card"><span>Fees de Cantaloupe</span><strong>{{ money(ice.process_fees + ice.service_fees) }}</strong></div>
+    <div class="ice-card"><span>Net acreditado</span><strong>{{ money(ice.net) }}</strong></div>
+    <div class="ice-card"><span>Efectivo depositado</span><strong>{{ money(ice.cash) }}</strong></div>
+    <div class="ice-card total"><span>Venta de hielo (Net + efectivo)</span><strong>{{ money(ice.total) }}</strong></div>
+  </div>
   {% endif %}
+
+  <div class="ice-section">
+    <h2>Ice Machine — Payment Summary</h2>
+    <p>Uno por semana. El Net entra a Chase como pago de Cantaloupe el mismo día del "Hasta", con el Reference del resumen.</p>
+    <div class="ice-table-wrap">
+      {% if control.summaries %}
+      <table class="ice-table">
+        <thead><tr><th>N°</th><th>Desde</th><th>Hasta</th><th>Ventas</th><th>Gross</th><th>Fee 5.95%</th><th>Service fee</th><th>Net</th><th>Chase</th></tr></thead>
+        <tbody>
+        {% for s in control.summaries %}
+          <tr>
+            <td>#{{ s.summary_no }}</td><td>{{ dm(s.from_date) }}</td><td>{{ dm(s.to_date) }}</td><td>{{ s.transactions }}</td>
+            <td>{{ money(s.gross) }}</td><td>{{ money(s.process_fees) }}</td><td>{{ money(s.service_fees) if s.service_fees else '—' }}</td>
+            <td>{{ money(s.net) }}</td><td>{{ chase_cell(s) }}</td>
+            
+          </tr>
+        {% endfor %}
+        </tbody>
+        <tfoot><tr><td colspan="3">Total</td><td>{{ control.ice.transactions }}</td><td>{{ money(control.ice.gross) }}</td><td>{{ money(control.ice.process_fees) }}</td><td>{{ money(control.ice.service_fees) }}</td><td>{{ money(control.ice.net) }}</td><td></td></tr></tfoot>
+      </table>
+      {% else %}<div class="ice-empty">No hay Payment Summary pagados en {{ month_name }}.</div>{% endif %}
+    </div>
+  </div>
+
+  {% for kind in control.kinds %}
+  {% set group = control.groups[kind] %}
+  {% if group.rows or group.orphans or kind in ("Depósito", "Ice Machine", "Food Truck", "Vaccumms") %}
+  <div class="ice-section">
+    <h2>{{ "Ice Machine — efectivo depositado" if kind == "Ice Machine" else control.group_labels[kind] }}</h2>
+    <div class="ice-table-wrap">
+      {% if group.rows or group.orphans %}
+      <table class="ice-table">
+        <thead><tr><th>Fecha</th><th>Recibo</th><th>Importe</th><th>Chase</th></tr></thead>
+        <tbody>
+        {% for d in group.rows %}
+          <tr>
+            <td>{{ dm(d.deposit_date) }}</td>
+            <td><a href="{{ url_for('carga_datos_depositos', year=year, month=month) }}#deposito-{{ d.id }}">#{{ d.tx_number or '?' }}</a></td>
+            <td>{{ money(d.amount) }}</td>
+            <td>{{ chase_cell(d) }}{% if d.uncategorized %}<span class="ice-tag" title="En Chase está como {{ d.chase.detalle or 'sin categoría' }}">en Chase como {{ (d.chase.detalle or 'sin categoría')|lower }}</span>{% endif %}</td>
+          </tr>
+        {% endfor %}
+        {% for o in group.orphans %}
+          <tr class="ice-orphan">
+            <td>{{ dm(o.date) }}</td><td class="ice-bad">Sin recibo</td><td>{{ money(o.amount) }}</td>
+            <td class="left ice-soft">En Chase: {{ o.description }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+        <tfoot><tr><td colspan="2">Total de recibos</td><td>{{ money(group.total) }}</td><td></td></tr></tfoot>
+      </table>
+      {% else %}<div class="ice-empty">No hay recibos ni depósitos de este tipo en {{ month_name }}.</div>{% endif %}
+    </div>
+  </div>
+  {% endif %}
+  {% endfor %}
 </div>
-<script>
-  (function () {
-    var hash = window.location.hash;
-    if (hash && hash.indexOf('#deposito-') === 0) {
-      var row = document.querySelector(hash);
-      if (row) { row.classList.add('dep-highlight'); row.scrollIntoView({ block: 'center' }); }
-    }
-  })();
-</script>
 {% endblock %}

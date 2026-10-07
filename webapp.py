@@ -38,6 +38,7 @@ import chase_db
 import cheques_db
 import depositos
 import depositos_db
+import control_depositos
 import ice_machine
 import ice_machine_db
 import control_cierre
@@ -667,7 +668,9 @@ CONTROLS = [
 _ICON_DEPOSIT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/></svg>'
 
 # "Cierre" reemplazó a "Caja" (Depósitos contra Chase) en la lista (pedido
-# del usuario, 2026-10-06); /controles/depositos sigue andando por URL.
+# del usuario, 2026-10-06). Desde el 2026-10-07 /controles/depositos es
+# "Control Depósitos": todos los depósitos y los pagos de la máquina de hielo
+# contra Chase (control_depositos.py).
 CONTROLES_SECTIONS = [
     {
         "key": "control_cierre",
@@ -700,12 +703,12 @@ CONTROLES_SECTIONS = [
         "accent_soft": "#DDE3FA",
     },
     {
-        "key": "control_ice",
-        "code": "IC",
-        "icon": _ICON_TRUCK,
-        "label": "Ice Machine, Food Truck y Vaccumms",
-        "url": "/controles/ice-food-truck",
-        "description": "Todo junto contra Chase: los pagos de Cantaloupe (la máquina de hielo) contra sus Payment Summary y los depósitos de Ice Machine, Food Truck y Vaccumms contra sus recibos.",
+        "key": "control_depositos",
+        "code": "DP",
+        "icon": _ICON_DEPOSIT,
+        "label": "Control Depósitos",
+        "url": "/controles/depositos",
+        "description": "Todos los depósitos del mes contra Chase (normales, Ice Machine, Food Truck y Vaccumms, cada uno con su recibo) y los pagos de la máquina de hielo (Cantaloupe) contra sus Payment Summary.",
         "accent": "#0891B2",
         "accent_soft": "#D5F0F6",
     },
@@ -791,12 +794,12 @@ CARGA_DATOS_TOOLS = [
         "accent_soft": "#D6F1EE",
     },
     {
-        "key": "carga_ice",
-        "code": "IC",
-        "icon": _ICON_TRUCK,
-        "label": "Ice Machine y Food Truck",
-        "url": "/carga-datos/ice-food-truck",
-        "description": "Subí los Payment Summary de la máquina de hielo y los recibos de depósito de Ice, Food Truck y Vaccumms; el control contra Chase está en Controles.",
+        "key": "carga_depositos",
+        "code": "DP",
+        "icon": _ICON_DEPOSIT,
+        "label": "Depósitos",
+        "url": "/carga-datos/depositos",
+        "description": "Subí todos los PDF de depósitos (normales, Food Truck, Ice Machine, Vaccumms) y los pagos de la máquina de hielo (Payment Summary); el control contra Chase está en Controles → Control Depósitos.",
         "accent": "#0891B2",
         "accent_soft": "#D5F0F6",
     },
@@ -2953,11 +2956,11 @@ def controles():
         print(f"[controles] estado de Tarjetas y Cupones: {exc}")
     try:
         today = date.today()
-        ice = _ice_month_control(today.year, today.month)
-        if ice["issues"]:
-            alerts["control_ice"] = f"{len(ice['issues'])} cosa(s) para revisar este mes"
+        deposits_control = _depositos_month_control(today.year, today.month)
+        if deposits_control["issues"]:
+            alerts["control_depositos"] = f"{len(deposits_control['issues'])} cosa(s) para revisar este mes"
     except Exception as exc:
-        print(f"[controles] estado de Ice Machine y Food Truck: {exc}")
+        print(f"[controles] estado de Control Depósitos: {exc}")
     return render_template("controles_index.html", controls=CONTROLES_SECTIONS, alerts=alerts)
 
 
@@ -7084,57 +7087,32 @@ def controles_rapidos_alertas():
 
 
 # ---------------------------------------------------------------------------
-# Ice Machine y Food Truck (pedido del usuario, 2026-10-07): se suben los
-# Payment Summary de Cantaloupe y los recibos de depósito de Ice Machine,
-# Food Truck y Vaccumms, y el mes se controla contra Chase. Lectura y control
-# en ice_machine.py; los recibos se guardan en Depósitos (import_deposit_pdf).
+# Depósitos y Control Depósitos (pedido del usuario, 2026-10-07): en Carga de
+# Datos -> Depósitos se suben todos los PDF de depósitos del cajero (normales,
+# Food Truck, Ice Machine, Vaccumms; cada recibo es una fila de depositos_db,
+# corregible a mano) y los Payment Summary de la máquina de hielo
+# (ice_machine.py). Controles -> Control Depósitos lo cruza todo con Chase
+# (control_depositos.py).
 # ---------------------------------------------------------------------------
 
-@app.route("/carga-datos/ice-food-truck")
-def carga_datos_ice():
-    """Solo la carga; el control del mes está en Controles (pedido del usuario, 2026-10-07)."""
+@app.route("/carga-datos/depositos")
+def carga_datos_depositos():
     year, month = _cierre_month()
-    _active_job = jobs.get_active_job("ice")
-    return render_template(
-        "carga_datos_ice.html", year=year, month=month,
-        resume_job_id=(_active_job["id"] if _active_job else None),
-        **THEME_BY_KEY["carga_ice"],
-    )
-
-
-def _ice_month_control(year, month):
-    deposits = []
-    for d in depositos_db.list_month(year, month):
-        kind = ice_machine.deposit_kind(d.get("kind"))
-        if kind:
-            deposits.append(dict(d, kind=kind))
+    rows = depositos_db.list_month(year, month)
+    for row in rows:
+        row["group"] = control_depositos.receipt_kind(row.get("kind"))
+        row["date_display"] = (
+            f"{row['deposit_date'][8:10]}/{row['deposit_date'][5:7]}/{row['deposit_date'][:4]}"
+            if row["deposit_date"] else None
+        )
     prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
     next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
-    # Un resumen que termina a fin de mes (o en un feriado) se acredita los
-    # primeros días del mes siguiente: el cruce mira también esa semana.
-    chase_rows = chase_db.get_month_transactions(year, month) + [
-        r for r in chase_db.get_month_transactions(next_year, next_month) if r["posting_date"][8:10] <= "07"
-    ]
-    return ice_machine.build_month_control(
-        year, month, ice_machine_db.list_month(year, month), deposits,
-        chase_rows, chase_db.get_last_posting_date(),
-        known_references=[s["reference"] for s in ice_machine_db.list_month(prev_year, prev_month)],
-    )
-
-
-@app.route("/controles/ice-food-truck")
-def controles_ice():
-    """
-    Control de Ice Machine, Food Truck y Vaccumms (pedido del usuario,
-    2026-10-07): todo junto contra Chase. Se carga en Carga de Datos.
-    """
-    year, month = _cierre_month()
-    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
-    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+    _active_job = jobs.get_active_job("depositos")
     return render_template(
-        "controles_ice.html",
-        control=_ice_month_control(year, month),
-        kinds=ice_machine.DEPOSIT_KINDS,
+        "carga_datos_depositos.html",
+        rows=rows,
+        total=round(sum(r["amount"] or 0 for r in rows), 2),
+        summaries=ice_machine_db.list_month(year, month),
         year=year,
         month=month,
         month_name=_MONTH_NAMES_ES[month - 1],
@@ -7142,20 +7120,65 @@ def controles_ice():
         prev_month=prev_month,
         next_year=next_year,
         next_month=next_month,
-        **THEME_BY_KEY["carga_ice"],
+        resume_job_id=(_active_job["id"] if _active_job else None),
+        **THEME_BY_KEY["carga_depositos"],
     )
 
 
-@app.route("/carga-datos/ice-food-truck/subir", methods=["POST"])
-def carga_datos_ice_subir():
+@app.route("/carga-datos/ice-food-truck")
+def carga_datos_ice():
+    return redirect(url_for("carga_datos_depositos", **request.args.to_dict()))
+
+
+def _depositos_month_control(year, month):
+    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+    # Un resumen que termina a fin de mes (o en un feriado) se acredita los
+    # primeros días del mes siguiente: el cruce mira también esa semana.
+    chase_rows = chase_db.get_month_transactions(year, month) + [
+        r for r in chase_db.get_month_transactions(next_year, next_month) if r["posting_date"][8:10] <= "07"
+    ]
+    return control_depositos.build_month_control(
+        year, month, ice_machine_db.list_month(year, month), depositos_db.list_month(year, month),
+        chase_rows, chase_db.get_last_posting_date(),
+        known_references=[s["reference"] for s in ice_machine_db.list_month(prev_year, prev_month)],
+    )
+
+
+@app.route("/controles/depositos")
+def controles_depositos():
+    year, month = _cierre_month()
+    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+    return render_template(
+        "controles_depositos.html",
+        control=_depositos_month_control(year, month),
+        year=year,
+        month=month,
+        month_name=_MONTH_NAMES_ES[month - 1],
+        prev_year=prev_year,
+        prev_month=prev_month,
+        next_year=next_year,
+        next_month=next_month,
+        **THEME_BY_KEY["carga_depositos"],
+    )
+
+
+@app.route("/controles/ice-food-truck")
+def controles_ice():
+    return redirect(url_for("controles_depositos", **request.args.to_dict()))
+
+
+@app.route("/carga-datos/depositos/subir", methods=["POST"])
+def carga_datos_depositos_subir():
     uploads = [u for u in request.files.getlist("pdf_files") if u and u.filename]
     if not uploads:
-        return _error_response("Seleccioná los Payment Summary o los recibos de depósito.")
+        return _error_response("Seleccioná los PDF de depósitos o los Payment Summary.")
     pdf_paths = _save_uploads_to_workspace(uploads)
     fallback = (request.form.get("year", type=int) or date.today().year,
                 request.form.get("month", type=int) or date.today().month)
-    job_id = jobs.create_job(len(pdf_paths), kind="ice")
-    threading.Thread(target=_run_ice_job, args=(job_id, pdf_paths, fallback), daemon=True).start()
+    job_id = jobs.create_job(len(pdf_paths), kind="depositos")
+    threading.Thread(target=_run_depositos_job, args=(job_id, pdf_paths, fallback), daemon=True).start()
     return jsonify({"job_id": job_id, "total": len(pdf_paths)})
 
 
@@ -7189,7 +7212,7 @@ def _link_ice_deposits_to_chase():
     return changed
 
 
-def _run_ice_job(job_id, pdf_paths, fallback_period):
+def _run_depositos_job(job_id, pdf_paths, fallback_period):
     """Cada PDF es un Payment Summary (con texto) o un PDF de recibos de depósito (fotos); aislado por archivo."""
     try:
         summaries = replaced = deposits = incomplete = duplicates = failed = 0
@@ -7210,7 +7233,7 @@ def _run_ice_job(job_id, pdf_paths, fallback_period):
             except ValueError as exc:
                 problems.append(str(exc))
             except Exception as exc:
-                print(f"[carga-datos/ice] {pdf_path}: {exc}")
+                print(f"[carga-datos/depositos] {pdf_path}: {exc}")
                 failed += 1
             jobs.update_job(job_id, done=index, total=len(pdf_paths))
 
@@ -7235,124 +7258,19 @@ def _run_ice_job(job_id, pdf_paths, fallback_period):
         jobs.update_job(
             job_id, status="done", done=len(pdf_paths), total=len(pdf_paths),
             notice=" ".join(parts) or "No se encontró nada para cargar.", notice_level=level,
-            redirect_url=f"/controles/ice-food-truck?year={year}&month={month}",
+            redirect_url=f"/carga-datos/depositos?year={year}&month={month}",
         )
     except Exception as exc:
         jobs.update_job(job_id, status="error", error=f"Error: {exc}")
 
 
-@app.route("/carga-datos/ice-food-truck/resumen/<summary_no>/eliminar", methods=["POST"])
-def carga_datos_ice_resumen_eliminar(summary_no):
+@app.route("/carga-datos/depositos/resumen/<summary_no>/eliminar", methods=["POST"])
+def carga_datos_resumen_eliminar(summary_no):
     to_date = ice_machine_db.delete_summary(summary_no)
     if to_date:
         year, month = ice_machine.month_of(to_date)
-        return redirect(url_for("controles_ice", year=year, month=month))
-    return redirect(url_for("controles_ice"))
-
-
-@app.route("/controles/depositos")
-def controles_depositos():
-    today = date.today()
-    year = request.args.get("year", type=int) or today.year
-    month = request.args.get("month", type=int) or today.month
-    if not (1 <= month <= 12):
-        month = today.month
-
-    rows = depositos_db.list_month(year, month)
-    # Corte por Chase (pedido explícito del usuario, 2026-09-28): "si el
-    # chase está hasta el día 10... se analizará hasta ese día los depósitos
-    # que tengan fecha hasta ese día" -- un depósito posterior al último día
-    # cargado de Chase todavía no puede aparecer ahí, así que queda fuera del
-    # cruce contra Chase y contra Caja (no es un faltante).
-    chase_month = chase_db.get_month_transactions(year, month)
-    chase_cutoff = max((r["posting_date"] for r in chase_month if r.get("posting_date")), default=None)
-    for row in rows:
-        row["after_cutoff"] = bool(chase_cutoff and row["deposit_date"] and row["deposit_date"] > chase_cutoff)
-    # Marca "En Chase": mismo día y mismo monto, cada movimiento de Chase se usa una sola vez.
-    chase_rows = _chase_deposits(year, month)
-    pending_chase = {}
-    for r in chase_rows:
-        key = (r["posting_date"], round(r["amount"], 2))
-        pending_chase[key] = pending_chase.get(key, 0) + 1
-    for row in rows:
-        key = (row["deposit_date"], round(row["amount"], 2)) if row["amount"] is not None else None
-        row["in_chase"] = bool(key and pending_chase.get(key))
-        if row["in_chase"]:
-            pending_chase[key] -= 1
-        row["date_display"] = (
-            f"{row['deposit_date'][8:10]}/{row['deposit_date'][5:7]}/{row['deposit_date'][:4]}"
-            if row["deposit_date"] else None
-        )
-    total = sum(r["amount"] or 0 for r in rows)
-
-    # Control contra Caja (pedido explícito del usuario, 2026-09-23): la suma
-    # de los depósitos normales tiene que dar igual que la columna Depósitos
-    # de Caja. Un depósito con aclaración (Food Truck, Ice Machine, Vaccumms)
-    # no es un depósito normal -- en Caja va aparte o no va.
-    docs_by_day = {}
-    for row in rows:
-        row["is_special"] = bool(row.get("kind"))
-        if not row["is_special"] and row["deposit_date"] and not row["after_cutoff"]:
-            docs_by_day[row["deposit_date"]] = docs_by_day.get(row["deposit_date"], 0) + (row["amount"] or 0)
-    caja_control = None
-    try:
-        caja_report = build_caja_month_report(year, month)
-        # La columna Depósitos de Caja sale de Chase: solo hasta el corte.
-        caja_by_day = {
-            r["date"]: (r.get("deposit") or 0) for r in caja_report["rows"]
-            if chase_cutoff and r["date"] <= chase_cutoff
-        }
-        docs_normal = round(sum(docs_by_day.values()), 2)
-        caja_total = round(sum(caja_by_day.values()), 2)
-        diff_days = []
-        for day in sorted(set(caja_by_day) | set(docs_by_day)):
-            docs_amount, caja_amount = docs_by_day.get(day, 0), caja_by_day.get(day, 0) or 0
-            if abs(docs_amount - caja_amount) > 0.005:
-                diff_days.append({
-                    "date": f"{day[8:10]}/{day[5:7]}/{day[:4]}",
-                    "docs": docs_amount, "caja": caja_amount, "diff": round(docs_amount - caja_amount, 2),
-                })
-        caja_control = {
-            "docs": docs_normal, "caja": caja_total, "diff": round(docs_normal - caja_total, 2),
-            "ok": abs(docs_normal - caja_total) < 0.005, "days": diff_days,
-        }
-    except Exception as exc:
-        print(f"[controles/depositos] control contra Caja: {exc}")
-
-    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
-    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
-    _active_job = jobs.get_active_job("depositos")
-    return render_template(
-        "controles_depositos.html",
-        rows=rows,
-        total=total,
-        caja_control=caja_control if chase_cutoff else None,
-        chase_cutoff=_fmt_ddmmyyyy(chase_cutoff) if chase_cutoff else None,
-        after_cutoff_count=sum(1 for r in rows if r["after_cutoff"]),
-        chase_loaded=bool(chase_rows),
-        year=year,
-        month=month,
-        month_name=_MONTH_NAMES_ES[month - 1],
-        prev_year=prev_year,
-        prev_month=prev_month,
-        next_year=next_year,
-        next_month=next_month,
-        resume_job_id=(_active_job["id"] if _active_job else None),
-        **THEME_BY_KEY["carga_chase"],
-    )
-
-
-@app.route("/controles/depositos/subir", methods=["POST"])
-def controles_depositos_subir():
-    uploads = [u for u in request.files.getlist("pdf_files") if u and u.filename]
-    if not uploads:
-        return _error_response("Seleccioná uno o más PDF de depósitos.")
-    pdf_paths = _save_uploads_to_workspace(uploads)
-    fallback = (request.form.get("year", type=int) or date.today().year,
-                request.form.get("month", type=int) or date.today().month)
-    job_id = jobs.create_job(len(pdf_paths), kind="depositos")
-    threading.Thread(target=_run_depositos_job, args=(job_id, pdf_paths, fallback), daemon=True).start()
-    return jsonify({"job_id": job_id, "total": len(pdf_paths)})
+        return redirect(url_for("carga_datos_depositos", year=year, month=month))
+    return redirect(url_for("carga_datos_depositos"))
 
 
 def import_deposit_pdf(pdf_path, filename, fallback_period):
@@ -7391,53 +7309,12 @@ def import_deposit_pdf(pdf_path, filename, fallback_period):
     return saved, incomplete, duplicates, first_period
 
 
-def _run_depositos_job(job_id, pdf_paths, fallback_period):
-    """Aislado por PDF; cada página del PDF es un depósito."""
-    try:
-        saved = incomplete = duplicates = failed = 0
-        first_period = None
-        for index, pdf_path in enumerate(pdf_paths, start=1):
-            try:
-                s, i, d, period = import_deposit_pdf(pdf_path, os.path.basename(pdf_path), fallback_period)
-                saved, incomplete, duplicates = saved + s, incomplete + i, duplicates + d
-                first_period = first_period or period
-            except Exception as exc:
-                print(f"[controles/depositos] {pdf_path}: {exc}")
-                failed += 1
-            jobs.update_job(job_id, done=index, total=len(pdf_paths))
-
-        parts = []
-        if saved:
-            parts.append(f"{saved} depósito(s) guardado(s).")
-        if incomplete:
-            parts.append(f"{incomplete} con algún dato sin leer — completalo a mano en el cuadro.")
-        if duplicates:
-            parts.append(f"{duplicates} ya estaban cargados y se omitieron.")
-        if failed:
-            parts.append(f"{failed} archivo(s) no se pudieron leer.")
-        linked = _link_ice_deposits_to_chase() if saved else 0
-        if linked:
-            parts.append(f"{linked} depósito(s) de Chase quedaron categorizados como Ice Machine.")
-        if saved:
-            level = "warning" if (incomplete or failed) else "success"
-        else:
-            level = "warning" if duplicates and not failed else "error"
-        year, month = first_period or fallback_period
-        jobs.update_job(
-            job_id, status="done", done=len(pdf_paths), total=len(pdf_paths),
-            notice=" ".join(parts) or "No se encontró ningún depósito.", notice_level=level,
-            redirect_url=f"/controles/depositos?year={year}&month={month}",
-        )
-    except Exception as exc:
-        jobs.update_job(job_id, status="error", error=f"Error: {exc}")
-
-
 @app.route("/controles/depositos/<int:deposit_id>/guardar", methods=["POST"])
 def controles_deposito_guardar(deposit_id):
     deposit = depositos_db.get_deposit(deposit_id)
     if deposit is None:
         flash("Ese depósito ya no existe.", "error")
-        return redirect(url_for("controles_depositos"))
+        return redirect(url_for("carga_datos_depositos"))
     raw_date = (request.form.get("deposit_date") or "").strip() or None
     try:
         if raw_date:
@@ -7445,7 +7322,7 @@ def controles_deposito_guardar(deposit_id):
         amount = _parse_money_field(request.form.get("amount"))
     except ValueError:
         flash("La fecha o el monto no son válidos.", "error")
-        return redirect(url_for("controles_depositos", year=deposit["year"], month=deposit["month"]))
+        return redirect(url_for("carga_datos_depositos", year=deposit["year"], month=deposit["month"]))
     description = (request.form.get("description") or "").strip() or None
     # La aclaración se edita en la propia descripción: "(Food Truck)" al final
     # lo saca del control contra Caja, borrarla lo vuelve un depósito normal.
@@ -7453,7 +7330,7 @@ def controles_deposito_guardar(deposit_id):
                                 depositos.kind_from_description(description))
     _link_ice_deposits_to_chase()
     updated = depositos_db.get_deposit(deposit_id)
-    return redirect(url_for("controles_depositos", year=updated["year"], month=updated["month"]) + f"#deposito-{deposit_id}")
+    return redirect(url_for("carga_datos_depositos", year=updated["year"], month=updated["month"]) + f"#deposito-{deposit_id}")
 
 
 @app.route("/controles/depositos/<int:deposit_id>/eliminar", methods=["POST"])
@@ -7461,9 +7338,9 @@ def controles_deposito_eliminar(deposit_id):
     deposit = depositos_db.delete_deposit(deposit_id)
     if deposit is None:
         flash("Ese depósito ya no existe.", "error")
-        return redirect(url_for("controles_depositos"))
+        return redirect(url_for("carga_datos_depositos"))
     flash("Depósito eliminado.", "success")
-    return redirect(url_for("controles_depositos", year=deposit["year"], month=deposit["month"]))
+    return redirect(url_for("carga_datos_depositos", year=deposit["year"], month=deposit["month"]))
 
 
 @app.route("/controles/depositos/<int:deposit_id>/pdf")
@@ -7471,11 +7348,11 @@ def controles_deposito_pdf(deposit_id):
     deposit = depositos_db.get_deposit(deposit_id)
     if deposit is None:
         flash("Ese depósito ya no existe.", "error")
-        return redirect(url_for("controles_depositos"))
+        return redirect(url_for("carga_datos_depositos"))
     name = (deposit.get("description") or "Deposito").replace("#", "N").replace("/", "-") + ".pdf"
     if not os.path.isfile(depositos_db.absolute_path(deposit["pdf_path"])):
         flash("No se encontró el PDF guardado de ese depósito.", "error")
-        return redirect(url_for("controles_depositos", year=deposit["year"], month=deposit["month"]))
+        return redirect(url_for("carga_datos_depositos", year=deposit["year"], month=deposit["month"]))
     return send_file(
         depositos_db.absolute_path(deposit["pdf_path"]),
         as_attachment=request.args.get("mode") == "download",
