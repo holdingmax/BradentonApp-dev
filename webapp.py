@@ -698,6 +698,16 @@ CONTROLES_SECTIONS = [
         "accent_soft": "#DDE3FA",
     },
     {
+        "key": "control_ice",
+        "code": "IC",
+        "icon": _ICON_TRUCK,
+        "label": "Ice Machine, Food Truck y Vaccumms",
+        "url": "/controles/ice-food-truck",
+        "description": "Todo junto contra Chase: los pagos de Cantaloupe (la máquina de hielo) contra sus Payment Summary y los depósitos de Ice Machine, Food Truck y Vaccumms contra sus recibos.",
+        "accent": "#0891B2",
+        "accent_soft": "#D5F0F6",
+    },
+    {
         "key": "control_productos",
         "code": "PR",
         "icon": _ICON_TRUCK,
@@ -784,7 +794,7 @@ CARGA_DATOS_TOOLS = [
         "icon": _ICON_TRUCK,
         "label": "Ice Machine y Food Truck",
         "url": "/carga-datos/ice-food-truck",
-        "description": "Subí los Payment Summary de la máquina de hielo y los recibos de depósito de Ice, Food Truck y Vaccumms — se controlan solos contra Chase.",
+        "description": "Subí los Payment Summary de la máquina de hielo y los recibos de depósito de Ice, Food Truck y Vaccumms; el control contra Chase está en Controles.",
         "accent": "#0891B2",
         "accent_soft": "#D5F0F6",
     },
@@ -2939,6 +2949,13 @@ def controles():
             alerts["control_tarjetas"] = f"Alerta: pendiente ${latest['pending']:,.2f} al {_fmt_ddmmyyyy(latest['date'])}"
     except Exception as exc:
         print(f"[controles] estado de Tarjetas y Cupones: {exc}")
+    try:
+        today = date.today()
+        ice = _ice_month_control(today.year, today.month)
+        if ice["issues"]:
+            alerts["control_ice"] = f"{len(ice['issues'])} cosa(s) para revisar este mes"
+    except Exception as exc:
+        print(f"[controles] estado de Ice Machine y Food Truck: {exc}")
     return render_template("controles_index.html", controls=CONTROLES_SECTIONS, alerts=alerts)
 
 
@@ -7069,7 +7086,17 @@ def controles_rapidos_alertas():
 
 @app.route("/carga-datos/ice-food-truck")
 def carga_datos_ice():
+    """Solo la carga; el control del mes está en Controles (pedido del usuario, 2026-10-07)."""
     year, month = _cierre_month()
+    _active_job = jobs.get_active_job("ice")
+    return render_template(
+        "carga_datos_ice.html", year=year, month=month,
+        resume_job_id=(_active_job["id"] if _active_job else None),
+        **THEME_BY_KEY["carga_ice"],
+    )
+
+
+def _ice_month_control(year, month):
     deposits = []
     for d in depositos_db.list_month(year, month):
         kind = ice_machine.deposit_kind(d.get("kind"))
@@ -7082,15 +7109,25 @@ def carga_datos_ice():
     chase_rows = chase_db.get_month_transactions(year, month) + [
         r for r in chase_db.get_month_transactions(next_year, next_month) if r["posting_date"][8:10] <= "07"
     ]
-    control = ice_machine.build_month_control(
+    return ice_machine.build_month_control(
         year, month, ice_machine_db.list_month(year, month), deposits,
         chase_rows, chase_db.get_last_posting_date(),
         known_references=[s["reference"] for s in ice_machine_db.list_month(prev_year, prev_month)],
     )
-    _active_job = jobs.get_active_job("ice")
+
+
+@app.route("/controles/ice-food-truck")
+def controles_ice():
+    """
+    Control de Ice Machine, Food Truck y Vaccumms (pedido del usuario,
+    2026-10-07): todo junto contra Chase. Se carga en Carga de Datos.
+    """
+    year, month = _cierre_month()
+    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
+    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
     return render_template(
-        "carga_datos_ice.html",
-        control=control,
+        "controles_ice.html",
+        control=_ice_month_control(year, month),
         kinds=ice_machine.DEPOSIT_KINDS,
         year=year,
         month=month,
@@ -7099,7 +7136,6 @@ def carga_datos_ice():
         prev_month=prev_month,
         next_year=next_year,
         next_month=next_month,
-        resume_job_id=(_active_job["id"] if _active_job else None),
         **THEME_BY_KEY["carga_ice"],
     )
 
@@ -7166,7 +7202,7 @@ def _run_ice_job(job_id, pdf_paths, fallback_period):
         jobs.update_job(
             job_id, status="done", done=len(pdf_paths), total=len(pdf_paths),
             notice=" ".join(parts) or "No se encontró nada para cargar.", notice_level=level,
-            redirect_url=f"/carga-datos/ice-food-truck?year={year}&month={month}",
+            redirect_url=f"/controles/ice-food-truck?year={year}&month={month}",
         )
     except Exception as exc:
         jobs.update_job(job_id, status="error", error=f"Error: {exc}")
@@ -7177,8 +7213,8 @@ def carga_datos_ice_resumen_eliminar(summary_no):
     to_date = ice_machine_db.delete_summary(summary_no)
     if to_date:
         year, month = ice_machine.month_of(to_date)
-        return redirect(url_for("carga_datos_ice", year=year, month=month))
-    return redirect(url_for("carga_datos_ice"))
+        return redirect(url_for("controles_ice", year=year, month=month))
+    return redirect(url_for("controles_ice"))
 
 
 @app.route("/controles/depositos")

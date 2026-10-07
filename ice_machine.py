@@ -269,7 +269,33 @@ def build_month_control(year, month, summaries, deposits, chase_rows, chase_last
     }
     ice["total"] = round(ice["net"] + ice["cash"], 2)
     uncategorized = [d for d in deposit_rows if d["uncategorized"]]
+
+    # Todo junto (pedido del usuario, 2026-10-07): por cada tipo, lo que dicen
+    # los papeles contra lo que entró a Chase. Lo que todavía no se puede
+    # controlar (después del último día de Chase) queda afuera de las dos.
+    def overview_row(label, papers, amount_key, orphans):
+        checked = [p for p in papers if p["status"] != "after"]
+        paper_total = total(checked, amount_key)
+        chase_total = round(sum(p["chase"]["amount"] for p in checked if p["chase"])
+                            + sum(o["amount"] for o in orphans), 2)
+        diff = round(chase_total - paper_total, 2)
+        return {"label": label, "count": len(checked), "papers": paper_total, "chase": chase_total,
+                "diff": diff, "ok": abs(diff) <= TOLERANCE and all(p["status"] == "ok" for p in checked)}
+
+    overview = [overview_row("Ice Machine — tarjeta (Cantaloupe)", summary_rows, "net", orphan_payments)]
+    labels = {ICE_MACHINE: "Ice Machine — efectivo", FOOD_TRUCK: FOOD_TRUCK, VACCUMMS: VACCUMMS}
+    for kind in DEPOSIT_KINDS:
+        overview.append(overview_row(labels[kind], groups[kind], "amount",
+                                     [o for o in orphan_deposits if o["kind"] == kind]))
+    overview_total = {
+        "label": "Total", "count": sum(r["count"] for r in overview),
+        "papers": round(sum(r["papers"] for r in overview), 2), "chase": round(sum(r["chase"] for r in overview), 2),
+    }
+    overview_total["diff"] = round(overview_total["chase"] - overview_total["papers"], 2)
+    overview_total["ok"] = all(r["ok"] for r in overview)
     return {
+        "overview": overview,
+        "overview_total": overview_total,
         "summaries": summary_rows,
         "deposits": deposit_rows,
         "groups": {kind: {"rows": rows, "total": total(rows, "amount")} for kind, rows in groups.items()},
