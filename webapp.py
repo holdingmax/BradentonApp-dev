@@ -65,6 +65,8 @@ from chase_rules import (
 import caja_db
 import gastos_caja
 from caja import (
+    CHASE_DETALLE_FOOD_TRUCK,
+    CHASE_DETALLE_ICE,
     build_caja_export_pdf,
     build_caja_export_workbook,
     build_month_report_from_db as build_caja_month_report,
@@ -3218,9 +3220,13 @@ def chase():
 
     inserted, updated = chase_db.upsert_transactions(rows, source_filename=filename)
     skipped = total_rows - len(rows)
-    uncategorized = sum(1 for row in rows if not row["detalle"])
+    # Los recibos de Ice Machine ya cargados categorizan sus depósitos.
+    linked = _link_ice_deposits_to_chase()
+    uncategorized = max(0, sum(1 for row in rows if not row["detalle"]) - linked)
 
     parts = [f"{len(rows)} movimiento(s) guardado(s) ({inserted} nuevo(s), {updated} actualizado(s))."]
+    if linked:
+        parts.append(f"{linked} depósito(s) categorizados como Ice Machine por su recibo.")
     if uncategorized:
         parts.append(f"{uncategorized} sin ninguna regla que matcheara.")
     if skipped:
@@ -7159,6 +7165,30 @@ def _pdf_text(pdf_path):
         return "\n".join((page.extract_text() or "") for page in pdf.pages)
 
 
+def _link_ice_deposits_to_chase():
+    """
+    Cada recibo de Ice Machine categoriza su depósito en Chase (misma fecha e
+    importe) como depósito de hielo, la categoría que la Caja muestra como
+    ICE MACHINE (pedido del usuario, 2026-10-07). Lo corregido a mano en
+    Chase no se toca; un depósito ya categorizado como otro tipo (Food Truck)
+    tampoco. Devuelve cuántos movimientos de Chase se categorizaron.
+    """
+    from collections import Counter
+    ice = CHASE_DETALLE_ICE
+    others = {CHASE_DETALLE_FOOD_TRUCK}
+    wanted = Counter((d["deposit_date"], round(d["amount"], 2)) for d in depositos_db.list_kind(depositos.ICE_MACHINE))
+    changed = 0
+    for (day, amount), count in wanted.items():
+        rows = [r for r in chase_db.deposits_on(day) if abs(r["amount"] - amount) <= 0.005]
+        need = count - sum(1 for r in rows if (r["detalle"] or "").upper() == ice)
+        candidates = [r for r in rows if (r["detalle"] or "").upper() != ice and r["detalle_source"] != "manual"
+                      and (r["detalle"] or "").upper() not in others]
+        for r in candidates[:max(need, 0)]:
+            chase_db.set_deposit_detalle(r["rowid"], ice)
+            changed += 1
+    return changed
+
+
 def _run_ice_job(job_id, pdf_paths, fallback_period):
     """Cada PDF es un Payment Summary (con texto) o un PDF de recibos de depósito (fotos); aislado por archivo."""
     try:
@@ -7193,6 +7223,9 @@ def _run_ice_job(job_id, pdf_paths, fallback_period):
             parts.append(f"{incomplete} recibo(s) con algún dato sin leer: completalo en Depósitos.")
         if duplicates:
             parts.append(f"{duplicates} recibo(s) ya estaban cargados.")
+        linked = _link_ice_deposits_to_chase() if deposits else 0
+        if linked:
+            parts.append(f"{linked} depósito(s) de Chase quedaron categorizados como Ice Machine.")
         parts.extend(problems)
         if failed:
             parts.append(f"{failed} archivo(s) no se pudieron leer.")
@@ -7382,6 +7415,9 @@ def _run_depositos_job(job_id, pdf_paths, fallback_period):
             parts.append(f"{duplicates} ya estaban cargados y se omitieron.")
         if failed:
             parts.append(f"{failed} archivo(s) no se pudieron leer.")
+        linked = _link_ice_deposits_to_chase() if saved else 0
+        if linked:
+            parts.append(f"{linked} depósito(s) de Chase quedaron categorizados como Ice Machine.")
         if saved:
             level = "warning" if (incomplete or failed) else "success"
         else:
@@ -7415,6 +7451,7 @@ def controles_deposito_guardar(deposit_id):
     # lo saca del control contra Caja, borrarla lo vuelve un depósito normal.
     depositos_db.update_deposit(deposit_id, raw_date, amount, description,
                                 depositos.kind_from_description(description))
+    _link_ice_deposits_to_chase()
     updated = depositos_db.get_deposit(deposit_id)
     return redirect(url_for("controles_depositos", year=updated["year"], month=updated["month"]) + f"#deposito-{deposit_id}")
 

@@ -137,6 +137,20 @@ def update_deposit(deposit_id, deposit_date, amount, description, kind):
         conn.close()
 
 
+def list_kind(kind):
+    """Todos los recibos de un tipo (cualquier mes), con fecha e importe."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT * FROM deposits WHERE kind = ? AND deposit_date IS NOT NULL AND amount IS NOT NULL "
+            "ORDER BY deposit_date, tx_number, id",
+            (kind,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
 def list_month(year, month):
     conn = _connect()
     try:
