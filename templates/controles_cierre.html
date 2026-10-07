@@ -42,7 +42,7 @@
   .ci-cross-table thead th { background: var(--accent-soft); font-weight: 700; }
   .ci-cross-table tr.ci-cross-section td { background: var(--surface-alt); font-weight: 700; text-align: left; }
   .ci-jh-tag { font-size: 11.5px; font-style: normal; font-weight: 600; margin-left: 8px; text-decoration: none; color: var(--text-soft); }
-  .ci-jh-tag.ok, .ci-jh-tag.partial { color: var(--success); }
+  .ci-jh-tag.ok, .ci-jh-tag.partial, .ci-jh-tag.pending { color: var(--success); }
   .ci-jh-tag.bad { color: var(--error); }
   .ci-ok { color: var(--success); }
   .ci-bad { color: var(--error); font-weight: 700; }
@@ -110,7 +110,7 @@
           <tr class="ci-box {{ 'ci-red' if line.red }}">
             {% if line.side == 'debit' %}
             <td colspan="2" class="ci-account">{{ line.account }}
-              {%- if line.account == account_jh and jh_cards %} <a class="ci-jh-tag {{ jh_cards.status }}" href="#ci-jh">{% if jh_cards.status == 'ok' %}✓ controlado contra J.H.{% elif jh_cards.status == 'bad' %}≠ no coincide con J.H.{% elif jh_cards.status == 'partial' %}✓ controlado en parte contra J.H.{% else %}sin datos de J.H.{% endif %}</a>{% endif %}</td>
+              </td>
             <td class="ci-amount">{{ amount_cell(line, loop.index) }}</td>
             <td class="ci-amount"></td>
             {% else %}
@@ -163,11 +163,12 @@
   {% set d, c = jh_cards.detail, jh_cards.coupons %}
   <div class="ci-cross" id="ci-jh">
     <h2>Tarjetas contra J.H. Williams</h2>
-    <div class="ci-status {{ {'ok': 'ok', 'partial': 'ok', 'bad': 'bad-strong'}.get(jh_cards.status, 'none') }}">
+    <div class="ci-status {{ {'ok': 'ok', 'partial': 'ok', 'bad': 'bad-strong'}.get(jh_cards.status, 'none') if jh_cards.status != 'pending' else 'bad' }}">
       <div class="ci-status-title">
         {% if jh_cards.status == 'ok' %}Bien: lo vendido con tarjeta coincide con lo que informa J.H.
         {% elif jh_cards.status == 'partial' %}Coincide con lo que hay de J.H., pero falta {{ 'el Credit Card Daily Summary del mes' if not c else 'el detalle de cupones' }}.
-        {% elif jh_cards.status == 'bad' %}Hay diferencias entre lo vendido con tarjeta y lo que informa J.H.
+        {% elif jh_cards.status == 'pending' %}Sin diferencias reales con J.H.: {{ money(-(d.diff_pending + d.diff_edge)) }} todavía sin depositar ({{ fmt_days(d.pending + d.edge) }}); se controla al subir el detalle de J.H. del mes siguiente.
+        {% elif jh_cards.status == 'bad' %}{% if d and d.bad %}Diferencia real con J.H.: {{ money(d.diff_bad) }} ({{ fmt_days(d.bad) }}){% if d.pending or d.edge %}; {{ money(-(d.diff_pending + d.diff_edge)) }} todavía sin depositar ({{ fmt_days(d.pending + d.edge) }}){% endif %}.{% else %}El Credit Card Daily Summary de J.H. no coincide con los cupones cargados.{% endif %}
         {% else %}Todavía no hay datos de J.H. de {{ month_name }} {{ year }}.{% endif %}
       </div>
       <p>El renglón {{ account_jh }} sale de las tarjetas de Store Info (TC {{ money(jh_cards.tc) }}). Acá se controla contra la página de J.H.: el detalle de cupones (los batches del POS, por día de venta) y el Credit Card Daily Summary del mes. Día por día en <a href="{{ url_for('controles_tarjetas', year=year, month=month) }}">Controles → Tarjetas y Cupones</a>.</p>

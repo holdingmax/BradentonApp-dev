@@ -249,12 +249,17 @@ def jh_cards_check(entries, detail, coupons):
             "ok": coupons["ok"],
         }
     parts = [part for part in (result["detail"], result["coupons"]) if part]
+    # Rojo solo para lo real (pedido del usuario, 2026-10-07): los días que
+    # todavía no se depositaron o que no se pueden comparar no son diferencia.
+    real_bad = bool(result["detail"] and result["detail"]["bad"]) or bool(result["coupons"] and not result["coupons"]["ok"])
     if not parts:
         result["status"] = "missing"
     elif all(part["ok"] for part in parts):
         result["status"] = "ok" if len(parts) == 2 else "partial"
-    else:
+    elif real_bad:
         result["status"] = "bad"
+    else:
+        result["status"] = "pending"
     return result
 
 
