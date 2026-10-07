@@ -4118,40 +4118,54 @@ def build_product_detail(key, lines, supplier_labels, pos_costs, monthly_sales):
 # deja el costo nuevo, para que sepa qué precio revisar.
 # ---------------------------------------------------------------------------
 
+def with_departments(rows, pos_costs):
+    """
+    Cada renglón con el departamento del POS de su UPC (pedido del usuario,
+    2026-10-06: "así se los identifica más fácil"); sin UPC en el POS, la
+    categoría de la factura.
+    """
+    pos_by_upc = _pos_index(pos_costs)
+    result = []
+    for row in rows:
+        pos = pos_by_upc.get(row["upc"]) if row["upc"] else None
+        result.append({**row, "department": (pos.get("dept_name") if pos else None) or row.get("category")})
+    return result
+
+
 def price_change_rows(rows, pos_costs):
     """Renglones de una factura (build_invoice_products) que cambiaron de costo: primero los que subieron."""
     pos_by_upc = _pos_index(pos_costs)
     changed = []
-    for row in rows:
+    for row in with_departments(rows, pos_costs):
         if row["state"] not in ("Subió", "Bajó"):
             continue
         pos = pos_by_upc.get(row["upc"]) if row["upc"] else None
         pos_price = pos.get("price") if pos else None
         margin = _pct(pos_price - row["unit_cost"], pos_price) if pos_price else None
         changed.append({**row, "pos_price": pos_price, "margin_pct": margin})
-    changed.sort(key=lambda r: (0 if r["state"] == "Subió" else 1, r.get("category") or "", r.get("description") or ""))
+    changed.sort(key=lambda r: (0 if r["state"] == "Subió" else 1, r.get("department") or "", r.get("description") or ""))
     return changed
-
-
-def _ddmmyyyy(iso):
-    return f"{iso[8:10]}/{iso[5:7]}/{iso[0:4]}" if iso else ""
 
 
 def _pack_label(row):
     return " ".join(str(part) for part in (row.get("pack"), row.get("size")) if part not in (None, ""))
 
 
+# El reporte va en inglés (es para el manager, pedido del usuario 2026-10-06),
+# con fechas MM/DD/YYYY, costos con 2 decimales, sin la fecha del costo
+# anterior, el precio del POS como "Elistar Price" y el departamento.
+_STATE_EN = {"Subió": "Up", "Bajó": "Down"}
+
+
+def _mmddyyyy(iso):
+    return f"{iso[5:7]}/{iso[8:10]}/{iso[0:4]}" if iso else ""
+
+
 def build_price_change_pdf(supplier_label, invoice, changed, dest_path):
     from pdf_export import build_simple_table_pdf
 
     def money(value):
-        # Hasta 4 decimales (costos por unidad de centavos), nunca menos de 2.
-        if value is None:
-            return ""
-        text = f"{abs(value):,.4f}".rstrip("0")
-        if len(text.split(".")[1]) < 2:
-            text = f"{abs(value):,.2f}"
-        return f"{'-' if value < 0 else ''}${text}"
+        return "" if value is None else f"{'-' if value < 0 else ''}${abs(value):,.2f}"
 
     table_rows = []
     for row in changed:
@@ -4159,8 +4173,9 @@ def build_price_change_pdf(supplier_label, invoice, changed, dest_path):
         table_rows.append([
             row["upc"] or "",
             row.get("description") or "",
+            row.get("department") or "",
             _pack_label(row),
-            f"{money(row['previous_cost'])} ({_ddmmyyyy(row['previous_date'])})",
+            money(row["previous_cost"]),
             money(row["unit_cost"]),
             f"{sign}{money(row['change'])} ({sign}{row['change_pct']}%)",
             money(row.get("srp")),
@@ -4170,16 +4185,17 @@ def build_price_change_pdf(supplier_label, invoice, changed, dest_path):
     up = sum(1 for row in changed if row["state"] == "Subió")
     build_simple_table_pdf(
         dest_path,
-        f"{supplier_label} — Cambios de precio — Factura N° {invoice['invoice_no']}",
-        ["UPC", "Producto", "Pack", "Costo anterior (fecha)", "Costo nuevo", "Cambio", "SRP factura", "Precio POS", "Margen POS"],
+        f"{supplier_label} — Price Changes — Invoice #{invoice['invoice_no']}",
+        ["UPC", "Product", "Department", "Pack", "Previous Cost", "New Cost", "Change", "Invoice SRP",
+         "Elistar Price", "Margin"],
         table_rows,
-        col_widths_mm=[30, 82, 22, 40, 24, 36, 22, 22, 22],
+        col_widths_mm=[30, 78, 34, 20, 24, 24, 34, 22, 24, 20],
         company_header=True,
         period_label=(
-            f"Factura del {_ddmmyyyy(invoice['invoice_date'])} — {up} subieron, {len(changed) - up} bajaron"
-            + (" — comparado con la compra anterior de cada producto" if changed else " — ningún producto cambió de precio")
+            f"Invoice dated {_mmddyyyy(invoice['invoice_date'])} — {up} went up, {len(changed) - up} went down"
+            + (" — compared with each product's previous purchase" if changed else " — no product changed price")
         ),
-        footer_note="Costo por unidad. Margen POS = (precio del POS − costo nuevo) / precio del POS.",
+        footer_note="Cost per unit. Margin = (Elistar price − new cost) / Elistar price.",
     )
     return dest_path
 
@@ -4190,34 +4206,34 @@ def build_price_change_workbook(supplier_label, invoice, changed, dest_path):
 
     workbook = openpyxl.Workbook()
     sheet = workbook.active
-    sheet.title = "Cambios de precio"
-    sheet.append([f"{supplier_label} — Factura N° {invoice['invoice_no']} del {_ddmmyyyy(invoice['invoice_date'])}"])
+    sheet.title = "Price Changes"
+    sheet.append([f"{supplier_label} — Invoice #{invoice['invoice_no']} dated {_mmddyyyy(invoice['invoice_date'])}"])
     sheet["A1"].font = Font(bold=True, size=12)
     sheet.append([])
-    headers = ["Cambio", "UPC", "Producto", "Categoría", "Pack", "Costo anterior", "Fecha anterior",
-               "Costo nuevo", "Diferencia", "Diferencia %", "SRP factura", "Precio POS", "Margen POS %"]
+    headers = ["Change", "UPC", "Product", "Department", "Pack", "Previous Cost", "New Cost",
+               "Difference", "Difference %", "Invoice SRP", "Elistar Price", "Margin %"]
     sheet.append(headers)
     for cell in sheet[3]:
         cell.font = Font(bold=True)
     up_fill = PatternFill("solid", fgColor="FEE2E2")
     down_fill = PatternFill("solid", fgColor="DCFCE7")
-    money_format = '"$"#,##0.00##'
+    money_format = '"$"#,##0.00'
     for row in changed:
         sheet.append([
-            row["state"], row["upc"], row.get("description"), row.get("category"), _pack_label(row),
-            row["previous_cost"], _ddmmyyyy(row["previous_date"]), row["unit_cost"], row["change"],
+            _STATE_EN[row["state"]], row["upc"], row.get("description"), row.get("department"), _pack_label(row),
+            row["previous_cost"], row["unit_cost"], row["change"],
             row["change_pct"], row.get("srp"), row.get("pos_price"), row.get("margin_pct"),
         ])
         new_row = sheet[sheet.max_row]
         new_row[0].fill = up_fill if row["state"] == "Subió" else down_fill
-        for index in (5, 7, 8, 10, 11):
+        for index in (5, 6, 7, 9, 10):
             new_row[index].number_format = money_format
         for cell in new_row[5:]:
             cell.alignment = Alignment(horizontal="center")
-    for col_letter, width in zip("ABCDEFGHIJKLM", (9, 15, 38, 16, 10, 14, 14, 12, 12, 12, 12, 12, 13)):
+    for col_letter, width in zip("ABCDEFGHIJKL", (9, 15, 38, 18, 10, 14, 12, 12, 13, 12, 13, 11)):
         sheet.column_dimensions[col_letter].width = width
     if changed:
-        sheet.auto_filter.ref = f"A3:M{sheet.max_row}"
+        sheet.auto_filter.ref = f"A3:L{sheet.max_row}"
     sheet.freeze_panes = "A4"
     workbook.save(dest_path)
     return dest_path

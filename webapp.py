@@ -7601,6 +7601,7 @@ def controles_productos_factura(supplier_key, invoice_date, invoice_no):
         flash("Esa factura no tiene productos guardados.", "error")
         return redirect(url_for("controles_productos_proveedor", supplier_key=supplier_key))
     invoice, rows = found
+    rows = proveedores_productos.with_departments(rows, cmv_db.get_all_costs())
     return render_template(
         "controles_productos.html",
         view="invoice",
@@ -7633,7 +7634,7 @@ def controles_productos_cambios(supplier_key, invoice_date, invoice_no, fmt):
     workspace_dir = tempfile.mkdtemp(prefix="cambios_precio_")
     dest_path = os.path.join(
         workspace_dir,
-        f"Cambios de precio {label} {invoice_date[8:10]}-{invoice_date[5:7]}-{invoice_date[0:4]} N {invoice_no}.{fmt}",
+        f"Price changes {label} {invoice_date[5:7]}-{invoice_date[8:10]}-{invoice_date[0:4]} Invoice {invoice_no}.{fmt}",
     )
     if fmt == "pdf":
         proveedores_productos.build_price_change_pdf(label, invoice, changed, dest_path)

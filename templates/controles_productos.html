@@ -159,7 +159,7 @@
       <thead>
         <tr>
           <th>Producto</th>
-          <th data-filter-col="categoria">Categoría</th>
+          <th data-filter-col="departamento">Departamento</th>
           <th class="num">Cant.</th>
           <th class="num">Costo unit.</th>
           <th class="num">Anterior</th>
@@ -174,7 +174,7 @@
             <a class="prod-name" href="{{ url_for('controles_productos_producto', product_key=r.product_key) }}">{{ r.description }}</a>
             <span class="prod-code">{% if r.upc %}UPC {{ r.upc }}{% else %}Item # {{ r.item_no }}{% endif %}{% if r.size %} · {{ r.size }}{% endif %}{% if r.units and r.units > 1 %} · {{ r.units }} u/caja{% endif %}</span>
           </td>
-          <td>{{ r.category or '—' }}</td>
+          <td>{{ r.department or '—' }}</td>
           <td class="num">{{ '%g'|format(r.qty) if r.qty is not none else '—' }}</td>
           <td class="num"><strong>{{ money(r.unit_cost) }}</strong></td>
           <td class="num">{{ money(r.previous_cost) }}</td>
