@@ -37,6 +37,13 @@ STORE_INFO_LABELS = (
 )
 
 
+# Lo que no se puede leer casi siempre es una hoja borrosa o mal escaneada
+# (septiembre 2026): se avisa para revisarla y pedirla de nuevo, o
+# completarlo a mano en "Editar datos del reporte".
+BLURRY_SHEET = ("La hoja puede estar borrosa o mal escaneada: revisala y pedila de nuevo, "
+                "o completalo a mano en \"Editar datos del reporte\".")
+
+
 def _ddmmyyyy(value):
     return value.strftime("%d/%m/%Y")
 
@@ -62,7 +69,7 @@ def extract_monthly_report(pdf_path):
 
     warnings = []
     if fields.get("missing_fields"):
-        warnings.append("Store Info: no se pudo leer " + ", ".join(fields["missing_fields"]) + ".")
+        warnings.append("Store Info: no se pudo leer " + ", ".join(fields["missing_fields"]) + ". " + BLURRY_SHEET)
     if fields.get("total_sales_mismatch"):
         warnings.append("Store Info: lo leído no cierra contra el Total Sales impreso.")
 
@@ -80,13 +87,14 @@ def extract_monthly_report(pdf_path):
         departments = [{"department": r["department"], "count": r["count"], "amount": r["amount"]} for r in records]
         printed = diagnostics.get("printed_totals")
         if diagnostics.get("doubtful_departments"):
-            warnings.append("Departamentos dudosos (quedaron vacíos): " + ", ".join(diagnostics["doubtful_departments"]) + ".")
+            names = [d["department"] or "sin nombre" for d in diagnostics["doubtful_departments"]]
+            warnings.append("Departamentos dudosos (quedaron vacíos): " + ", ".join(names) + ". " + BLURRY_SHEET)
         if diagnostics.get("total_unverified"):
             warnings.append("Departamentos: no se pudo controlar la suma contra el total impreso.")
         elif diagnostics.get("subtotal_mismatch"):
             warnings.append("Departamentos: la suma no cierra contra el total impreso.")
     except Exception as exc:
-        warnings.append(f"No se pudieron leer los departamentos ({exc}).")
+        warnings.append(f"No se pudieron leer los departamentos ({exc}). {BLURRY_SHEET}")
 
     store_info = {key: fields.get(key) for key in (
         "volume", "sales_fuel", "desc_comb", "non_fuel_total", "desc_otros", "tax_collect", "total_sales",
@@ -102,6 +110,96 @@ def extract_monthly_report(pdf_path):
         "printed_department_total": printed,
         "warnings": warnings,
     }
+
+
+# Campos de Store Info que se pueden corregir a mano, en el orden del PDF
+# ("tc" es la suma de Credit Terms: se edita como un solo importe).
+EDITABLE_STORE_INFO = tuple(item for item in STORE_INFO_LABELS if item[0] != "total_fuel")
+_RECALCULATED_WARNINGS = ("Store Info: no se pudo leer", "Departamentos dudosos", "Departamentos: ",
+                          "No se pudieron leer los departamentos")
+
+
+def parse_amount(text):
+    """'$1,234.56' / '-12.5' / '(12.50)' -> float; vacío -> None; ValueError si no es un número."""
+    text = (text or "").strip().replace("$", "").replace(",", "").replace(" ", "")
+    if not text:
+        return None
+    negative = text.startswith("(") and text.endswith(")")
+    value = float(text.strip("()"))
+    return -value if negative else value
+
+
+def edited_report(report, form):
+    """
+    Corrección a mano del reporte guardado (pedido del usuario, 2026-10-07:
+    el de septiembre no traía Network/Total Revenue por una hoja escaneada al
+    revés). `form` es el formulario de la página: si_<campo>, dept_count_<i>,
+    dept_amount_<i>, dept_name_<i> (el renglón nuevo), printed_amount y
+    printed_count. Lo que se deja vacío queda sin dato. Los avisos de "no se
+    pudo leer" se rehacen con lo que siga vacío; los demás se mantienen.
+    Devuelve (store_info, departments, printed_amount, printed_count,
+    warnings); ValueError con el campo que no es un número.
+    """
+    def number(name, label, integer=False):
+        try:
+            value = parse_amount(form.get(name))
+        except ValueError:
+            raise ValueError(f"{label}: no es un número.") from None
+        if value is not None and integer:
+            if value != int(value):
+                raise ValueError(f"{label}: la cantidad tiene que ser entera.")
+            value = int(value)
+        return value
+
+    store_info = dict(report["store_info"])
+    for key, label in EDITABLE_STORE_INFO:
+        value = number(f"si_{key}", label)
+        if key == "tc":
+            old = store_info.get("credit_terms")
+            old_sum = round(sum(old), 2) if old else None
+            if value != old_sum:
+                store_info["credit_terms"] = [value] if value is not None else None
+        else:
+            store_info[key] = value
+
+    departments = []
+    for index, record in enumerate(report.get("departments") or []):
+        departments.append({
+            "department": record["department"],
+            "count": number(f"dept_count_{index}", f"{record['department']} (cantidad)", integer=True),
+            "amount": number(f"dept_amount_{index}", f"{record['department']} (importe)"),
+        })
+    new_name = (form.get("dept_name_new") or "").strip().upper()
+    if new_name:
+        if any(d["department"] == new_name for d in departments):
+            raise ValueError(f"El departamento {new_name} ya está en el reporte.")
+        departments.append({
+            "department": new_name,
+            "count": number("dept_count_new", f"{new_name} (cantidad)", integer=True),
+            "amount": number("dept_amount_new", f"{new_name} (importe)"),
+        })
+
+    printed_amount = number("printed_amount", "Total impreso de departamentos (importe)")
+    printed_count = number("printed_count", "Total impreso de departamentos (cantidad)", integer=True)
+
+    warnings = [w for w in report.get("warnings") or [] if not w.startswith(_RECALCULATED_WARNINGS)]
+    missing = [label for key, label in EDITABLE_STORE_INFO
+               if (store_info.get("credit_terms") if key == "tc" else store_info.get(key)) is None]
+    if missing:
+        warnings.insert(0, "Store Info: no se pudo leer " + ", ".join(missing).rstrip(".") + ". " + BLURRY_SHEET)
+    doubtful = [d["department"] for d in departments if d["count"] is None or d["amount"] is None]
+    if doubtful:
+        warnings.append("Departamentos dudosos (quedaron vacíos): " + ", ".join(doubtful) + ". " + BLURRY_SHEET)
+    if not departments:
+        warnings.append("No se pudieron leer los departamentos. " + BLURRY_SHEET)
+    elif printed_amount is None:
+        warnings.append("Departamentos: no se pudo controlar la suma contra el total impreso.")
+    elif not doubtful and (
+        abs(round(sum(d["amount"] for d in departments), 2) - printed_amount) > TOLERANCE
+        or (printed_count is not None and sum(d["count"] for d in departments) != printed_count)
+    ):
+        warnings.append("Departamentos: la suma no cierra contra el total impreso.")
+    return store_info, departments, printed_amount, printed_count, warnings
 
 
 def _report_groups(report):

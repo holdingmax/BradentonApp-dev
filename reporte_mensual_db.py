@@ -56,7 +56,48 @@ def _connect():
         )
         """
     )
+    # Edición a mano (pedido del usuario, 2026-10-07): cuándo se corrigió.
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(monthly_reports)")}
+    if "edited_at" not in columns:
+        conn.execute("ALTER TABLE monthly_reports ADD COLUMN edited_at TEXT")
     return conn
+
+
+def update_report(year, month, store_info, departments, printed_amount, printed_count, warnings):
+    """
+    Corrección a mano del reporte guardado (pedido del usuario, 2026-10-07):
+    Store Info (`store_info` con las claves de STORE_INFO_FIELDS y
+    "credit_terms"), departamentos [{department, count, amount}], total
+    impreso de departamentos y los avisos ya recalculados. Devuelve False si
+    el mes no tiene reporte.
+    """
+    conn = _connect()
+    try:
+        with conn:
+            exists = conn.execute(
+                "SELECT 1 FROM monthly_reports WHERE year = ? AND month = ?", (year, month)
+            ).fetchone()
+            if exists is None:
+                return False
+            assignments = ", ".join(f"{field} = ?" for field in STORE_INFO_FIELDS)
+            credit_terms = store_info.get("credit_terms")
+            conn.execute(
+                f"UPDATE monthly_reports SET {assignments}, credit_terms_json = ?, printed_department_amount = ?, "
+                "printed_department_count = ?, warnings_json = ?, edited_at = ? WHERE year = ? AND month = ?",
+                [*(store_info.get(field) for field in STORE_INFO_FIELDS),
+                 json.dumps(credit_terms) if credit_terms is not None else None,
+                 printed_amount, printed_count, json.dumps(warnings or []),
+                 datetime.now().isoformat(timespec="seconds"), year, month],
+            )
+            conn.execute("DELETE FROM monthly_report_departments WHERE year = ? AND month = ?", (year, month))
+            for record in departments:
+                conn.execute(
+                    "INSERT OR REPLACE INTO monthly_report_departments (year, month, department, count, amount) VALUES (?, ?, ?, ?, ?)",
+                    (year, month, record["department"], record.get("count"), record.get("amount")),
+                )
+        return True
+    finally:
+        conn.close()
 
 
 def save_report(report, filename=None):
@@ -120,6 +161,7 @@ def get_report(year, month):
         "warnings": json.loads(row["warnings_json"]) if row["warnings_json"] else [],
         "filename": row["filename"],
         "updated_at": row["updated_at"],
+        "edited_at": row["edited_at"],
     }
 
 

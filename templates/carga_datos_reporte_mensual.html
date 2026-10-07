@@ -25,6 +25,17 @@
   .rm-bad { color: var(--error); font-weight: 700; }
   .rm-ok { color: var(--success); }
   .rm-actions { margin-top: 14px; display: flex; justify-content: flex-end; }
+  .rm-edit { margin-top: 18px; border: 1px solid var(--border); border-radius: 10px; padding: 0 16px; }
+  .rm-edit summary { padding: 12px 0; font-weight: 700; }
+  .rm-edit p { margin: 0 0 12px; font-size: 13px; color: var(--text-soft); }
+  .rm-edit-cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; }
+  .rm-edit h3 { font-size: 13.5px; margin: 0 0 8px; }
+  .rm-edit table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .rm-edit td, .rm-edit th { padding: 4px 6px; border-bottom: 1px solid var(--border); text-align: left; }
+  .rm-edit input[type="text"] { width: 100%; box-sizing: border-box; text-align: right; font-variant-numeric: tabular-nums; padding: 4px 6px; }
+  .rm-edit input.rm-name { text-align: left; }
+  .rm-edit input.rm-empty { border-color: var(--error); background: #FEF2F2; }
+  .rm-edit-save { display: flex; justify-content: flex-end; gap: 12px; align-items: center; padding: 14px 0; }
 </style>
 {% endblock %}
 {% block content %}
@@ -57,6 +68,7 @@
   {% elif not cross %}
   <div class="rm-status warn">
     <div class="rm-status-title">Reporte mensual cargado, pero no hay Store Info de {{ month_name }} {{ year }} para cruzarlo.</div>
+    {% for warning in report.warnings %}<p>Reporte mensual: {{ warning }}</p>{% endfor %}
   </div>
   {% else %}
   {% set others = other_store_info or other_departments %}
@@ -96,6 +108,48 @@
   {% endif %}
 
   {% if report %}
+  {% macro num(x) -%}{%- if x is not none -%}{{ "%.2f"|format(x) }}{%- endif -%}{%- endmacro %}
+  {% set info = report.store_info %}
+  {% set missing_data = (info.values()|select('none')|list) or (report.departments|selectattr('amount', 'none')|list) or not report.departments %}
+  <details class="rm-edit"{% if missing_data %} open{% endif %}>
+    <summary>Editar datos del reporte</summary>
+    <p>Para completar o corregir lo que no se pudo leer del PDF (en rojo, vacío). Lo que se deja vacío queda sin dato.{% if report.edited_at %} Corregido a mano el {{ report.edited_at[8:10] }}/{{ report.edited_at[5:7] }} a las {{ report.edited_at[11:16] }}.{% endif %}</p>
+    <form method="post" action="{{ url_for('carga_datos_reporte_mensual_editar') }}">
+      <input type="hidden" name="year" value="{{ year }}">
+      <input type="hidden" name="month" value="{{ month }}">
+      <div class="rm-edit-cols">
+        <div>
+          <h3>Store Info</h3>
+          <table>
+            {% for key, label in editable_fields %}
+            {% set value = ((info.credit_terms|sum) if info.credit_terms else none) if key == 'tc' else info[key] %}
+            <tr><td>{{ label }}</td><td><input type="text" inputmode="decimal" name="si_{{ key }}" value="{{ num(value) }}" class="{{ 'rm-empty' if value is none }}"></td></tr>
+            {% endfor %}
+          </table>
+        </div>
+        <div>
+          <h3>Ventas por Departamento</h3>
+          <table>
+            <tr><th>Departamento</th><th>Cantidad</th><th>Importe</th></tr>
+            {% for d in report.departments %}
+            <tr><td>{{ d.department }}</td>
+              <td><input type="text" inputmode="numeric" name="dept_count_{{ loop.index0 }}" value="{{ d.count if d.count is not none }}" class="{{ 'rm-empty' if d.count is none }}"></td>
+              <td><input type="text" inputmode="decimal" name="dept_amount_{{ loop.index0 }}" value="{{ num(d.amount) }}" class="{{ 'rm-empty' if d.amount is none }}"></td></tr>
+            {% endfor %}
+            <tr><td><input type="text" class="rm-name" name="dept_name_new" placeholder="Agregar departamento"></td>
+              <td><input type="text" inputmode="numeric" name="dept_count_new"></td>
+              <td><input type="text" inputmode="decimal" name="dept_amount_new"></td></tr>
+            {% set printed = report.printed_department_total or {} %}
+            <tr><th>Total impreso</th>
+              <td><input type="text" inputmode="numeric" name="printed_count" value="{{ printed.count if printed.count is not none }}"></td>
+              <td><input type="text" inputmode="decimal" name="printed_amount" value="{{ num(printed.amount) }}"></td></tr>
+          </table>
+        </div>
+      </div>
+      <div class="rm-edit-save"><button type="submit" class="btn-primary">Guardar cambios</button></div>
+    </form>
+  </details>
+
   <form method="post" action="{{ url_for('carga_datos_reporte_mensual_eliminar') }}" class="rm-actions" onsubmit="return confirm('¿Eliminar el reporte mensual de {{ month_name }} {{ year }}? Lo cargado día por día no se toca.');">
     <input type="hidden" name="year" value="{{ year }}">
     <input type="hidden" name="month" value="{{ month }}">

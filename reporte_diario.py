@@ -3623,6 +3623,19 @@ def _extract_store_info_from_pdf_uncached(pdf_path, start_page_index=DEFAULT_STO
             and pages_tried < STORE_INFO_MAX_CONTINUATION_PAGES
         ):
             text = _ocr_store_info_page_text(images[idx])
+            if _score_store_info_page_text(text) == 0 and images[idx] is not None:
+                # Hoja escaneada al revés (Resumen de Ventas de septiembre
+                # 2026: la página de Network/Total Revenue vino girada 180°).
+                rotated = _ocr_store_info_page_text(images[idx].rotate(180))
+                if _score_store_info_page_text(rotated) > 0:
+                    text = rotated
+            if any(_line_contains_anchor(line) for line in text.splitlines()) and (
+                NETWORK_REVENUE_ANCHOR not in text.lower()
+            ):
+                # Ya es el Department Sales Report, no Store Info: leerla como
+                # continuación hacía que los departamentos se buscaran desde
+                # la página siguiente, dando la vuelta a todo el PDF (3 min).
+                break
             lines.extend(text.splitlines())
             pages_used.append(idx + 1)
             pages_tried += 1

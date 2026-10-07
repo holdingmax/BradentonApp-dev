@@ -1960,6 +1960,7 @@ def carga_datos_reporte_mensual():
     return render_template(
         "carga_datos_reporte_mensual.html",
         report=report,
+        editable_fields=reporte_mensual.EDITABLE_STORE_INFO,
         entries=entries,
         cross=cross,
         other_store_info=other_store_info,
@@ -2019,6 +2020,28 @@ def _run_reporte_mensual_job(job_id, paths):
         )
     except Exception as exc:
         jobs.update_job(job_id, status="error", error=f"Error: {exc}")
+
+
+@app.route("/carga-datos/reporte-mensual/editar", methods=["POST"])
+def carga_datos_reporte_mensual_editar():
+    """Corrección a mano del reporte mensual guardado (pedido del usuario, 2026-10-07)."""
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    report = reporte_mensual_db.get_report(year, month) if year and month else None
+    if report is None:
+        flash("Ese mes no tiene reporte mensual cargado.", "error")
+    else:
+        try:
+            store_info, departments, printed_amount, printed_count, warnings = reporte_mensual.edited_report(
+                report, request.form
+            )
+        except ValueError as exc:
+            flash(f"No se guardó: {exc}", "error")
+        else:
+            reporte_mensual_db.update_report(
+                year, month, store_info, departments, printed_amount, printed_count, warnings
+            )
+    return redirect(url_for("carga_datos_reporte_mensual", year=year, month=month))
 
 
 @app.route("/carga-datos/reporte-mensual/eliminar", methods=["POST"])
