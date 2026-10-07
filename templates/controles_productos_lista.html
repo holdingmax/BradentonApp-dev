@@ -82,7 +82,7 @@
       </thead>
       <tbody>
         {% for p in products %}
-        {% set change_state = 'Primera compra' if p.change is none else ('Subió' if p.change > 0.0001 else ('Bajó' if p.change < -0.0001 else 'Igual')) %}
+        {% set change_state = 'Primera compra' if p.change is none else ('Subió' if p.change > 1e-7 else ('Bajó' if p.change < -1e-7 else 'Igual')) %}
         {% set pos_state = 'Sin dato' if p.pos_cost_diff is none else ('Al día' if p.pos_cost_diff == 0 else 'Desactualizado') %}
         <tr data-search="{{ (p.description or '')|lower }} {{ p.upc }} {{ p.item_no }}">
           <td>
@@ -92,14 +92,14 @@
           <td>{{ p.suppliers|join(', ') }}</td>
           <td>{{ p.category or '—' }}</td>
           <td class="nowrap" data-filter-value="{{ p.last_date[:7] }}">{{ ddmmyyyy(p.last_date) }}</td>
-          <td class="num"><strong>{{ money(p.last_cost) }}</strong></td>
-          <td class="num">{{ money(p.previous_cost) }}</td>
+          <td class="num"><strong>{{ p.last_cost|exact_money(2) }}</strong></td>
+          <td class="num">{{ p.previous_cost|exact_money(2) }}</td>
           <td class="num" data-filter-value="{{ change_state }}">
             {% if p.change is none %}<span class="muted">—</span>
             {% elif change_state == 'Igual' %}<span class="muted">=</span>
-            {% else %}<span class="{{ 'prod-up' if change_state == 'Subió' else 'prod-down' }}">{{ '+' if p.change > 0 else '−' }}${{ "{:,.2f}".format(p.change|abs) }}{% if p.change_pct is not none %} ({{ '+' if p.change_pct > 0 else '' }}{{ p.change_pct }}%){% endif %}</span>{% endif %}
+            {% else %}<span class="{{ 'prod-up' if change_state == 'Subió' else 'prod-down' }}">{{ '+' if p.change > 0 else '−' }}{{ (p.shown_change|abs)|exact_money(2) }}{% if p.change_pct is not none %} ({{ '+' if p.change_pct > 0 else '' }}{{ p.change_pct }}%){% endif %}</span>{% endif %}
           </td>
-          <td class="num">{{ money(p.pos_cost) }}</td>
+          <td class="num">{{ p.pos_cost|exact_money }}</td>
           <td class="num">{{ money(p.pos_price) }}</td>
           <td class="num">{% if p.margin_pct is not none %}<span class="{{ 'prod-up' if p.margin_pct < 0 else '' }}">{{ p.margin_pct }}%</span>{% else %}<span class="muted">—</span>{% endif %}</td>
           <td data-filter-value="{{ pos_state }}">

@@ -256,7 +256,7 @@ def _ht_line(cells, category, line_no):
         "tax": _num(cells["tax"]),
         "net": net,
         "ext": _num(cells["ext"]),
-        "unit_cost": round(net / units, 4),
+        "unit_cost": net / units,
         "srp": _num(cells["srp"]),
     }
 
@@ -437,7 +437,7 @@ def _line(line_no, *, upc="", item_no="", description="", category=None, qty, pa
         "tax": tax,
         "net": net,
         "ext": ext,
-        "unit_cost": round(net / units, 4),
+        "unit_cost": net / units,
         "srp": srp,
     }
 
@@ -556,8 +556,10 @@ def _qty_reread_ok(image, row):
 
 # CEC vende solo por cartón: cigarrillos 305's y filter cigars 305's, ambos en
 # cartones de 10 paquetes (el cuadro "Cartons" del pie los cuenta igual). El
-# costo por unidad queda por paquete, como el POS (igual que el CTN de H.T.).
-_CEC_UNITS_PER_CARTON = 10
+# UPC de la factura es el del cartón, y el POS lo vende como cartón (CMV: 305
+# GOLD $9.00, 305 PURPLE KING CARTON $34.90; el paquete suelto tiene otro
+# UPC), así que el costo por unidad es el precio del cartón.
+_CEC_UNITS_PER_CARTON = 1
 # Precio por cartón con 4 decimales; el OCR a veces mete ",." o lee el 9 como "g".
 _CEC_PRICE = re.compile(r"[\dgOoSlIB]{1,4}[.,]{1,2}\d{4}(?!\d)")
 _CEC_MONEY = re.compile(r"\d[\d.,]*[.,]\d{2}(?!\d)")
@@ -2376,6 +2378,26 @@ _RB_HEADERS = (("price", r"PRICE"), ("dep", r"DEP"), ("disc", r"DISC"), ("sugar"
 _RB_UPC = re.compile(r"\d{11,13}")
 
 
+# Tamaño de la lata pegado a "OZ", que el OCR lee "0Z", "02" o "07"
+# ("RED BULL 1202 LS", "8.402 LS", "840ZLS"). Red Bull vende latas de 8.4,
+# 12, 16 y 20 oz: "84" es 8.4 sin el punto y 6.4 no existe (el 8 leído 6).
+_RB_SIZE = re.compile(r"(?<![\d.])(\d{1,2})(?:[.,](\d))?\s*[O0Q][Z27](?:\s*(L\S?\S?))?")
+_RB_SIZE_FIX = {"84": "8.4", "6.4": "8.4"}
+
+
+def _rb_description(description):
+    """(descripción, tamaño) con el tamaño separado: "COCONUT 8.40ZLS" -> ("COCONUT 8.4 OZ LS", "8.4 OZ")."""
+    match = _RB_SIZE.search(description)
+    if match is None:
+        return description, ""
+    size = match.group(1) + (f".{match.group(2)}" if match.group(2) else "")
+    size = _RB_SIZE_FIX.get(size, size) + " OZ"
+    name = description[:match.start()].strip()
+    rest = description[match.end():].strip()
+    text = " ".join(part for part in (name, size, "LS" if match.group(3) else "", rest) if part)
+    return text, size
+
+
 def _rb_product(row, columns):
     """Renglón ID/QTY/UNITS/.../TOTAL leído en una pasada, o None si no es un renglón de producto."""
     words = [w for w in row["words"] if re.search(r"[0-9A-Za-z$]", w["text"])]
@@ -2565,10 +2587,10 @@ def _rb_resolve(block, images, cache, columns):
     lines = []
     for c in chosen:
         per_case = c["per_case"]
-        match = re.search(r"(\d{1,2}(?:\.\d)?)\s*[O0][Z2]", c["description"])
+        description, size = _rb_description(c["description"])
         lines.append(_line(
-            len(lines) + 1, upc=c["upc"], description=c["description"],
-            qty=c["qty"], pack=per_case, size=f"{match.group(1)}OZ" if match else "", units=per_case,
+            len(lines) + 1, upc=c["upc"], description=description,
+            qty=c["qty"], pack=per_case, size=size, units=per_case,
             price=c["price"], allowance=c["disc"] or None, net=c["net"], ext=c["ext"],
         ))
     total = next((round(subtotal + charges, 2) for t in _ticket_top(footer.get("total_due", []))
@@ -3862,6 +3884,15 @@ def extract_lines(supplier_key, pdf_path, invoices=None):
 # Resumen por producto y cruce con el POS (CMV)
 # ---------------------------------------------------------------------------
 
+def _shown_change(cost, previous_cost):
+    """
+    El cambio que se muestra: la resta de los dos costos tal como se ven (2
+    decimales cortados), para que la cuenta dé a ojo ($1.91 - $1.77 = $0.14).
+    El estado Subió/Bajó sigue saliendo del cambio exacto.
+    """
+    return round(_cut(cost, 2) - _cut(previous_cost, 2), 2)
+
+
 def _pct(part, whole):
     return round(part / whole * 100, 1) if whole else None
 
@@ -3895,7 +3926,7 @@ def _summary(key, product_lines, supplier_labels, pos_by_upc):
          if (line["supplier_key"], line["invoice_no"]) != (last["supplier_key"], last["invoice_no"])),
         None,
     )
-    change = round(last["unit_cost"] - previous["unit_cost"], 4) if previous else None
+    change = round(last["unit_cost"] - previous["unit_cost"], 9) if previous else None
     pos = pos_by_upc.get(last["upc"]) if last["upc"] else None
     pos_cost = pos.get("cost") if pos else None
     pos_price = pos.get("price") if pos else None
@@ -3917,6 +3948,7 @@ def _summary(key, product_lines, supplier_labels, pos_by_upc):
         "previous_cost": previous["unit_cost"] if previous else None,
         "previous_date": previous["invoice_date"] if previous else None,
         "change": change,
+        "shown_change": _shown_change(last["unit_cost"], previous["unit_cost"]) if previous else None,
         "change_pct": _pct(change, previous["unit_cost"]) if previous else None,
         "min_cost": min(costs),
         "max_cost": max(costs),
@@ -3983,12 +4015,12 @@ def _compare_supplier_invoices(supplier_lines):
                          if k in last_by_product]
                 if len(found) == 1:
                     key, previous = found[0], last_by_product[found[0]]
-            change = round(line["unit_cost"] - previous["unit_cost"], 4) if previous else None
+            change = round(line["unit_cost"] - previous["unit_cost"], 9) if previous else None
             if change is None:
                 state = "Nuevo"
-            elif change > 0.0001:
+            elif change > 1e-7:
                 state = "Subió"
-            elif change < -0.0001:
+            elif change < -1e-7:
                 state = "Bajó"
             else:
                 state = "Igual"
@@ -3999,6 +4031,7 @@ def _compare_supplier_invoices(supplier_lines):
                 "previous_date": previous["invoice_date"] if previous else None,
                 "previous_invoice_no": previous["invoice_no"] if previous else None,
                 "change": change,
+                "shown_change": _shown_change(line["unit_cost"], previous["unit_cost"]) if previous else None,
                 "change_pct": _pct(change, previous["unit_cost"]) if previous else None,
                 "state": state,
             })
@@ -4076,11 +4109,12 @@ def build_product_detail(key, lines, supplier_labels, pos_costs, monthly_sales):
     purchases = []
     previous_cost = None
     for line in product_lines:
-        change = round(line["unit_cost"] - previous_cost, 4) if previous_cost is not None else None
+        change = round(line["unit_cost"] - previous_cost, 9) if previous_cost is not None else None
         purchases.append({
             **line,
             "supplier_label": supplier_labels.get(line["supplier_key"], line["supplier_key"]),
             "change": change,
+            "shown_change": _shown_change(line["unit_cost"], previous_cost) if change is not None else None,
             "change_pct": _pct(change, previous_cost) if change is not None else None,
         })
         previous_cost = line["unit_cost"]
@@ -4152,9 +4186,28 @@ def _pack_label(row):
 
 
 # El reporte va en inglés (es para el manager, pedido del usuario 2026-10-06),
-# con fechas MM/DD/YYYY, costos con 2 decimales, sin la fecha del costo
-# anterior, el precio del POS como "Elistar Price" y el departamento.
+# con fechas MM/DD/YYYY, sin la fecha del costo anterior, el precio del POS
+# como "Elistar Price" y el departamento. Los costos van sin redondear
+# (pedido del usuario 2026-10-07), igual que en la pantalla.
 _STATE_EN = {"Subió": "Up", "Bajó": "Down"}
+
+
+def exact_money(value, places=6):
+    """
+    Costo por unidad sin redondear: $1.91625, no $1.92. Se cortan los ceros
+    de más (mínimo 2 decimales) y, si la división no termina (34/12), se
+    corta en el decimal `places` sin redondear. El costo y el costo anterior
+    se muestran con places=2 (pedido del usuario 2026-10-07): $1.91625 -> $1.91.
+    """
+    from decimal import Decimal, ROUND_DOWN
+
+    if value is None:
+        return "—"
+    digits = Decimal(f"{abs(value):.10f}").quantize(Decimal(1).scaleb(-places), rounding=ROUND_DOWN)
+    text = f"{digits:,.{places}f}".rstrip("0")
+    if len(text.split(".")[1]) < 2:
+        text = f"{digits:,.2f}"
+    return ("-$" if value < 0 and digits else "$") + text
 
 
 def _mmddyyyy(iso):
@@ -4175,9 +4228,9 @@ def build_price_change_pdf(supplier_label, invoice, changed, dest_path):
             row.get("description") or "",
             row.get("department") or "",
             _pack_label(row),
-            money(row["previous_cost"]),
-            money(row["unit_cost"]),
-            f"{sign}{money(row['change'])} ({sign}{row['change_pct']}%)",
+            exact_money(row["previous_cost"], 2),
+            exact_money(row["unit_cost"], 2),
+            f"{sign}{exact_money(row['shown_change'], 2)} ({sign}{row['change_pct']}%)",
             money(row.get("srp")),
             money(row.get("pos_price")),
             "" if row.get("margin_pct") is None else f"{row['margin_pct']}%",
@@ -4198,6 +4251,15 @@ def build_price_change_pdf(supplier_label, invoice, changed, dest_path):
         footer_note="Cost per unit. Margin = (Elistar price − new cost) / Elistar price.",
     )
     return dest_path
+
+
+def _cut(value, places=6):
+    """Valor cortado (no redondeado) en el decimal `places`: el formato de Excel redondearía 1.7704166 a 1.770417."""
+    from decimal import Decimal, ROUND_DOWN
+
+    if value is None:
+        return None
+    return float(Decimal(f"{value:.10f}").quantize(Decimal(1).scaleb(-places), rounding=ROUND_DOWN))
 
 
 def build_price_change_workbook(supplier_label, invoice, changed, dest_path):
@@ -4221,7 +4283,7 @@ def build_price_change_workbook(supplier_label, invoice, changed, dest_path):
     for row in changed:
         sheet.append([
             _STATE_EN[row["state"]], row["upc"], row.get("description"), row.get("department"), _pack_label(row),
-            row["previous_cost"], row["unit_cost"], row["change"],
+            _cut(row["previous_cost"], 2), _cut(row["unit_cost"], 2), row["shown_change"],
             row["change_pct"], row.get("srp"), row.get("pos_price"), row.get("margin_pct"),
         ])
         new_row = sheet[sheet.max_row]

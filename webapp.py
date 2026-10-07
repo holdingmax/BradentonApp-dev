@@ -223,6 +223,9 @@ app.config.update(
     REMEMBER_COOKIE_SECURE=bool(os.environ.get("RENDER")),
 )
 
+# Costos por unidad sin redondear (Productos, Precios de la botonera).
+app.jinja_env.filters["exact_money"] = proveedores_productos.exact_money
+
 login_manager = LoginManager(app)
 login_manager.login_view = "login"
 login_manager.login_message = "Iniciá sesión para continuar."

@@ -4,7 +4,7 @@
 {% endblock %}
 {% macro ddmmyyyy(iso) %}{{ iso[8:10] }}/{{ iso[5:7] }}/{{ iso[:4] }}{% endmacro %}
 {% macro money(value) %}{% if value is not none %}${{ "{:,.2f}".format(value) }}{% else %}<span class="muted">—</span>{% endif %}{% endmacro %}
-{% macro change_cell(change, pct) %}{% if change is none %}<span class="muted">—</span>{% elif change|abs < 0.0001 %}<span class="muted">=</span>{% else %}<span class="{{ 'prod-up' if change > 0 else 'prod-down' }}">{{ '+' if change > 0 else '−' }}${{ "{:,.2f}".format(change|abs) }}{% if pct is not none %} ({{ '+' if pct > 0 else '' }}{{ pct }}%){% endif %}</span>{% endif %}{% endmacro %}
+{% macro change_cell(change, pct, shown) %}{% if change is none %}<span class="muted">—</span>{% elif change|abs < 1e-7 %}<span class="muted">=</span>{% else %}<span class="{{ 'prod-up' if change > 0 else 'prod-down' }}">{{ '+' if change > 0 else '−' }}{{ (shown|abs)|exact_money(2) }}{% if pct is not none %} ({{ '+' if pct > 0 else '' }}{{ pct }}%){% endif %}</span>{% endif %}{% endmacro %}
 {% block content %}
 <div class="page-header">
   <span class="eyebrow">Producto</span>
@@ -19,22 +19,22 @@
 <div class="prod-stats">
   <div class="prod-stat">
     <span class="prod-stat-label">Último costo unit.</span>
-    <span class="prod-stat-value">{{ money(product.last_cost) }}</span>
+    <span class="prod-stat-value">{{ product.last_cost|exact_money(2) }}</span>
     <span class="prod-stat-note">{{ ddmmyyyy(product.last_date) }}</span>
   </div>
   <div class="prod-stat">
     <span class="prod-stat-label">Compra anterior</span>
-    <span class="prod-stat-value">{{ money(product.previous_cost) }}</span>
-    <span class="prod-stat-note">{{ change_cell(product.change, product.change_pct) }}</span>
+    <span class="prod-stat-value">{{ product.previous_cost|exact_money(2) }}</span>
+    <span class="prod-stat-note">{{ change_cell(product.change, product.change_pct, product.shown_change) }}</span>
   </div>
   <div class="prod-stat">
     <span class="prod-stat-label">Mínimo / máximo</span>
-    <span class="prod-stat-value">{{ money(product.min_cost) }} / {{ money(product.max_cost) }}</span>
+    <span class="prod-stat-value">{{ product.min_cost|exact_money(2) }} / {{ product.max_cost|exact_money(2) }}</span>
     <span class="prod-stat-note">en {{ product.purchases }} compra(s) desde {{ ddmmyyyy(product.first_date) }}</span>
   </div>
   <div class="prod-stat">
     <span class="prod-stat-label">Costo en el POS</span>
-    <span class="prod-stat-value">{{ money(product.pos_cost) }}</span>
+    <span class="prod-stat-value">{{ product.pos_cost|exact_money }}</span>
     <span class="prod-stat-note">
       {% if product.pos_cost_diff is none %}sin dato en CMV
       {% elif product.pos_cost_diff == 0 %}<span class="prod-down">al día con la última compra</span>
@@ -71,8 +71,8 @@
           <td>{{ line.invoice_no }}</td>
           <td class="num">{{ '%g'|format(line.qty) }}</td>
           <td class="num" title="Precio {{ '%.2f'|format(line.price or 0) }}{% if line.allowance %} − descuento {{ '%.2f'|format(line.allowance) }}{% endif %}{% if line.tax %} + impuesto {{ '%.2f'|format(line.tax) }}{% endif %}">{{ money(line.net) }}</td>
-          <td class="num"><strong>{{ money(line.unit_cost) }}</strong></td>
-          <td class="num">{{ change_cell(line.change, line.change_pct) }}</td>
+          <td class="num"><strong>{{ line.unit_cost|exact_money(2) }}</strong></td>
+          <td class="num">{{ change_cell(line.change, line.change_pct, line.shown_change) }}</td>
           <td class="num">{{ money(line.srp) }}</td>
         </tr>
         {% endfor %}
@@ -97,7 +97,7 @@
           <td class="num">{{ s.count }}</td>
           <td class="num">{{ money(s.amount) }}</td>
           <td class="num">{{ money(s.avg_price) }}</td>
-          <td class="num">{{ money(s.cost) }}</td>
+          <td class="num">{{ s.cost|exact_money }}</td>
           <td class="num">{% if s.margin_pct is not none %}{{ s.margin_pct }}%{% else %}<span class="muted">—</span>{% endif %}</td>
         </tr>
         {% endfor %}

@@ -101,8 +101,8 @@
             {{ row.description }}
             {% if row.pack_suspect %}<span class="qc-tag" title="La diferencia es demasiado grande para ser un aumento: casi siempre son las unidades por caja mal tomadas.">¿pack?</span>{% endif %}
           </td>
-          <td>{{ cost(row.pos_cost) }}</td>
-          <td>{{ cost(row.unit_cost) }}</td>
+          <td>{{ row.pos_cost|exact_money }}</td>
+          <td>{{ row.unit_cost|exact_money(2) }}</td>
           <td class="{{ 'qc-up' if row.diff > 0 else 'qc-down' }}">{{ "{:+.1f}".format(row.diff_pct) }}%</td>
           <td>{{ money(row.pos_price) }}</td>
           <td class="{{ 'qc-up' if row.margin_pct is not none and row.margin_pct < 0 else '' }}">{{ "{:.1f}".format(row.margin_pct) ~ "%" if row.margin_pct is not none else "—" }}</td>

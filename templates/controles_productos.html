@@ -160,6 +160,7 @@
           <th>Producto</th>
           <th data-filter-col="departamento">Departamento</th>
           <th class="num">Cant.</th>
+          <th class="num">Total línea</th>
           <th class="num">Costo unit.</th>
           <th class="num">Anterior</th>
           <th>Compra anterior</th>
@@ -174,14 +175,16 @@
             <span class="prod-code">{% if r.upc %}UPC {{ r.upc }}{% else %}Item # {{ r.item_no }}{% endif %}{% if r.size %} · {{ r.size }}{% endif %}{% if r.units and r.units > 1 %} · {{ r.units }} u/caja{% endif %}</span>
           </td>
           <td>{{ r.department or '—' }}</td>
-          <td class="num">{{ '%g'|format(r.qty) if r.qty is not none else '—' }}</td>
-          <td class="num"><strong>{{ money(r.unit_cost) }}</strong></td>
-          <td class="num">{{ money(r.previous_cost) }}</td>
+          {# Cantidad en unidades (como la columna UNITS de Red Bull), la misma unidad que el costo unitario. #}
+          <td class="num">{{ '%g'|format(r.qty * (r.units or 1)) if r.qty is not none else '—' }}</td>
+          <td class="num">{{ money(r.ext) }}</td>
+          <td class="num"><strong>{{ r.unit_cost|exact_money(2) }}</strong></td>
+          <td class="num">{{ r.previous_cost|exact_money(2) }}</td>
           <td class="nowrap">{% if r.previous_date %}{{ ddmmyyyy(r.previous_date) }}{% else %}<span class="muted">—</span>{% endif %}</td>
           <td class="num" data-filter-value="{{ r.state }}">
             {% if r.state == 'Nuevo' %}<span class="prod-badge prod-badge-new">Nuevo</span>
             {% elif r.state == 'Igual' %}<span class="muted">=</span>
-            {% else %}<span class="{{ 'prod-up' if r.state == 'Subió' else 'prod-down' }}">{{ '+' if r.change > 0 else '−' }}${{ "{:,.2f}".format(r.change|abs) }}{% if r.change_pct is not none %} ({{ '+' if r.change_pct > 0 else '' }}{{ r.change_pct }}%){% endif %}</span>{% endif %}
+            {% else %}<span class="{{ 'prod-up' if r.state == 'Subió' else 'prod-down' }}">{{ '+' if r.change > 0 else '−' }}{{ (r.shown_change|abs)|exact_money(2) }}{% if r.change_pct is not none %} ({{ '+' if r.change_pct > 0 else '' }}{{ r.change_pct }}%){% endif %}</span>{% endif %}
           </td>
         </tr>
         {% endfor %}
