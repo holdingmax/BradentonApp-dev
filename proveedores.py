@@ -682,43 +682,17 @@ def _extract_red_bull_invoice(pdf_path):
 
 def _extract_sweetheart_invoice(pdf_path):
     """
-    Sweetheart Ice Cream -- escaneo de una sola página con la info que hace
-    falta; puede traer una foto del cheque en una segunda página (se
-    ignora). "TOTAL SALES" y "BALANCE DUE" son el mismo importe: se leen
-    los dos y, si los dos se leyeron y no coinciden, se rechaza para
-    cargarla a mano en vez de elegir uno a ciegas (auditoría 2026-09: un
-    OCR leyó 236.15 contra 238.15). Si solo uno es legible, se usa ese.
+    Sweetheart Ice Cream -- ticket escaneado de una página (a veces
+    fotografiado junto al cheque).
+
+    2026-10-07 (pedido del usuario): sale del lector de tickets
+    (proveedores_productos.read_sweetheart_invoices), como Gold Coast y Red
+    Bull: N°, fecha e importe votados entre varias lecturas, importe
+    confirmado por la suma de los renglones o por TOTAL SALES = BALANCE DUE,
+    y los renglones de producto. Sobre los 15 PDFs del Drive: 13 bien
+    (antes 9), ninguno con un importe distinto del Ledger.
     """
-    _ensure_pdfplumber()
-    _ensure_pytesseract()
-    with pdfplumber.open(pdf_path) as pdf:
-        image = _extract_page_image(pdf.pages[0])
-    if image is None:
-        raise ValueError(
-            f"{os.path.basename(pdf_path)}: no se encontró la imagen escaneada de la factura Sweetheart."
-        )
-    text = pytesseract.image_to_string(image)
-
-    invoice_match = re.search(r"INVOICE.{0,4}?(\d{8,})", text, re.IGNORECASE)
-    date_match = re.search(r"Date:\s*(\d{1,2}/\d{1,2}/\d{4})", text)
-    total_match = re.search(r"TOTAL SALES:\s*\$?\s*([\d,]+\.\d{2})", text, re.IGNORECASE)
-    balance_match = re.search(r"BALANCE DUE:?\s*\$?\s*([\d,]+\.\d{2})", text, re.IGNORECASE)
-
-    if not (invoice_match and date_match and (total_match or balance_match)):
-        raise ValueError(
-            f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total del PDF de Sweetheart."
-        )
-
-    amounts = [float(m.group(1).replace(",", "")) for m in (total_match, balance_match) if m]
-    if len(amounts) == 2 and abs(amounts[0] - amounts[1]) > 0.005:
-        raise ValueError(
-            f"{os.path.basename(pdf_path)}: TOTAL SALES (${amounts[0]:,.2f}) y BALANCE DUE "
-            f"(${amounts[1]:,.2f}) no coinciden -- cargala a mano."
-        )
-
-    invoice_no = int(invoice_match.group(1))
-    invoice_date = datetime.strptime(date_match.group(1), "%m/%d/%Y")
-    return {"invoice_no": invoice_no, "date": invoice_date, "amount": amounts[0]}
+    return _ticket_invoices(proveedores_productos.read_sweetheart_invoices(pdf_path), pdf_path, "Sweetheart")
 
 
 def _extract_bimbo_invoice(pdf_path):
