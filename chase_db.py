@@ -15,7 +15,7 @@ Detalle ya guardado.
 
 import os
 import sqlite3
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 _BASE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reportes_data")
 _DB_PATH = os.path.join(_BASE_DIR, "chase.db")
@@ -162,6 +162,8 @@ def upsert_transactions(rows, source_filename=None):
         inserted = 0
         updated = 0
         now = datetime.utcnow().isoformat()
+        # Clave de cada movimiento del archivo, y el rango de fechas que cubre.
+        keyed = []
         seen = {}
         for row in rows:
             posting_date = row["posting_date"]
@@ -170,11 +172,30 @@ def upsert_transactions(rows, source_filename=None):
             key = (posting_date, row["description"], row["amount"])
             occurrence = seen.get(key, 0)
             seen[key] = occurrence + 1
+            keyed.append((row, posting_date, occurrence))
+        batch_keys = {(d, r["description"], r["amount"], o) for r, d, o in keyed}
+        first_day = min((d for _r, d, _o in keyed), default=None)
+        last_day = max((d for _r, d, _o in keyed), default=None)
+        renamed = set()
+        for row, posting_date, occurrence in keyed:
             cur = conn.execute(
                 "SELECT 1 FROM chase_transactions WHERE posting_date = ? AND description = ? AND amount = ? AND occurrence = ?",
                 (posting_date, row["description"], row["amount"], occurrence),
             )
             exists = cur.fetchone() is not None
+            if not exists:
+                stale = _stale_version(conn, posting_date, row["amount"], first_day, last_day, batch_keys, renamed)
+                if stale is not None:
+                    # El mismo movimiento con la descripción (o la fecha) que
+                    # Chase mostraba en una descarga anterior: se le pone la
+                    # clave nueva y el upsert de abajo lo actualiza (lo
+                    # corregido a mano se conserva).
+                    conn.execute(
+                        "UPDATE chase_transactions SET posting_date = ?, description = ?, occurrence = ? WHERE rowid = ?",
+                        (posting_date, row["description"], occurrence, stale),
+                    )
+                    renamed.add(stale)
+                    exists = True
             conn.execute(
                 """
                 INSERT INTO chase_transactions
@@ -185,9 +206,9 @@ def upsert_transactions(rows, source_filename=None):
                     type = excluded.type,
                     source_filename = excluded.source_filename,
                     updated_at = excluded.updated_at,
-                    detalle = CASE WHEN chase_transactions.detalle_source = 'manual'
+                    detalle = CASE WHEN chase_transactions.detalle_source IN ('manual', 'deposito')
                                    THEN chase_transactions.detalle ELSE excluded.detalle END,
-                    detalle_source = CASE WHEN chase_transactions.detalle_source = 'manual'
+                    detalle_source = CASE WHEN chase_transactions.detalle_source IN ('manual', 'deposito')
                                           THEN chase_transactions.detalle_source ELSE excluded.detalle_source END,
                     supplier_key = CASE WHEN chase_transactions.supplier_source = 'manual'
                                         THEN chase_transactions.supplier_key ELSE excluded.supplier_key END,
@@ -211,6 +232,42 @@ def upsert_transactions(rows, source_filename=None):
         return inserted, updated
     finally:
         conn.close()
+
+
+# Cuántos días puede correrse la fecha de un movimiento entre una descarga y
+# otra (un pendiente con la fecha de la compra pasa a la fecha en que se asentó).
+_STALE_DAYS = 5
+
+
+def _stale_version(conn, posting_date, amount, first_day, last_day, batch_keys, taken):
+    """
+    rowid de un movimiento ya guardado que es una versión vieja del que llega
+    (pedido del usuario, 2026-10-07: el depósito de $2,057 del 22/09 quedó
+    dos veces, "DEPOSIT" de la descarga del 29/09 y "DEPOSIT  ID NUMBER
+    293043" de la del 07/10). Chase cambia la descripción de los movimientos
+    recientes (y a veces la fecha de un pendiente) entre una descarga y otra.
+    Es versión vieja un movimiento guardado del mismo importe, a no más de
+    _STALE_DAYS días, dentro del rango de fechas del archivo nuevo y que el
+    archivo nuevo NO trae tal cual: si el archivo cubre esa fecha y no lo
+    trae, es que Chase lo muestra distinto. El más cercano en fecha.
+    """
+    if first_day is None:
+        return None
+    day = date.fromisoformat(posting_date)
+    low = max(first_day, (day - timedelta(days=_STALE_DAYS)).isoformat())
+    high = min(last_day, (day + timedelta(days=_STALE_DAYS)).isoformat())
+    candidates = conn.execute(
+        "SELECT rowid AS rowid, posting_date, description, amount, occurrence FROM chase_transactions "
+        "WHERE amount = ? AND posting_date BETWEEN ? AND ?",
+        (amount, low, high),
+    ).fetchall()
+    stale = [c for c in candidates
+             if c["rowid"] not in taken
+             and (c["posting_date"], c["description"], c["amount"], c["occurrence"]) not in batch_keys]
+    if not stale:
+        return None
+    stale.sort(key=lambda c: (abs((date.fromisoformat(c["posting_date"]) - day).days), c["rowid"]))
+    return stale[0]["rowid"]
 
 
 def set_manual_detalle(posting_date, description, amount, detalle):
@@ -336,7 +393,7 @@ def recategorize_all(categorize_fn, resolve_supplier_fn):
         now = datetime.utcnow().isoformat()
         for row in rows:
             updates = {}
-            if row["detalle_source"] != "manual":
+            if row["detalle_source"] not in ("manual", "deposito"):
                 new_detalle = categorize_fn(row["description"], row["amount"])
                 if new_detalle != row["detalle"]:
                     updates["detalle"] = new_detalle
@@ -360,6 +417,38 @@ def recategorize_all(categorize_fn, resolve_supplier_fn):
             )
         conn.commit()
         return detalle_changed, supplier_changed
+    finally:
+        conn.close()
+
+
+def deposits_on(posting_date):
+    """Los depósitos (DEPOSIT, importe positivo) de Chase de un día: [{rowid, amount, detalle, detalle_source}]."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT rowid AS rowid, amount, detalle, detalle_source FROM chase_transactions "
+            "WHERE posting_date = ? AND amount > 0 AND UPPER(description) LIKE 'DEPOSIT%' ORDER BY rowid",
+            (posting_date,),
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def set_deposit_detalle(rowid, detalle):
+    """
+    Categoría puesta por un recibo de depósito cargado (pedido del usuario,
+    2026-10-07: un recibo de Ice Machine categoriza su depósito en Chase).
+    detalle_source="deposito": ni una recarga del extracto ni un cambio de
+    reglas la pisan (como "manual"); una corrección a mano sí.
+    """
+    conn = _connect()
+    try:
+        conn.execute(
+            "UPDATE chase_transactions SET detalle = ?, detalle_source = 'deposito', updated_at = ? WHERE rowid = ?",
+            (detalle, datetime.utcnow().isoformat(), rowid),
+        )
+        conn.commit()
     finally:
         conn.close()
 
