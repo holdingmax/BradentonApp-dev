@@ -1170,6 +1170,14 @@
     }
     @media print { .qc { display: none; } }
 
+    /* Cuadro de confirmación en el medio de la pantalla (pedido del usuario,
+       2026-10-07, para "Cancelar carga" en vez del confirm() del navegador). */
+    .confirm-overlay { position: fixed; inset: 0; z-index: 900; background: rgba(15, 23, 42, 0.45); display: flex; align-items: center; justify-content: center; padding: 16px; }
+    .confirm-box { background: var(--surface); border-radius: 12px; box-shadow: 0 20px 50px rgba(15, 23, 42, 0.3); width: 100%; max-width: 400px; padding: 20px 22px 18px; }
+    .confirm-box h3 { margin: 0 0 6px; font-size: 16px; }
+    .confirm-box p { margin: 0; font-size: 13.5px; color: var(--text-soft); }
+    .confirm-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+
     /* Link de descarga mientras se arma el archivo (ver "Descargas sin
        recargar" en el script de abajo). */
     a[aria-busy="true"] { opacity: 0.55; pointer-events: none; }
@@ -2185,7 +2193,8 @@
           }
         }
 
-        // Pide al servidor cortar la carga `jobId` y avisa.
+        // Pide al servidor cortar la carga `jobId`; confirmado, la barra
+        // solo desaparece, sin aviso (pedido del usuario, 2026-10-07).
         function cancelJob(jobId) {
           cancelBtn.disabled = true;
           if (pollTimer) { clearTimeout(pollTimer); pollTimer = null; }
@@ -2202,14 +2211,6 @@
               return;
             }
             progress.reset();
-            if (data.status === 'cancelled') {
-              showNotice(
-                'Carga cancelada. ' + (data.done
-                  ? 'Iban ' + data.done + ' de ' + data.total + ' archivos: lo ya guardado queda (y el que se estaba leyendo, si llega a terminar).'
-                  : 'Si el primer archivo llega a terminar de leerse, queda guardado; el resto no se carga.'),
-                'warning'
-              );
-            }
             finish();
           };
           xhr.onerror = function () {
@@ -2222,16 +2223,22 @@
 
         var cancelOnStart = false;
         cancelBtn.addEventListener('click', function () {
+          askConfirm('¿Querés cancelar la carga?',
+                     'Lo que ya se guardó queda guardado; el resto no se carga.',
+                     'Sí, cancelar', 'Seguir cargando').then(function (yes) {
+            if (yes) cancelCurrentLoad();
+          });
+        });
+
+        function cancelCurrentLoad() {
           if (currentUpload && !currentUpload.uploadComplete) {
             var upload = currentUpload;
             currentUpload = null;
             upload.abort();
             progress.reset();
-            showNotice('Carga cancelada: no se llegó a subir nada.', 'warning');
             finish();
             return;
           }
-          if (!confirm('¿Cancelar la carga? Lo que ya se guardó queda guardado; el resto no se carga.')) return;
           if (currentUpload) {
             // Ya se subió todo y el servidor está arrancando la carga: se
             // cancela apenas devuelva su número.
@@ -2241,7 +2248,7 @@
             return;
           }
           if (currentJobId) cancelJob(currentJobId);
-        });
+        }
 
         function ack(jobId) {
           // Fire-and-forget -- ver jobs.acknowledge_job. El peor caso si
@@ -3091,6 +3098,40 @@
         if (event.key === 'Escape') closeAllPopovers();
       });
     })();
+
+    // Cuadro de confirmación en el medio de la pantalla (pedido del usuario,
+    // 2026-10-07): devuelve una promesa con true (Sí) o false (el otro botón,
+    // Escape o un click afuera).
+    function askConfirm(title, text, yesLabel, noLabel) {
+      return new Promise(function (resolve) {
+        var overlay = document.createElement('div');
+        overlay.className = 'confirm-overlay';
+        overlay.innerHTML = '<div class="confirm-box" role="alertdialog" aria-modal="true">'
+          + '<h3></h3><p></p><div class="confirm-actions">'
+          + '<button type="button" class="btn-secondary" data-answer="no"></button>'
+          + '<button type="button" data-answer="yes"></button></div></div>';
+        overlay.querySelector('h3').textContent = title;
+        overlay.querySelector('p').textContent = text;
+        overlay.querySelector('[data-answer="yes"]').textContent = yesLabel;
+        overlay.querySelector('[data-answer="no"]').textContent = noLabel;
+        function close(answer) {
+          document.removeEventListener('keydown', onKey, true);
+          overlay.remove();
+          resolve(answer);
+        }
+        function onKey(event) {
+          if (event.key === 'Escape') { event.stopPropagation(); close(false); }
+        }
+        overlay.addEventListener('click', function (event) {
+          var button = event.target.closest('[data-answer]');
+          if (button) close(button.getAttribute('data-answer') === 'yes');
+          else if (!event.target.closest('.confirm-box')) close(false);
+        });
+        document.addEventListener('keydown', onKey, true);
+        document.body.appendChild(overlay);
+        overlay.querySelector('[data-answer="no"]').focus();
+      });
+    }
 
     // Botonera de controles rápidos (pedido del jefe, 2026-10-05): el botón
     // de abajo a la derecha muestra los accesos, cada acceso pide su resumen
