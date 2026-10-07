@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block main_class %}main-full{% endblock %}
 {% block crumbs %}
-<nav class="crumbs"><a href="{{ url_for('controles') }}">Controles</a><a href="{{ url_for('controles_productos') }}">Productos de proveedores</a><span class="current">Lista completa</span></nav>
+<nav class="crumbs"><a href="{{ url_for('controles_productos') }}">Productos de proveedores</a><span class="current">Lista completa</span></nav>
 {% endblock %}
 {% from "_table_filters_macros.html" import filter_styles, filter_config_button %}
 {% block head_extra %}
