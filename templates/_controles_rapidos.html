@@ -14,10 +14,10 @@
 {%- endmacro %}
 {# Cambio de mes (pedido del usuario, 2026-10-07): las flechas piden el cuadro de otro mes. #}
 <div class="qc-month" data-month="{{ '' if is_current else this_month }}">
-  <button type="button" class="qc-month-btn" data-qc-month="{{ prev_month }}" aria-label="Mes anterior">&lsaquo;</button>
-  <span>{{ month_label }}</span>
-  {% if next_month %}<button type="button" class="qc-month-btn" data-qc-month="{{ next_month }}" aria-label="Mes siguiente">&rsaquo;</button>
-  {% else %}<span class="qc-month-btn off">&rsaquo;</span>{% endif %}
+  <button type="button" class="qc-month-btn" data-qc-month="{{ prev_month }}" aria-label="Mes anterior"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 6 9 12 15 18"/></svg></button>
+  <span class="qc-month-label">{{ month_label }}</span>
+  {% if next_month %}<button type="button" class="qc-month-btn" data-qc-month="{{ next_month }}" aria-label="Mes siguiente"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg></button>
+  {% else %}<span class="qc-month-btn off"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg></span>{% endif %}
   {% if not is_current %}<button type="button" class="qc-month-today" data-qc-month="">Mes actual</button>{% endif %}
 </div>
 
