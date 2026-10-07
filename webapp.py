@@ -2433,7 +2433,7 @@ def carga_datos_lottery_mensual_subir():
     """Monthly Sales Report de Lottery (pedido del usuario, 2026-10-06): se cruza en Controles → Lottery."""
     uploads = request.files.getlist("monthly_files")
     if not uploads or not any(u.filename for u in uploads):
-        return _error_response("Seleccioná el PDF del Monthly Sales Report.")
+        return _error_response("Seleccioná el PDF o el Excel del Monthly Sales Report.")
     paths = _save_uploads_to_workspace(uploads)
     job_id = jobs.create_job(len(paths), kind="lottery_mensual")
     threading.Thread(

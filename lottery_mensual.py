@@ -45,29 +45,60 @@ CROSS_FIELDS = (
 PAYMENT_WINDOW_DAYS = 3
 
 
-def extract_monthly_report(pdf_path):
-    """
-    Lee el Monthly Sales Report. Los importes salen con el mismo lector del
-    reporte diario (mismos conceptos y mismos signos que lottery_days); además
-    se guardan todos los renglones tal cual, para mostrar el reporte entero.
-    ValueError si no es un reporte mensual o no cubre un mes completo.
-    """
-    with pdfplumber.open(pdf_path) as pdf:
+# Cada importe del cruce sale de un renglón del reporte, con el signo que usa
+# lottery_days (lo que entra a la caja positivo, pagos y comisiones negativos).
+_VALUE_SOURCES = (
+    ("sales", "Net Terminal Sales Amount", 1),
+    ("pagos", "Terminal Pay Amount", -1),
+    ("total_comm", "Terminal Sales Commission", -1),
+    ("skoff_sales_amount", "Instant Sales Amount", 1),
+    ("sales_comm", "Instant Sales Commission", -1),
+    ("pays_units", "Instant Tickets Paid", 1),
+    ("pays_amount", "Instant Pay Amount", -1),
+)
+# Cuentas que el propio reporte tiene que cerrar: (resultado, [(renglón, signo)]).
+_INTERNAL_CHECKS = (
+    ("Net Terminal Sales Amount", (("Terminal Sales Amount", 1), ("Terminal Cancel Amount", -1))),
+    ("Net Terminal Sales", (("Terminal Tickets", 1), ("Terminal Cancels", -1))),
+    ("Instant Sales Amount", (("Instant Books Amount", 1), ("Instant Full Returns Amount", -1),
+                              ("Instant Partial Returns Amount", -1))),
+    ("Instant Pay Amount", (("Instant Low Tier Pay Amount", 1), ("Instant Mid Tier Pay Amount", 1))),
+    ("Instant Tickets Paid", (("Instant Low Tier Tickets Paid", 1), ("Instant Mid Tier Tickets Paid", 1))),
+)
+# El Excel del portal nombra un par de renglones distinto que el PDF.
+_EXCEL_LABELS = {"Terminal Cancels Amount": "Terminal Cancel Amount", "Terminal Cash Commission": "Terminal Cash Commission Amount"}
+
+
+def _number(value):
+    """'$8,907.50' / '5937' / '$ 6,490.00' / 8907.5 -> float; None si no es un número."""
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = re.sub(r"[$,\s]", "", str(value or ""))
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _parse_date(text):
+    """'2026-03-01' / '03/01/2026' / '08-01-2024' -> date, o None."""
+    text = str(text or "").strip()
+    match = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", text)
+    if match:
+        return date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+    match = re.fullmatch(r"(\d{1,2})[/-](\d{1,2})[/-](\d{4})", text)
+    if match:
+        return date(int(match.group(3)), int(match.group(1)), int(match.group(2)))
+    return None
+
+
+def _pdf_report(path):
+    """(inicio, fin, renglones) del PDF; además controla lo leído contra el lector del reporte diario."""
+    with pdfplumber.open(path) as pdf:
         text = "\n".join(page.extract_text() or "" for page in pdf.pages)
     if "Monthly Sales Report" not in text:
-        raise ValueError("Uno de los archivos no es un Monthly Sales Report de Lottery (¿es un reporte diario?).")
-    fields = extract_lottery_receipt_fields_from_sales_report(pdf_path)
-    start = fields["report_date"]
-    match = _END_DATE_RE.search(text)
-    if not match:
-        raise ValueError('No se encontró "End Date" en el Monthly Sales Report de Lottery.')
-    end = date(*(int(part) for part in match.groups()))
-    month_end = date(start.year, start.month, calendar.monthrange(start.year, start.month)[1])
-    if start.day != 1 or end != month_end:
-        raise ValueError(
-            f"El Monthly Sales Report de Lottery va del {start:%d/%m/%Y} al {end:%d/%m/%Y}: tiene que ser un mes completo."
-        )
-
+        raise ValueError("Uno de los archivos no es el Monthly Sales Report (o Summary) de Lottery: "
+                         "puede ser un reporte diario u otro reporte del portal.")
     lines = []
     for raw in text.splitlines():
         line = raw.strip()
@@ -77,13 +108,124 @@ def extract_monthly_report(pdf_path):
         parsed = _LINE_RE.match(line)
         if parsed:
             lines.append({"label": parsed.group(1), "value": parsed.group(2)})
+    match = _END_DATE_RE.search(text)
+    if not match:
+        raise ValueError('No se encontró "End Date" en el Monthly Sales Report de Lottery.')
+    end = date(*(int(part) for part in match.groups()))
+    start = extract_lottery_receipt_fields_from_sales_report(path)["report_date"]
+    return start, end, lines
 
-    values = {key: fields.get(key) for key in ("sales", "pagos", "skoff_sales_amount", "sales_comm", "pays_units", "pays_amount")}
-    comis, prize = fields.get("comis"), fields.get("prize_free_plays")
-    values["total_comm"] = round(comis + prize, 2) if comis is not None and prize is not None else None
+
+def _excel_rows(path):
+    """Filas (listas de valores) de la primera hoja del Excel (.xlsx con openpyxl, .xls con pandas)."""
+    if path.lower().endswith(".xls"):
+        import pandas as pd
+        frame = pd.read_excel(path, header=None, dtype=object)
+        return [[None if pd.isna(v) else v for v in row] for row in frame.itertuples(index=False)]
+    import openpyxl
+    workbook = openpyxl.load_workbook(path, read_only=True, data_only=True)
+    try:
+        return [list(row) for row in workbook.worksheets[0].iter_rows(values_only=True)]
+    finally:
+        workbook.close()
+
+
+def _excel_report(path):
+    """
+    (inicio, fin, renglones) del Monthly Sales Summary en Excel (lo que baja el
+    portal; de 2024-2025 solo existe así): fechas en sus filas "Starting Date"
+    / "Ending Date", títulos de columna en la fila que empieza con "Terminal
+    Tickets" y los valores en la fila de abajo.
+    """
+    rows = _excel_rows(path)
+    found = {}
+    header_at = None
+    for index, row in enumerate(rows):
+        cells = [c for c in row if c is not None and str(c).strip() != ""]
+        if not cells:
+            continue
+        first = str(cells[0]).strip()
+        if first in ("Starting Date", "Ending Date") and len(cells) > 1:
+            found[first] = _parse_date(cells[1])
+        if first == "Terminal Tickets":
+            header_at = index
+            break
+    if "Monthly Sales Summary" not in " ".join(str(c) for row in rows[:3] for c in row if c is not None) or header_at is None:
+        raise ValueError("Uno de los archivos no es el Monthly Sales Summary de Lottery.")
+    if not found.get("Starting Date") or not found.get("Ending Date"):
+        raise ValueError('No se encontraron "Starting Date" y "Ending Date" en el Monthly Sales Summary de Lottery.')
+    header = rows[header_at]
+    values = rows[header_at + 1] if header_at + 1 < len(rows) else []
+    lines, section = [], None
+    for column, title in enumerate(header):
+        if title is None or str(title).strip() == "":
+            continue
+        label = _EXCEL_LABELS.get(str(title).strip(), str(title).strip())
+        wanted = "Online Sales Summary" if label.startswith("Terminal") else (
+            "Instant Sales Summary" if label.startswith("Instant") else None)
+        if wanted != section and wanted is not None:
+            lines.append({"section": wanted})
+        section = wanted or section
+        number = _number(values[column]) if column < len(values) else None
+        if number is None:
+            continue
+        money = re.search(r"Amount|Commission", label) is not None
+        lines.append({"label": label, "value": f"${number:,.2f}" if money else f"{int(round(number))}"})
+    return found["Starting Date"], found["Ending Date"], lines
+
+
+def extract_monthly_report(path):
+    """
+    Lee el Monthly Sales Report de Lottery, en PDF o en Excel (Monthly Sales
+    Summary, como lo baja el portal). Los importes del cruce salen de los
+    renglones del reporte con los signos de lottery_days; en el PDF además
+    tienen que coincidir con el lector del reporte diario (dos lecturas
+    independientes). Las cuentas del propio reporte (ventas menos bajas,
+    libros menos devoluciones, premios Low + Mid Tier) se controlan y lo que
+    no cierra va a `warnings`. ValueError si no es un reporte mensual o no
+    cubre un mes completo.
+    """
+    if path.lower().endswith((".xlsx", ".xls")):
+        start, end, lines = _excel_report(path)
+        daily_fields = None
+    else:
+        start, end, lines = _pdf_report(path)
+        daily_fields = extract_lottery_receipt_fields_from_sales_report(path)
+    month_end = date(start.year, start.month, calendar.monthrange(start.year, start.month)[1])
+    if start.day != 1 or end != month_end:
+        raise ValueError(
+            f"El Monthly Sales Report de Lottery va del {start:%d/%m/%Y} al {end:%d/%m/%Y}: tiene que ser un mes completo."
+        )
+
+    by_label = {}
+    for line in lines:
+        if "label" in line:
+            by_label.setdefault(line["label"].strip(), _number(line["value"]))
+    values = {}
+    for key, label, sign in _VALUE_SOURCES:
+        number = by_label.get(label)
+        values[key] = None if number is None else (int(number) if key == "pays_units" else round(sign * number, 2))
     warnings = [
         f'No se pudo leer "{pdf_label}".' for key, _, pdf_label, _, _ in CROSS_FIELDS if values.get(key) is None
     ]
+
+    if daily_fields is not None:
+        comis, prize = daily_fields.get("comis"), daily_fields.get("prize_free_plays")
+        other = {key: daily_fields.get(key) for key in ("sales", "pagos", "skoff_sales_amount", "sales_comm",
+                                                         "pays_units", "pays_amount")}
+        other["total_comm"] = round(comis + prize, 2) if comis is not None and prize is not None else None
+        for key, label, _ in _VALUE_SOURCES:
+            if values.get(key) is not None and other.get(key) is not None and abs(values[key] - other[key]) >= 0.005:
+                raise ValueError(f'"{label}" del Monthly Sales Report de Lottery se leyó de dos formas distintas '
+                                 f"({values[key]:,.2f} y {other[key]:,.2f}): revisalo a mano.")
+
+    for result, parts in _INTERNAL_CHECKS:
+        if by_label.get(result) is None or any(by_label.get(label) is None for label, _ in parts):
+            continue
+        total = round(sum(sign * by_label[label] for label, sign in parts), 2)
+        if abs(total - by_label[result]) >= 0.005:
+            warnings.append(f'El reporte no cierra: "{result}" dice {by_label[result]:,.2f} y la cuenta da {total:,.2f}.')
+
     return {
         "year": start.year,
         "month": start.month,
