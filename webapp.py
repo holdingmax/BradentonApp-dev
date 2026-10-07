@@ -6980,17 +6980,25 @@ def controles_cierre_excel():
 def controles_rapidos_panel(kind):
     """
     Cuadro de la botonera de controles rápidos de abajo a la derecha
-    (base.html, pedido del jefe, 2026-10-05): un resumen chico de Tarjetas,
-    Caja o Precios a revisar, que el navegador pide al tocar el botón y mete
-    en el cuadro. Cálculo en controles_rapidos.py.
+    (base.html, pedido del jefe, 2026-10-05): un resumen chico de Tarjetas o
+    Caja que el navegador pide al tocar el botón y mete en el cuadro. Arranca
+    en el mes actual; ?year=&month= pasa a otro mes (pedido del usuario,
+    2026-10-07). Cálculo en controles_rapidos.py.
     """
     today = date.today()
+    year = request.args.get("year", type=int) or today.year
+    month = request.args.get("month", type=int) or today.month
+    if not 1 <= month <= 12:
+        abort(404)
+    day = controles_rapidos.reference_day(year, month, today)
+    if day is None:  # mes futuro: el actual
+        year, month, day = today.year, today.month, today
     if kind == "tarjetas":
         data = controles_rapidos.tarjetas_status(
-            reportes_db.get_card_sales_by_date(), eft_db.get_coupon_gross_by_date(), today=today,
+            reportes_db.get_card_sales_by_date(), eft_db.get_coupon_gross_by_date(), today=day,
         )
     elif kind == "caja":
-        data = controles_rapidos.caja_status(today=today)
+        data = controles_rapidos.caja_status(today=day)
     elif kind == "precios":
         pos_costs = cmv_db.get_all_costs()
         snapshots = cmv_db.list_snapshots()
@@ -6998,15 +7006,46 @@ def controles_rapidos_panel(kind):
             "pos_loaded": bool(pos_costs),
             "cmv_date": snapshots[0]["loaded_on"] if snapshots else None,
             "suppliers": controles_rapidos.price_review(
-                proveedores_db.get_all_invoice_lines(), pos_costs, _supplier_labels(), today=today,
+                proveedores_db.get_all_invoice_lines(), pos_costs, _supplier_labels(), today=day,
             ),
         }
     else:
         abort(404)
+    prev_year, prev_month = (year - 1, 12) if month == 1 else (year, month - 1)
+    next_year, next_month = (year + 1, 1) if month == 12 else (year, month + 1)
     return render_template(
         "_controles_rapidos.html", kind=kind, data=data,
-        month_label=f"{_MONTH_NAMES_ES[today.month - 1]} {today.year}",
+        month_label=f"{_MONTH_NAMES_ES[month - 1]} {year}",
+        is_current=(year, month) == (today.year, today.month),
+        this_month=f"{year}-{month}",
+        prev_month=f"{prev_year}-{prev_month}",
+        next_month=None if (year, month) == (today.year, today.month) else f"{next_year}-{next_month}",
+        caja_limit=controles_rapidos.caja_limit(),
     )
+
+
+@app.route("/controles/rapidos/caja/limite", methods=["POST"])
+def controles_rapidos_caja_limite():
+    """Límite de la alerta de Caja de la botonera (pedido del usuario, 2026-10-07)."""
+    try:
+        controles_rapidos.set_caja_limit(reporte_mensual.parse_amount(request.form.get("limit")))
+    except ValueError as exc:
+        return jsonify({"error": str(exc) if "límite" in str(exc) else "El límite no es un monto."}), 400
+    return jsonify({"ok": True})
+
+
+@app.route("/controles/rapidos/alertas")
+def controles_rapidos_alertas():
+    """Qué botón de la botonera marcar en rojo (mes actual), sin abrir el cuadro."""
+    today = date.today()
+    tarjetas = controles_rapidos.tarjetas_status(
+        reportes_db.get_card_sales_by_date(), eft_db.get_coupon_gross_by_date(), today=today,
+    )
+    caja_data = controles_rapidos.caja_status(today=today)
+    return jsonify({
+        "tarjetas": bool(tarjetas and tarjetas["last"]["status"] == "alert"),
+        "caja": bool(caja_data and caja_data["alert"]),
+    })
 
 
 @app.route("/controles/depositos")

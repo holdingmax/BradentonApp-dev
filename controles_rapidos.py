@@ -4,16 +4,21 @@ la derecha (base.html) muestra en un cuadro cómo viene cada cosa, sin entrar a
 cada control. Acá solo el cálculo, con los datos ya cargados; la pantalla
 completa de cada uno sigue en Controles.
 
-Todo es del MES ACTUAL (pedido del usuario, el mismo día): un mes anterior se
-mira en Controles, no acá. Si el mes todavía no tiene nada cargado, el cuadro
-lo dice en vez de mostrar el último mes que sí tiene.
+Arranca en el MES ACTUAL (pedido del usuario, el mismo día) y desde el
+2026-10-07 se puede pasar a otro mes desde el propio cuadro (el cálculo se
+hace "al último día" de ese mes). Si el mes todavía no tiene nada cargado, el
+cuadro lo dice en vez de mostrar el último mes que sí tiene. Precios a
+revisar salió de la botonera ese día ("de momento", pedido del usuario): el
+cálculo queda acá y en /controles/rapidos/precios.
 
 - Tarjetas: lo vendido con tarjeta que todavía no acreditó JH, al último día
   del mes con Store Info (el mismo cálculo y la misma alerta de
   control_tarjetas).
 - Caja: el efectivo que debería haber en la estación (el Saldo de Caja) al
   último día del mes con Reporte Diario, los días de antes para ver si se
-  viene depositando, y desde cuándo falta cargar.
+  viene depositando, y desde cuándo falta cargar. Alerta (pedido del
+  usuario, 2026-10-07) si el Saldo da negativo o pasa del límite, que se
+  cambia desde el propio cuadro.
 - Precios: los productos de la última factura del mes de cada proveedor cuyo
   UPC está en el CMV (el Costo que se exporta de eListar) con otro costo: son
   los que hay que revisar de precio. Solo cruza por UPC (sin los ceros de
@@ -21,6 +26,9 @@ lo dice en vez de mostrar el último mes que sí tiene.
   Midtown, que no traen UPC, no entran.
 """
 
+import calendar
+import json
+import os
 from datetime import date
 
 import caja
@@ -33,6 +41,56 @@ _RECENT_DAYS = 7  # cuántos días se muestran de Tarjetas y de Caja
 # siempre es un pack mal leído (ej. los cigarros que H.T. factura por caja y
 # el POS vende de a uno), no un aumento: se marca para revisar el pack.
 _PACK_SUSPECT_RATIO = 2.0
+
+
+# Límite de la alerta de Caja: se cambia desde el cuadro y se guarda en
+# reportes_data (gitignored, como las bases).
+_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reportes_data", "controles_rapidos.json")
+DEFAULT_CAJA_LIMIT = 10500.0  # lo más alto que se ve un fin de semana normal
+
+
+def caja_limit():
+    try:
+        with open(_CONFIG_PATH, encoding="utf-8") as handle:
+            return float(json.load(handle)["caja_limit"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return DEFAULT_CAJA_LIMIT
+
+
+def set_caja_limit(value):
+    if value is None or value <= 0:
+        raise ValueError("El límite tiene que ser un monto mayor que cero.")
+    os.makedirs(os.path.dirname(_CONFIG_PATH), exist_ok=True)
+    try:
+        with open(_CONFIG_PATH, encoding="utf-8") as handle:
+            config = json.load(handle)
+    except (OSError, ValueError):
+        config = {}
+    config["caja_limit"] = round(float(value), 2)
+    with open(_CONFIG_PATH, "w", encoding="utf-8") as handle:
+        json.dump(config, handle, indent=2)
+
+
+def caja_alert(saldo, limit):
+    """'negative' / 'high' / None."""
+    if saldo is None:
+        return None
+    if saldo < -0.005:
+        return "negative"
+    return "high" if saldo > limit else None
+
+
+def reference_day(year, month, today=None):
+    """
+    El "hoy" con el que se calcula un mes elegido en el cuadro: hoy si es el
+    mes actual, el último día si es un mes anterior. None si es un mes futuro.
+    """
+    today = today or date.today()
+    if (year, month) == (today.year, today.month):
+        return today
+    if (year, month) > (today.year, today.month):
+        return None
+    return date(year, month, calendar.monthrange(year, month)[1])
 
 
 def _month_prefix(today):
@@ -80,9 +138,13 @@ def caja_status(today=None, build_month=None):
     last = loaded[-1]
     deposits = [row for row in rows if row["deposit"]]
     upto_last = [row for row in rows if row["date"] <= last["date"]]
+    limit = caja_limit()
     return {
         "date": last["date"],
         "saldo": last["saldo"],
+        "limit": limit,
+        "alert": caja_alert(last["saldo"], limit),
+        "alert_days": {row["date"]: caja_alert(row["saldo"], limit) for row in upto_last},
         "days_behind": (today - date.fromisoformat(last["date"])).days,
         "recent": upto_last[-_RECENT_DAYS:],
         "last_deposit": {"date": deposits[-1]["date"], "amount": deposits[-1]["deposit"]} if deposits else None,

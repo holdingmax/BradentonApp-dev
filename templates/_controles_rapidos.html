@@ -7,14 +7,19 @@
 {% macro dmy(iso) -%}{{ iso[8:10] }}/{{ iso[5:7] }}/{{ iso[:4] }}{%- endmacro %}
 {% macro dm(iso) -%}{{ iso[8:10] }}/{{ iso[5:7] }}{%- endmacro %}
 {% macro behind(days, iso) -%}
-  {%- if days > 1 %}<p class="qc-note qc-warn">El Reporte Diario está cargado hasta el {{ dmy(iso) }} (hace {{ days }} días).</p>{% endif -%}
+  {%- if days > 1 %}<p class="qc-note qc-warn">El Reporte Diario {{ "del mes " if not is_current }}está cargado hasta el {{ dmy(iso) }}{{ " (hace %d días)"|format(days) if is_current }}.</p>{% endif -%}
 {%- endmacro %}
-{# Solo el mes actual: lo de meses anteriores se mira en Controles. #}
 {% macro empty_month(what, endpoint) -%}
-  <p class="qc-note">{{ month_label }} todavía no tiene {{ what }}. Los meses anteriores se ven en
-    <a href="{{ url_for(endpoint) }}">Controles</a>.</p>
+  <p class="qc-note">{{ month_label }} {{ "todavía " if is_current }}no tiene {{ what }}.</p>
 {%- endmacro %}
-<p class="qc-month">{{ month_label }}</p>
+{# Cambio de mes (pedido del usuario, 2026-10-07): las flechas piden el cuadro de otro mes. #}
+<div class="qc-month" data-month="{{ '' if is_current else this_month }}">
+  <button type="button" class="qc-month-btn" data-qc-month="{{ prev_month }}" aria-label="Mes anterior">&lsaquo;</button>
+  <span>{{ month_label }}</span>
+  {% if next_month %}<button type="button" class="qc-month-btn" data-qc-month="{{ next_month }}" aria-label="Mes siguiente">&rsaquo;</button>
+  {% else %}<span class="qc-month-btn off">&rsaquo;</span>{% endif %}
+  {% if not is_current %}<button type="button" class="qc-month-today" data-qc-month="">Mes actual</button>{% endif %}
+</div>
 
 {% if kind == "tarjetas" %}
   {% if not data %}
@@ -47,10 +52,14 @@
   {% if not data %}
   {{ empty_month("ningún día de Reporte Diario cargado", "controles") }}
   {% else %}
-  <div class="qc-status neutral">
+  <div class="qc-status {{ 'bad' if data.alert else 'neutral' }}">
     <span>Efectivo que debería haber al {{ dmy(data.date) }}</span>
     <strong>{{ money(data.saldo) }}</strong>
-    <span class="qc-sub">Saldo de Caja: lo cobrado en efectivo menos lo depositado, los gastos y Lottery</span>
+    <span class="qc-sub">
+      {%- if data.alert == "negative" %}Da negativo: falta efectivo o hay algo mal cargado.
+      {%- elif data.alert == "high" %}Pasa el límite de {{ money(data.limit) }}: se está juntando efectivo sin depositar.
+      {%- else %}Saldo de Caja: lo cobrado en efectivo menos lo depositado, los gastos y Lottery. No pasa el límite de {{ money(data.limit) }}.{% endif -%}
+    </span>
   </div>
   {{ behind(data.days_behind, data.date) }}
   {% if data.last_deposit %}
@@ -60,7 +69,7 @@
     <thead><tr><th>Día</th><th>Efectivo</th><th>Depósito</th><th>Saldo</th></tr></thead>
     <tbody>
     {% for row in data.recent %}
-      <tr class="{{ 'qc-row-off' if row.cash is none else '' }}">
+      <tr class="{{ 'qc-row-off' if row.cash is none else ('qc-row-bad' if data.alert_days.get(row.date) else '') }}">
         <td>{{ dm(row.date) }}</td>
         <td>{{ money(row.cash) if row.cash is not none else "sin cargar" }}</td>
         <td>{{ money(row.deposit) if row.deposit else "—" }}</td>
@@ -70,6 +79,11 @@
     </tbody>
   </table>
   <p class="qc-note">Si el saldo crece varios días seguidos sin depósitos, el efectivo se está juntando en la estación.</p>
+  <form class="qc-limit" data-qc-limit>
+    <label for="qc-limit-input">Alertar si el saldo pasa de</label>
+    <input type="text" inputmode="decimal" id="qc-limit-input" name="limit" value="{{ '%.2f'|format(caja_limit) }}">
+    <button type="submit" class="btn-secondary">Guardar</button>
+  </form>
   <a class="qc-link" href="{{ url_for('carga_datos_caja', year=data.date[:4]|int, month=data.date[5:7]|int) }}">Ver Caja del mes &rarr;</a>
   {% endif %}
 
