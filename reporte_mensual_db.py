@@ -60,16 +60,20 @@ def _connect():
     columns = {row[1] for row in conn.execute("PRAGMA table_info(monthly_reports)")}
     if "edited_at" not in columns:
         conn.execute("ALTER TABLE monthly_reports ADD COLUMN edited_at TEXT")
+    # Completado con la hoja pedida de nuevo (pedido del usuario, 2026-10-07).
+    if "sheet_added_at" not in columns:
+        conn.execute("ALTER TABLE monthly_reports ADD COLUMN sheet_added_at TEXT")
     return conn
 
 
-def update_report(year, month, store_info, departments, printed_amount, printed_count, warnings):
+def update_report(year, month, store_info, departments, printed_amount, printed_count, warnings, from_sheet=False):
     """
     Corrección a mano del reporte guardado (pedido del usuario, 2026-10-07):
     Store Info (`store_info` con las claves de STORE_INFO_FIELDS y
     "credit_terms"), departamentos [{department, count, amount}], total
     impreso de departamentos y los avisos ya recalculados. Devuelve False si
-    el mes no tiene reporte.
+    el mes no tiene reporte. from_sheet=True: lo completó la hoja pedida de
+    nuevo (sheet_added_at), no una edición a mano (edited_at).
     """
     conn = _connect()
     try:
@@ -83,7 +87,8 @@ def update_report(year, month, store_info, departments, printed_amount, printed_
             credit_terms = store_info.get("credit_terms")
             conn.execute(
                 f"UPDATE monthly_reports SET {assignments}, credit_terms_json = ?, printed_department_amount = ?, "
-                "printed_department_count = ?, warnings_json = ?, edited_at = ? WHERE year = ? AND month = ?",
+                "printed_department_count = ?, warnings_json = ?, "
+                f"{'sheet_added_at' if from_sheet else 'edited_at'} = ? WHERE year = ? AND month = ?",
                 [*(store_info.get(field) for field in STORE_INFO_FIELDS),
                  json.dumps(credit_terms) if credit_terms is not None else None,
                  printed_amount, printed_count, json.dumps(warnings or []),
@@ -162,7 +167,18 @@ def get_report(year, month):
         "filename": row["filename"],
         "updated_at": row["updated_at"],
         "edited_at": row["edited_at"],
+        "sheet_added_at": row["sheet_added_at"],
     }
+
+
+def list_months():
+    """[(year, month)] de los reportes guardados, del más nuevo al más viejo."""
+    conn = _connect()
+    try:
+        return [(r["year"], r["month"]) for r in
+                conn.execute("SELECT year, month FROM monthly_reports ORDER BY year DESC, month DESC")]
+    finally:
+        conn.close()
 
 
 def delete_report(year, month):

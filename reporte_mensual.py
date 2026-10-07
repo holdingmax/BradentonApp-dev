@@ -291,3 +291,233 @@ def department_comparison(days_departments, report):
                    count_ok=(d.get("count") or 0) == (m.get("count") or 0))
         rows.append(row)
     return rows
+
+
+# ---------------------------------------------------------------------------
+# Hoja pedida de nuevo (pedido del usuario, 2026-10-07): cuando una hoja del
+# reporte salió borrosa, el manager la manda otra vez (a veces solo esa hoja,
+# sin el período impreso) y se sube para completar el mes que la tenía
+# pendiente. Solo se llena lo que estaba vacío: un número distinto de uno ya
+# guardado se avisa y no se pisa.
+# ---------------------------------------------------------------------------
+
+# Nombre completo para los avisos (los de STORE_INFO_LABELS van abreviados en las tablas).
+_FULL_LABELS = {"tc": "Tarjeta/Crédito", "local_accounts": "Local Accounts", "network_revenue": "Network Revenue",
+                "total_revenue": "Total Revenue", "desc_comb": "Desc. Combustible"}
+
+
+def _full_label(key):
+    return _FULL_LABELS.get(key) or dict(STORE_INFO_LABELS)[key]
+
+
+def pending_items(report):
+    """Lo que le falta al reporte guardado (rótulos), o [] si está completo."""
+    info = report["store_info"]
+    items = [_full_label(key) for key, _label in EDITABLE_STORE_INFO
+             if (info.get("credit_terms") if key == "tc" else info.get(key)) is None]
+    departments = report.get("departments") or []
+    if not departments:
+        items.append("Ventas por Departamento")
+    else:
+        items.extend(f"Departamento {d['department']}" for d in departments
+                     if d.get("amount") is None or d.get("count") is None)
+    return items
+
+
+IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".tif", ".tiff")
+
+
+def _image_to_pdf(path):
+    """Una foto (JPG/PNG) de la hoja pasa a PDF de una página, que es lo que leen los lectores."""
+    from PIL import Image
+    pdf_path = path + ".pdf"
+    with Image.open(path) as image:
+        image.convert("RGB").save(pdf_path, "PDF", resolution=200.0)
+    return pdf_path
+
+
+# Rótulo que tiene que aparecer en la hoja para tomar cada campo. Un rótulo
+# opcional del POS ("Fuel Discounts") que no está vale 0 solo si en la hoja
+# está la sección a la que pertenece.
+_SHEET_FIELD_LABELS = (
+    ("volume", ("Total Fuel Sales",), ()),
+    ("sales_fuel", ("Total Fuel Sales",), ()),
+    ("desc_comb", ("Fuel Discounts",), ("Total Fuel Sales",)),
+    ("non_fuel_total", ("Total Non Fuel Sales",), ()),
+    ("desc_otros", ("Other Discounts",), ("Total Non Fuel Sales",)),
+    ("tax_collect", ("Total Taxes Collected",), ()),
+    ("total_sales", ("Total Sales",), ()),
+    ("cash", ("Cash",), ()),
+    ("credit_terms", ("Cash", "Local Accounts"), ()),
+    ("local_accounts", ("Local Accounts",), ()),
+    # "Other" se imprime después de LOCAL ACCOUNTS, a veces ya en la hoja siguiente.
+    ("other_amount", ("Other",), ()),
+    ("network_revenue", ("Network Revenue",), ()),
+    ("total_revenue", ("Total Revenue",), ()),
+)
+
+
+def extract_replacement_sheet(path):
+    """
+    Lee una hoja suelta del reporte mensual (PDF o foto): los campos de Store
+    Info que trae y los departamentos si es la hoja del Department Sales.
+    Devuelve {store_info, departments, printed_department_total, period};
+    lo que la hoja no trae queda afuera (nunca en 0).
+    """
+    from reporte_diario import (_LazyPdfPageImages, _extract_store_info_fields, _find_label_values,
+                                _ocr_store_info_page_text, _score_store_info_page_text)
+
+    if path.lower().endswith(IMAGE_EXTENSIONS):
+        path = _image_to_pdf(path)
+    lines = []
+    images = _LazyPdfPageImages(path)
+    try:
+        for index in range(len(images)):
+            image = images[index]
+            text = _ocr_store_info_page_text(image)
+            if _score_store_info_page_text(text) == 0 and image is not None:
+                # La hoja de septiembre 2026 vino girada 180°.
+                rotated = _ocr_store_info_page_text(image.rotate(180))
+                if _score_store_info_page_text(rotated) > 0:
+                    text = rotated
+            lines.extend(text.splitlines())
+    finally:
+        images.close()
+
+    fields = _extract_store_info_fields(lines, require_period=False)
+
+    def has(label):
+        return _find_label_values(lines, label) is not None
+
+    store_info = {}
+    for key, labels, section in _SHEET_FIELD_LABELS:
+        found = all(has(label) for label in labels) or bool(section and all(has(label) for label in section))
+        if found and fields.get(key) is not None:
+            store_info[key] = fields[key]
+    period = (fields["from_date"], fields["to_date"]) if fields.get("from_date") else None
+
+    departments, printed = None, None
+    try:
+        records, diagnostics = parse_elistar_daily_pdf_page(path, page_index=0)
+        if diagnostics.get("period") and period is None:
+            period = (diagnostics["period"]["from_date"], diagnostics["period"]["to_date"])
+        for record in records:
+            if record.get("department") == "GETTEL/TOYOTA":
+                record["department"] = "LOCAL ACCT"
+        departments = [{"department": r["department"], "count": r["count"], "amount": r["amount"]}
+                       for r in records if r.get("department")]
+        printed = diagnostics.get("printed_totals")
+    except Exception:
+        pass  # No es la hoja de departamentos (o no se pudo leer): solo Store Info.
+    return {"store_info": store_info, "departments": departments or None,
+            "printed_department_total": printed, "period": period}
+
+
+def _closes(total, *parts):
+    return total is not None and None not in parts and abs(round(sum(parts), 2) - total) <= 0.01
+
+
+# Rótulos opcionales del POS que, si no aparecen, el lector guarda como 0. Un 0
+# así se reemplaza con la hoja nueva cuando los totales impresos lo confirman.
+_OPTIONAL_ZERO_CHECKS = {
+    "other_amount": lambda i: _closes(i.get("total_revenue"), i.get("cash"), i.get("local_accounts"),
+                                      i.get("other_amount"), *(i.get("credit_terms") or [None])),
+    "desc_comb": lambda i: _closes(i.get("total_sales"), i.get("sales_fuel"), i.get("desc_comb"),
+                                   i.get("non_fuel_total"), i.get("desc_otros"), i.get("tax_collect")),
+    "desc_otros": lambda i: _closes(i.get("total_sales"), i.get("sales_fuel"), i.get("desc_comb"),
+                                    i.get("non_fuel_total"), i.get("desc_otros"), i.get("tax_collect")),
+}
+
+
+def _department_key(name):
+    return re.sub(r"[^A-Z0-9]", "", (name or "").upper())
+
+
+def _differs(a, b):
+    return abs(a - b) > TOLERANCE
+
+
+def apply_replacement_sheet(report, sheet):
+    """
+    Completa el reporte guardado con lo leído de la hoja nueva, solo donde
+    estaba vacío. Devuelve (store_info, departments, printed_amount,
+    printed_count, warnings, filled, conflicts): los cinco primeros como
+    edited_report, para reporte_mensual_db.update_report. ValueError si la
+    hoja es de otro mes o no trae nada de lo que faltaba.
+    """
+    if sheet["period"]:
+        from_date, to_date = sheet["period"]
+        month = (report["year"], report["month"])
+        if (from_date.year, from_date.month) != month or (to_date.year, to_date.month) != month:
+            raise ValueError(f"La hoja es del {_ddmmyyyy(from_date)} al {_ddmmyyyy(to_date)}, no de este mes.")
+
+    info = dict(report["store_info"])
+    departments = [dict(d) for d in report.get("departments") or []]
+    filled, conflicts = [], []
+    for key, value in sheet["store_info"].items():
+        old = info.get(key)
+        if key == "credit_terms":
+            label = _full_label("tc")
+            value_cmp, old_cmp = round(sum(value), 2), (round(sum(old), 2) if old else None)
+        else:
+            label, value_cmp, old_cmp = _full_label(key), value, old
+        if old_cmp is None:
+            info[key] = value
+            filled.append(label)
+        elif key in _OPTIONAL_ZERO_CHECKS and old_cmp == 0 and value_cmp and _OPTIONAL_ZERO_CHECKS[key](
+                {**info, key: value}):
+            # El 0 no se leyó: el rótulo no estaba en la hoja borrosa y el
+            # lector pone 0 (septiembre 2026: "Other" $15.00). Se reemplaza
+            # solo si los totales impresos lo confirman.
+            info[key] = value
+            filled.append(label)
+        elif _differs(value_cmp, old_cmp):
+            conflicts.append(f"{label} (guardado {old_cmp:,.2f}, la hoja dice {value_cmp:,.2f})")
+
+    by_key = {_department_key(d["department"]): d for d in departments}
+    for record in sheet["departments"] or []:
+        current = by_key.get(_department_key(record["department"]))
+        if current is None:
+            departments.append(dict(record))
+            filled.append(f"Departamento {record['department']}")
+            continue
+        changed = False
+        for field in ("count", "amount"):
+            if record.get(field) is None:
+                continue
+            if current.get(field) is None:
+                current[field] = record[field]
+                changed = True
+            elif _differs(current[field], record[field]):
+                conflicts.append(f"{current['department']} ({'cantidad' if field == 'count' else 'importe'})")
+        if changed:
+            filled.append(f"Departamento {current['department']}")
+
+    printed = dict(report.get("printed_department_total") or {})
+    for field, value in (sheet.get("printed_department_total") or {}).items():
+        if printed.get(field) is None and value is not None:
+            printed[field] = value
+
+    if not filled:
+        if conflicts:
+            raise ValueError("La hoja no trae nada de lo que faltaba y no coincide con lo guardado en: "
+                             + ", ".join(conflicts) + ".")
+        raise ValueError("No se leyó nada de lo que faltaba en esta hoja. " + BLURRY_SHEET)
+
+    # Los avisos se rehacen igual que al editar a mano.
+    def text(value):
+        return "" if value is None else repr(value)
+
+    form = {}
+    for key, _label in EDITABLE_STORE_INFO:
+        if key == "tc":
+            form["si_tc"] = text(round(sum(info["credit_terms"]), 2) if info.get("credit_terms") else None)
+        else:
+            form[f"si_{key}"] = text(info.get(key))
+    for index, record in enumerate(departments):
+        form[f"dept_count_{index}"] = text(record.get("count"))
+        form[f"dept_amount_{index}"] = text(record.get("amount"))
+    form["printed_amount"] = text(printed.get("amount"))
+    form["printed_count"] = text(printed.get("count"))
+    merged = {**report, "store_info": info, "departments": departments}
+    return (*edited_report(merged, form), filled, conflicts)

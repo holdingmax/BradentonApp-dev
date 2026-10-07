@@ -31,4 +31,38 @@
     </div>
   </form>
 </div>
+{% if pending_reports %}
+<div class="card" style="margin-top: 18px; border-color: #FDE68A; background: #FFFBEB;">
+  <h2>Hoja pendiente del reporte mensual</h2>
+  <p class="muted">A estos reportes les falta algo que no se pudo leer (hoja borrosa). Cuando el manager mande la hoja de nuevo, subila acá: solo completa lo que faltaba, sin tocar lo ya guardado. Sirve el PDF o una foto.</p>
+  <ul style="margin: 8px 0 14px; padding-left: 20px; font-size: 13.5px;">
+    {% for p in pending_reports %}
+    <li><a href="{{ url_for('carga_datos_reporte_mensual', year=p.year, month=p.month) }}">{{ p.label }}</a>: falta {{ p['items']|join(', ') }}.</li>
+    {% endfor %}
+  </ul>
+  <form method="post" action="{{ url_for('carga_datos_reporte_mensual_hoja') }}" enctype="multipart/form-data" class="background-job-form">
+    <label class="muted">Mes</label>
+    <select name="year_month" class="rm-pending-month" required>
+      {% for p in pending_reports %}<option value="{{ p.year }}-{{ p.month }}">{{ p.label }}</option>{% endfor %}
+    </select>
+    <input type="hidden" name="year" value="{{ pending_reports[0].year }}">
+    <input type="hidden" name="month" value="{{ pending_reports[0].month }}">
+    <label class="muted">Hoja nueva (PDF o foto)</label>
+    <input type="file" name="hoja_files" id="reporte-hoja-input" multiple accept="application/pdf,image/*" class="accumulate-files" required>
+    <div class="form-actions">
+      <button type="submit">Completar el mes</button>
+      <button type="button" class="btn-secondary clear-file-btn" data-target="reporte-hoja-input">Limpiar</button>
+    </div>
+  </form>
+  <script>
+    document.querySelectorAll('.rm-pending-month').forEach(function (select) {
+      select.addEventListener('change', function () {
+        var parts = select.value.split('-'), form = select.form;
+        form.elements.year.value = parts[0];
+        form.elements.month.value = parts[1];
+      });
+    });
+  </script>
+</div>
+{% endif %}
 {% endblock %}

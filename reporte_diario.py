@@ -3421,7 +3421,7 @@ def _force_negative(value):
     return -abs(value)
 
 
-def _extract_store_info_fields(lines):
+def _extract_store_info_fields(lines, require_period=True):
     """
     Pull every Store Info value out of the OCR'd lines of pages 3(-4).
 
@@ -3437,8 +3437,12 @@ def _extract_store_info_fields(lines):
             period = _parse_period_from_to_line(line)
             if period:
                 break
-    if period is None:
+    if period is None and require_period:
         raise ValueError('No se encontró la línea "PERIOD FROM: ... TO: ..." en el PDF.')
+    # require_period=False: una hoja suelta del reporte mensual, pedida de
+    # nuevo porque salió borrosa (reporte_mensual.extract_replacement_sheet);
+    # la continuación de Store Info no imprime el período.
+    period = period or {"from_date": None, "from_time": None, "to_date": None, "to_time": None}
 
     # Cada campo se lee por separado (2026-10-02, pedido del usuario: "lo que
     # se pueda cargar de forma automática bien, y si está medio borroso y no

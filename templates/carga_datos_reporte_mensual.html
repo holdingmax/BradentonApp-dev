@@ -107,6 +107,24 @@
   </div>
   {% endif %}
 
+  {% if report and pending_items %}
+  <div class="rm-status warn rm-pending">
+    <div class="rm-status-title">Hoja pendiente: falta {{ pending_items|join(', ') }}.</div>
+    <p>Pedile al manager la hoja de nuevo y subila acá (PDF o foto): completa solo lo que falta, sin tocar lo ya guardado. También se puede cargar a mano en "Editar datos del reporte".</p>
+    <form method="post" action="{{ url_for('carga_datos_reporte_mensual_hoja') }}" enctype="multipart/form-data" class="background-job-form" style="margin-top: 10px;">
+      <input type="hidden" name="year" value="{{ year }}">
+      <input type="hidden" name="month" value="{{ month }}">
+      <input type="file" name="hoja_files" id="reporte-hoja-input" multiple accept="application/pdf,image/*" class="accumulate-files" required>
+      <div class="form-actions">
+        <button type="submit">Completar con la hoja nueva</button>
+        <button type="button" class="btn-secondary clear-file-btn" data-target="reporte-hoja-input">Limpiar</button>
+      </div>
+    </form>
+  </div>
+  {% elif report and report.sheet_added_at %}
+  <p class="muted" style="margin-top: 12px; font-size: 13px;">Completado con la hoja pedida de nuevo el {{ report.sheet_added_at[8:10] }}/{{ report.sheet_added_at[5:7] }} a las {{ report.sheet_added_at[11:16] }}.</p>
+  {% endif %}
+
   {% if report %}
   {% macro num(x) -%}{%- if x is not none -%}{{ "%.2f"|format(x) }}{%- endif -%}{%- endmacro %}
   {% set info = report.store_info %}

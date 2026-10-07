@@ -1966,6 +1966,7 @@ def carga_datos_reporte_mensual():
         other_store_info=other_store_info,
         other_departments=other_departments,
         notice=control_cierre.missing_notice(entries) if entries else None,
+        pending_items=reporte_mensual.pending_items(report) if report else [],
         year=year,
         month=month,
         month_name=_MONTH_NAMES_ES[month - 1],
@@ -1991,10 +1992,25 @@ def carga_datos_reporte_mensual_subir():
 def _run_reporte_mensual_job(job_id, paths):
     """Aislado por archivo: cada PDF es el reporte de un mes y reemplaza el de ese mes."""
     try:
-        loaded, problems, last = [], [], None
+        loaded, problems, sheets, last = [], [], [], None
         for index, path in enumerate(paths, start=1):
             try:
-                report = reporte_mensual.extract_monthly_report(path)
+                try:
+                    report = reporte_mensual.extract_monthly_report(path)
+                except ValueError as exc:
+                    # Una hoja suelta (sin "PERIOD FROM") es la que se pidió de
+                    # nuevo: si hay un solo mes con hoja pendiente, va a ese mes.
+                    pending = _pending_monthly_reports()
+                    if "PERIOD FROM" not in str(exc) or not pending:
+                        raise
+                    if len(pending) > 1:
+                        raise ValueError("Ese archivo no es un reporte mensual completo. Si es la hoja que faltaba, "
+                                         "subila en \"Hoja pendiente\", eligiendo el mes.") from None
+                    notice, left = _apply_monthly_sheet(pending[0]["year"], pending[0]["month"], path)
+                    (problems if left else sheets).append(notice)
+                    last = (pending[0]["year"], pending[0]["month"])
+                    jobs.update_job(job_id, done=index, total=len(paths))
+                    continue
                 reporte_mensual_db.save_report(report, os.path.basename(path))
                 label = f"{_MONTH_NAMES_ES[report['month'] - 1]} {report['year']}"
                 loaded.append(label)
@@ -2010,13 +2026,90 @@ def _run_reporte_mensual_job(job_id, paths):
         parts = []
         if loaded:
             parts.append("Reporte mensual cargado: " + ", ".join(loaded) + ".")
-        parts.extend(problems)
-        level = "success" if loaded and not problems else ("warning" if loaded else "error")
+        parts.extend(sheets + problems)
+        done = loaded or sheets or last
+        level = "success" if done and not problems else ("warning" if done else "error")
         jobs.update_job(
             job_id, status="done", done=len(paths), total=len(paths),
             notice=" ".join(parts), notice_level=level,
             redirect_url=(f"/carga-datos/reporte-mensual?year={last[0]}&month={last[1]}" if last
                           else "/carga-datos/reporte-mensual"),
+        )
+    except Exception as exc:
+        jobs.update_job(job_id, status="error", error=f"Error: {exc}")
+
+
+def _pending_monthly_reports():
+    """Meses cuyo reporte mensual tiene algo sin leer: [{year, month, label, items}]."""
+    pending = []
+    for year, month in reporte_mensual_db.list_months():
+        items = reporte_mensual.pending_items(reporte_mensual_db.get_report(year, month))
+        if items:
+            pending.append({"year": year, "month": month, "items": items,
+                            "label": f"{_MONTH_NAMES_ES[month - 1]} {year}"})
+    return pending
+
+
+def _apply_monthly_sheet(year, month, path):
+    """Completa el reporte del mes con la hoja pedida de nuevo; devuelve el aviso. ValueError si no sirve."""
+    report = reporte_mensual_db.get_report(year, month)
+    if report is None:
+        raise ValueError("Ese mes no tiene reporte mensual cargado.")
+    sheet = reporte_mensual.extract_replacement_sheet(path)
+    store_info, departments, printed_amount, printed_count, warnings, filled, conflicts = (
+        reporte_mensual.apply_replacement_sheet(report, sheet)
+    )
+    reporte_mensual_db.update_report(year, month, store_info, departments, printed_amount, printed_count,
+                                     warnings, from_sheet=True)
+    label = f"{_MONTH_NAMES_ES[month - 1]} {year}"
+    parts = [f"{label}: se completó con la hoja nueva " + ", ".join(filled) + "."]
+    if conflicts:
+        parts.append("No se pisó lo ya guardado que no coincide con la hoja: " + ", ".join(conflicts) + ".")
+    left = reporte_mensual.pending_items(reporte_mensual_db.get_report(year, month))
+    parts.append("Sigue faltando: " + ", ".join(left) + "." if left else "Ya no le falta nada.")
+    return " ".join(parts), bool(conflicts or left)
+
+
+@app.route("/carga-datos/reporte-mensual/hoja", methods=["POST"])
+def carga_datos_reporte_mensual_hoja():
+    """
+    Hoja pedida de nuevo (pedido del usuario, 2026-10-07): la hoja que salió
+    borrosa, mandada otra vez por el manager, completa lo que le faltaba al
+    reporte del mes (solo lo vacío; ver reporte_mensual.apply_replacement_sheet).
+    """
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    uploads = request.files.getlist("hoja_files")
+    if not (year and month):
+        return _error_response("Elegí el mes al que le falta la hoja.")
+    if not uploads or not any(u.filename for u in uploads):
+        return _error_response("Seleccioná la hoja (PDF o foto).")
+    paths = _save_uploads_to_workspace(uploads)
+    job_id = jobs.create_job(len(paths), kind="reporte_mensual")
+    threading.Thread(target=_run_reporte_mensual_hoja_job, args=(job_id, year, month, paths), daemon=True).start()
+    return jsonify({"job_id": job_id, "total": len(paths)})
+
+
+def _run_reporte_mensual_hoja_job(job_id, year, month, paths):
+    """Cada archivo es una hoja (o varias) del mismo mes; una que no sirve no frena las demás."""
+    try:
+        notices, problems, still_pending = [], [], False
+        for index, path in enumerate(paths, start=1):
+            try:
+                notice, left = _apply_monthly_sheet(year, month, path)
+                notices.append(notice)
+                still_pending = left
+            except ValueError as exc:
+                problems.append(str(exc))
+            except Exception as exc:
+                print(f"[carga-datos/reporte-mensual/hoja] {path}: {exc}")
+                problems.append("Un archivo no se pudo leer.")
+            jobs.update_job(job_id, done=index, total=len(paths))
+        level = "error" if not notices else ("warning" if problems or still_pending else "success")
+        jobs.update_job(
+            job_id, status="done", done=len(paths), total=len(paths),
+            notice=" ".join(notices + problems), notice_level=level,
+            redirect_url=f"/carga-datos/reporte-mensual?year={year}&month={month}",
         )
     except Exception as exc:
         jobs.update_job(job_id, status="error", error=f"Error: {exc}")
@@ -2071,6 +2164,7 @@ def carga_datos_reporte_diario():
         "carga_datos_reporte_diario.html",
         resume_job_id=(_active_job["id"] if _active_job else None),
         resume_monthly_job_id=(_monthly_job["id"] if _monthly_job else None),
+        pending_reports=_pending_monthly_reports(),
         **THEME_BY_KEY["reporte"],
     )
 
