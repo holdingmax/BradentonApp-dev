@@ -550,6 +550,16 @@ def has_detalle_on_date(fecha, detalle):
         conn.close()
 
 
+def get_first_posting_date():
+    """Fecha del primer movimiento guardado (date), o None: desde dónde está cargado Chase."""
+    conn = _connect()
+    try:
+        row = conn.execute("SELECT MIN(posting_date) AS first FROM chase_transactions").fetchone()
+    finally:
+        conn.close()
+    return date.fromisoformat(row["first"]) if row and row["first"] else None
+
+
 def get_last_posting_date():
     """Fecha del último movimiento guardado (date), o None: hasta dónde está cargado Chase."""
     conn = _connect()

@@ -4058,7 +4058,10 @@ def _cc_blocks(readings):
     """
     all_rows = [row for reading in readings for row in reading]
     tolerance = _median([row["height"] for row in all_rows]) if all_rows else 10
-    ends = [{"page": row["page"], "y": row["y"]} for row in all_rows if "due" in _cc_footer(row["text"])]
+    # El documento termina en AMOUNT DUE y el AMOUNT PAID de abajo (que va en el
+    # mismo grupo): si no, el PAID quedaba en la factura siguiente (50511242049).
+    ends = [{"page": row["page"], "y": row["y"]} for row in all_rows
+            if {"due", "paid"} & set(_cc_footer(row["text"]))]
     boundaries = [(c[0]["page"], max(e["y"] for e in c) + tolerance)
                   for c in _ticket_clusters(ends, tolerance * 6)]
     if not boundaries:
@@ -4273,37 +4276,78 @@ def _cc_date(block, filename):
             return read
     if len(named) == 1:
         return next(iter(named))  # el nombre del archivo manda (ver _extract_coca_invoices)
+    # "01.02.2024" da dos fechas posibles: los nombres de Coca-Cola van
+    # día.mes.año (39703471016 01.02.2024 es del 1 de febrero).
+    match = re.search(r"(?<!\d)(\d{1,2})\.(\d{1,2})\.(\d{4})(?!\d)", filename or "")
+    if match:
+        try:
+            return datetime(int(match.group(3)), int(match.group(2)), int(match.group(1)))
+        except ValueError:
+            pass
     winner = _ticket_winner(votes)
     return winner if winner is not None and votes[winner] >= 2 else None
 
 
-def _cc_amount(block, detail):
+def _cc_solid(values):
+    """Un número del pie leído sin dudas: en 3+ pasadas y el doble que cualquier otra lectura; o None."""
+    counts = _ticket_votes([{"v": v} for v in values], "v")
+    winner = _ticket_winner(counts)
+    if winner is None or counts[winner] < 3:
+        return None
+    if any(2 * n > counts[winner] for value, n in counts.items() if value != winner):
+        return None
+    return winner
+
+
+def _cc_amount(block, detail, returns=()):
     """
-    AMOUNT DUE confirmado (la suma de los renglones, o el leído que coincide
-    con TOTAL PRODUCTS + TOTAL ADJUSTMENTS) y la regla de AMOUNT PAID: si lo
-    pagado es otro importe (una devolución del mismo día ya neteada), vale lo
-    pagado. None si no se puede confirmar.
+    (importe, sale del PAID): AMOUNT DUE confirmado por otra parte del
+    ticket y la regla de AMOUNT PAID: si lo pagado es otro importe (una
+    devolución del mismo día ya neteada), vale lo pagado. (None, False) si
+    no se puede confirmar.
+
+    Confirma el DUE: la suma de los renglones; TOTAL PRODUCTS menos TOTAL
+    ADJUSTMENTS (el OCR suele perder el signo menos), admitiendo un dígito
+    confundido en uno de los dos (50709193040: 742.29 sale 142.29); la suma
+    de los totales de grupo; o, con una devolución del PDF (`returns`), DUE
+    más la devolución igual al PAID. Leer el DUE igual en todas las pasadas
+    NO alcanza: la fuente grande confunde siempre igual el 5 con el 6
+    (49119495039: $517.39 sale $617.39 en el DUE y en el PAID).
     """
     footer = block["footer"]
     due = detail["total"] if detail is not None else None
+    paid_votes = _ticket_votes([{"v": v} for v in footer.get("paid", [])], "v")
+    paid = _ticket_winner(paid_votes)
     if due is None:
-        # Sin renglones: el AMOUNT DUE leído vale si lo confirma otra parte del
-        # ticket: TOTAL PRODUCTS menos TOTAL ADJUSTMENTS (el OCR suele perder
-        # el signo menos de los descuentos) o la suma de los totales de grupo.
-        sums = {round(p - abs(a), 2) for p in _ticket_top(footer.get("products", []))
-                for a in _ticket_top(footer.get("adjustments", []))}
+        sums = set()
+        for p in _ticket_top(footer.get("products", [])):
+            for a in _ticket_top(footer.get("adjustments", [])):
+                a = abs(a)
+                sums.add(round(p - a, 2))
+                sums.update(round(v - a, 2) for v in _ticket_variants(p, _CC_CONFUSIONS))
+                sums.update(round(p - abs(v), 2) for v in _ticket_variants(a, _CC_CONFUSIONS))
         groups = [g["total"] for g in _cc_groups(block)]
         if groups:
             sums.add(round(sum(groups), 2))
         candidates = [d for d in _ticket_top(footer.get("due", [])) if d in sums]
         due = candidates[0] if len(candidates) == 1 else None
+    if due is None and returns:
+        solid_due, solid_paid = _cc_solid(footer.get("due", [])), _cc_solid(footer.get("paid", []))
+        if solid_due is not None and solid_paid is not None and abs(solid_due + sum(returns) - solid_paid) < 0.005:
+            due = solid_due
     if due is None:
-        return None
-    paid_votes = _ticket_votes([{"v": v} for v in footer.get("paid", [])], "v")
-    paid = _ticket_winner(paid_votes)
-    if paid is not None and paid not in (0, due) and 0 < paid < due and paid_votes[paid] >= 2:
-        return paid
-    return due
+        return None, False
+    if paid is not None and 0 < paid < due and paid_votes[paid] >= 2:
+        return paid, True
+    return due, False
+
+
+def _cc_candidates(block, returns=()):
+    """Importes posibles de una factura que no se pudo confirmar (para cruzarlos con Chase)."""
+    footer = block["footer"]
+    found = set(_ticket_top(footer.get("due", []))) | set(_ticket_top(footer.get("paid", [])))
+    found |= {round(d + sum(returns), 2) for d in list(found)} if returns else set()
+    return sorted(v for v in found if v > 0)
 
 
 def _cc_invoices(images, reading, filename, passes, cache=None):
@@ -4330,10 +4374,25 @@ def _cc_invoices(images, reading, filename, passes, cache=None):
                 pending = True
         if not pending:
             break
+    if not blocks:
+        raise ValueError("no se encontró el pie (AMOUNT DUE) de ninguna factura de Coca-Cola.")
+    # Devoluciones (RETURNS) del PDF: si la factura no la trae ya neteada en
+    # el AMOUNT PAID, se le resta (ver _cc_amount). Solo con una sola factura
+    # con importe en el PDF; si no, no se sabe a cuál va.
+    returns, unreadable_returns = [], 0
+    for block in blocks:
+        if block["returns"] and not block["sales"]:
+            value = _cc_solid([abs(v) for v in block["footer"].get("due", [])])
+            if value is None:
+                unreadable_returns += 1
+            elif value:
+                returns.append(-value)
+    sales = [b for b in blocks if not (b["returns"] and not b["sales"])
+             and any(v > 0 for v in b["footer"].get("due", []) + b["footer"].get("paid", []))]
     results = []
     for block in blocks:
         if block["returns"] and not block["sales"]:
-            continue  # devolución: ya neteada en la factura principal (AMOUNT PAID)
+            continue  # devolución: se resta en la factura principal (o ya viene neteada en AMOUNT PAID)
         key = (block["end"][0], round(block["end"][1] / 60))
         detail = resolved.get(key)
         number = _cc_number(block, filename)
@@ -4341,16 +4400,31 @@ def _cc_invoices(images, reading, filename, passes, cache=None):
             if block["products"] or block["numbers"]:
                 results.append({"error": "no se pudo leer el N° de invoice con seguridad.", "invoice_no": None})
             continue
-        amount = _cc_amount(block, detail)
+        date = _cc_date(block, filename)
+        if date is None:
+            results.append({"error": "no se pudo leer la fecha de la factura.", "invoice_no": int(number)})
+            continue
+        block_returns = returns if len(sales) == 1 else []
+        amount, from_paid = _cc_amount(block, detail, block_returns)
+        if amount and not from_paid and (returns or unreadable_returns):
+            # La devolución no vino neteada en el AMOUNT PAID: se resta (pedido
+            # del usuario, 2026-10-08: así está en el Excel de Proveedores,
+            # 43485344087 $1,068.62 − $15.22 = $1,053.40).
+            if unreadable_returns or len(sales) != 1:
+                results.append({"error": "trae una devolución en el mismo PDF que no se pudo descontar con "
+                                         "seguridad.", "invoice_no": int(number), "date": date,
+                                "candidates": _cc_candidates(block, block_returns)})
+                continue
+            amount = round(amount + sum(returns), 2)
         if amount is None:
             results.append({"error": "no se pudo leer el AMOUNT DUE con seguridad.", "invoice_no": int(number),
+                            "date": date, "candidates": _cc_candidates(block, block_returns),
                             "lines_error": failures.get(key)})
             continue
         if amount == 0:
             continue  # factura en $0.00: no deja deuda
-        date = _cc_date(block, filename)
-        if date is None:
-            results.append({"error": "no se pudo leer la fecha de la factura.", "invoice_no": int(number)})
+        if amount < 0:
+            results.append({"error": "dio un importe negativo.", "invoice_no": int(number)})
             continue
         results.append({"invoice_no": int(number), "date": date, "amount": amount,
                         "lines": detail["lines"] if detail is not None else None,
@@ -4826,8 +4900,7 @@ LINE_EXTRACTORS = {
     "red_bull": extract_red_bull_lines,
     "frito_lay": extract_frito_lay_lines,
     "midtown": extract_midtown_lines,
-    # "coca": extract_coca_lines -- pendiente (2026-10-07): en la comparación contra
-    # el Ledger el lector nuevo leyó 3 importes distintos en 11 PDFs; se revisa antes de enchufarlo.
+    "coca": extract_coca_lines,
     "sweetheart": extract_sweetheart_lines,
 }
 

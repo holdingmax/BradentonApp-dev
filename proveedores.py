@@ -695,6 +695,68 @@ def _extract_sweetheart_invoice(pdf_path):
     return _ticket_invoices(proveedores_productos.read_sweetheart_invoices(pdf_path), pdf_path, "Sweetheart")
 
 
+def _extract_coca_ticket_invoices(pdf_path):
+    """
+    Coca-Cola -- 2026-10-08: sale del lector de tickets
+    (proveedores_productos.read_coca_invoices) en vez de _extract_coca_invoices:
+    N°, fecha e importe votados entre varias lecturas, cada factura del PDF
+    por separado, devolución del mismo PDF descontada si el AMOUNT PAID no la
+    trae, y renglones de producto. Después se controla contra Chase
+    (_coca_bank_check). Sobre los PDFs del Drive, ningún importe distinto del
+    papel (las diferencias con el Ledger son del Ledger, ver HISTORIAL).
+    """
+    found = proveedores_productos.read_coca_invoices(pdf_path)
+    # Un PDF con solo una devolución (o una factura en $0.00) no trae nada
+    # para cargar y no es un error: la carga lo avisa como "PDF sin factura".
+    # Si no se vio ningún pie, read_coca_invoices ya tiró el error.
+    return _coca_bank_check(found)
+
+
+# Coca-Cola se paga con cheque unos días después de la entrega (en Chase,
+# "CHECK 1753 COCA"); 14 días alcanzan para los vistos (1 a 3 días).
+_COCA_CHECK_DAYS = 14
+
+
+def _coca_bank_check(invoices):
+    """
+    Pedido del usuario (2026-10-08): lo que se pagó en el banco determina el
+    importe real de una factura de Coca-Cola. Si Chase está cargado hasta
+    _COCA_CHECK_DAYS después de la factura: un importe leído que no es
+    ningún cheque de Coca-Cola de esos días no se carga y se avisa (va a
+    mano); una factura que no se pudo confirmar se carga si uno solo de sus
+    importes posibles es un cheque de esos días. Con Chase sin cargar
+    esos días (antes del primer movimiento o después del último), queda lo
+    leído.
+    """
+    from datetime import timedelta
+
+    import chase_db
+
+    first, last = chase_db.get_first_posting_date(), chase_db.get_last_posting_date()
+    if first is None or last is None:
+        return invoices
+    checks = [(datetime.strptime(t["posting_date"], "%Y-%m-%d").date(), round(-t["amount"], 2))
+              for t in chase_db.get_supplier_transactions("coca") if (t["amount"] or 0) < 0]
+    result = []
+    for invoice in invoices:
+        day = invoice.get("date")
+        if day is None or day.date() < first or day.date() + timedelta(days=_COCA_CHECK_DAYS) > last:
+            result.append(invoice)
+            continue
+        paid = {amount for when, amount in checks
+                if day.date() <= when <= day.date() + timedelta(days=_COCA_CHECK_DAYS)}
+        if "error" in invoice:
+            hits = paid & set(invoice.get("candidates") or [])
+            if len(hits) == 1:
+                invoice = {"invoice_no": invoice["invoice_no"], "date": day, "amount": hits.pop(),
+                           "lines": None, "lines_error": invoice.get("lines_error")}
+        elif invoice["amount"] not in paid:
+            invoice = {"error": f"el importe leído (${invoice['amount']:,.2f}) no coincide con ningún cheque de "
+                                f"Coca-Cola en Chase de esos días.", "invoice_no": invoice["invoice_no"]}
+        result.append(invoice)
+    return result
+
+
 def _extract_bimbo_invoice(pdf_path):
     """
     Bimbo Bakeries -- escaneo, puede traer una foto de cheque en otra
@@ -2515,7 +2577,7 @@ SUPPLIER_REGISTRY = {
         # leen limpio en ninguna página (caso real encontrado 2026-09-04).
         "detect": lambda text: ("coca" in text.lower() and "cola" in text.lower())
         or "outlet 501565447" in text.lower(),
-        "extract": _extract_coca_invoices,
+        "extract": _extract_coca_ticket_invoices,
     },
     "pepsi": {
         "label": "Pepsi Beverages Company",
