@@ -2359,3 +2359,33 @@ Pedido del usuario: revisar los controles buscando bugs, errores o código malic
 - **Años fuera de rango** (1, −3, 9999) daban 500 en Cierre, Lottery y Tarjetas: `_cierre_month` vuelve al año actual (Tarjetas usa `_cierre_month`). Reporte de precios sin "(None%)".
 - Barrido final: todas las páginas de Controles y la botonera con jul-oct 2026, dic 2025 y parámetros raros: ningún 500; ago/sep sin cambios.
 - **Sin tocar (decisión o menor)**: Control CMV tiene subida y Eliminar dentro de Controles (contra la regla del usuario; propuesto moverlo a Carga de Datos → CMV); un pago de Lottery/J.H. de los primeros días del mes que es del mes anterior podría marcarse en los dos; un PDF del detalle de cupones faltante en el medio se vería como diferencia; facturas del mismo día ordenadas como texto ("9" después de "10"); "Sumando Lottery" del Cierre copia el Excel (S57 = S48 + L33).
+
+## Sesión 2026-10-08, chat 26 (el usuario lo llamó "chat16"): Horas, Coca-Cola enchufado, ventas de Elistar, Ventas y costos, revisión de Carga de Datos y sesión de 30 minutos
+Commits `b9a0bdc`..`ee9e82d`, uno por tema, **sin pushear** (el usuario pushea).
+- **Horas, filas viejas**: 6 renglones pasados a horas exactas (H.MM → HH:MM real). Respaldo `horas_trabajo_antes_horas_exactas_20261008_110419.db`. Queda sin resolver Rick Leal del 03/08.
+- **Coca-Cola enchufado** (`b9a0bdc`, `256a00d`): el lector de tickets (`proveedores_productos._cc_*`) es el `extract` de "coca" en `SUPPLIER_REGISTRY` (`proveedores._extract_coca_ticket_invoices`), con estas reglas:
+  - El importe tiene que estar confirmado: TOTAL PRODUCTS − |TOTAL ADJUSTMENTS| (con un dígito confundible, `_CC_CONFUSIONS`), la suma de los totales de grupo o, con una devolución, DUE + devolución = PAID. Con el DUE leído sin dudas (`_cc_solid`: ≥3 votos y el doble que cualquier otra lectura) vale cualquier lectura de PRODUCTS/ADJ. **DUE = PAID solos no alcanzan**: 49119495039 lee $617.39 en los dos y es $517.39, porque el 5 sale 6 siempre.
+  - **Devoluciones** del mismo PDF (pedido del usuario): si el AMOUNT PAID no la trae neteada, se resta; si viene neteada (PAID sólido < DUE), vale el PAID. Una devolución mal leída en su hoja igual sirve si DUE − PAID es una de sus lecturas (39399414007).
+  - **Control contra Chase** (`proveedores._coca_bank_check`, ventana de 14 días): el monto pagado en el banco manda. Un importe que no está entre los cheques pasa a error; una factura con error y un solo candidato en Chase se confirma. Solo se aplica con cobertura (desde `chase_db.get_first_posting_date` y con ≥3 días con movimientos en la ventana) y cada cheque se usa una vez.
+  - **Banco** sobre los 85 PDFs del Drive: 59 OK, 13 a mano (pie ilegible, DUE/PAID contradictorios, N° ilegible, Money Order), 8 sin Ledger, 2 vacíos.
+  - **Errores del Ledger** confirmados con el papel y Chase (corregir en el Excel): 53252357026 $730.06 (el Ledger dice 730.03), 53868599010 $609.84 (609.4), 41552143026 $1,151.40 (1,208.66).
+  - 43266738012 ($1,332.66) no devuelve factura: 4 páginas, la primera es la foto de un cheque al revés y solo encuentra la hoja de RETURNS. Sin revisar.
+- **Elistar** (el usuario dio acceso; POS → Sales Insights por departamento, 5000 filas, la API JSON necesita `X-Requested-With`): ventas por producto de **jun-sep 2026** cargadas en CMV (`cmv_db.get_monthly_sales_rows`). Respaldo `cmv_antes_ventas_elistar_20261008_124937.db`. Octubre se carga a fin de mes. Elistar no guarda costos históricos.
+- **Gold Coast**: todas las facturas del Drive cargadas con renglones (respaldo `proveedores_antes_gce_20261008_140618.db`). En la carpeta de GCE hay PDFs que no son de GCE.
+- **Controles → Ventas y costos** (`03971db`, `/controles/ventas-costos`, `proveedores_productos.build_sales_cost_view`): cada producto vendido en el mes, con el costo de su última compra (por UPC) antes y después. Un cambio de precio cuenta desde $0.05 y 2 %. Con GCE: 1,043 sin compra, 617 sin cambios, 58 suben costo y no precio, 34 suben los dos, 53 cambian precio, 6 bajan costo.
+- **Toolbox** (pregunta del usuario): las bases están en `reportes_data/` (gitignored). Si se sube la app a otro servidor, los datos no viajan con git: hay que copiar `reportes_data/` aparte.
+- **Revisión de bugs de Carga de Datos** (`beb7125`):
+  - Reporte mensual: la hoja pendiente solo desde PDFs de 1-2 hojas (`_pdf_page_count`); un mes editado se vuelve a subir solo llenando lo vacío; la hoja tiene que cubrir del 1 al último día.
+  - Depósitos: volver a subir un recibo con otro tipo lo cambia (`depositos_db.set_kind`), salvo que esté editado.
+  - "Ver": la pestaña se abre en el click (antes la frenaba el bloqueador).
+  - Cancelar carga: avisa qué quedó cargado (`jobs` `cancel_note`).
+  - Validaciones: Caja, Horas (`parse_amount_input`), CMV del mes elegido, montos no finitos.
+  - Chase: las versiones viejas se emparejan por cercanía (`_stale_candidates`).
+  - Ice Machine `_undouble`, EFT repetido, J.H. con listas, Lottery con datetime, GCE "0/12".
+  - **Quedaron sin arreglar** (menores): edición por posición de campos, el prefetch sigue usando CPU tras cancelar, asignación Kia pos_only, decimales de cantidades CMV truncados, avisos "no se pudo leer" en guardados parciales, borrar el Daily Summary de J.H. no deshace cupones.
+- **Sesión de 30 minutos** (`b597a4d`):
+  - `SESSION_IDLE_SECONDS` en `require_login` (`session["_last_seen"]`; también `login_fresh`). La página avisa adentro con un cuadro y después lleva al login; la actividad se comparte entre pestañas (localStorage).
+  - "Recordarme" solo guarda el usuario en el navegador.
+  - **Test client**: ahora la sesión necesita `_user_id`, `_fresh: True`, `_id` (de `flask_login.utils._create_identifier` con el mismo User-Agent de Werkzeug y REMOTE_ADDR 127.0.0.1) y `_last_seen`.
+- **Nombres** (`6db3113`): inicio "Seleccioná un módulo" en negrita; "Reportes Diario/Mensual" → **"Reporte C-Store"**; Depósitos #65A30D y Horas #475569.
+- **Lección de git**: separar hunks con `git apply --cached --unidiff-zero` coloca mal las inserciones si se saltean hunks anteriores (rompió `chase_db.py` en `256a00d`, arreglado en `ee9e82d`). Lo que funcionó: aplicar los hunks -U0 elegidos sobre `git show HEAD:archivo` por su posición vieja y stagear con `hash-object` + `update-index`.
