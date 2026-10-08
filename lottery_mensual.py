@@ -283,6 +283,10 @@ def _chase_lottery_payments_around(year, month):
     return [{"date": date.fromisoformat(d), "amount": amount} for d, amount in sorted(payments)]
 
 
+def _chase_month_loaded(year, month):
+    return bool(chase_db.get_month_transactions(year, month))
+
+
 def payments_check(year, month):
     """
     El Debito de cada bloque que se paga en el mes (fecha confirmada o
@@ -312,7 +316,11 @@ def payments_check(year, month):
             used.add(index)
         diff = round(debit - chase["amount"], 2) if chase and debit is not None else None
         if chase is None:
-            covered = last_chase is not None and last_chase >= pay_date + timedelta(days=PAYMENT_WINDOW_DAYS)
+            # Cubierto = Chase cargado hasta después del pago y con movimientos
+            # en el mes del pago (revisión 2026-10-08: con meses de Chase sin
+            # cargar en el medio salía "sin pago" en rojo).
+            covered = (last_chase is not None and last_chase >= pay_date + timedelta(days=PAYMENT_WINDOW_DAYS)
+                       and _chase_month_loaded(pay_date.year, pay_date.month))
             status = "no_chase" if covered else "chase_not_loaded"
         else:
             status = "ok" if diff is not None and abs(diff) < 0.005 else ("incomplete" if missing else "diff")

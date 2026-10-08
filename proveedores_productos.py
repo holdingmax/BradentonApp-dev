@@ -5193,7 +5193,7 @@ def build_price_change_pdf(supplier_label, invoice, changed, dest_path):
             _pack_label(row),
             exact_money(row["previous_cost"], 2),
             exact_money(row["unit_cost"], 2),
-            f"{sign}{exact_money(row['shown_change'], 2)} ({sign}{row['change_pct']}%)",
+            f"{sign}{exact_money(row['shown_change'], 2)}" + (f" ({sign}{row['change_pct']}%)" if row.get("change_pct") is not None else ""),
             money(row.get("srp")),
             money(row.get("pos_price")),
             "" if row.get("margin_pct") is None else f"{row['margin_pct']}%",

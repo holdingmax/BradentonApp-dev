@@ -28,6 +28,7 @@ cálculo queda acá y en /controles/rapidos/precios.
 
 import calendar
 import json
+import math
 import os
 from datetime import date
 
@@ -52,13 +53,14 @@ DEFAULT_CAJA_LIMIT = 10500.0  # lo más alto que se ve un fin de semana normal
 def caja_limit():
     try:
         with open(_CONFIG_PATH, encoding="utf-8") as handle:
-            return float(json.load(handle)["caja_limit"])
+            value = float(json.load(handle)["caja_limit"])
     except (OSError, ValueError, KeyError, TypeError):
         return DEFAULT_CAJA_LIMIT
+    return value if math.isfinite(value) and value > 0 else DEFAULT_CAJA_LIMIT
 
 
 def set_caja_limit(value):
-    if value is None or value <= 0:
+    if value is None or not math.isfinite(value) or value <= 0:
         raise ValueError("El límite tiene que ser un monto mayor que cero.")
     os.makedirs(os.path.dirname(_CONFIG_PATH), exist_ok=True)
     try:
@@ -67,8 +69,11 @@ def set_caja_limit(value):
     except (OSError, ValueError):
         config = {}
     config["caja_limit"] = round(float(value), 2)
-    with open(_CONFIG_PATH, "w", encoding="utf-8") as handle:
+    # Se escribe aparte y se reemplaza: un corte a mitad no deja el archivo roto.
+    temp_path = _CONFIG_PATH + ".tmp"
+    with open(temp_path, "w", encoding="utf-8") as handle:
         json.dump(config, handle, indent=2)
+    os.replace(temp_path, _CONFIG_PATH)
 
 
 def caja_alert(saldo, limit):

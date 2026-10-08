@@ -163,11 +163,12 @@
   {% set d, c = jh_cards.detail, jh_cards.coupons %}
   <div class="ci-cross" id="ci-jh">
     <h2>Tarjetas contra J.H. Williams</h2>
-    <div class="ci-status {{ {'ok': 'ok', 'partial': 'ok', 'bad': 'bad-strong'}.get(jh_cards.status, 'none') if jh_cards.status != 'pending' else 'bad' }}">
+    <div class="ci-status {{ {'ok': 'ok', 'partial': 'ok', 'bad': 'bad-strong', 'pending': 'bad', 'unchecked': 'bad'}.get(jh_cards.status, 'none') }}">
       <div class="ci-status-title">
         {% if jh_cards.status == 'ok' %}Bien: lo vendido con tarjeta coincide con lo que informa J.H.
         {% elif jh_cards.status == 'partial' %}Coincide con lo que hay de J.H., pero falta {{ 'el Credit Card Daily Summary del mes' if not c else 'el detalle de cupones' }}.
         {% elif jh_cards.status == 'pending' %}Sin diferencias reales con J.H.: {{ money(-(d.diff_pending + d.diff_edge)) }} todavía sin depositar ({{ fmt_days(d.pending + d.edge) }}); se controla al subir el detalle de J.H. del mes siguiente.
+        {% elif jh_cards.status == 'unchecked' %}Coincide en lo que ya se puede controlar; quedan {{ money(d.unchecked) }} de días que el detalle de J.H. todavía no cubre.
         {% elif jh_cards.status == 'bad' %}{% if d and d.bad %}Diferencia real con J.H.: {{ money(d.diff_bad) }} ({{ fmt_days(d.bad) }}){% if d.pending or d.edge %}; {{ money(-(d.diff_pending + d.diff_edge)) }} todavía sin depositar ({{ fmt_days(d.pending + d.edge) }}){% endif %}.{% else %}El Credit Card Daily Summary de J.H. no coincide con los cupones cargados.{% endif %}
         {% else %}Todavía no hay datos de J.H. de {{ month_name }} {{ year }}.{% endif %}
       </div>

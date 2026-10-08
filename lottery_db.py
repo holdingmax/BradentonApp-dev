@@ -559,6 +559,11 @@ def _build_block(conn, iso_year, iso_week, days_by_date):
     )
     debito["pays_amount"] = _safe_add3(subtotal.get("pays_amount"), subtotal.get("skoff_sales_amount"), subtotal.get("sales_comm"))  # Q
     debito["net_debit"] = _safe_add(debito["sales"], debito["pays_amount"])  # V =+F+Q (de la fila Debito)
+    # Una semana sin ningún dato no debe $10 (el +10 fijo de la fórmula):
+    # queda vacía (revisión 2026-10-08).
+    if all(subtotal.get(f) is None for f in ("sales", "pagos", "comis", "prize_free_plays", "pays_amount",
+                                              "skoff_sales_amount", "sales_comm")):
+        debito["sales"] = debito["net_debit"] = None
 
     block_row = conn.execute(
         "SELECT chase_bank_date FROM lottery_blocks WHERE iso_year = ? AND iso_week = ?",

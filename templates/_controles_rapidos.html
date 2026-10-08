@@ -141,7 +141,7 @@
           </td>
           <td>{{ row.pos_cost|exact_money }}</td>
           <td>{{ row.unit_cost|exact_money(2) }}</td>
-          <td class="{{ 'qc-up' if row.diff > 0 else 'qc-down' }}">{{ "{:+.1f}".format(row.diff_pct) }}%</td>
+          <td class="{{ 'qc-up' if row.diff > 0 else 'qc-down' }}">{{ "{:+.1f}".format(row.diff_pct) ~ "%" if row.diff_pct is not none else "—" }}</td>
           <td>{{ money(row.pos_price) }}</td>
           <td class="{{ 'qc-up' if row.margin_pct is not none and row.margin_pct < 0 else '' }}">{{ "{:.1f}".format(row.margin_pct) ~ "%" if row.margin_pct is not none else "—" }}</td>
         </tr>

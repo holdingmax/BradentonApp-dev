@@ -57,6 +57,11 @@ _STORE_INFO_REQUIRED = (
 )
 
 
+def _is_empty(row, key):
+    """Un campo de Store Info sin cargar. Las tarjetas se guardan como lista: vacía = sin cargar."""
+    return not row.get(key) if key == "credit_terms" else row.get(key) is None
+
+
 def month_totals(rows):
     """Los totales del mes que usa el asiento, sumando los días."""
     return {
@@ -65,7 +70,7 @@ def month_totals(rows):
         "desc_otros": _total(rows, lambda r: r.get("desc_otros")),
         "tax_collect": _total(rows, lambda r: r.get("tax_collect")),
         "cash": _total(rows, lambda r: r.get("cash")),
-        "tc": _total(rows, lambda r: sum(r.get("credit_terms") or [])),
+        "tc": _total(rows, lambda r: sum(v for v in (r.get("credit_terms") or []) if v is not None)),
         "other": _total(rows, lambda r: r.get("other_amount")),
         "local_accounts": _total(rows, lambda r: r.get("local_accounts")),
         "lotto": _total(rows, _category(LOTTO_LABEL)),
@@ -145,8 +150,8 @@ def build_month_entries(rows, year, month):
         "missing_store_info": [r["date"] for r in rows if not r.get("store_info_source") and r["date"] <= last_day],
         "missing_departments": [r["date"] for r in loaded if not r.get("has_departments")],
         "empty_fields": [
-            (r["date"], [label for key, label in _STORE_INFO_REQUIRED if r.get(key) is None])
-            for r in loaded if any(r.get(key) is None for key, _label in _STORE_INFO_REQUIRED)
+            (r["date"], [label for key, label in _STORE_INFO_REQUIRED if _is_empty(r, key)])
+            for r in loaded if any(_is_empty(r, key) for key, _label in _STORE_INFO_REQUIRED)
         ],
     }
 
@@ -252,14 +257,21 @@ def jh_cards_check(entries, detail, coupons):
     # Rojo solo para lo real (pedido del usuario, 2026-10-07): los días que
     # todavía no se depositaron o que no se pueden comparar no son diferencia.
     real_bad = bool(result["detail"] and result["detail"]["bad"]) or bool(result["coupons"] and not result["coupons"]["ok"])
+    # Revisión 2026-10-08: "ok" del detalle no mira lo pendiente ni lo que el
+    # detalle no cubre, así que antes esos meses decían "Bien" igual.
+    detail_part = result["detail"]
     if not parts:
         result["status"] = "missing"
-    elif all(part["ok"] for part in parts):
-        result["status"] = "ok" if len(parts) == 2 else "partial"
     elif real_bad:
         result["status"] = "bad"
-    else:
+    elif detail_part and (detail_part["pending"] or detail_part["edge"]):
         result["status"] = "pending"
+    elif detail_part and abs(detail_part["unchecked"]) >= 0.005:
+        result["status"] = "unchecked"
+    elif all(part["ok"] for part in parts):
+        result["status"] = "ok" if len(parts) == 2 else "partial"
+    else:
+        result["status"] = "bad"
     return result
 
 

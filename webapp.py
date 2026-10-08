@@ -6844,10 +6844,7 @@ def controles_tarjetas():
     $15,000. Cálculo en control_tarjetas.py.
     """
     today = date.today()
-    year = request.args.get("year", type=int) or today.year
-    month = request.args.get("month", type=int) or today.month
-    if not (1 <= month <= 12):
-        month = today.month
+    year, month = _cierre_month()
     control = control_tarjetas.build_month_control(
         year, month, reportes_db.get_card_sales_by_date(), eft_db.get_coupon_gross_by_date(), today=today,
     )
@@ -6907,6 +6904,9 @@ def _cierre_month():
     month = request.args.get("month", type=int) or today.month
     if not (1 <= month <= 12):
         month = today.month
+    # Un año fuera de lo razonable tiraba error 500 (revisión 2026-10-08).
+    if not (2000 <= year <= 2100):
+        year = today.year
     return year, month
 
 
@@ -7016,7 +7016,7 @@ def controles_rapidos_panel(kind):
     today = date.today()
     year = request.args.get("year", type=int) or today.year
     month = request.args.get("month", type=int) or today.month
-    if not 1 <= month <= 12:
+    if not 1 <= month <= 12 or not 2000 <= year <= 2100:
         abort(404)
     day = controles_rapidos.reference_day(year, month, today)
     if day is None:  # mes futuro: el actual
@@ -7229,9 +7229,10 @@ def controles_cmv_subir():
     for upload in uploads:
         filename = os.path.basename(upload.filename)
         tmp_dir = tempfile.mkdtemp(prefix="elistar_")
-        path = os.path.join(tmp_dir, filename)
-        upload.save(path)
+        # Nombre fijo: un nombre raro ("..", "x?.xls") daba error 500.
+        path = os.path.join(tmp_dir, "elistar.xls")
         try:
+            upload.save(path)
             report = control_cmv.read_elistar_report(path)
         except ValueError as exc:
             errors.append(str(exc))
@@ -7257,6 +7258,8 @@ def controles_cmv_subir():
 
 @app.route("/controles/cmv/<int:year>/<int:month>/<kind>/eliminar", methods=["POST"])
 def controles_cmv_eliminar(year, month, kind):
+    if kind not in ("depts", "pl"):
+        abort(404)
     control_cmv_db.delete_report(year, month, kind)
     return redirect(url_for("controles_cmv", year=year, month=month))
 

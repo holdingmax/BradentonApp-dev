@@ -321,11 +321,17 @@ def build_control(days_departments, monthly_departments, cmv_departments, elista
                 a, b = mine.get(name, 0.0), el.get(name, 0.0)
                 if loaded and abs(a - b) > TOLERANCE:
                     diffs.append({"group": name, "days": a, "elistar": b, "diff": round(a - b, 2)})
-            fuel_el, fuel_mine = el.get(FUEL), (fuel_by_date or {}).get(iso)
+            # Un día que Elistar trae sin combustible es $0 (la lectura saca los
+            # ceros); si falta de un lado y del otro hay venta, no está bien
+            # (revisión 2026-10-08: antes pasaba como "ok").
+            fuel_mine = (fuel_by_date or {}).get(iso)
+            fuel_el = el.get(FUEL, 0.0 if iso in elistar["days"] else None)
             fuel_diff = None if fuel_el is None or fuel_mine is None else round(fuel_mine - fuel_el, 2)
+            fuel_missing = fuel_diff is None and abs(fuel_el or fuel_mine or 0.0) > TOLERANCE
             day_rows.append({"date": iso, "loaded": loaded, "diffs": diffs, "fuel_elistar": fuel_el,
-                             "fuel_days": fuel_mine, "fuel_diff": fuel_diff,
-                             "ok": loaded and not diffs and (fuel_diff is None or abs(fuel_diff) <= TOLERANCE)})
+                             "fuel_days": fuel_mine, "fuel_diff": fuel_diff, "fuel_missing": fuel_missing,
+                             "ok": loaded and not diffs and not fuel_missing
+                                   and (fuel_diff is None or abs(fuel_diff) <= TOLERANCE)})
         bad_days = [r for r in day_rows if r["loaded"] and not r["ok"]]
         if bad_days:
             issues.append(f"{len(bad_days)} día(s) con diferencias contra Elistar: "
@@ -336,6 +342,12 @@ def build_control(days_departments, monthly_departments, cmv_departments, elista
                           + ", ".join(f"{r['date'][8:10]}/{r['date'][5:7]}" for r in missing) + ".")
 
     cmv_problems = [d for d in departments if "CMV" in d["problems"]]
+    # El "Bien" de arriba dice que coinciden diarios, mensual y Elistar: sin
+    # mensual o con el CMV distinto no se puede decir (revisión 2026-10-08).
+    if cmv_problems:
+        issues.append(f"{len(cmv_problems)} departamento(s) no coinciden con las ventas del CMV.")
+    if elistar and monthly_departments is None:
+        issues.append("Falta el reporte mensual del POS de este mes para cruzarlo.")
     return {
         "departments": departments,
         "groups": groups,
