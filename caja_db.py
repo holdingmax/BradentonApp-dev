@@ -202,12 +202,14 @@ def get_month_pending_expenses(year, month):
 
 
 def delete_pending_expense(pending_id):
+    """Borra un comprobante "Para confirmar"; True si existía."""
     conn = _connect()
     try:
-        conn.execute("DELETE FROM caja_expense_pending WHERE id = ?", (pending_id,))
+        deleted = conn.execute("DELETE FROM caja_expense_pending WHERE id = ?", (pending_id,)).rowcount
         conn.commit()
     finally:
         conn.close()
+    return bool(deleted)
 
 
 def delete_expense_item(item_id):

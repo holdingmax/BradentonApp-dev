@@ -35,13 +35,18 @@ def _money(text):
 
 
 def _undouble(line):
-    """El encabezado sale con cada letra repetida ("FFrroomm::MMaayy"): se vuelve a "From:May"."""
-    words = []
-    for word in line.split(" "):
-        if len(word) >= 2 and len(word) % 2 == 0 and all(word[i] == word[i + 1] for i in range(0, len(word), 2)):
-            word = word[::2]
-        words.append(word)
-    return " ".join(words)
+    """
+    El encabezado sale con cada letra repetida ("FFrroomm::MMaayy"): se vuelve
+    a "From:May". Solo si TODA la línea viene repetida: "Totals: 66" (66
+    transacciones) se leía como 6 (revisión 2026-10-08).
+    """
+    def doubled(word):
+        return len(word) >= 2 and len(word) % 2 == 0 and all(word[i] == word[i + 1] for i in range(0, len(word), 2))
+
+    words = [word for word in line.split(" ") if word]
+    if not words or not all(doubled(word) for word in words):
+        return line
+    return " ".join(word[::2] for word in words)
 
 
 def _parse_date(text):

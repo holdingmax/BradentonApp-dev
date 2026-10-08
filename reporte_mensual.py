@@ -10,6 +10,7 @@ es reporte_mensual_db.py.
 """
 
 import calendar
+import math
 import re
 
 from reporte_diario import extract_store_info_from_pdf, group_department_sales, parse_elistar_daily_pdf_page
@@ -126,6 +127,9 @@ def parse_amount(text):
         return None
     negative = text.startswith("(") and text.endswith(")")
     value = float(text.strip("()"))
+    # "nan", "inf" o "1e30" pasaban como números (revisión 2026-10-08).
+    if not math.isfinite(value) or abs(value) >= 1e9:
+        raise ValueError(f"{text}: no es un importe válido.")
     return -value if negative else value
 
 
@@ -448,8 +452,12 @@ def apply_replacement_sheet(report, sheet):
     if sheet["period"]:
         from_date, to_date = sheet["period"]
         month = (report["year"], report["month"])
-        if (from_date.year, from_date.month) != month or (to_date.year, to_date.month) != month:
-            raise ValueError(f"La hoja es del {_ddmmyyyy(from_date)} al {_ddmmyyyy(to_date)}, no de este mes.")
+        last_day = calendar.monthrange(*month)[1]
+        # El mes entero: un Close Store diario del mismo mes (14/09 al 15/09)
+        # completaba el mensual con los números de un día (revisión 2026-10-08).
+        if ((from_date.year, from_date.month, from_date.day) != (*month, 1)
+                or (to_date.year, to_date.month, to_date.day) != (*month, last_day)):
+            raise ValueError(f"La hoja es del {_ddmmyyyy(from_date)} al {_ddmmyyyy(to_date)}, no del mes entero.")
 
     info = dict(report["store_info"])
     departments = [dict(d) for d in report.get("departments") or []]
@@ -478,6 +486,11 @@ def apply_replacement_sheet(report, sheet):
     for record in sheet["departments"] or []:
         current = by_key.get(_department_key(record["department"]))
         if current is None:
+            if report.get("departments"):
+                # El mes ya tiene sus departamentos: un nombre que no coincide es
+                # una mala lectura ("S0DA"), no un departamento nuevo.
+                conflicts.append(f"{record['department']} (no está entre los departamentos del mes)")
+                continue
             departments.append(dict(record))
             filled.append(f"Departamento {record['department']}")
             continue

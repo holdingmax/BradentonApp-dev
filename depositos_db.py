@@ -116,6 +116,16 @@ def find_by_source_page(source_filename, page_index, tx_number=None):
         conn.close()
 
 
+def set_kind(deposit_id, kind, description):
+    """Cambia la aclaración de un recibo vuelto a subir con otro nombre (no cuenta como corrección a mano)."""
+    conn = _connect()
+    try:
+        conn.execute("UPDATE deposits SET kind = ?, description = ? WHERE id = ?", (kind, description, deposit_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def update_deposit(deposit_id, deposit_date, amount, description, kind):
     """
     Corrección a mano. Si cambia la fecha, el depósito pasa al mes de la

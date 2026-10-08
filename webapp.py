@@ -13,6 +13,7 @@ igual que el desktop, probando cada uno antes de seguir con el próximo.
 import calendar
 import json
 import os
+import math
 import re
 import sqlite3
 import shutil
@@ -2052,6 +2053,16 @@ def carga_datos_reporte_mensual_subir():
     return jsonify({"job_id": job_id, "total": len(paths)})
 
 
+def _pdf_page_count(path):
+    """Cantidad de hojas de un PDF (una foto o un PDF ilegible cuentan como 1)."""
+    try:
+        import pdfplumber
+        with pdfplumber.open(path) as pdf:
+            return len(pdf.pages)
+    except Exception:
+        return 1
+
+
 def _run_reporte_mensual_job(job_id, paths):
     """Aislado por archivo: cada PDF es el reporte de un mes y reemplaza el de ese mes."""
     try:
@@ -2064,7 +2075,10 @@ def _run_reporte_mensual_job(job_id, paths):
                     # Una hoja suelta (sin "PERIOD FROM") es la que se pidió de
                     # nuevo: si hay un solo mes con hoja pendiente, va a ese mes.
                     pending = _pending_monthly_reports()
-                    if "PERIOD FROM" not in str(exc) or not pending:
+                    # Solo un PDF de 1 o 2 hojas: un reporte mensual (o un Close
+                    # Store) entero con el período borroso no es la hoja pedida y
+                    # completaba el mes pendiente con otro mes (revisión 2026-10-08).
+                    if "PERIOD FROM" not in str(exc) or not pending or _pdf_page_count(path) > 2:
                         raise
                     if len(pending) > 1:
                         raise ValueError("Ese archivo no es un reporte mensual completo. Si es la hoja que faltaba, "
@@ -2074,8 +2088,29 @@ def _run_reporte_mensual_job(job_id, paths):
                     last = (pending[0]["year"], pending[0]["month"])
                     jobs.update_job(job_id, done=index, total=len(paths))
                     continue
-                reporte_mensual_db.save_report(report, os.path.basename(path))
                 label = f"{_MONTH_NAMES_ES[report['month'] - 1]} {report['year']}"
+                existing = reporte_mensual_db.get_report(report["year"], report["month"])
+                if existing and (existing.get("edited_at") or existing.get("sheet_added_at")):
+                    # El mes tiene correcciones a mano o la hoja pedida de nuevo:
+                    # el PDF vuelto a subir solo completa lo vacío, como una hoja
+                    # (antes las borraba sin aviso; revisión 2026-10-08).
+                    sheet = {"period": None,
+                             "store_info": {k: v for k, v in report["store_info"].items() if v is not None},
+                             "departments": report.get("departments"),
+                             "printed_department_total": report.get("printed_department_total")}
+                    store_info, departments, printed_amount, printed_count, warnings, filled, conflicts = (
+                        reporte_mensual.apply_replacement_sheet(existing, sheet))
+                    reporte_mensual_db.update_report(report["year"], report["month"], store_info, departments,
+                                                     printed_amount, printed_count, warnings, from_sheet=True)
+                    notice = f"{label}: tiene datos corregidos a mano o con la hoja nueva, así que el PDF solo completó lo vacío"
+                    notice += (" (" + ", ".join(filled) + ")." if filled else "; no faltaba nada.")
+                    if conflicts:
+                        notice += " No se pisó lo guardado que no coincide con el PDF: " + ", ".join(conflicts) + "."
+                    (problems if conflicts else sheets).append(notice)
+                    last = (report["year"], report["month"])
+                    jobs.update_job(job_id, done=index, total=len(paths))
+                    continue
+                reporte_mensual_db.save_report(report, os.path.basename(path))
                 loaded.append(label)
                 last = (report["year"], report["month"])
                 problems.extend(f"{label}: {warning}" for warning in report["warnings"])
@@ -4372,6 +4407,10 @@ def job_status(job_id):
             # solo lo llevan los jobs que lo necesitan (ver jobs.update_job
             # en cada _run_*_job de Carga de Datos), None para el resto.
             "redirect_url": job.get("redirect_url"),
+            # Cancelada: si el hilo todavía termina el archivo que leía, y qué
+            # alcanzó a quedar guardado (jobs._touch_locked).
+            "stopping": bool(job.get("stopping")),
+            "cancel_note": job.get("cancel_note"),
         }
     )
 
@@ -5663,6 +5702,14 @@ def carga_datos_caja_exportar_pdf():
     return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
 
 
+def _expense_amount(text):
+    """Monto de un gasto escrito a mano; ValueError si no es un número finito y razonable ("nan", "inf")."""
+    amount = float((text or "").strip())
+    if not math.isfinite(amount) or abs(amount) >= 1e7:
+        raise ValueError(text)
+    return amount
+
+
 @app.route("/carga-datos/caja/gastos/agregar", methods=["POST"])
 def carga_datos_caja_gastos_agregar():
     """
@@ -5679,7 +5726,7 @@ def carga_datos_caja_gastos_agregar():
     month = request.form.get("month", type=int)
 
     try:
-        amount = float(amount_raw)
+        amount = _expense_amount(amount_raw)
     except ValueError:
         flash("El monto tiene que ser un número válido.", "error")
         return redirect(url_for("carga_datos_caja", year=year, month=month))
@@ -5807,13 +5854,17 @@ def carga_datos_caja_gastos_pendiente_agregar(pending_id):
     year = request.form.get("year", type=int)
     month = request.form.get("month", type=int)
     try:
-        amount = float((request.form.get("amount") or "").strip())
+        amount = _expense_amount(request.form.get("amount"))
         parsed_date = datetime.strptime(request.form.get("date") or "", "%Y-%m-%d").date()
     except ValueError:
         flash("Completá la fecha y el monto del gasto antes de agregarlo.", "error")
         return redirect(url_for("carga_datos_caja", year=year, month=month))
+    # Primero se saca de "Para confirmar": un segundo envío (otra pestaña,
+    # "Atrás") ya no lo encuentra y no duplica el gasto (revisión 2026-10-08).
+    if not caja_db.delete_pending_expense(pending_id):
+        flash("Ese comprobante ya se había agregado o descartado.", "info")
+        return redirect(url_for("carga_datos_caja", year=year, month=month))
     caja_db.add_expense_item(parsed_date, amount, request.form.get("detail"), source="comprobante")
-    caja_db.delete_pending_expense(pending_id)
     if year and month and (parsed_date.year, parsed_date.month) != (year, month):
         flash(f"Gasto agregado en {parsed_date:%d/%m/%Y}, que es de otro mes.", "info")
     return redirect(url_for("carga_datos_caja", year=year, month=month))
@@ -6461,8 +6512,8 @@ def carga_datos_horas_trabajo_empleado_editar(employee_id):
     name = (request.form.get("employee_name") or "").strip()
     try:
         hours, hours_label = horas_trabajo.parse_hours_input(request.form.get("hours") or "0")
-        rate = float((request.form.get("rate") or "0").strip())
-        deduct = float((request.form.get("deduct") or "0").strip())
+        rate = horas_trabajo.parse_amount_input(request.form.get("rate"))
+        deduct = horas_trabajo.parse_amount_input(request.form.get("deduct"))
     except ValueError:
         flash("No se pudo guardar: las horas van como 26:48 (o 26.8) y tarifa/descuento como números.", "error")
         return redirect(url_for("carga_datos_horas_trabajo_historial", year=year, month=month))
@@ -6485,9 +6536,8 @@ def carga_datos_horas_trabajo_empleado_agregar(week_id):
 
     try:
         hours, hours_label = horas_trabajo.parse_hours_input(request.form.get("hours") or "0")
-        rate_raw = (request.form.get("rate") or "").strip()
-        rate = float(rate_raw) if rate_raw else horas_trabajo_db.DEFAULT_HOURLY_RATE
-        deduct = float((request.form.get("deduct") or "0").strip())
+        rate = horas_trabajo.parse_amount_input(request.form.get("rate"), horas_trabajo_db.DEFAULT_HOURLY_RATE)
+        deduct = horas_trabajo.parse_amount_input(request.form.get("deduct"))
     except ValueError:
         flash("No se pudo agregar: las horas van como 26:48 (o 26.8) y tarifa/descuento como números.", "error")
         return redirect(url_for("carga_datos_horas_trabajo_historial", year=year, month=month))
@@ -6666,7 +6716,17 @@ def carga_datos_cmv_ventas_subir():
     repeated_departments = set()
     unmapped_departments = set()
     files_failed = 0
+    other_month = []
     for file_index, path in enumerate(paths):
+        # El Export de Elistar trae el período en el nombre
+        # ("3341-top-selling-2026-09-01-2026-09-30.csv"): un archivo de otro mes
+        # que el elegido no se guarda (antes se guardaba en el mes del selector,
+        # que arranca en el actual; revisión 2026-10-08).
+        period = re.search(r"(\d{4})-(\d{2})-\d{2}-(\d{4})-(\d{2})-\d{2}", os.path.basename(path))
+        if period and {(int(period.group(1)), int(period.group(2))),
+                       (int(period.group(3)), int(period.group(4)))} != {(year, month)}:
+            other_month.append(f"{period.group(2)}/{period.group(1)}")
+            continue
         try:
             frame = parse_monthly_sales_file(path)
         except Exception as exc:
@@ -6722,10 +6782,14 @@ def carga_datos_cmv_ventas_subir():
         )
     if files_failed:
         parts.append(f"{files_failed} archivo(s) no se pudieron leer.")
-    if not parts:
-        flash("No se pudo guardar nada de este lote.", "error")
+    if other_month:
+        parts.append(f"{len(other_month)} archivo(s) son de otro mes ({', '.join(other_month)}) y no se guardaron: "
+                     f"subilos eligiendo ese mes.")
+    if not rows_by_dept:
+        flash(" ".join(parts) if parts else "No se pudo guardar nada de este lote.", "error")
     else:
-        flash(" ".join(parts), "warning" if (unmapped_departments or files_failed or repeated_departments) else "success")
+        flash(" ".join(parts), "warning" if (unmapped_departments or files_failed or repeated_departments
+                                             or other_month) else "success")
 
     return redirect(url_for("carga_datos_cmv_ventas_historial", year=year, month=month))
 
@@ -7379,23 +7443,24 @@ def carga_datos_gettel_cierre():
     if not uploads:
         return _error_response("Seleccioná los Excel de Cierre.")
     read, errors = [], []
+    # Guardado adentro del try y avisos sin el nombre del archivo: un nombre
+    # inválido daba 500 (revisión 2026-10-08).
     for upload in uploads:
-        filename = os.path.basename(upload.filename)
-        tmp_dir = tempfile.mkdtemp(prefix="kia_toyota_")
-        path = os.path.join(tmp_dir, filename)
-        upload.save(path)
+        path = None
         try:
+            path, filename = _save_upload_to_workspace(upload)
             data = cuenta_kia_toyota.read_control_workbook(path)
             if not data["days"] and not data["payments"]:
-                errors.append(f"{filename}: no tiene hojas de Gettel-Toyota.")
+                errors.append("Un Excel no tiene hojas de Gettel-Toyota.")
                 continue
             new_days, new_payments = cuenta_kia_toyota_db.save_import(data, filename)
             read.append((len(data["days"]), new_payments))
         except Exception as exc:
-            print(f"[carga-datos/gettel/cierre] {filename}: {exc}")
-            errors.append(f"{filename}: no se pudo leer (tiene que ser un Excel de Cierre).")
+            print(f"[carga-datos/gettel/cierre] {upload.filename}: {exc}")
+            errors.append("Un archivo no se pudo leer (tiene que ser un Excel de Cierre).")
         finally:
-            shutil.rmtree(tmp_dir, ignore_errors=True)
+            if path:
+                shutil.rmtree(os.path.dirname(path), ignore_errors=True)
     if read:
         flash(f"Leídos {len(read)} Excel: {sum(n for _, n in read)} pago(s) nuevo(s).", "success")
     for message in errors:
@@ -7491,7 +7556,7 @@ def _link_ice_deposits_to_chase():
 def _run_depositos_job(job_id, pdf_paths, fallback_period):
     """Cada PDF es un Payment Summary (con texto) o un PDF de recibos de depósito (fotos); aislado por archivo."""
     try:
-        summaries = replaced = deposits = incomplete = duplicates = failed = 0
+        summaries = replaced = deposits = incomplete = duplicates = failed = retyped = kept = 0
         problems, last_period = [], None
         for index, pdf_path in enumerate(pdf_paths, start=1):
             filename = os.path.basename(pdf_path)
@@ -7503,8 +7568,9 @@ def _run_depositos_job(job_id, pdf_paths, fallback_period):
                     summaries += 1
                     last_period = ice_machine.month_of(summary["to_date"])
                 else:
-                    s, i, d, period = import_deposit_pdf(pdf_path, filename, fallback_period)
+                    s, i, d, period, r, k = import_deposit_pdf(pdf_path, filename, fallback_period)
                     deposits, incomplete, duplicates = deposits + s, incomplete + i, duplicates + d
+                    retyped, kept = retyped + r, kept + k
                     last_period = period or last_period
             except ValueError as exc:
                 problems.append(str(exc))
@@ -7522,7 +7588,12 @@ def _run_depositos_job(job_id, pdf_paths, fallback_period):
             parts.append(f"{incomplete} recibo(s) con algún dato sin leer: completalo en Depósitos.")
         if duplicates:
             parts.append(f"{duplicates} recibo(s) ya estaban cargados.")
-        linked = _link_ice_deposits_to_chase() if deposits else 0
+        if retyped:
+            parts.append(f"{retyped} de ellos cambiaron de tipo por la aclaración nueva del nombre del archivo.")
+        if kept:
+            parts.append(f"{kept} traen otra aclaración en el nombre, pero ya estaban corregidos a mano: "
+                         "no se cambiaron (editalos en Depósitos si hace falta).")
+        linked = _link_ice_deposits_to_chase() if deposits or retyped else 0
         if linked:
             parts.append(f"{linked} depósito(s) de Chase quedaron categorizados por su recibo (Ice Machine o Vaccumms).")
         parts.extend(problems)
@@ -7550,8 +7621,12 @@ def carga_datos_resumen_eliminar(summary_no):
 
 
 def import_deposit_pdf(pdf_path, filename, fallback_period):
-    """Divide un PDF en depósitos y los guarda. Devuelve (guardados, incompletos, duplicados, primer_período)."""
-    saved = incomplete = duplicates = 0
+    """
+    Divide un PDF en depósitos y los guarda. Devuelve (guardados,
+    incompletos, duplicados, primer_período, aclaraciones cambiadas,
+    aclaraciones que no se cambiaron porque el recibo se corrigió a mano).
+    """
+    saved = incomplete = duplicates = retyped = kept = 0
     first_period = None
     for item in depositos.extract_deposits_from_pdf(pdf_path, filename):
         deposit_date = item["date"]
@@ -7560,11 +7635,21 @@ def import_deposit_pdf(pdf_path, filename, fallback_period):
         # También por archivo y página cuando el recibo está completo: si el
         # usuario ya corrigió a mano el monto o la fecha, find_duplicate no
         # lo encuentra con lo que vuelve a leer el OCR y se duplicaba.
-        if (
-            (complete and depositos_db.find_duplicate(item["tx_number"], iso, item["amount"]))
-            or depositos_db.find_by_source_page(filename, item["page"], item["tx_number"])
-        ):
+        existing_id = ((complete and depositos_db.find_duplicate(item["tx_number"], iso, item["amount"]))
+                       or depositos_db.find_by_source_page(filename, item["page"], item["tx_number"]))
+        if existing_id:
             duplicates += 1
+            # Vuelto a subir con la aclaración agregada o cambiada en el nombre
+            # ("#133 (Ice Machine)"): toma la nueva (revisión 2026-10-08: antes
+            # quedaba como estaba, sin aviso). Lo corregido a mano no se toca.
+            existing = depositos_db.get_deposit(existing_id)
+            if existing and item["kind"] and existing.get("kind") != item["kind"]:
+                if existing.get("edited"):
+                    kept += 1
+                else:
+                    depositos_db.set_kind(existing_id, item["kind"],
+                                          depositos.default_description(existing.get("tx_number"), item["kind"]))
+                    retyped += 1
             continue
         kind = item["kind"] or _chase_kind_for(deposit_date, item["amount"])
         year, month = (deposit_date.year, deposit_date.month) if deposit_date else fallback_period
@@ -7582,7 +7667,7 @@ def import_deposit_pdf(pdf_path, filename, fallback_period):
         first_period = first_period or (year, month)
         if not complete:
             incomplete += 1
-    return saved, incomplete, duplicates, first_period
+    return saved, incomplete, duplicates, first_period, retyped, kept
 
 
 @app.route("/controles/depositos/<int:deposit_id>/guardar", methods=["POST"])
@@ -7872,6 +7957,14 @@ def _run_carga_datos_proveedores_job(job_id, paths):
             except _PDF_EXTRACTION_EXCEPTIONS as exc:
                 print(f"[carga-datos/proveedores] {filename}: {exc}")
                 failed.append({"filename": filename, "supplier": getattr(exc, "supplier_label", None)})
+                jobs.update_job(job_id, done=index, total=len(paths))
+                continue
+            except Exception as exc:
+                # Cualquier otro error de un lector (ZeroDivisionError, KeyError,
+                # la base de Chase bloqueada en el control de Coca-Cola) queda en
+                # ese archivo: antes cortaba el lote entero (revisión 2026-10-08).
+                print(f"[carga-datos/proveedores] {filename}: {type(exc).__name__}: {exc}")
+                failed.append({"filename": filename, "supplier": None})
                 jobs.update_job(job_id, done=index, total=len(paths))
                 continue
             # Gold Coast y Red Bull devuelven aparte cada factura del PDF que no

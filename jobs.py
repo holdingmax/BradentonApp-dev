@@ -132,9 +132,25 @@ def create_job(total, kind=None):
     return job_id
 
 
-def _touch_locked(job):
-    """Se llama con _lock tomado: corta la carga si se canceló (ver JobCancelled)."""
+def _touch_locked(job, fields=None):
+    """
+    Se llama con _lock tomado: corta la carga si se canceló (ver
+    JobCancelled). Antes de cortar deja en `cancel_note` lo que ya había
+    quedado guardado, para que la página lo avise (revisión 2026-10-08: con
+    un solo archivo, la carga se guardaba entera y la página decía
+    "cancelada" sin más).
+    """
     if job["cancel_requested"]:
+        fields = fields or {}
+        if fields.get("status") in ("done", "error"):
+            final = fields.get("notice") or fields.get("error")
+            job["cancel_note"] = ("La carga ya había terminado cuando se canceló" +
+                                  (": " + final if final else "; lo leído quedó guardado."))
+        else:
+            saved = fields.get("done", job.get("done") or 0)
+            if saved:
+                job["cancel_note"] = (f"Se canceló: {saved} de {job.get('total') or saved} archivo(s) ya habían "
+                                      "quedado cargados.")
         job["stopping"] = False
         raise JobCancelled(job["id"])
     job["updated_at"] = time.time()
@@ -143,14 +159,14 @@ def _touch_locked(job):
 def update_job(job_id, **fields):
     with _lock:
         if job_id in _jobs:
-            _touch_locked(_jobs[job_id])
+            _touch_locked(_jobs[job_id], fields)
             _jobs[job_id].update(fields)
 
 
 def increment_done(job_id, done, total):
     with _lock:
         if job_id in _jobs:
-            _touch_locked(_jobs[job_id])
+            _touch_locked(_jobs[job_id], {"done": done})
             _jobs[job_id]["done"] = done
             _jobs[job_id]["total"] = total
 

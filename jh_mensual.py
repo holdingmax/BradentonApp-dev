@@ -99,8 +99,10 @@ def _rows_completing_total(kind, rows, printed, known_rows):
     seen = {r[key] for r in rows}
     first, last = min(r["date"] for r in rows), max(r["date"] for r in rows)
     others = [r for r in known_rows if r[key] not in seen]
-    older = sorted((r for r in others if r["date"] < first), key=lambda r: r["date"], reverse=True)
-    newer = sorted((r for r in others if r["date"] > last), key=lambda r: r["date"])
+    # Con <= / >=: el corte de página puede caer en medio de un día con varios
+    # renglones (revisión 2026-10-08); los del PDF ya quedaron afuera (`seen`).
+    older = sorted((r for r in others if r["date"] <= first), key=lambda r: r["date"], reverse=True)
+    newer = sorted((r for r in others if r["date"] >= last), key=lambda r: r["date"])
     for side in (older, newer):
         sums = [sum(r[f] for r in rows) for f in fields]
         for count, r in enumerate(side, start=1):

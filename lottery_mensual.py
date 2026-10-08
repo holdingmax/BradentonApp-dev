@@ -16,7 +16,7 @@ Carga de Datos → Lottery y se controla en /controles/lottery.
 
 import calendar
 import re
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pdfplumber
 
@@ -81,7 +81,11 @@ def _number(value):
 
 
 def _parse_date(text):
-    """'2026-03-01' / '03/01/2026' / '08-01-2024' -> date, o None."""
+    """'2026-03-01' / '03/01/2026' / '08-01-2024' (o una fecha de Excel) -> date, o None."""
+    if isinstance(text, datetime):
+        return text.date()
+    if isinstance(text, date):
+        return text
     text = str(text or "").strip()
     match = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", text)
     if match:

@@ -870,6 +870,24 @@ def save_coupon_detail(groups, source_filename=None):
                 dates = sorted(b["batch_date"] for b in batches)
                 coupons = ",".join(group["coupons"]) if group.get("coupons") else None
                 existing = conn.execute("SELECT id, coupons FROM cupon_detail_groups WHERE signature = ?", (signature,)).fetchone()
+                if existing is None:
+                    # Un PDF de un solo cupón trae solo sus batches: si todos ya
+                    # están en un grupo cargado (el Credit Card Detail del depósito
+                    # entero), es ese mismo grupo y no otro; antes se guardaba
+                    # aparte y el control día por día los contaba dos veces
+                    # (revisión 2026-10-08).
+                    holders = set()
+                    for b in batches:
+                        row = conn.execute(
+                            "SELECT group_id FROM cupon_detail_batches WHERE batch_date = ? AND batch = ? "
+                            "AND ROUND(gross, 2) = ROUND(?, 2) AND ROUND(fees, 2) = ROUND(?, 2) AND ROUND(net, 2) = ROUND(?, 2)",
+                            (b["batch_date"], b["batch"], b["gross"], b["fees"], b["net"]),
+                        ).fetchone()
+                        holders.add(row["group_id"] if row else None)
+                    if batches and None not in holders and len(holders) == 1:
+                        existing = conn.execute("SELECT id, coupons FROM cupon_detail_groups WHERE id = ?",
+                                                (holders.pop(),)).fetchone()
+                        coupons = None  # los DDC de un cupón no son los del grupo entero
                 if existing is not None:
                     if coupons and existing["coupons"] != coupons:
                         conn.execute(

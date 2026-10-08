@@ -176,15 +176,31 @@ def upsert_transactions(rows, source_filename=None):
         batch_keys = {(d, r["description"], r["amount"], o) for r, d, o in keyed}
         first_day = min((d for _r, d, _o in keyed), default=None)
         last_day = max((d for _r, d, _o in keyed), default=None)
-        renamed = set()
-        for row, posting_date, occurrence in keyed:
-            cur = conn.execute(
-                "SELECT 1 FROM chase_transactions WHERE posting_date = ? AND description = ? AND amount = ? AND occurrence = ?",
-                (posting_date, row["description"], row["amount"], occurrence),
-            )
-            exists = cur.fetchone() is not None
+        # Versiones viejas: se asignan de una vez, la pareja más cercana en fecha
+        # primero. Antes cada renglón tomaba la suya en el orden del archivo
+        # (del más nuevo al más viejo) y un depósito del 25/09 se llevaba la
+        # fila del 22/09 del mismo importe con su categoría a mano (revisión
+        # 2026-10-08).
+        missing = [n for n, (row, posting_date, occurrence) in enumerate(keyed)
+                   if conn.execute(
+                       "SELECT 1 FROM chase_transactions WHERE posting_date = ? AND description = ? AND amount = ? "
+                       "AND occurrence = ?", (posting_date, row["description"], row["amount"], occurrence),
+                   ).fetchone() is None]
+        pairs = []
+        for n in missing:
+            row, posting_date, _occurrence = keyed[n]
+            for distance, rowid in _stale_candidates(conn, posting_date, row["amount"], first_day, last_day, batch_keys):
+                pairs.append((distance, rowid, n))
+        assigned, renamed = {}, set()
+        for distance, rowid, n in sorted(pairs):
+            if n not in assigned and rowid not in renamed:
+                assigned[n] = rowid
+                renamed.add(rowid)
+        missing = set(missing)
+        for n, (row, posting_date, occurrence) in enumerate(keyed):
+            exists = n not in missing
             if not exists:
-                stale = _stale_version(conn, posting_date, row["amount"], first_day, last_day, batch_keys, renamed)
+                stale = assigned.get(n)
                 if stale is not None:
                     # El mismo movimiento con la descripción (o la fecha) que
                     # Chase mostraba en una descarga anterior: se le pone la
@@ -239,7 +255,7 @@ def upsert_transactions(rows, source_filename=None):
 _STALE_DAYS = 5
 
 
-def _stale_version(conn, posting_date, amount, first_day, last_day, batch_keys, taken):
+def _stale_candidates(conn, posting_date, amount, first_day, last_day, batch_keys):
     """
     rowid de un movimiento ya guardado que es una versión vieja del que llega
     (pedido del usuario, 2026-10-07: el depósito de $2,057 del 22/09 quedó
@@ -249,10 +265,11 @@ def _stale_version(conn, posting_date, amount, first_day, last_day, batch_keys, 
     Es versión vieja un movimiento guardado del mismo importe, a no más de
     _STALE_DAYS días, dentro del rango de fechas del archivo nuevo y que el
     archivo nuevo NO trae tal cual: si el archivo cubre esa fecha y no lo
-    trae, es que Chase lo muestra distinto. El más cercano en fecha.
+    trae, es que Chase lo muestra distinto. Devuelve [(días de distancia,
+    rowid)]; upsert_transactions elige las parejas.
     """
     if first_day is None:
-        return None
+        return []
     day = date.fromisoformat(posting_date)
     low = max(first_day, (day - timedelta(days=_STALE_DAYS)).isoformat())
     high = min(last_day, (day + timedelta(days=_STALE_DAYS)).isoformat())
@@ -261,13 +278,8 @@ def _stale_version(conn, posting_date, amount, first_day, last_day, batch_keys, 
         "WHERE amount = ? AND posting_date BETWEEN ? AND ?",
         (amount, low, high),
     ).fetchall()
-    stale = [c for c in candidates
-             if c["rowid"] not in taken
-             and (c["posting_date"], c["description"], c["amount"], c["occurrence"]) not in batch_keys]
-    if not stale:
-        return None
-    stale.sort(key=lambda c: (abs((date.fromisoformat(c["posting_date"]) - day).days), c["rowid"]))
-    return stale[0]["rowid"]
+    return [(abs((date.fromisoformat(c["posting_date"]) - day).days), c["rowid"]) for c in candidates
+            if (c["posting_date"], c["description"], c["amount"], c["occurrence"]) not in batch_keys]
 
 
 def set_manual_detalle(posting_date, description, amount, detalle):

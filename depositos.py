@@ -62,6 +62,11 @@ def normalize_kind(text):
     # Palabra entera: "Service"/"Invoice" también contienen "ice".
     if re.search(r"\b(ice|hielo)\b", lowered):
         return ICE_MACHINE
+    # "(Vaccums)", "(Vacuums)", "(vaccumms)": en el Drive aparece escrito de
+    # varias formas y solo "Vaccumms" exacto categorizaba su depósito en Chase
+    # (revisión 2026-10-08; igual que control_depositos.receipt_kind).
+    if re.search(r"\bvac", lowered):
+        return "Vaccumms"
     return (text or "").strip() or None
 
 

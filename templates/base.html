@@ -2220,14 +2220,44 @@
               poll(jobId);
               return;
             }
-            progress.reset();
-            finish();
+            if (data.status !== 'cancelled') {
+              // Sin respuesta válida (sesión vencida, error del servidor): la
+              // carga sigue; antes la barra se cerraba como si se hubiera
+              // cancelado (revisión 2026-10-08).
+              cancelBtn.disabled = false;
+              alert('No se pudo cancelar: la carga sigue.');
+              poll(jobId);
+              return;
+            }
+            // El servidor corta al terminar el archivo que estaba leyendo: se
+            // espera a que corte y se avisa lo que alcanzó a quedar guardado.
+            cancelBtn.hidden = true;
+            progress.set(0, 'Cancelando: termina el archivo que estaba leyendo...', true);
+            waitCancelled(jobId, Date.now());
           };
           xhr.onerror = function () {
             cancelBtn.disabled = false;
             alert('No se pudo cancelar: la carga sigue.');
             poll(jobId);
           };
+          xhr.send();
+        }
+
+        function waitCancelled(jobId, since) {
+          var xhr = new XMLHttpRequest();
+          xhr.open('GET', '/jobs/' + jobId + '/status', true);
+          xhr.onload = function () {
+            var data = null;
+            try { data = JSON.parse(xhr.responseText); } catch (parseErr) {}
+            if (data && data.stopping && Date.now() - since < 15 * 60 * 1000) {
+              setTimeout(function () { waitCancelled(jobId, since); }, 1500);
+              return;
+            }
+            progress.reset();
+            finish();
+            if (data && data.cancel_note) showNotice(data.cancel_note, 'warning');
+          };
+          xhr.onerror = function () { setTimeout(function () { waitCancelled(jobId, since); }, 3000); };
           xhr.send();
         }
 
@@ -2283,7 +2313,21 @@
               pollTimer = setTimeout(function () { poll(jobId); }, 2000);
               return;
             }
-            var data = JSON.parse(xhr.responseText);
+            var data;
+            try {
+              data = JSON.parse(xhr.responseText);
+            } catch (parseErr) {
+              // Sesión vencida (vuelve la página de login) u otra respuesta
+              // rara: antes el sondeo moría y la barra quedaba trabada.
+              if (/\/login/.test(xhr.responseURL || '')) {
+                progress.reset();
+                alert('La sesión se cerró. Volvé a entrar: la carga sigue en el servidor y lo leído queda guardado.');
+                finish();
+                return;
+              }
+              pollTimer = setTimeout(function () { poll(jobId); }, 2000);
+              return;
+            }
             if (data.status === 'running' && data.phase === 'saving') {
               // Los PDF ya se leyeron -- ahora se están guardando en la
               // página (vuelve a leer cada uno, más lento que la lectura
@@ -2428,7 +2472,18 @@
               finish();
               return;
             }
-            var started = JSON.parse(startXhr.responseText);
+            var started = null;
+            try { started = JSON.parse(startXhr.responseText); } catch (parseErr) {}
+            if (!started || !started.job_id) {
+              // Sesión vencida (vuelve el login con 200) u otra respuesta rara:
+              // antes el botón quedaba en "Procesando..." (revisión 2026-10-08).
+              progress.reset();
+              alert(/\/login/.test(startXhr.responseURL || '')
+                    ? 'La sesión se cerró: volvé a entrar y subí los archivos de nuevo.'
+                    : 'Error al procesar.');
+              finish();
+              return;
+            }
             if (cancelOnStart) {
               cancelOnStart = false;
               cancelJob(started.job_id);
@@ -2792,25 +2847,60 @@
         return flash ? (flash.firstElementChild || flash).textContent.trim() : null;
       }
 
-      function fetchFile(url, view, done) {
+      // "Ver" (revisión 2026-10-08): la pestaña se abre en el clic (si no, el
+      // navegador puede bloquearla porque el archivo tarda) y se le carga el
+      // PDF ya bajado, sin pedirlo otra vez (antes se generaba dos veces).
+      function openViewTab() {
+        var win = window.open('', '_blank');
+        if (!win) return null;
+        try {
+          win.opener = null;
+          win.document.title = 'Generando…';
+          win.document.body.style.fontFamily = 'sans-serif';
+          win.document.body.textContent = 'Generando el archivo…';
+        } catch (tabErr) {}
+        return win;
+      }
+      function showInTab(win, blob, disposition) {
+        var match = /filename\*=UTF-8''([^;]+)/i.exec(disposition) || /filename="?([^";]+)"?/i.exec(disposition);
+        var name = match ? decodeURIComponent(match[1]) : 'Archivo';
+        var blobUrl = URL.createObjectURL(blob);
+        var doc = win.document;
+        doc.open();
+        doc.write('<!doctype html><meta charset="utf-8"><title></title>' +
+                  '<style>html,body{margin:0;height:100%}iframe{border:0;width:100%;height:100%}</style>' +
+                  '<iframe></iframe>');
+        doc.close();
+        doc.title = name;
+        doc.querySelector('iframe').src = blobUrl;
+      }
+
+      function fetchFile(url, view, done, win) {
         if (typeof hideNotice === 'function') hideNotice();
+        function closeTab() { if (win && !win.closed) win.close(); }
         fetch(url.href, { credentials: 'same-origin', headers: { 'X-Download-Check': '1' } })
           .then(function (resp) {
             var type = resp.headers.get('Content-Type') || '';
             var disposition = resp.headers.get('Content-Disposition') || '';
             if (!resp.ok && /application\/json/i.test(type)) {
+              closeTab();
               return resp.json().then(function (data) {
                 fail(data.error || 'No se pudo generar el archivo.', data.level);
               });
             }
             if (!resp.ok) {
+              closeTab();
               fail('No se pudo generar el archivo (error ' + resp.status + ').');
               return;
             }
             if (/text\/html/i.test(type)) {
+              closeTab();
               return resp.text().then(function (html) {
                 fail(messageFromPage(html) || 'No se pudo generar el archivo.');
               });
+            }
+            if (view && win) {
+              return resp.blob().then(function (blob) { showInTab(win, blob, disposition); });
             }
             if (view || !/attachment/i.test(disposition)) {
               // Para verlo en el navegador se abre la dirección de siempre
@@ -2822,7 +2912,7 @@
             }
             return resp.blob().then(function (blob) { saveBlob(blob, disposition); });
           })
-          .catch(function () { fail('No se pudo descargar: error de conexión. Volvé a intentarlo.'); })
+          .catch(function () { closeTab(); fail('No se pudo descargar: error de conexión. Volvé a intentarlo.'); })
           .then(done, done);
       }
 
@@ -2838,7 +2928,7 @@
         if (link.getAttribute('aria-busy') === 'true') return;
         link.setAttribute('aria-busy', 'true');
         var view = target === '_blank' && url.searchParams.get('mode') !== 'download';
-        fetchFile(url, view, function () { link.removeAttribute('aria-busy'); });
+        fetchFile(url, view, function () { link.removeAttribute('aria-busy'); }, view ? openViewTab() : null);
       }
 
       function onSubmit(event) {

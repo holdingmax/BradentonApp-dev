@@ -36,6 +36,7 @@ el usuario lo cargue a mano.
 
 import difflib
 import itertools
+import math
 import re
 from datetime import datetime
 
@@ -98,7 +99,21 @@ def parse_hours_input(text):
         hours = int(match.group(1)) + int(match.group(2)) / 60.0
         return hours, f"{int(match.group(1))}:{match.group(2)}"
     hours = float(cleaned.replace(",", "."))
+    # "inf" daba 500 y "-5" se guardaba como -5 horas (revisión 2026-10-08).
+    if not math.isfinite(hours) or not 0 <= hours < 1000:
+        raise ValueError(f"{cleaned}: no son horas válidas.")
     return hours, hours_to_label(hours)
+
+
+def parse_amount_input(text, default=0.0):
+    """Tarifa o descuento tipeados a mano: número finito y no negativo (vacío = default); ValueError si no."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return default
+    value = float(cleaned.replace(",", "."))
+    if not math.isfinite(value) or not 0 <= value < 1e6:
+        raise ValueError(f"{cleaned}: no es un importe válido.")
+    return value
 
 
 def _parse_short_date(text):

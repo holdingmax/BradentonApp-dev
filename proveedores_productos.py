@@ -2165,7 +2165,7 @@ def _gce_form_lines(found, tolerance, content):
         qty, price, ext, upc = best
         description = _ticket_winner(_ticket_votes(cluster, "description")) or cluster[0]["description"]
         per_case, size = _gce_units(description)
-        if per_case is None:
+        if not per_case:  # "0/12" leído del OCR: dividía por cero (revisión 2026-10-08)
             return None, f"no se pudo leer el pack (unidades por caja) de {description}."
         lines.append(_line(len(lines) + 1, upc=upc, item_no=_ticket_winner(_ticket_votes(cluster, "item")) or "",
                            description=description, qty=qty, pack=per_case, size=size, units=per_case,
@@ -5336,6 +5336,10 @@ def price_change_rows(rows, pos_costs):
     changed = []
     for row in with_departments(rows, pos_costs):
         if row["state"] not in ("Subió", "Bajó"):
+            continue
+        if not row.get("shown_change"):
+            # De $1.912 a $1.915: con 2 decimales cortados no se ve ningún cambio
+            # y el reporte decía "Up +$0.00" (revisión 2026-10-08).
             continue
         pos = pos_by_upc.get(row["upc"]) if row["upc"] else None
         pos_price = pos.get("price") if pos else None

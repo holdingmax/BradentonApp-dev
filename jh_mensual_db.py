@@ -59,6 +59,10 @@ def merge_report(kind, month_report, filename=None):
     avisa en `conflicts`); solo se actualiza su estado (saldo de la factura,
     estado del EFT). Devuelve {"added", "updated", "conflicts": [clave]}.
     """
+    def _comparable(value):
+        # Los DDC de un día en otro orden no son otro importe (revisión 2026-10-08).
+        return sorted(value) if isinstance(value, list) else value
+
     key = ROW_KEY[kind]
     year, month = month_report["year"], month_report["month"]
     stored = get_reports(year, month).get(kind)
@@ -70,7 +74,7 @@ def merge_report(kind, month_report, filename=None):
         if old is None:
             rows[r[key]] = dict(r)
             added += 1
-        elif any(old.get(f) != r.get(f) for f in _ROW_AMOUNTS[kind]):
+        elif any(_comparable(old.get(f)) != _comparable(r.get(f)) for f in _ROW_AMOUNTS[kind]):
             conflicts.append(r[key])
         elif any(old.get(f) != r.get(f) for f in _ROW_STATUS[kind]):
             old.update({f: r.get(f) for f in _ROW_STATUS[kind]})
