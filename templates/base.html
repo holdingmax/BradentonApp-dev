@@ -3233,6 +3233,68 @@
       });
     }
 
+    // Sesión vencida por inactividad (pedido del usuario, 2026-10-08): "que
+    // el mensaje salga dentro de la página y que luego te lleve al log in".
+    // Cada pedido al servidor (navegar, guardar, fetch, sondeo de una carga)
+    // renueva el plazo, igual que en el servidor (webapp.require_login); el
+    // último uso se comparte entre pestañas para que una pestaña olvidada no
+    // cierre la sesión que se está usando en otra.
+    (function () {
+      var LIMIT = {{ SESSION_IDLE_SECONDS }} * 1000;
+      var KEY = 'bradenton.lastServerActivity';
+      var last = Date.now();
+      var shown = false;
+      function mark() {
+        last = Date.now();
+        try { localStorage.setItem(KEY, String(last)); } catch (storageErr) {}
+      }
+      function latest() {
+        var shared = 0;
+        try { shared = Number(localStorage.getItem(KEY)) || 0; } catch (storageErr) {}
+        return Math.max(shared, last);
+      }
+      mark();
+      if (window.fetch && !window.__idleFetchWrapped) {
+        var originalFetch = window.fetch;
+        window.fetch = function () { mark(); return originalFetch.apply(this, arguments); };
+        var originalSend = XMLHttpRequest.prototype.send;
+        window.__idleOriginalSend = originalSend;
+        XMLHttpRequest.prototype.send = function () { mark(); return originalSend.apply(this, arguments); };
+        window.__idleFetchWrapped = true;
+      }
+      function goToLogin() { window.location.replace('/login'); }
+      function expire() {
+        if (shown) return;
+        shown = true;
+        var overlay = document.createElement('div');
+        overlay.className = 'confirm-overlay';
+        overlay.innerHTML = '<div class="confirm-box" role="alertdialog" aria-modal="true">'
+          + '<h3>La sesión se cerró por inactividad</h3>'
+          + '<p>Pasaron ' + Math.round(LIMIT / 60000) + ' minutos sin usar la página. Volvé a entrar para seguir.</p>'
+          + '<div class="confirm-actions"><button type="button">Ir al inicio de sesión</button></div></div>';
+        document.body.appendChild(overlay);
+        overlay.querySelector('button').addEventListener('click', goToLogin);
+        overlay.querySelector('button').focus();
+        // Se cierra también en el servidor (si no, /login volvería a entrar
+        // solo) y a los pocos segundos se va al login.
+        var form = new FormData();
+        var done = false;
+        function later() { if (!done) { done = true; setTimeout(goToLogin, 6000); } }
+        try {
+          var xhr = new XMLHttpRequest();
+          xhr.open('POST', '/logout', true);
+          xhr.onloadend = later;
+          // Sin renovar el plazo (no es uso de la página).
+          (window.__idleOriginalSend || XMLHttpRequest.prototype.send).call(xhr, form);
+        } catch (logoutErr) { later(); }
+      }
+      function check() {
+        if (!shown && Date.now() - latest() >= LIMIT) expire();
+      }
+      setInterval(check, 15000);
+      document.addEventListener('visibilitychange', check);
+    })();
+
     // Botonera de controles rápidos (pedido del jefe, 2026-10-05): el botón
     // de abajo a la derecha muestra los accesos, cada acceso pide su resumen
     // a /controles/rapidos/<kind> y lo mete en el cuadro. Tocar el mismo

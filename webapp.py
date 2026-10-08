@@ -29,6 +29,7 @@ from flask_login import (
     LoginManager,
     UserMixin,
     current_user,
+    login_fresh,
     login_required,
     login_user,
     logout_user,
@@ -283,12 +284,31 @@ def _reject_cross_site_posts():
     return None
 
 
+# Sesión que vence por inactividad (pedido del usuario, 2026-10-08): "si
+# pasás mucho tiempo fuera de la sesión, que te vuelva a pedir el log in".
+# Cada pedido a la página renueva el plazo; una carga en segundo plano que
+# sigue corriendo también (el sondeo de su progreso).
+SESSION_IDLE_SECONDS = 30 * 60
+app.jinja_env.globals["SESSION_IDLE_SECONDS"] = SESSION_IDLE_SECONDS  # el aviso de base.html
+
+
 @app.before_request
 def require_login():
     if request.endpoint in ("login", "static") or request.endpoint is None:
         return None
     if not current_user.is_authenticated:
         return redirect(url_for("login"))
+    now = time.time()
+    last_seen = session.get("_last_seen")
+    # Una sesión revivida por la cookie de "Recordarme" de antes (duraba un
+    # año) no es un login reciente: también pide entrar de nuevo.
+    if not login_fresh() or (last_seen is not None and now - last_seen > SESSION_IDLE_SECONDS):
+        # El aviso lo da la propia página antes de mandar al login (base.html,
+        # pedido del usuario): acá solo se cierra.
+        logout_user()
+        session.pop("_last_seen", None)
+        return redirect(url_for("login"))
+    session["_last_seen"] = now
     return None
 
 
@@ -418,11 +438,14 @@ def login():
         if user is None:
             flash("Usuario o contraseña incorrectos.", "error")
         else:
-            remember = bool(request.form.get("remember"))
+            # "Recordarme" ya no deja la sesión abierta (pedido del usuario,
+            # 2026-10-08): solo recuerda el usuario en el navegador (login.html);
+            # la contraseña la completa el gestor de contraseñas del navegador.
             login_user(
                 WebUser(username, user.get("is_admin", False), user.get("must_change_password", False)),
-                remember=remember,
+                remember=False,
             )
+            session["_last_seen"] = time.time()
             if user.get("must_change_password", False):
                 return redirect(url_for("perfil_password"))
             return redirect(url_for("home"))

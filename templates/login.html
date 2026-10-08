@@ -182,6 +182,15 @@
       margin-bottom: 16px;
       font-size: 13px;
     }
+    .flash-warning {
+      background: #FEF3C7;
+      border: 1px solid #FCD34D;
+      color: #92400E;
+      padding: 10px 12px;
+      border-radius: 8px;
+      margin-bottom: 16px;
+      font-size: 13px;
+    }
     .login-extra-row {
       display: flex;
       align-items: center;
@@ -234,6 +243,31 @@
     </form>
   </div>
   <script>
+    // "Recordarme" (pedido del usuario, 2026-10-08): ya no deja la sesión
+    // abierta, solo completa los datos. El usuario queda guardado en este
+    // navegador; la contraseña la guarda y completa el gestor de contraseñas
+    // del navegador (los campos tienen autocomplete="username" /
+    // "current-password"), nunca la página. Sin la casilla, se olvida.
+    (function () {
+      var KEY = 'bradenton.loginUser';
+      var form = document.querySelector('form');
+      var user = document.getElementById('username');
+      var box = document.getElementById('remember');
+      var pass = document.getElementById('password');
+      var saved = null;
+      try { saved = localStorage.getItem(KEY); } catch (storageErr) {}
+      if (saved && user && !user.value) {
+        user.value = saved;
+        if (box) box.checked = true;
+        if (pass) pass.focus();
+      }
+      if (form) form.addEventListener('submit', function () {
+        try {
+          if (box && box.checked && user.value.trim()) localStorage.setItem(KEY, user.value.trim());
+          else localStorage.removeItem(KEY);
+        } catch (storageErr) {}
+      });
+    })();
     (function () {
       var capsWarning = document.getElementById('caps-lock-indicator');
       function updateCapsLockState(event) {
