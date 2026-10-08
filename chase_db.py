@@ -562,6 +562,19 @@ def get_first_posting_date():
 
 def get_last_posting_date():
     """Fecha del último movimiento guardado (date), o None: hasta dónde está cargado Chase."""
+def get_posting_dates(first, last):
+    """Días (date) con algún movimiento de Chase guardado entre first y last (date), inclusive."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT posting_date FROM chase_transactions WHERE posting_date BETWEEN ? AND ?",
+            (first.isoformat(), last.isoformat()),
+        ).fetchall()
+    finally:
+        conn.close()
+    return {date.fromisoformat(row["posting_date"]) for row in rows}
+
+
     conn = _connect()
     try:
         row = conn.execute("SELECT MAX(posting_date) AS last FROM chase_transactions").fetchone()

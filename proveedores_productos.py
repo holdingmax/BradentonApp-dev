@@ -4299,7 +4299,7 @@ def _cc_solid(values):
     return winner
 
 
-def _cc_amount(block, detail, returns=()):
+def _cc_amount(block, detail, returns=(), return_readings=()):
     """
     (importe, sale del PAID): AMOUNT DUE confirmado por otra parte del
     ticket y la regla de AMOUNT PAID: si lo pagado es otro importe (una
@@ -4316,12 +4316,26 @@ def _cc_amount(block, detail, returns=()):
     """
     footer = block["footer"]
     due = detail["total"] if detail is not None else None
+    solid_due = _cc_solid(footer.get("due", []))
+    if due is not None and solid_due is not None and abs(solid_due - due) > 0.005:
+        # Los renglones cierran contra los totales de grupo, pero el AMOUNT DUE
+        # impreso dice otra cosa: no se sabe cuál vale (revisión 2026-10-08).
+        return None, False
     paid_votes = _ticket_votes([{"v": v} for v in footer.get("paid", [])], "v")
     paid = _ticket_winner(paid_votes)
     if due is None:
         sums = set()
-        for p in _ticket_top(footer.get("products", [])):
-            for a in _ticket_top(footer.get("adjustments", [])):
+        products = _ticket_top(footer.get("products", []))
+        adjustments = _ticket_top(footer.get("adjustments", []))
+        if solid_due is not None:
+            # Con el DUE leído sin dudas, vale cualquier lectura de TOTAL
+            # PRODUCTS / ADJUSTMENTS que lo confirme: el pie chico se lee peor
+            # (44371558036: ADJ 122.34 una vez de tres; 50709193040: 142.29
+            # dos de seis, que con el 1 por 7 da 742.29 - 139.64 = 602.65).
+            products = sorted(set(footer.get("products", [])))
+            adjustments = sorted(set(footer.get("adjustments", [])))
+        for p in products:
+            for a in adjustments:
                 a = abs(a)
                 sums.add(round(p - a, 2))
                 sums.update(round(v - a, 2) for v in _ticket_variants(p, _CC_CONFUSIONS))
@@ -4331,14 +4345,25 @@ def _cc_amount(block, detail, returns=()):
             sums.add(round(sum(groups), 2))
         candidates = [d for d in _ticket_top(footer.get("due", [])) if d in sums]
         due = candidates[0] if len(candidates) == 1 else None
+    solid_paid = _cc_solid(footer.get("paid", []))
     if due is None and returns:
-        solid_due, solid_paid = _cc_solid(footer.get("due", [])), _cc_solid(footer.get("paid", []))
         if solid_due is not None and solid_paid is not None and abs(solid_due + sum(returns) - solid_paid) < 0.005:
             due = solid_due
+    if (due is None and return_readings and solid_due is not None and solid_paid is not None
+            and 0 < solid_paid < solid_due and round(solid_due - solid_paid, 2) in return_readings):
+        # Devolución mal leída en su hoja, pero DUE - PAID es una de sus
+        # lecturas: las tres cifras se confirman entre sí y la devolución ya
+        # viene neteada en lo pagado (39399414007: 654.84 - 51.30 = 603.54).
+        return solid_paid, True
     if due is None:
         return None, False
-    if paid is not None and 0 < paid < due and paid_votes[paid] >= 2:
-        return paid, True
+    # Lo pagado (una devolución ya neteada) vale solo leído sin dudas: con dos
+    # lecturas de seis, un PAID mal leído pisaba un DUE confirmado (revisión
+    # 2026-10-08).
+    if solid_paid is not None and 0 < solid_paid < due:
+        return solid_paid, True
+    if paid is not None and 0 < paid < due:
+        return None, False
     return due, False
 
 
@@ -4379,12 +4404,13 @@ def _cc_invoices(images, reading, filename, passes, cache=None):
     # Devoluciones (RETURNS) del PDF: si la factura no la trae ya neteada en
     # el AMOUNT PAID, se le resta (ver _cc_amount). Solo con una sola factura
     # con importe en el PDF; si no, no se sabe a cuál va.
-    returns, unreadable_returns = [], 0
+    returns, unreadable_returns, return_readings = [], 0, set()
     for block in blocks:
         if block["returns"] and not block["sales"]:
             value = _cc_solid([abs(v) for v in block["footer"].get("due", [])])
             if value is None:
                 unreadable_returns += 1
+                return_readings = {round(abs(v), 2) for v in block["footer"].get("due", []) if v}
             elif value:
                 returns.append(-value)
     sales = [b for b in blocks if not (b["returns"] and not b["sales"])
@@ -4405,7 +4431,8 @@ def _cc_invoices(images, reading, filename, passes, cache=None):
             results.append({"error": "no se pudo leer la fecha de la factura.", "invoice_no": int(number)})
             continue
         block_returns = returns if len(sales) == 1 else []
-        amount, from_paid = _cc_amount(block, detail, block_returns)
+        single_unreadable = len(sales) == 1 and unreadable_returns == 1 and not returns
+        amount, from_paid = _cc_amount(block, detail, block_returns, return_readings if single_unreadable else ())
         if amount and not from_paid and (returns or unreadable_returns):
             # La devolución no vino neteada en el AMOUNT PAID: se resta (pedido
             # del usuario, 2026-10-08: así está en el Excel de Proveedores,

@@ -737,20 +737,34 @@ def _coca_bank_check(invoices):
         return invoices
     checks = [(datetime.strptime(t["posting_date"], "%Y-%m-%d").date(), round(-t["amount"], 2))
               for t in chase_db.get_supplier_transactions("coca") if (t["amount"] or 0) < 0]
+    used = set()
     result = []
     for invoice in invoices:
         day = invoice.get("date")
         if day is None or day.date() < first or day.date() + timedelta(days=_COCA_CHECK_DAYS) > last:
             result.append(invoice)
             continue
+        window_end = day.date() + timedelta(days=_COCA_CHECK_DAYS)
+        if len(chase_db.get_posting_dates(day.date(), window_end)) < 3:
+            # Chase cargado por partes, con esos días sin subir: no se controla
+            # (antes una factura buena se rechazaba; revisión 2026-10-08).
+            result.append(invoice)
+            continue
+        # Un cheque cuenta para una sola factura del PDF.
         paid = {amount for when, amount in checks
-                if day.date() <= when <= day.date() + timedelta(days=_COCA_CHECK_DAYS)}
+                if day.date() <= when <= window_end and (when, amount) not in used}
         if "error" in invoice:
             hits = paid & set(invoice.get("candidates") or [])
             if len(hits) == 1:
+                hit = next(iter(hits))
+                used.add(next(c for c in checks if c[1] == hit and day.date() <= c[0] <= window_end
+                               and c not in used))
                 invoice = {"invoice_no": invoice["invoice_no"], "date": day, "amount": hits.pop(),
                            "lines": None, "lines_error": invoice.get("lines_error")}
-        elif invoice["amount"] not in paid:
+        elif invoice["amount"] in paid:
+            used.add(next(c for c in checks if c[1] == invoice["amount"] and day.date() <= c[0] <= window_end
+                           and c not in used))
+        else:
             invoice = {"error": f"el importe leído (${invoice['amount']:,.2f}) no coincide con ningún cheque de "
                                 f"Coca-Cola en Chase de esos días.", "invoice_no": invoice["invoice_no"]}
         result.append(invoice)
