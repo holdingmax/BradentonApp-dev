@@ -7068,7 +7068,15 @@ def controles_rapidos_panel(kind):
     day = controles_rapidos.reference_day(year, month, today)
     if day is None:  # mes futuro: el actual
         year, month, day = today.year, today.month, today
-    if kind == "tarjetas":
+    if kind == "kia":
+        # Kia y Toyota (pedido del usuario, 2026-10-08): lo que debe cada una
+        # hoy y la cuenta del mes elegido.
+        ledger = _kia_toyota_ledger()
+        month_key = f"{year:04d}-{month:02d}"
+        data = {"status": ledger["status"], "companies": cuenta_kia_toyota.COMPANIES,
+                "month": next((m for m in ledger["monthly"] if m["month"] == month_key), None),
+                "unassigned": len(ledger["unassigned_groups"])}
+    elif kind == "tarjetas":
         data = controles_rapidos.tarjetas_status(
             reportes_db.get_card_sales_by_date(), eft_db.get_coupon_gross_by_date(), today=day,
         )
@@ -7117,9 +7125,15 @@ def controles_rapidos_alertas():
         reportes_db.get_card_sales_by_date(), eft_db.get_coupon_gross_by_date(), today=today,
     )
     caja_data = controles_rapidos.caja_status(today=today)
+    try:
+        kia = any(st["late"] for st in _kia_toyota_ledger()["status"].values())
+    except Exception as exc:
+        print(f"[controles/rapidos] Kia y Toyota: {exc}")
+        kia = False
     return jsonify({
         "tarjetas": bool(tarjetas and tarjetas["last"]["status"] == "alert"),
         "caja": bool(caja_data and caja_data["alert"]),
+        "kia": kia,
     })
 
 
@@ -7350,9 +7364,27 @@ def controles_kia_toyota():
     month_summary = next((m for m in ledger["monthly"] if m["month"] == month_key), None)
     prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
     next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
+    # Historial agrupado por año, cada uno plegable (pedido del usuario,
+    # 2026-10-08), con lo cargado y pagado del año y el saldo al cerrarlo.
+    history_years = []
+    for m in reversed(ledger["monthly"]):
+        if not history_years or history_years[-1]["year"] != m["month"][:4]:
+            history_years.append({"year": m["month"][:4], "months": [], "companies": {
+                c: {"charged": 0.0, "paid": 0.0, "closing": m["companies"][c]["closing"]}
+                for c in cuenta_kia_toyota.COMPANIES}})
+        entry = history_years[-1]
+        entry["months"].append(m)
+        for c in cuenta_kia_toyota.COMPANIES:
+            entry["companies"][c]["charged"] = round(entry["companies"][c]["charged"] + m["companies"][c]["charged"], 2)
+            entry["companies"][c]["paid"] = round(entry["companies"][c]["paid"] + m["companies"][c]["paid"], 2)
+    today = date.today()
     return render_template(
         "controles_kia_toyota.html",
         ledger=ledger,
+        history_years=history_years,
+        # Un mes elegido (desde el historial o las flechas) que no es el
+        # actual muestra arriba dónde estás parado y cómo volver.
+        picked_month=(year, month) != (today.year, today.month),
         companies=cuenta_kia_toyota.COMPANIES,
         voided=cuenta_kia_toyota.VOIDED,
         month_summary=month_summary,

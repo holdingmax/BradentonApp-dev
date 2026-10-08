@@ -1,6 +1,7 @@
 {% extends "base.html" %}
 {% block crumbs %}
-<nav class="crumbs"><span class="current">Kia y Toyota</span></nav>
+{% if picked_month %}<nav class="crumbs"><a href="{{ url_for('controles_kia_toyota') }}">Kia y Toyota</a><span class="current">{{ month_name }} {{ year }}</span></nav>
+{% else %}<nav class="crumbs"><span class="current">Kia y Toyota</span></nav>{% endif %}
 {% endblock %}
 {% block head_extra %}
 <style>
@@ -50,8 +51,19 @@
   .kt-credit { color: var(--success); }
   .kt-soft { color: var(--text-soft); }
   .kt-paid { font-weight: 600; }
-  details.kt-history > summary { cursor: default; font-weight: 700; font-size: 16px; list-style-position: inside; }
-  details.kt-history > summary span { font-weight: 400; font-size: 13px; color: var(--text-soft); margin-left: 6px; }
+  .kt-here { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; padding: 9px 14px; border-radius: 10px; background: var(--accent-soft); font-size: 13px; }
+  .kt-here a { font-weight: 600; text-decoration: none; }
+  .kt-years { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .kt-year + .kt-year { border-top: 1px solid var(--border); }
+  .kt-year > summary { list-style: none; cursor: default; display: grid; grid-template-columns: 110px 1fr 1fr; gap: 12px; align-items: center; padding: 10px 14px; background: var(--surface-alt); font-size: 13px; font-variant-numeric: tabular-nums; }
+  .kt-year > summary::-webkit-details-marker { display: none; }
+  .kt-year-name { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 14px; }
+  .kt-year-name svg { width: 14px; height: 14px; transition: transform .15s; color: var(--text-soft); }
+  .kt-year[open] .kt-year-name svg { transform: rotate(90deg); }
+  .kt-year-co { color: var(--text-soft); }
+  .kt-year-co strong { color: var(--text); font-weight: 600; }
+  .kt-year .kt-table { border-top: 1px solid var(--border); }
+  .kt-table tr.kt-current td { background: var(--accent-soft); }
   .kt-foot { margin-top: 22px; font-size: 12.5px; color: var(--text-soft); }
 </style>
 {% endblock %}
@@ -72,6 +84,12 @@
 </div>
 
 <div class="card">
+  {% if picked_month %}
+  <div class="kt-here">
+    <span>Estás viendo <strong>{{ month_name }} {{ year }}</strong>.</span>
+    <a href="{{ url_for('controles_kia_toyota') }}">&larr; Volver a Kia y Toyota</a>
+  </div>
+  {% endif %}
   <div class="historial-nav">
     <a href="{{ url_for('controles_kia_toyota', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
     <div class="historial-nav-title">
@@ -92,7 +110,7 @@
         <div class="kt-today-label">{{ 'Tiene a favor hoy' if st.balance < -0.005 else 'Debe hoy' }}</div>
         <div class="kt-today-amount {{ 'credit' if st.balance < -0.005 else 'owes' }}">{{ abs_money(st.balance) }}</div>
         {% if st.last_payment %}
-        <p class="kt-last{{ ' late' if st.late }}">Último pago el {{ dmy(st.last_payment) }} por {{ money(st.last_amount) }}, hace {{ st.days_since }} día{{ '' if st.days_since == 1 else 's' }}.</p>
+        <p class="kt-last{{ ' late' if st.late }}">Último pago el {{ dmy(st.last_payment) }}, hace {{ st.days_since }} día{{ '' if st.days_since == 1 else 's' }}.</p>
         {% endif %}
       </div>
       {% if month_summary %}{% set c = month_summary.companies[company] %}
@@ -153,26 +171,61 @@
   </div>
 
   <div class="kt-section">
-    <details class="kt-history">
-      <summary>Historial mes a mes <span>saldo de cada una al terminar cada mes</span></summary>
-      <div class="kt-table-wrap" style="margin-top: 10px;">
+    <h2>Historial mes a mes</h2>
+    <p>Cada año se abre o se cierra con la flecha. Tocá un mes para ver sus días.</p>
+    <div class="kt-years">
+    {% for y in history_years %}
+      <details class="kt-year" data-year="{{ y.year }}"{% if y.year == year|string %} open{% endif %}>
+        <summary>
+          <span class="kt-year-name"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg>{{ y.year }}</span>
+          {% for company in companies %}{% set c = y.companies[company] %}
+          <span class="kt-year-co">{{ company }} al cerrar el año: <strong>{{ balance(c.closing) }}</strong></span>
+          {% endfor %}
+        </summary>
+        <div style="overflow-x: auto;">
         <table class="kt-table">
           <thead>
             <tr><th rowspan="2">Mes</th>{% for company in companies %}<th colspan="3" class="kt-sep" style="text-align:center;">{{ company }}</th>{% endfor %}</tr>
             <tr class="kt-sub">{% for company in companies %}<th class="kt-sep">Cargó</th><th>Pagó</th><th>Saldo</th>{% endfor %}</tr>
           </thead>
           <tbody>
-          {% for m in ledger.monthly|reverse %}
-            <tr><td><a href="{{ url_for('controles_kia_toyota', year=m.month[:4]|int, month=m.month[5:7]|int) }}">{{ month_names[m.month[5:7]|int - 1] }} {{ m.month[:4] }}</a></td>
+          {% for m in y.months %}
+            <tr class="{{ 'kt-current' if m.month == '%04d-%02d'|format(year, month) }}"><td><a href="{{ url_for('controles_kia_toyota', year=m.month[:4]|int, month=m.month[5:7]|int) }}">{{ month_names[m.month[5:7]|int - 1] }}</a></td>
               {% for company in companies %}{% set c = m.companies[company] %}
               <td class="kt-sep">{{ money(c.charged) if c.charged else '' }}</td><td>{{ money(c.paid) if c.paid else '' }}</td><td>{{ balance(c.closing) }}</td>
               {% endfor %}</tr>
           {% endfor %}
           </tbody>
+          <tfoot>
+            <tr><td>Total {{ y.year }}</td>
+              {% for company in companies %}{% set c = y.companies[company] %}
+              <td class="kt-sep">{{ money(c.charged) }}</td><td>{{ money(c.paid) }}</td><td>{{ balance(c.closing) }}</td>
+              {% endfor %}</tr>
+          </tfoot>
         </table>
-      </div>
-    </details>
+        </div>
+      </details>
+    {% endfor %}
+    </div>
   </div>
+  <script>
+    // Qué años dejó abiertos o cerrados el usuario (solo en este navegador).
+    (function () {
+      var KEY = 'kt-years-open';
+      var saved = null;
+      try { saved = JSON.parse(localStorage.getItem(KEY) || 'null'); } catch (e) {}
+      document.querySelectorAll('.kt-year').forEach(function (el) {
+        var year = el.getAttribute('data-year');
+        if (saved && Object.prototype.hasOwnProperty.call(saved, year)) el.open = !!saved[year];
+        el.addEventListener('toggle', function () {
+          var state = {};
+          try { state = JSON.parse(localStorage.getItem(KEY) || '{}') || {}; } catch (e) {}
+          state[year] = el.open;
+          try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {}
+        });
+      });
+    })();
+  </script>
 
   <p class="kt-foot">Cómo se calcula: sus autos cargan con un vale y no pagan en el momento (Local Account). Se les cobra (vales − ${{ "%.2f"|format(rebate) }} por galón) + {{ (card_charge * 100)|round|int }}% del recargo de la tarjeta, y cada una o dos semanas pagan con la Amex. Un pago atrasado más de {{ late_days }} días se marca en rojo.</p>
 </div>

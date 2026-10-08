@@ -87,6 +87,30 @@
   <a class="qc-link" href="{{ url_for('carga_datos_caja', year=data.date[:4]|int, month=data.date[5:7]|int) }}">Ver Caja del mes &rarr;</a>
   {% endif %}
 
+{% elif kind == "kia" %}
+  {% for company in data.companies %}{% set st = data.status[company] %}
+  <div class="qc-status {{ 'bad' if st.late else 'neutral' }}"{% if not loop.first %} style="margin-top: 8px;"{% endif %}>
+    <span>{{ company }}{{ " (Gettel)" if company == "Kia" }}: {{ "tiene a favor hoy" if st.balance < -0.005 else "debe hoy" }}</span>
+    <strong{% if st.balance < -0.005 %} class="qc-good"{% endif %}>${{ "{:,.2f}".format(st.balance|abs) }}</strong>
+    {% if st.last_payment %}<span class="qc-sub{{ ' qc-warn' if st.late }}">Último pago el {{ dmy(st.last_payment) }}, hace {{ st.days_since }} día{{ '' if st.days_since == 1 else 's' }}{{ ": se está atrasando" if st.late }}.</span>{% endif %}
+  </div>
+  {% endfor %}
+  {% if data.month %}
+  <table class="qc-table">
+    <thead><tr><th>En el mes</th><th>Cargó</th><th>Pagó</th><th>Al terminar</th></tr></thead>
+    <tbody>
+    {% for company in data.companies %}{% set c = data.month.companies[company] %}
+      <tr><td>{{ company }}</td><td>{{ money(c.charged) }}</td><td>{{ money(c.paid) }}</td>
+        <td>{% if c.closing < -0.005 %}<span class="qc-good">${{ "{:,.2f}".format(-c.closing) }} a favor</span>{% else %}{{ money(c.closing) }}{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  {{ empty_month("cargas ni pagos de Kia o Toyota", "controles_kia_toyota") }}
+  {% endif %}
+  {% if data.unassigned %}<p class="qc-note qc-warn">{{ data.unassigned }} pago(s) sin empresa: asignalos en Carga de Datos &rarr; Gettel / Toyota.</p>{% endif %}
+  <a class="qc-link" href="{{ url_for('controles_kia_toyota', year=this_month.split('-')[0]|int, month=this_month.split('-')[1]|int) }}">Ver control completo &rarr;</a>
+
 {% elif kind == "precios" %}
   {% if not data.pos_loaded %}
   <p class="qc-note">Todavía no hay un CMV cargado (el Costo que se exporta de eListar). Se carga en Carga de Datos &rarr; CMV.</p>
