@@ -2221,7 +2221,62 @@ def carga_datos_reporte_diario():
     )
 
 
-def _run_carga_datos_reporte_diario_job(job_id, pdf_paths):
+def _is_lottery_sales_report(pdf_path):
+    """El Daily Sales Report del portal de la Lotería trae texto; el Close Store del POS es escaneado."""
+    try:
+        import pdfplumber
+        with pdfplumber.open(pdf_path) as pdf:
+            text = (pdf.pages[0].extract_text() or "") if pdf.pages else ""
+    except Exception:
+        return False
+    return "Daily Sales Report" in text and "Start Date" in text
+
+
+def _short_upload_notice(saved, review, bad_files, without_lottery=0):
+    """(aviso, nivel) corto: "Se cargó exitosamente." o los días a revisar y los archivos que no se leyeron."""
+    if not saved:
+        return ("No se pudo cargar ningún archivo." if bad_files else "No se encontró nada para cargar."), "error"
+    if not review and not bad_files and not without_lottery:
+        return "Se cargó exitosamente.", "success"
+    parts = ["Se cargó."]
+    if review:
+        parts.append("Revisá: " + ", ".join(d.strftime("%d/%m") for d in sorted(review)) + ".")
+    if bad_files:
+        parts.append(f"{bad_files} archivo(s) no se pudieron leer.")
+    if without_lottery:
+        parts.append(f"{without_lottery} reporte(s) diario(s) sin las ventas de Lottery.")
+    return " ".join(parts), "warning"
+
+
+def _load_lottery_sales_reports(pdf_paths, progress=None):
+    """
+    Guarda los Daily Sales Report de la Lotería. Devuelve {"saved": [fechas],
+    "review": {fechas con algún campo sin leer}, "failed": archivos que no se
+    pudieron leer (o de otra fecha que la del nombre)}.
+    """
+    saved, review, failed = [], set(), 0
+    for index, pdf_path in enumerate(pdf_paths, start=1):
+        filename = os.path.basename(pdf_path)
+        try:
+            fields = extract_lottery_receipt_fields_from_sales_report(pdf_path)
+            if _filename_date_mismatch(filename, fields["report_date"]):
+                raise ValueError("la fecha leída no coincide con la del nombre de archivo")
+            # Un campo que no se pudo leer queda en None (no pisa lo ya
+            # guardado, ver upsert_sales_report_fields) y se avisa el día.
+            if fields.get("warning"):
+                review.add(fields["report_date"])
+            pdf_relpath = lottery_db.store_pdf_copy(fields["report_date"], pdf_path, filename)
+            lottery_db.upsert_sales_report_fields(fields["report_date"], fields, source="ocr", pdf_filename=pdf_relpath)
+            saved.append(fields["report_date"])
+        except Exception as exc:
+            print(f"[carga-datos/lottery] {pdf_path}: {exc}")
+            failed += 1
+        if progress:
+            progress(index)
+    return {"saved": saved, "review": review, "failed": failed}
+
+
+def _run_carga_datos_reporte_diario_job(job_id, pdf_paths, origin="reporte"):
     """
     Corre en su propio hilo (ver carga_datos_reporte_diario_subir) -- mismo
     patrón que _run_reporte_ventas_job (jobs.py): el cuerpo entero va
@@ -2239,7 +2294,14 @@ def _run_carga_datos_reporte_diario_job(job_id, pdf_paths):
     guarda el actual (reporte_diario.DepartmentPagePrefetch, 2026-10-06): la
     misma lectura, más rápida en un lote.
     """
-    prefetch = DepartmentPagePrefetch(pdf_paths)
+    # Los dos tipos de PDF del día se pueden subir juntos en cualquiera de las
+    # dos cajas (Reporte Diario o Lottery, pedido del usuario, 2026-10-08):
+    # el Daily Sales Report de la Lotería (con texto) va a Lottery y el Close
+    # Store del POS (escaneado) a Store Info, Ventas por Departamento y
+    # ONLINE/SKOFF de Lottery.
+    lottery_paths = [path for path in pdf_paths if _is_lottery_sales_report(path)]
+    reporte_paths = [path for path in pdf_paths if path not in lottery_paths]
+    prefetch = DepartmentPagePrefetch(reporte_paths)
     try:
         days_complete = set()
         days_partial = set()
@@ -2254,7 +2316,7 @@ def _run_carga_datos_reporte_diario_job(job_id, pdf_paths):
         date_mismatches = 0
         first_date = None
 
-        for index, pdf_path in enumerate(pdf_paths, start=1):
+        for index, pdf_path in enumerate(reporte_paths, start=1):
             prefetch.wait(index - 1)
             filename = os.path.basename(pdf_path)
             filename_day_month = _reporte_filename_day_month(filename)
@@ -2360,80 +2422,28 @@ def _run_carga_datos_reporte_diario_job(job_id, pdf_paths):
 
             jobs.update_job(job_id, done=index, total=len(pdf_paths))
 
-        parts = []
-        if days_complete:
-            parts.append(f"{len(days_complete)} día(s) guardado(s) completos.")
-        if days_partial:
-            dates_txt = ", ".join(sorted(d.isoformat() for d in days_partial))
-            parts.append(f"{len(days_partial)} día(s) quedaron incompletos ({dates_txt}) — completalos a mano.")
-        if date_mismatches:
-            parts.append(
-                f"{date_mismatches} archivo(s) rechazados: la fecha real del PDF no coincide con la del "
-                "nombre de archivo — revisá que no sea de otro mes."
-            )
-        if files_unreadable - date_mismatches:
-            parts.append(f"{files_unreadable - date_mismatches} archivo(s) no se pudieron leer en absoluto.")
-        if days_subtotal_mismatch:
-            dates_txt = ", ".join(sorted(d.isoformat() for d in days_subtotal_mismatch))
-            parts.append(
-                f"{len(days_subtotal_mismatch)} día(s) con la suma de departamentos distinta del total "
-                f"impreso en el PDF ({dates_txt}) — es señal de que el OCR se salteó alguna fila (ej. un "
-                "departamento esporádico como GIFT CARD), revisá Ventas por Departamento y completalo a mano si falta algo."
-            )
-        if days_store_info_missing:
-            dates_txt = "; ".join(
-                f"{d.strftime('%d/%m')}: {', '.join(fields)}" for d, fields in sorted(days_store_info_missing.items())
-            )
-            parts.append(
-                f"Store Info: lo demás se guardó, pero no se pudo leer con seguridad ({dates_txt}) — "
-                "quedó vacío, completalo a mano."
-            )
-        if days_doubtful:
-            dates_txt = "; ".join(
-                f"{d.strftime('%d/%m')}: {', '.join(items)}" for d, items in sorted(days_doubtful.items())
-            )
-            parts.append(
-                f"Ventas por Departamento: valores que el OCR no pudo leer con seguridad ({dates_txt}) — "
-                "quedaron vacíos, completalos a mano en el día."
-            )
-        if days_lottery_missing:
-            dates_txt = "; ".join(
-                f"{d.strftime('%d/%m')}: {', '.join(items)}" for d, items in sorted(days_lottery_missing.items())
-            )
-            parts.append(
-                f"Lottery: ventas que el OCR no pudo leer con seguridad ({dates_txt}) — no se cargaron, "
-                "completalas a mano en el día de Lottery."
-            )
-        if lottery_unreadable:
-            parts.append(
-                f"Lottery: {lottery_unreadable} archivo(s) sin las ventas ONLINE/SKOFF "
-                "(no se pudo leer la fecha o la página) — completalas a mano en Lottery."
-            )
-        if days_unverified:
-            dates_txt = ", ".join(sorted(d.isoformat() for d in days_unverified))
-            parts.append(
-                f"{len(days_unverified)} día(s) sin el total impreso legible al pie de Ventas por Departamento "
-                f"({dates_txt}) — no se pudo verificar la suma, revisalos contra el PDF."
-            )
-        if days_total_sales_mismatch:
-            dates_txt = ", ".join(
-                f"{d.isoformat()} (${v:+,.2f})" for d, v in sorted(days_total_sales_mismatch.items())
-            )
-            parts.append(
-                f"{len(days_total_sales_mismatch)} día(s) donde Store Info no cierra contra el Total Sales "
-                f"impreso ({dates_txt}) — algún monto se leyó mal, revisalo a mano en el día."
-            )
+        lottery = _load_lottery_sales_reports(
+            lottery_paths, lambda done: jobs.update_job(job_id, done=len(reporte_paths) + done, total=len(pdf_paths)))
 
-        if not parts:
-            notice, level = "No se pudo guardar nada de este lote.", "error"
+        # Aviso corto (pedido del usuario, 2026-10-08): si todo salió bien,
+        # solo "Se cargó exitosamente."; si no, los días a revisar.
+        review = set(days_partial) | days_subtotal_mismatch | set(days_doubtful) | days_unverified
+        review |= set(days_total_sales_mismatch) | set(days_store_info_missing) | set(days_lottery_missing)
+        review |= lottery["review"]
+        saved = days_complete | days_partial | set(lottery["saved"])
+        bad_files = files_unreadable + lottery["failed"]
+        notice, level = _short_upload_notice(saved, review, bad_files, lottery_unreadable)
+
+        if origin == "lottery" and lottery["saved"]:
+            first = min(lottery["saved"])
+            redirect_url = f"/carga-datos/lottery/historial?year={first.year}&month={first.month}"
+        elif first_date:
+            redirect_url = f"/reporte/historial?year={first_date.year}&month={first_date.month}"
+        elif lottery["saved"]:
+            first = min(lottery["saved"])
+            redirect_url = f"/carga-datos/lottery/historial?year={first.year}&month={first.month}"
         else:
-            notice = " ".join(parts)
-            level = "warning" if (days_partial or files_unreadable or days_subtotal_mismatch or days_doubtful or days_unverified or days_total_sales_mismatch or days_lottery_missing or lottery_unreadable) else "success"
-
-        redirect_url = (
-            f"/reporte/historial?year={first_date.year}&month={first_date.month}"
-            if first_date else "/carga-datos/reporte-diario"
-        )
+            redirect_url = "/carga-datos/lottery" if origin == "lottery" else "/carga-datos/reporte-diario"
         jobs.update_job(
             job_id, status="done", done=len(pdf_paths), total=len(pdf_paths),
             notice=notice, notice_level=level, redirect_url=redirect_url,
@@ -2495,70 +2505,13 @@ def carga_datos_lottery_subir():
     """
     pdf_uploads = request.files.getlist("pdf_files")
     if not pdf_uploads or not any(u.filename for u in pdf_uploads):
-        return _error_response("Seleccioná uno o más PDF de Daily Sales Report.")
+        return _error_response("Seleccioná uno o más PDF (Daily Sales Report de Lottery o Close Store).")
 
     pdf_paths = _save_uploads_to_workspace(pdf_uploads)
     job_id = jobs.create_job(len(pdf_paths), kind="lottery")
-    threading.Thread(target=_run_carga_datos_lottery_job, args=(job_id, pdf_paths), daemon=True).start()
+    threading.Thread(target=_run_carga_datos_reporte_diario_job, args=(job_id, pdf_paths, "lottery"),
+                     daemon=True).start()
     return jsonify({"job_id": job_id, "total": len(pdf_paths)})
-
-
-def _run_carga_datos_lottery_job(job_id, pdf_paths):
-    """Corre en su propio hilo -- mismo patrón que _run_carga_datos_reporte_diario_job, ver ese docstring."""
-    try:
-        saved_dates = []
-        failed = 0
-        date_mismatches = 0
-        incomplete = 0
-        for index, pdf_path in enumerate(pdf_paths, start=1):
-            filename = os.path.basename(pdf_path)
-            try:
-                fields = extract_lottery_receipt_fields_from_sales_report(pdf_path)
-                # Un campo que no se pudo leer queda en None con un warning:
-                # se guarda lo demás (el None no pisa lo ya guardado, ver
-                # upsert_sales_report_fields) y se avisa para completarlo.
-                if fields.get("warning"):
-                    incomplete += 1
-                if _filename_date_mismatch(filename, fields["report_date"]):
-                    date_mismatches += 1
-                    raise ValueError("la fecha leída no coincide con la del nombre de archivo")
-                pdf_relpath = lottery_db.store_pdf_copy(fields["report_date"], pdf_path, filename)
-                lottery_db.upsert_sales_report_fields(fields["report_date"], fields, source="ocr", pdf_filename=pdf_relpath)
-                saved_dates.append(fields["report_date"])
-            except Exception as exc:
-                print(f"[carga-datos/lottery] {pdf_path}: {exc}")
-                failed += 1
-            jobs.update_job(job_id, done=index, total=len(pdf_paths))
-
-        parts = []
-        if saved_dates:
-            parts.append(f"{len(saved_dates)} día(s) guardado(s).")
-        if date_mismatches:
-            parts.append(
-                f"{date_mismatches} archivo(s) rechazados: la fecha real no coincide con la del "
-                "nombre de archivo — revisá que no sea de otro mes."
-            )
-        if failed - date_mismatches:
-            parts.append(f"{failed - date_mismatches} archivo(s) no se pudieron leer.")
-        if incomplete:
-            parts.append(f"{incomplete} día(s) con algún campo que no se pudo leer: completalo a mano.")
-        if not parts:
-            notice, level = "No se pudo guardar nada de este lote.", "error"
-        else:
-            notice, level = " ".join(parts), ("warning" if (failed or incomplete) else "success")
-
-        if saved_dates:
-            first = min(saved_dates)
-            redirect_url = f"/carga-datos/lottery/historial?year={first.year}&month={first.month}"
-        else:
-            redirect_url = "/carga-datos/lottery"
-
-        jobs.update_job(
-            job_id, status="done", done=len(pdf_paths), total=len(pdf_paths),
-            notice=notice, notice_level=level, redirect_url=redirect_url,
-        )
-    except Exception as exc:
-        jobs.update_job(job_id, status="error", error=f"Error: {exc}")
 
 
 def _run_monthly_upload_job(job_id, paths, read_and_save, done_prefix, redirect_for, fallback_url):
