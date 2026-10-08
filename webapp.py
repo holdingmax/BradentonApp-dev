@@ -7393,9 +7393,14 @@ def carga_datos_gettel_cierre():
 def carga_datos_gettel_asignar():
     company = request.form.get("company")
     ids = [int(x) for x in request.form.get("ids", "").split(",") if x.strip().isdigit()]
-    pos_date = request.form.get("pos_date") or ""
+    pos_date = (request.form.get("pos_date") or "").strip()
     if company not in cuenta_kia_toyota.COMPANIES + (cuenta_kia_toyota.VOIDED,) or not (ids or pos_date):
         return _error_response("Elegí Kia o Toyota.")
+    if pos_date:
+        try:
+            date.fromisoformat(pos_date)
+        except ValueError:
+            return _error_response("La fecha del pago no es válida.")
     if pos_date:
         cuenta_kia_toyota_db.assign_pos_only(pos_date, company)
     else:
@@ -7434,7 +7439,9 @@ def _link_ice_deposits_to_chase():
     muestra como ICE MACHINE (pedido del usuario, 2026-10-07), y DEPOSITO
     VACCUMMS (2026-10-08). Lo corregido a mano en Chase no se toca; un
     depósito ya categorizado como otro de estos tipos (o Food Truck) tampoco.
-    Devuelve cuántos movimientos de Chase se categorizaron.
+    Al revés, si se borra el recibo o se le cambia el tipo, su depósito
+    vuelve a la categoría de las reglas (revisión 2026-10-08: quedaba como
+    hielo para siempre). Devuelve cuántos movimientos de Chase se categorizaron.
     """
     from collections import Counter
     by_kind = {depositos.ICE_MACHINE: CHASE_DETALLE_ICE, control_depositos.VACCUMMS: CHASE_DETALLE_VACCUMMS}
@@ -7451,6 +7458,19 @@ def _link_ice_deposits_to_chase():
             for r in candidates[:max(need, 0)]:
                 chase_db.set_deposit_detalle(r["rowid"], detalle)
                 changed += 1
+    # Los que categorizó un recibo que ya no está (o que ahora es de otro tipo).
+    wanted_by_detalle = {
+        detalle: Counter((d["deposit_date"], round(d["amount"], 2)) for d in depositos_db.list_kind(kind)
+                         if d["deposit_date"] and d["amount"] is not None)
+        for kind, detalle in by_kind.items()
+    }
+    linked = Counter()
+    for r in chase_db.deposits_set_by_receipt(list(by_kind.values())):
+        detalle = r["detalle"].upper()
+        key = (r["posting_date"], round(r["amount"], 2))
+        linked[(detalle, key)] += 1
+        if linked[(detalle, key)] > wanted_by_detalle.get(detalle, Counter())[key]:
+            chase_db.release_deposit_detalle(r["rowid"], categorize_chase_description(r["description"], r["amount"]))
     return changed
 
 
@@ -7581,6 +7601,7 @@ def controles_deposito_eliminar(deposit_id):
     if deposit is None:
         flash("Ese depósito ya no existe.", "error")
         return redirect(url_for("carga_datos_depositos"))
+    _link_ice_deposits_to_chase()
     flash("Depósito eliminado.", "success")
     return redirect(url_for("carga_datos_depositos", year=deposit["year"], month=deposit["month"]))
 

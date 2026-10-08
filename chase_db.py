@@ -435,6 +435,34 @@ def deposits_on(posting_date):
         conn.close()
 
 
+def deposits_set_by_receipt(detalles):
+    """Los depósitos de Chase que categorizó un recibo con alguno de esos Detalle: [{rowid, posting_date, description, amount, detalle}]."""
+    conn = _connect()
+    try:
+        marks = ", ".join("?" for _ in detalles)
+        rows = conn.execute(
+            "SELECT rowid AS rowid, posting_date, description, amount, detalle FROM chase_transactions "
+            f"WHERE detalle_source = 'deposito' AND UPPER(detalle) IN ({marks}) ORDER BY rowid",
+            [d.upper() for d in detalles],
+        ).fetchall()
+        return [dict(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def release_deposit_detalle(rowid, detalle):
+    """Un depósito que ya no tiene el recibo que lo categorizó vuelve a la categoría de las reglas (o sin categoría)."""
+    conn = _connect()
+    try:
+        conn.execute(
+            "UPDATE chase_transactions SET detalle = ?, detalle_source = ?, updated_at = ? WHERE rowid = ?",
+            (detalle, "rule" if detalle else None, datetime.utcnow().isoformat(), rowid),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def set_deposit_detalle(rowid, detalle):
     """
     Categoría puesta por un recibo de depósito cargado (pedido del usuario,

@@ -70,7 +70,7 @@
             {% if g.pos_only %}<input type="hidden" name="pos_date" value="{{ g.date }}">{% else %}<input type="hidden" name="ids" value="{{ g.ids|join(',') }}">{% endif %}
             {% for company in companies %}<button type="submit" name="company" value="{{ company }}" class="btn-secondary" style="margin:0; padding:4px 12px;">{{ company }}</button>{% endfor %}
             <button type="submit" name="company" value="{{ voided }}" class="btn-secondary" style="margin:0; padding:4px 12px;" title="El recibo dice VOID o el POS no lo cobró">Anulado</button>
-          </form>{% endif %}</td>
+          </form>{% else %}<span class="muted">Asignalo en el <a href="{{ url_for('carga_datos_gettel_pagos_cuadro', year=g.date[:4]|int, month=g.date[5:7]|int) }}">Cuadro de Pagos</a></span>{% endif %}</td>
         </tr>
       {% endfor %}
       </tbody>
