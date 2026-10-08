@@ -10,8 +10,8 @@ mes contra Chase, de una vez. Cálculo puro, sin UI ni base.
   máquina de hielo, que Chase acredita como "Cantaloupe ... IND ID:<Reference>"
   el día del "To" del resumen (ver ice_machine.py).
 
-Al revés, todo depósito y todo pago de Cantaloupe de Chase del mes tiene que
-tener su papel. Lo posterior al último día cargado de Chase queda "todavía
+Al revés, todo pago de Cantaloupe de Chase del mes tiene que tener su
+Payment Summary; un depósito de Chase sin recibo solo se avisa ("notices"). Lo posterior al último día cargado de Chase queda "todavía
 no se puede controlar".
 """
 
@@ -27,7 +27,8 @@ KNOWN_KINDS = (NORMAL, ICE_MACHINE, FOOD_TRUCK, VACCUMMS)
 GROUP_LABELS = {NORMAL: "Depósitos normales", ICE_MACHINE: "Ice Machine — efectivo",
                 FOOD_TRUCK: FOOD_TRUCK, VACCUMMS: VACCUMMS}
 # Cómo queda categorizado en Chase cada tipo (detalle).
-CHASE_DETALLE = {NORMAL: "DEPOSITO", ICE_MACHINE: "DEPOSITO VENTA ICE", FOOD_TRUCK: "FOOD TRUCK"}
+CHASE_DETALLE = {NORMAL: "DEPOSITO", ICE_MACHINE: "DEPOSITO VENTA ICE", FOOD_TRUCK: "FOOD TRUCK",
+                 VACCUMMS: "DEPOSITO VACCUMMS"}
 
 
 def receipt_kind(kind):
@@ -52,7 +53,7 @@ def chase_kind(detalle):
         return ICE_MACHINE
     if upper == CHASE_DETALLE[FOOD_TRUCK]:
         return FOOD_TRUCK
-    if upper.startswith("VAC"):
+    if upper == CHASE_DETALLE[VACCUMMS] or upper.startswith("VAC"):
         return VACCUMMS
     if upper in ("", CHASE_DETALLE[NORMAL]):
         return NORMAL
@@ -147,13 +148,14 @@ def build_month_control(year, month, summaries, deposits, chase_rows, chase_last
     orphan_deposits = [dict(c, group=chase_kind(c["detalle"])) for i, c in enumerate(chase_deps)
                        if i not in taken and c["date"].startswith(prefix)]
 
+    # Un depósito de Chase sin recibo es un aviso, no algo mal (pedido del
+    # usuario, 2026-10-08: suele ser un recibo que el manager no mandó).
     kinds = list(KNOWN_KINDS) + sorted({r["group"] for r in deposit_rows + orphan_deposits} - set(KNOWN_KINDS))
+    notices = []
     for kind in kinds:
-        missing = [o for o in orphan_deposits if o["group"] == kind]
-        if missing:
-            label = GROUP_LABELS.get(kind, kind)
-            issues.append(f"Chase: {len(missing)} depósito(s) de {label} sin su recibo "
-                          f"(${sum(o['amount'] for o in missing):,.2f}).")
+        for o in (o for o in orphan_deposits if o["group"] == kind):
+            label = "Depósito" if kind == NORMAL else GROUP_LABELS.get(kind, kind)
+            notices.append(f"{label} de ${o['amount']:,.2f} del {_dm(o['date'])}")
 
     def total(items, key):
         return round(sum(i[key] or 0 for i in items), 2)
@@ -170,26 +172,30 @@ def build_month_control(year, month, summaries, deposits, chase_rows, chase_last
     ice["total"] = round(ice["net"] + ice["cash"], 2)
 
     # Todo junto: por tipo, lo que dicen los papeles contra lo que entró a
-    # Chase (lo cruzado más lo de Chase sin papel). Lo posterior al último día
-    # de Chase queda afuera de las dos columnas.
-    def overview_row(key, label, papers, amount_key, orphans):
+    # Chase por esos papeles; lo de Chase sin papel va aparte ("Sin papel"):
+    # en depósitos es un aviso, en Cantaloupe (sin Payment Summary) un error.
+    # Lo posterior al último día de Chase queda afuera.
+    def overview_row(key, label, papers, amount_key, orphans, orphans_are_errors):
         checked = [p for p in papers if p["status"] != "after"]
         paper_total = total(checked, amount_key)
-        chase_total = round(sum(p["chase"]["amount"] for p in checked if p["chase"])
-                            + sum(o["amount"] for o in orphans), 2)
+        chase_total = round(sum(p["chase"]["amount"] for p in checked if p["chase"]), 2)
         diff = round(chase_total - paper_total, 2)
         return {"key": key, "label": label, "count": len(checked), "papers": paper_total, "chase": chase_total,
-                "diff": diff, "orphans": len(orphans),
-                "ok": abs(diff) <= TOLERANCE and not orphans and all(p["status"] == "ok" for p in checked)}
+                "diff": diff, "orphans": len(orphans), "orphans_total": total(orphans, "amount"),
+                "ok": abs(diff) <= TOLERANCE and not (orphans and orphans_are_errors)
+                      and all(p["status"] == "ok" for p in checked)}
 
     overview = [overview_row(kind, GROUP_LABELS.get(kind, kind), groups[kind], "amount",
-                             [o for o in orphan_deposits if o["group"] == kind]) for kind in kinds]
+                             [o for o in orphan_deposits if o["group"] == kind], False) for kind in kinds]
     overview.insert(1, overview_row("cantaloupe", "Ice Machine — tarjeta (Cantaloupe)", summary_rows, "net",
-                                    orphan_payments))
-    overview = [r for r in overview if r["count"] or r["chase"] or r["key"] in KNOWN_KINDS or r["key"] == "cantaloupe"]
+                                    orphan_payments, True))
+    overview = [r for r in overview if r["count"] or r["chase"] or r["orphans"]
+                or r["key"] in KNOWN_KINDS or r["key"] == "cantaloupe"]
     overview_total = {
         "label": "Total", "count": sum(r["count"] for r in overview),
         "papers": round(sum(r["papers"] for r in overview), 2), "chase": round(sum(r["chase"] for r in overview), 2),
+        "orphans": sum(r["orphans"] for r in overview),
+        "orphans_total": round(sum(r["orphans_total"] for r in overview), 2),
     }
     overview_total["diff"] = round(overview_total["chase"] - overview_total["papers"], 2)
     overview_total["ok"] = all(r["ok"] for r in overview)
@@ -206,6 +212,7 @@ def build_month_control(year, month, summaries, deposits, chase_rows, chase_last
         "orphan_payments": orphan_payments,
         "uncategorized": [d for d in deposit_rows if d["uncategorized"]],
         "issues": issues,
+        "notices": notices,
         "chase_last_date": chase_last_date,
         "pending_after": [r for r in summary_rows + deposit_rows if r["status"] == "after"],
         "ok": not issues,

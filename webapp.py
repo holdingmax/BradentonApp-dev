@@ -78,6 +78,7 @@ from caja import (
     build_caja_pdf_resumen,
     get_available_years as get_caja_available_years,
 )
+CHASE_DETALLE_VACCUMMS = control_depositos.CHASE_DETALLE[control_depositos.VACCUMMS]
 from cmv_costo import _consolidate_department_files, compare_cost_snapshots, update_master_costo_todos_bulk
 import eft_db
 from eft_cta_cte import EFT_DUPLICATE_ALERT, extract_eft_data
@@ -3253,7 +3254,7 @@ def chase():
 
     parts = [f"{len(rows)} movimiento(s) guardado(s) ({inserted} nuevo(s), {updated} actualizado(s))."]
     if linked:
-        parts.append(f"{linked} depósito(s) categorizados como Ice Machine por su recibo.")
+        parts.append(f"{linked} depósito(s) categorizados por su recibo (Ice Machine o Vaccumms).")
     if uncategorized:
         parts.append(f"{uncategorized} sin ninguna regla que matcheara.")
     if skipped:
@@ -3400,7 +3401,7 @@ def chase_historial():
         # "DEPOSITO VENTA ICE" siempre disponible para elegir a mano -- esos
         # depósitos chicos ya no se categorizan solos (ver
         # chase_rules._split_small_deposit), así que puede no estar usado todavía.
-        known_details=sorted(set(chase_db.list_known_details()) | {"DEPOSITO VENTA ICE"}),
+        known_details=sorted(set(chase_db.list_known_details()) | {"DEPOSITO VENTA ICE", CHASE_DETALLE_VACCUMMS}),
         supplier_options=supplier_options,
         supplier_labels=supplier_labels,
         **THEME_BY_KEY["carga_chase"],
@@ -6832,7 +6833,8 @@ def documentos_index():
 # descripción leídos por OCR y editables. Ver depositos.py/depositos_db.py.
 # ---------------------------------------------------------------------------
 
-_CHASE_DEPOSIT_KINDS = {"FOOD TRUCK": depositos.FOOD_TRUCK, "DEPOSITO VENTA ICE": depositos.ICE_MACHINE}
+_CHASE_DEPOSIT_KINDS = {"FOOD TRUCK": depositos.FOOD_TRUCK, "DEPOSITO VENTA ICE": depositos.ICE_MACHINE,
+                        CHASE_DETALLE_VACCUMMS: control_depositos.VACCUMMS}
 
 
 def _chase_deposits(year, month):
@@ -7429,25 +7431,28 @@ def _pdf_text(pdf_path):
 
 def _link_ice_deposits_to_chase():
     """
-    Cada recibo de Ice Machine categoriza su depósito en Chase (misma fecha e
-    importe) como depósito de hielo, la categoría que la Caja muestra como
-    ICE MACHINE (pedido del usuario, 2026-10-07). Lo corregido a mano en
-    Chase no se toca; un depósito ya categorizado como otro tipo (Food Truck)
-    tampoco. Devuelve cuántos movimientos de Chase se categorizaron.
+    Cada recibo de Ice Machine o de Vaccumms categoriza su depósito en Chase
+    (misma fecha e importe): DEPOSITO VENTA ICE, la categoría que la Caja
+    muestra como ICE MACHINE (pedido del usuario, 2026-10-07), y DEPOSITO
+    VACCUMMS (2026-10-08). Lo corregido a mano en Chase no se toca; un
+    depósito ya categorizado como otro de estos tipos (o Food Truck) tampoco.
+    Devuelve cuántos movimientos de Chase se categorizaron.
     """
     from collections import Counter
-    ice = CHASE_DETALLE_ICE
-    others = {CHASE_DETALLE_FOOD_TRUCK}
-    wanted = Counter((d["deposit_date"], round(d["amount"], 2)) for d in depositos_db.list_kind(depositos.ICE_MACHINE))
+    by_kind = {depositos.ICE_MACHINE: CHASE_DETALLE_ICE, control_depositos.VACCUMMS: CHASE_DETALLE_VACCUMMS}
+    special = {CHASE_DETALLE_FOOD_TRUCK, *by_kind.values()}
     changed = 0
-    for (day, amount), count in wanted.items():
-        rows = [r for r in chase_db.deposits_on(day) if abs(r["amount"] - amount) <= 0.005]
-        need = count - sum(1 for r in rows if (r["detalle"] or "").upper() == ice)
-        candidates = [r for r in rows if (r["detalle"] or "").upper() != ice and r["detalle_source"] != "manual"
-                      and (r["detalle"] or "").upper() not in others]
-        for r in candidates[:max(need, 0)]:
-            chase_db.set_deposit_detalle(r["rowid"], ice)
-            changed += 1
+    for kind, detalle in by_kind.items():
+        wanted = Counter((d["deposit_date"], round(d["amount"], 2)) for d in depositos_db.list_kind(kind)
+                         if d["deposit_date"] and d["amount"] is not None)
+        for (day, amount), count in wanted.items():
+            rows = [r for r in chase_db.deposits_on(day) if abs(r["amount"] - amount) <= 0.005]
+            need = count - sum(1 for r in rows if (r["detalle"] or "").upper() == detalle)
+            candidates = [r for r in rows if r["detalle_source"] != "manual"
+                          and (r["detalle"] or "").upper() not in special]
+            for r in candidates[:max(need, 0)]:
+                chase_db.set_deposit_detalle(r["rowid"], detalle)
+                changed += 1
     return changed
 
 
@@ -7487,7 +7492,7 @@ def _run_depositos_job(job_id, pdf_paths, fallback_period):
             parts.append(f"{duplicates} recibo(s) ya estaban cargados.")
         linked = _link_ice_deposits_to_chase() if deposits else 0
         if linked:
-            parts.append(f"{linked} depósito(s) de Chase quedaron categorizados como Ice Machine.")
+            parts.append(f"{linked} depósito(s) de Chase quedaron categorizados por su recibo (Ice Machine o Vaccumms).")
         parts.extend(problems)
         if failed:
             parts.append(f"{failed} archivo(s) no se pudieron leer.")

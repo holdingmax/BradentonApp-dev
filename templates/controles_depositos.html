@@ -31,7 +31,9 @@
   .ice-tag { display: inline-block; margin-left: 6px; padding: 0 7px; border-radius: 999px; background: var(--warning-soft); color: var(--warning); font-size: 11px; font-weight: 600; }
   .ice-del { margin: 0; background: none; border: none; padding: 0; color: var(--text-soft); font-size: 12px; cursor: default; }
   .ice-del:hover { color: var(--error); }
-  .ice-orphan td { background: #FEF2F2; }
+  .ice-orphan td { color: var(--text-soft); }
+  .ice-notice { margin-top: 10px; padding: 9px 14px; border-radius: 10px; background: var(--surface-alt); border: 1px solid var(--border); font-size: 13px; color: var(--text-soft); }
+  .ice-notice b { color: var(--text); font-weight: 600; }
   .ice-empty { padding: 12px; font-size: 13px; color: var(--text-soft); }
 </style>
 {% endblock %}
@@ -65,7 +67,7 @@
     <a href="{{ url_for('controles_depositos', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
   </div>
 
-  {% set loaded = control.overview_total.count or control.overview_total.chase or control.issues %}
+  {% set loaded = control.overview_total.count or control.overview_total.chase or control.issues or control.notices %}
   {% if not loaded %}
   <div class="ice-status none">
     <div class="ice-status-title">{{ month_name }} {{ year }} no tiene nada cargado todavía.</div>
@@ -74,26 +76,31 @@
   {% else %}
   <div class="ice-status {{ 'ok' if control.ok else 'bad' }}">
     <div class="ice-status-title">
-      {% if control.ok %}Bien: todos los depósitos y pagos de {{ month_name }} están en Chase, y todo lo de Chase tiene su papel.
+      {% if control.ok %}Bien: todos los recibos y Payment Summary de {{ month_name }} están en Chase.
       {% else %}Hay {{ control.issues|length }} cosa{{ 's' if control.issues|length > 1 }} para revisar:{% endif %}
     </div>
     {% if control.issues %}<ul>{% for issue in control.issues %}<li>{{ issue }}</li>{% endfor %}</ul>{% endif %}
     {% if control.uncategorized %}<p>En Chase quedaron sin la categoría de su tipo: {% for d in control.uncategorized %}{{ control.group_labels[d.group] }} {{ money(d.amount) }} del {{ dm(d.deposit_date) }}{{ ', ' if not loop.last else '.' }}{% endfor %} Conviene categorizarlos en Chase.</p>{% endif %}
     {% if control.pending_after %}<p>{{ control.pending_after|length }} todavía no se pueden controlar: Chase está cargado hasta el {{ dm(control.chase_last_date) }}.</p>{% endif %}
   </div>
+  {% if control.notices %}
+  <div class="ice-notice"><b>Sin recibo físico:</b> {{ control.notices|join(', ') }}. Están en Chase pero no tienen su recibo cargado.</div>
+  {% endif %}
 
   <div class="ice-table-wrap" style="margin-top: 14px;">
     <table class="ice-table">
-      <thead><tr><th>Todo junto</th><th>Papeles</th><th>Según los papeles</th><th>Entró a Chase</th><th>Diferencia</th></tr></thead>
+      <thead><tr><th>Todo junto</th><th>Papeles</th><th>Según los papeles</th><th>Entró a Chase</th><th>Diferencia</th><th>En Chase sin papel</th></tr></thead>
       <tbody>
       {% for r in control.overview %}
         <tr><td>{{ r.label }}</td><td>{{ r.count }}</td><td>{{ money(r.papers) }}</td><td>{{ money(r.chase) }}</td>
-          <td class="{{ 'ice-ok' if r.ok else 'ice-bad' }}">{{ money(r.diff) if r.diff else ('$0.00' if r.ok else 'revisar') }}</td></tr>
+          <td class="{{ 'ice-ok' if r.ok else 'ice-bad' }}">{{ money(r.diff) if r.diff else ('$0.00' if r.ok else 'revisar') }}</td>
+          <td class="{{ 'ice-bad' if r.orphans and r.key == 'cantaloupe' else 'ice-soft' }}">{% if r.orphans %}{{ money(r.orphans_total) }} ({{ r.orphans }}){% else %}—{% endif %}</td></tr>
       {% endfor %}
       </tbody>
       {% set t = control.overview_total %}
       <tfoot><tr><td>{{ t.label }}</td><td>{{ t.count }}</td><td>{{ money(t.papers) }}</td><td>{{ money(t.chase) }}</td>
-        <td class="{{ 'ice-ok' if t.ok else 'ice-bad' }}">{{ money(t.diff) if t.diff else ('$0.00' if t.ok else 'revisar') }}</td></tr></tfoot>
+        <td class="{{ 'ice-ok' if t.ok else 'ice-bad' }}">{{ money(t.diff) if t.diff else ('$0.00' if t.ok else 'revisar') }}</td>
+        <td class="ice-soft">{% if t.orphans %}{{ money(t.orphans_total) }} ({{ t.orphans }}){% else %}—{% endif %}</td></tr></tfoot>
     </table>
   </div>
   {% if control.pending_after %}<p class="muted" style="font-size: 12.5px; margin: 6px 0 0;">Lo posterior al {{ dm(control.chase_last_date) }} (último día cargado de Chase) no entra en el cuadro.</p>{% endif %}
@@ -142,7 +149,7 @@
         {% endfor %}
         {% for o in group.orphans %}
           <tr class="ice-orphan">
-            <td>{{ dm(o.date) }}</td><td class="ice-bad">Sin recibo</td><td>{{ money(o.amount) }}</td>
+            <td>{{ dm(o.date) }}</td><td>Sin recibo</td><td>{{ money(o.amount) }}</td>
             <td class="left ice-soft">En Chase: {{ o.description }}</td>
           </tr>
         {% endfor %}
