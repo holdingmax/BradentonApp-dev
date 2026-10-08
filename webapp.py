@@ -739,8 +739,8 @@ CONTROLES_SECTIONS = [
         "label": "Control Depósitos",
         "url": "/controles/depositos",
         "description": "Los depósitos del mes contra Chase.",
-        "accent": "#0891B2",
-        "accent_soft": "#D5F0F6",
+        "accent": "#65A30D",
+        "accent_soft": "#E7F3D4",
     },
     {
         "key": "control_cmv",
@@ -797,7 +797,7 @@ CARGA_DATOS_TOOLS = [
         "key": "carga_reporte",
         "code": "RD",
         "icon": _ICON_CALENDAR,
-        "label": "Reportes Diario/Mensual",
+        "label": "Reporte C-Store",
         "url": "/carga-datos/reporte-diario",
         "description": "Los reportes de cierre del día y del mes.",
         "accent": "#0284C7",
@@ -860,8 +860,8 @@ CARGA_DATOS_TOOLS = [
         "label": "Depósitos",
         "url": "/carga-datos/depositos",
         "description": "Los comprobantes de depósito y los pagos de la máquina de hielo.",
-        "accent": "#0891B2",
-        "accent_soft": "#D5F0F6",
+        "accent": "#65A30D",
+        "accent_soft": "#E7F3D4",
     },
     {
         # Nunca aparece en la grilla de Herramientas (ver el filtro de
@@ -907,8 +907,8 @@ CARGA_DATOS_TOOLS = [
         "label": "Horas de Trabajo",
         "url": "/carga-datos/horas-trabajo",
         "description": "Las horas de los empleados y su sueldo.",
-        "accent": "#0891B2",
-        "accent_soft": "#D3F0F4",
+        "accent": "#475569",
+        "accent_soft": "#E2E8F0",
     },
     {
         "key": "carga_combustible",
@@ -2275,7 +2275,7 @@ def carga_datos_reporte_diario():
     plan de dejar este lado autosuficiente para subir datos sin depender de
     Herramientas). Ver carga_datos_reporte_diario_subir más abajo.
 
-    "Reportes Diario/Mensual" (pedido del usuario, 2026-10-06): abajo, en la
+    "Reporte C-Store" (pedido del usuario, 2026-10-06): abajo, en la
     misma página, se carga el reporte mensual (carga_datos_reporte_mensual_
     subir); su página propia queda solo para verlo y eliminarlo.
     """

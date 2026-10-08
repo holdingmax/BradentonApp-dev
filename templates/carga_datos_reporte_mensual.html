@@ -43,7 +43,7 @@
 {% macro money(x) -%}{%- if x is none -%}—{%- elif x < 0 -%}-${{ "{:,.2f}".format(-x) }}{%- else -%}${{ "{:,.2f}".format(x) }}{%- endif -%}{%- endmacro %}
 <div class="page-header">
   <h1>Reporte Mensual</h1>
-  <p class="page-subtitle">El resumen de ventas del mes que imprime el POS, cruzado con la suma de los reportes diarios del mes (Store Info y Ventas por Departamento): todo tiene que coincidir al centavo. Se carga en <a href="{{ url_for('carga_datos_reporte_diario') }}">Carga de Datos → Reportes Diario/Mensual</a>.</p>
+  <p class="page-subtitle">El resumen de ventas del mes que imprime el POS, cruzado con la suma de los reportes diarios del mes (Store Info y Ventas por Departamento): todo tiene que coincidir al centavo. Se carga en <a href="{{ url_for('carga_datos_reporte_diario') }}">Carga de Datos → Reporte C-Store</a>.</p>
 </div>
 
 <div class="card">
@@ -63,7 +63,7 @@
   {% if not report %}
   <div class="rm-status none">
     <div class="rm-status-title">Todavía no hay reporte mensual de {{ month_name }} {{ year }}.</div>
-    <p>Cargalo en <a href="{{ url_for('carga_datos_reporte_diario') }}">Carga de Datos → Reportes Diario/Mensual</a> para cruzarlo con lo cargado.</p>
+    <p>Cargalo en <a href="{{ url_for('carga_datos_reporte_diario') }}">Carga de Datos → Reporte C-Store</a> para cruzarlo con lo cargado.</p>
   </div>
   {% elif not cross %}
   <div class="rm-status warn">

@@ -98,7 +98,7 @@
       {% else %}Falta el reporte de Elistar de {{ month_name }} para el control completo.{% endif %}
     </div>
     {% if control.issues %}<ul>{% for issue in control.issues %}<li>{{ issue }}</li>{% endfor %}</ul>{% endif %}
-    {% if not control.has_monthly %}<p>Sin reporte mensual del POS de {{ month_name }} (se sube en Carga de Datos → Reportes Diario/Mensual).</p>{% endif %}
+    {% if not control.has_monthly %}<p>Sin reporte mensual del POS de {{ month_name }} (se sube en Carga de Datos → Reporte C-Store).</p>{% endif %}
     {% if not control.has_cmv %}<p>Sin ventas cargadas en CMV de {{ month_name }} (se suben en Carga de Datos → CMV).</p>
     {% elif control.cmv_problems %}<p>CMV: {{ control.cmv_problems|length }} departamento(s) no coinciden con los reportes diarios (abajo, en la tabla por departamento).</p>{% endif %}
   </div>

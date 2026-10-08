@@ -4,7 +4,7 @@
 <style>
   .home-menu-wrap { max-width: 1040px; margin: 56px auto 40px; padding: 0 16px; }
   .home-menu-header { text-align: center; margin-bottom: 34px; }
-  .home-menu-header h1 { font-size: 25px; margin: 0 0 8px; color: var(--text); }
+  .home-menu-header h1 { font-size: 25px; font-weight: 700; margin: 0; color: var(--text); }
   .home-menu-header p { font-size: 14px; color: var(--text-soft); margin: 0; }
   .home-menu-grid {
     display: grid;
@@ -47,8 +47,7 @@
 {% block content %}
 <div class="home-menu-wrap">
   <div class="home-menu-header">
-    <h1>¿A qué módulo querés entrar?</h1>
-    <p>Elegí una sección para empezar.</p>
+    <h1>Seleccioná un módulo</h1>
   </div>
   <div class="home-menu-grid">
     <a class="home-menu-card" href="{{ url_for('carga_datos_index') }}" style="--card-color: #0B6FAE; --card-color-soft: #E0F2FB;">
