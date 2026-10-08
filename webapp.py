@@ -670,6 +670,7 @@ CONTROLS = [
 # llenando de a uno. Los 6 controles viejos de arriba (CONTROLS, basados en
 # Excel) quedan ocultos: siguen andando por URL directa, pero no se listan
 # ni aparecen en la búsqueda.
+_ICON_TAG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4l-7.2 7.2a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8z"/><circle cx="7.5" cy="7.5" r="1.5"/></svg>'
 _ICON_DEPOSIT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/></svg>'
 
 # "Cierre" reemplazó a "Caja" (Depósitos contra Chase) en la lista (pedido
@@ -746,6 +747,16 @@ CONTROLES_SECTIONS = [
         "description": "Los cambios de precio de los productos de cada proveedor.",
         "accent": "#DB2777",
         "accent_soft": "#FBD9EA",
+    },
+    {
+        "key": "control_ventas_costos",
+        "code": "VC",
+        "icon": _ICON_TAG,
+        "label": "Ventas y costos",
+        "url": "/controles/ventas-costos",
+        "description": "Lo vendido de cada producto mes por mes, su precio y el costo de su última compra.",
+        "accent": "#B45309",
+        "accent_soft": "#FBE8CF",
     },
 ]
 
@@ -8174,6 +8185,48 @@ def controles_productos_cambios(supplier_key, invoice_date, invoice_no, fmt):
     else:
         proveedores_productos.build_price_change_workbook(label, invoice, changed, dest_path)
     return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
+
+
+@app.route("/controles/ventas-costos")
+def controles_ventas_costos():
+    """
+    Ventas y costos (pedido del usuario, 2026-10-08): las ventas por producto
+    de Elistar cargadas en CMV Ventas, mes por mes (por defecto los últimos 4
+    meses cargados; ?desde=YYYY-MM&hasta=YYYY-MM), con el costo de la última
+    compra a proveedor hasta cada fin de mes (proveedores_productos.
+    build_sales_cost_view).
+    """
+    section = next(s for s in CONTROLES_SECTIONS if s["key"] == "control_ventas_costos")
+    available = sorted(cmv_db.get_month_years_with_data())
+
+    def parse(value):
+        match = re.fullmatch(r"(\d{4})-(\d{1,2})", value or "")
+        return (int(match.group(1)), int(match.group(2))) if match else None
+
+    start, end = parse(request.args.get("desde")), parse(request.args.get("hasta"))
+    if available:
+        end = end or available[-1]
+        start = start or next((ym for ym in available[-4:] if ym <= end), available[0])
+        if start > end:
+            start, end = end, start
+    year_months = [ym for ym in available if start <= ym <= end] if available else []
+    products = proveedores_productos.build_sales_cost_view(
+        cmv_db.get_monthly_sales_rows(year_months), proveedores_db.get_all_invoice_lines(), year_months)
+    states = {state: sum(1 for p in products if p["state"] == state)
+              for state in proveedores_productos.SALES_COST_STATES}
+    return render_template(
+        "controles_ventas_costos.html",
+        products=products,
+        year_months=year_months,
+        available=available,
+        start=start,
+        end=end,
+        states=states,
+        with_cost=sum(1 for p in products if p["cost_change"] is not None),
+        month_names=_MONTH_NAMES_ES,
+        accent=section["accent"],
+        accent_soft=section["accent_soft"],
+    )
 
 
 @app.route("/controles/productos/lista")

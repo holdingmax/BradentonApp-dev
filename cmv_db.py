@@ -318,6 +318,22 @@ def get_all_monthly_sales():
     return [dict(row) for row in rows]
 
 
+def get_monthly_sales_rows(year_months):
+    """Renglones de ventas (año, mes, departamento, UPC, nombre, cantidad, importe) de los meses pedidos."""
+    if not year_months:
+        return []
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT year, month, dept_name, upc, name, count, amount FROM cmv_monthly_sales "
+            "WHERE " + " OR ".join("(year = ? AND month = ?)" for _ in year_months),
+            [value for ym in year_months for value in ym],
+        ).fetchall()
+    finally:
+        conn.close()
+    return [dict(row) for row in rows]
+
+
 def get_recent_price_changes(limit=30):
     conn = _connect()
     try:

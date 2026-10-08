@@ -5181,6 +5181,107 @@ def build_product_detail(key, lines, supplier_labels, pos_costs, monthly_sales):
 
 
 # ---------------------------------------------------------------------------
+# Ventas y costos por mes (pedido del usuario, 2026-10-08): las ventas por
+# producto de Elistar (CMV Ventas, Sales Insights) mes por mes, con el costo
+# de la última compra a proveedor hasta fin de cada mes (el POS solo guarda
+# el costo de hoy, no el de una fecha pasada), para ver qué precios se
+# mantienen y si un costo que cambió se pasó o no al precio de venta.
+# El precio promedio es importe / cantidad: Elistar ya le restó los
+# descuentos Mix & Match, así que se mueve un poco aunque el precio de
+# lista no cambie; por eso un cambio de precio cuenta desde 5 centavos y 2 %.
+# ---------------------------------------------------------------------------
+
+_PRICE_MIN_CHANGE = 0.05
+_PRICE_MIN_PCT = 2.0
+
+SALES_COST_STATES = (
+    "Subió el costo, no el precio",
+    "Subió el costo y el precio",
+    "Bajó el costo",
+    "Cambió el precio",
+    "Sin cambios",
+    "Sin compra cargada",
+)
+
+
+def _price_changed(first, last):
+    return abs(last - first) >= _PRICE_MIN_CHANGE and first and abs(last - first) / first * 100 >= _PRICE_MIN_PCT
+
+
+def build_sales_cost_view(sales_rows, lines, year_months):
+    """
+    Un renglón por producto vendido (departamento + UPC) en los meses
+    `year_months` (de más viejo a más nuevo): por mes, cantidad, importe,
+    precio promedio, costo de la última compra hasta fin de mes y margen;
+    y el estado comparando el primer mes con venta contra el último.
+    """
+    purchases = {}
+    for line in lines:
+        upc = normalize_upc(line.get("upc"))
+        if upc and line.get("unit_cost") is not None:
+            purchases.setdefault(upc, []).append(line)  # vienen del más viejo al más nuevo
+
+    products = {}
+    for row in sales_rows:
+        upc = normalize_upc(row.get("upc"))
+        if not upc or not row.get("count"):
+            continue
+        product = products.setdefault((row["dept_name"], upc), {
+            "dept_name": row["dept_name"], "upc": upc, "name": row.get("name") or "", "months": {}})
+        cell = product["months"].setdefault((row["year"], row["month"]), {"count": 0, "amount": 0.0})
+        cell["count"] += row["count"]
+        cell["amount"] += row["amount"] or 0.0
+
+    result = []
+    for product in products.values():
+        bought = purchases.get(product["upc"], [])
+        cells = []
+        for year, month in year_months:
+            cell = product["months"].get((year, month))
+            if cell is None:
+                cells.append(None)
+                continue
+            month_end = f"{year:04d}-{month:02d}-31"
+            known = [line for line in bought if line["invoice_date"] <= month_end]
+            cost = known[-1]["unit_cost"] if known else None
+            avg_price = cell["amount"] / cell["count"]
+            cells.append({
+                "count": cell["count"], "amount": round(cell["amount"], 2), "avg_price": round(avg_price, 2),
+                "cost": cost, "margin_pct": _pct(avg_price - cost, avg_price) if cost is not None and avg_price else None,
+            })
+        sold = [c for c in cells if c is not None]
+        with_cost = [c for c in sold if c["cost"] is not None]
+        price_change = round(sold[-1]["avg_price"] - sold[0]["avg_price"], 2)
+        cost_change = round(with_cost[-1]["cost"] - with_cost[0]["cost"], 9) if with_cost else None
+        price_moved = _price_changed(sold[0]["avg_price"], sold[-1]["avg_price"])
+        if cost_change is None:
+            state = "Sin compra cargada"
+        elif cost_change > 0.005:
+            state = "Subió el costo y el precio" if price_moved and price_change > 0 else "Subió el costo, no el precio"
+        elif cost_change < -0.005:
+            state = "Bajó el costo"
+        elif price_moved:
+            state = "Cambió el precio"
+        else:
+            state = "Sin cambios"
+        last_line = bought[-1] if bought else None
+        result.append({
+            **{k: product[k] for k in ("dept_name", "upc", "name")},
+            "cells": cells,
+            "count": sum(c["count"] for c in sold),
+            "amount": round(sum(c["amount"] for c in sold), 2),
+            "price_change": price_change if price_moved else 0.0,
+            "cost_change": cost_change,
+            "state": state,
+            "last_purchase": last_line["invoice_date"] if last_line else None,
+            "product_key": product_key(last_line["supplier_key"], last_line["upc"], last_line["item_no"],
+                                       last_line.get("description")) if last_line else None,
+        })
+    result.sort(key=lambda p: (p["dept_name"].lower(), -p["amount"]))
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Reporte para el manager (pedido del usuario, 2026-10-02): "enviar un
 # reporte en Excel o PDF directamente al manager de la estación de servicio
 # con los productos que cambiaron de precio". Solo los que subieron o

@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block main_class %}main-full{% endblock %}
+{% from "_table_filters_macros.html" import filter_styles, filter_config_button %}
+{% block head_extra %}
+{{ filter_styles() }}
+<style>
+  .historial-table-wrap { overflow-x: auto; margin-top: 10px; border: 1px solid var(--border); border-radius: 10px; }
+  .historial-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .historial-table th, .historial-table td { padding: 7px 10px; text-align: left; }
+  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
+  .vc-table { min-width: 1100px; }
+  .vc-table th.num, .vc-table td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .vc-table th.month { text-align: center; border-left: 1px solid var(--border); }
+  .vc-table td.month-start, .vc-table th.month-start { border-left: 1px solid var(--border); }
+  .vc-table td:first-child { min-width: 240px; }
+  .vc-table tr.vc-search-hidden { display: none; }
+  .vc-name { font-weight: 600; text-decoration: none; }
+  .vc-name:hover { text-decoration: underline; }
+  .vc-code { display: block; font-size: 12px; color: var(--text-soft); margin-top: 2px; }
+  .vc-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .vc-toolbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .vc-toolbar-actions input[type="search"] { width: 240px; max-width: 100%; margin: 0; }
+  .vc-range { display: flex; align-items: end; gap: 10px; flex-wrap: wrap; }
+  .vc-range label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600; }
+  .vc-range select { margin: 0; }
+  .vc-states { display: flex; gap: 8px; flex-wrap: wrap; margin: 4px 0 0; }
+  .vc-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; white-space: nowrap; background: var(--surface-alt); color: var(--text-soft); }
+  .vc-badge-warn { background: var(--warning-soft); color: var(--warning); }
+  .vc-badge-up { background: var(--error-soft, #FDE2E2); color: var(--error); }
+  .vc-badge-ok { background: var(--success-soft); color: var(--success); }
+  .vc-badge-info { background: var(--accent-soft); color: var(--text); }
+  .vc-up { color: var(--error); font-weight: 600; }
+  .vc-down { color: var(--success); font-weight: 600; }
+  .vc-empty-search { margin-top: 12px; }
+</style>
+{% endblock %}
+{% macro ym_label(ym) %}{{ month_names[ym[1] - 1][:3] }} {{ ym[0] }}{% endmacro %}
+{% macro state_badge(state) %}
+  {% set cls = {'Subió el costo, no el precio': 'vc-badge-warn', 'Subió el costo y el precio': 'vc-badge-up', 'Bajó el costo': 'vc-badge-ok', 'Cambió el precio': 'vc-badge-info'}.get(state, '') %}
+  <span class="vc-badge {{ cls }}">{{ state }}</span>
+{% endmacro %}
+{% block content %}
+<div class="page-header">
+  <span class="eyebrow">Controles</span>
+  <h1>Ventas y costos</h1>
+  <p class="page-subtitle">Lo vendido de cada producto mes por mes (Sales Insights de Elistar, cargado en <a href="{{ url_for('carga_datos_cmv') }}">CMV — Ventas</a>), el precio promedio al que se vendió y el costo de su última compra a proveedor hasta fin de ese mes (de las facturas de <a href="{{ url_for('carga_datos_proveedores') }}">Proveedores</a> que guardan productos). El precio promedio es importe ÷ cantidad, ya con los descuentos Mix &amp; Match: por eso un cambio de precio cuenta desde $0.05 y 2 %.</p>
+</div>
+
+{% if not available %}
+<div class="card">
+  <p class="muted">Todavía no hay ventas por producto cargadas. Subí el CSV de Top Selling de Elistar en <a href="{{ url_for('carga_datos_cmv') }}">CMV — Ventas</a>.</p>
+</div>
+{% else %}
+<div class="card">
+  <form class="vc-range" method="get" action="{{ url_for('controles_ventas_costos') }}">
+    <label>Desde
+      <select name="desde">
+        {% for ym in available %}<option value="{{ ym[0] }}-{{ '%02d'|format(ym[1]) }}" {% if ym == start %}selected{% endif %}>{{ month_names[ym[1] - 1] }} {{ ym[0] }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Hasta
+      <select name="hasta">
+        {% for ym in available %}<option value="{{ ym[0] }}-{{ '%02d'|format(ym[1]) }}" {% if ym == end %}selected{% endif %}>{{ month_names[ym[1] - 1] }} {{ ym[0] }}</option>{% endfor %}
+      </select>
+    </label>
+    <button type="submit" class="btn-secondary">Ver</button>
+  </form>
+  <p class="muted" style="margin:12px 0 4px;"><strong>{{ products|length }}</strong> producto(s) vendidos · <strong>{{ with_cost }}</strong> con alguna compra cargada para comparar el costo</p>
+  <div class="vc-states">
+    {% for state, n in states.items() if n %}<span>{{ state_badge(state) }} {{ n }}</span>{% endfor %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="vc-toolbar">
+    <p class="muted" style="margin:0;">Ordenado por departamento y, adentro, por lo más vendido. Tocá el nombre para ver el historial de compras del producto.</p>
+    <div class="vc-toolbar-actions">
+      <input type="search" id="vc-search" placeholder="Buscar por nombre o UPC" autocomplete="off">
+      {{ filter_config_button("ventas-costos-table") }}
+    </div>
+  </div>
+  <div class="historial-table-wrap">
+    <table class="historial-table vc-table" id="ventas-costos-table" data-filter-table>
+      <thead>
+        <tr>
+          <th rowspan="2">Producto</th>
+          <th rowspan="2" data-filter-col="departamento">Depto.</th>
+          {% for ym in year_months %}<th colspan="3" class="month">{{ ym_label(ym) }}</th>{% endfor %}
+          <th rowspan="2" class="num month-start">Margen</th>
+          <th rowspan="2" data-filter-col="estado">Estado</th>
+        </tr>
+        <tr>
+          {% for ym in year_months %}<th class="num month-start">Cant.</th><th class="num">Precio</th><th class="num">Costo</th>{% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in products %}
+        <tr data-search="{{ p.name|lower }} {{ p.upc }}">
+          <td>
+            {% if p.product_key %}<a class="vc-name" href="{{ url_for('controles_productos_producto', product_key=p.product_key) }}">{{ p.name }}</a>{% else %}<span class="vc-name">{{ p.name }}</span>{% endif %}
+            <span class="vc-code">UPC {{ p.upc }}{% if p.last_purchase %} · última compra {{ p.last_purchase[8:10] }}/{{ p.last_purchase[5:7] }}/{{ p.last_purchase[:4] }}{% endif %}</span>
+          </td>
+          <td>{{ p.dept_name }}</td>
+          {% for c in p.cells %}
+            {% if c is none %}
+            <td class="num month-start muted">—</td><td></td><td></td>
+            {% else %}
+            <td class="num month-start">{{ c.count }}</td>
+            <td class="num">${{ "{:,.2f}".format(c.avg_price) }}</td>
+            <td class="num">{% if c.cost is not none %}{{ c.cost|exact_money(2) }}{% else %}<span class="muted">—</span>{% endif %}</td>
+            {% endif %}
+          {% endfor %}
+          <td class="num month-start">
+            {% set margins = p.cells|reject('none')|selectattr('margin_pct', 'ne', none)|list %}
+            {% if margins %}<span class="{{ 'vc-up' if margins[-1].margin_pct < 0 else '' }}">{{ margins[-1].margin_pct }}%</span>{% else %}<span class="muted">—</span>{% endif %}
+          </td>
+          <td data-filter-value="{{ p.state }}">{{ state_badge(p.state) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted vc-empty-search" id="vc-empty-search" hidden>Ningún producto coincide con la búsqueda.</p>
+</div>
+
+{% include "_table_filters.html" %}
+<script>
+  (function () {
+    var input = document.getElementById('vc-search');
+    var rows = Array.prototype.slice.call(document.querySelectorAll('#ventas-costos-table tbody tr'));
+    var empty = document.getElementById('vc-empty-search');
+    input.addEventListener('input', function () {
+      var q = input.value.trim().toLowerCase();
+      var visible = 0;
+      rows.forEach(function (row) {
+        var match = !q || row.getAttribute('data-search').indexOf(q) !== -1;
+        row.classList.toggle('vc-search-hidden', !match);
+        if (match) visible++;
+      });
+      empty.hidden = visible > 0;
+    });
+  })();
+</script>
+{% endif %}
+{% endblock %}
