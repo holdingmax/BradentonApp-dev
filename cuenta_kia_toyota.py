@@ -374,7 +374,7 @@ def build_ledger(charges, payments, pos, today=None):
             issues.append(f"{company} no paga hace {days_since} días (último pago: {last[8:10]}/{last[5:7]}/{last[:4]}).")
     if unassigned:
         issues.append(f"{len(payment_groups(unassigned))} pago(s) sin empresa (${sum(p['amount'] for p in unassigned):,.2f}): "
-                      f"asignalos abajo para que el saldo de cada una sea el real.")
+                      f"asignalos en Carga de Datos → Gettel / Toyota para que el saldo de cada una sea el real.")
     return {
         "monthly": monthly,
         "days": days,

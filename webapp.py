@@ -5934,10 +5934,21 @@ def carga_datos_gettel():
     """
     _active_job = jobs.get_active_job("gettel")
     _active_pagos_job = jobs.get_active_job("gettel_pagos")
+    # Pagos de Kia/Toyota cuyo recibo no dice de quién son: se asignan acá
+    # (antes en Controles → Kia y Toyota).
+    try:
+        unassigned_groups = _kia_toyota_ledger()["unassigned_groups"]
+    except Exception as exc:
+        print(f"[carga-datos/gettel] pagos sin empresa: {exc}")
+        unassigned_groups = []
     return render_template(
         "carga_datos_gettel.html",
         resume_job_id=(_active_job["id"] if _active_job else None),
         resume_pagos_job_id=(_active_pagos_job["id"] if _active_pagos_job else None),
+        unassigned_groups=unassigned_groups,
+        companies=cuenta_kia_toyota.COMPANIES,
+        voided=cuenta_kia_toyota.VOIDED,
+        known_cards=cuenta_kia_toyota.KNOWN_CARDS,
         **THEME_BY_KEY["carga_gettel"],
     )
 
@@ -7361,8 +7372,10 @@ def controles_kia_toyota():
     )
 
 
-@app.route("/controles/kia-toyota/subir", methods=["POST"])
-def controles_kia_toyota_subir():
+# Lo de Kia y Toyota se carga en Carga de Datos → Gettel / Toyota (pedido del
+# usuario, 2026-10-08: desde Controles no se carga nada).
+@app.route("/carga-datos/gettel/cierre", methods=["POST"])
+def carga_datos_gettel_cierre():
     uploads = [u for u in request.files.getlist("files") if u and u.filename]
     if not uploads:
         return _error_response("Seleccioná los Excel de Cierre.")
@@ -7380,7 +7393,7 @@ def controles_kia_toyota_subir():
             new_days, new_payments = cuenta_kia_toyota_db.save_import(data, filename)
             read.append((len(data["days"]), new_payments))
         except Exception as exc:
-            print(f"[controles/kia-toyota] {filename}: {exc}")
+            print(f"[carga-datos/gettel/cierre] {filename}: {exc}")
             errors.append(f"{filename}: no se pudo leer (tiene que ser un Excel de Cierre).")
         finally:
             shutil.rmtree(tmp_dir, ignore_errors=True)
@@ -7388,11 +7401,11 @@ def controles_kia_toyota_subir():
         flash(f"Leídos {len(read)} Excel: {sum(n for _, n in read)} pago(s) nuevo(s).", "success")
     for message in errors:
         flash(message, "error")
-    return redirect(request.referrer or url_for("controles_kia_toyota"))
+    return redirect(url_for("carga_datos_gettel"))
 
 
-@app.route("/controles/kia-toyota/asignar", methods=["POST"])
-def controles_kia_toyota_asignar():
+@app.route("/carga-datos/gettel/asignar", methods=["POST"])
+def carga_datos_gettel_asignar():
     company = request.form.get("company")
     ids = [int(x) for x in request.form.get("ids", "").split(",") if x.strip().isdigit()]
     pos_date = request.form.get("pos_date") or ""
@@ -7402,7 +7415,7 @@ def controles_kia_toyota_asignar():
         cuenta_kia_toyota_db.assign_pos_only(pos_date, company)
     else:
         cuenta_kia_toyota_db.assign_company(ids, company)
-    return redirect(request.referrer or url_for("controles_kia_toyota"))
+    return redirect(url_for("carga_datos_gettel") + "#pagos-sin-empresa")
 
 
 @app.route("/controles/ice-food-truck")

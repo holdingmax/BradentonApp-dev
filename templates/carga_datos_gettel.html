@@ -39,4 +39,43 @@
     </div>
   </form>
 </div>
+
+<div class="card">
+  <h2>Historial de Kia y Toyota (Excel de Cierre)</h2>
+  <p class="muted">Las hojas de Gettel-Toyota del Excel de Cierre (cargas por día y empresa, pagos) y Store Info (Local Account y VS), para la cuenta de cada concesionaria en <a href="{{ url_for('controles_kia_toyota') }}">Controles → Kia y Toyota</a>. Se pueden subir varios meses juntos; subir otra vez el mismo mes solo completa lo que falta y nunca pisa la empresa elegida a mano.</p>
+  <form method="post" action="{{ url_for('carga_datos_gettel_cierre') }}" enctype="multipart/form-data">
+    <label class="muted">Excel de Cierre</label>
+    <input type="file" name="files" id="gettel-cierre-input" accept=".xlsx" multiple class="accumulate-files" required>
+    <div class="form-actions">
+      <button type="submit">Subir Excel</button>
+      <button type="button" class="btn-secondary clear-file-btn" data-target="gettel-cierre-input">Limpiar</button>
+    </div>
+  </form>
+</div>
+
+{% if unassigned_groups %}
+<div class="card" id="pagos-sin-empresa">
+  <h2>Pagos sin empresa</h2>
+  <p class="muted">El recibo de estos pagos no dice de quién son. Mirá los últimos 4 dígitos de la tarjeta: {% for company in companies %}{{ company }} {{ known_cards|dictsort|selectattr(1, 'equalto', company)|map(attribute=0)|join(', ') }}{{ '; ' if not loop.last else '.' }}{% endfor %} "Cobrado en el POS sin recibo" es lo que la caja cobró como LOCAL ACCT ese día sin recibo anotado: el pago existió, falta el papel.</p>
+  <div style="overflow-x:auto; border:1px solid var(--border); border-radius:10px;">
+    <table style="width:100%; border-collapse:collapse; font-size:13px;">
+      <thead><tr style="background:var(--accent-soft);"><th style="text-align:left; padding:7px 12px;">Fecha</th><th style="text-align:left; padding:7px 12px;">Cobros</th><th style="text-align:right; padding:7px 12px;">Importe</th><th style="padding:7px 12px;"></th></tr></thead>
+      <tbody>
+      {% for g in unassigned_groups %}
+        <tr style="border-top:1px solid var(--border);">
+          <td style="padding:7px 12px;">{{ g.date[8:10] }}/{{ g.date[5:7] }}/{{ g.date[:4] }}</td>
+          <td style="padding:7px 12px;" class="muted">{% if g.pos_only %}Cobrado en el POS sin recibo{% else %}N° {{ g.transcs|join(", ") }}{% endif %}</td>
+          <td style="padding:7px 12px; text-align:right; font-variant-numeric:tabular-nums;">${{ "{:,.2f}".format(g.amount) }}</td>
+          <td style="padding:5px 12px; text-align:right;">{% if g.ids or g.pos_only %}<form method="post" action="{{ url_for('carga_datos_gettel_asignar') }}" style="display:inline-flex; gap:6px; margin:0;">
+            {% if g.pos_only %}<input type="hidden" name="pos_date" value="{{ g.date }}">{% else %}<input type="hidden" name="ids" value="{{ g.ids|join(',') }}">{% endif %}
+            {% for company in companies %}<button type="submit" name="company" value="{{ company }}" class="btn-secondary" style="margin:0; padding:4px 12px;">{{ company }}</button>{% endfor %}
+            <button type="submit" name="company" value="{{ voided }}" class="btn-secondary" style="margin:0; padding:4px 12px;" title="El recibo dice VOID o el POS no lo cobró">Anulado</button>
+          </form>{% endif %}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
 {% endblock %}
