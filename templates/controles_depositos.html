@@ -32,6 +32,11 @@
   .ice-del { margin: 0; background: none; border: none; padding: 0; color: var(--text-soft); font-size: 12px; cursor: default; }
   .ice-del:hover { color: var(--error); }
   .ice-orphan td { color: var(--text-soft); }
+  /* Un día nuevo abre con una raya más marcada; los depósitos del mismo día van con la normal. */
+  .ice-table tr.ice-day-start > td { border-top: 2px solid #94A3B8; }
+  .ice-table td.ice-day { vertical-align: top; font-weight: 600; }
+  .ice-table td.ice-rcpt { text-align: right; }
+  .ice-table td.ice-day-total { vertical-align: top; font-weight: 600; border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
   .ice-notice { margin-top: 10px; padding: 9px 14px; border-radius: 10px; background: var(--surface-alt); border: 1px solid var(--border); font-size: 13px; color: var(--text-soft); }
   .ice-notice b { color: var(--text); font-weight: 600; }
   .ice-empty { padding: 12px; font-size: 13px; color: var(--text-soft); }
@@ -137,24 +142,25 @@
     <div class="ice-table-wrap">
       {% if group.rows or group.orphans %}
       <table class="ice-table">
-        <thead><tr><th>Fecha</th><th>Recibo</th><th>Importe</th><th>Chase</th></tr></thead>
+        <thead><tr><th>Fecha</th><th>Recibo</th><th>Importe</th><th>Total del día</th><th>Chase</th></tr></thead>
         <tbody>
-        {% for d in group.rows %}
-          <tr>
-            <td>{{ dm(d.deposit_date) }}</td>
-            <td><a href="{{ url_for('carga_datos_depositos', year=year, month=month) }}#deposito-{{ d.id }}">#{{ d.tx_number or '?' }}</a></td>
+        {% for line in group.lines %}{% set d = line.receipt %}{% set o = line.orphan %}
+          <tr class="{{ 'ice-day-start' if line.first_of_day and not loop.first }}{{ ' ice-orphan' if o }}">
+            {% if line.first_of_day %}<td rowspan="{{ line.day_count }}" class="ice-day">{{ dm(line.date) }}</td>{% endif %}
+            {% if d %}
+            <td class="ice-rcpt"><a href="{{ url_for('carga_datos_depositos', year=year, month=month) }}#deposito-{{ d.id }}">#{{ d.tx_number or '?' }}</a></td>
             <td>{{ money(d.amount) }}</td>
+            {% if line.first_of_day %}<td rowspan="{{ line.day_count }}" class="ice-day-total">{{ money(line.day_total) }}</td>{% endif %}
             <td>{{ chase_cell(d) }}{% if d.uncategorized %}<span class="ice-tag" title="En Chase está como {{ d.chase.detalle or 'sin categoría' }}">en Chase como {{ (d.chase.detalle or 'sin categoría')|lower }}</span>{% endif %}</td>
-          </tr>
-        {% endfor %}
-        {% for o in group.orphans %}
-          <tr class="ice-orphan">
-            <td>{{ dm(o.date) }}</td><td>Sin recibo</td><td>{{ money(o.amount) }}</td>
+            {% else %}
+            <td class="ice-rcpt">Sin recibo</td><td>{{ money(o.amount) }}</td>
+            {% if line.first_of_day %}<td rowspan="{{ line.day_count }}" class="ice-day-total">{{ money(line.day_total) }}</td>{% endif %}
             <td class="left ice-soft">En Chase: {{ o.description }}</td>
+            {% endif %}
           </tr>
         {% endfor %}
         </tbody>
-        <tfoot><tr><td colspan="2">Total de recibos</td><td>{{ money(group.total) }}</td><td></td></tr></tfoot>
+        <tfoot><tr><td colspan="2">Total de recibos</td><td>{{ money(group.total) }}</td><td></td><td></td></tr></tfoot>
       </table>
       {% else %}<div class="ice-empty">No hay recibos ni depósitos de este tipo en {{ month_name }}.</div>{% endif %}
     </div>

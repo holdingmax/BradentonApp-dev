@@ -67,6 +67,24 @@ def chase_deposits(rows):
             for r in rows if (r.get("amount") or 0) > 0 and (r.get("description") or "").upper().startswith("DEPOSIT")]
 
 
+def _day_lines(rows, orphans):
+    """
+    Recibos y depósitos de Chase sin recibo de un tipo, juntos y por día
+    (pedido del usuario, 2026-10-08): cada renglón dice si abre un día nuevo,
+    cuántos renglones tiene ese día y el total del día.
+    """
+    lines = [{"date": r["deposit_date"], "receipt": r, "orphan": None, "amount": r["amount"]} for r in rows]
+    lines += [{"date": o["date"], "receipt": None, "orphan": o, "amount": o["amount"]} for o in orphans]
+    lines.sort(key=lambda l: (l["date"] or "9999", l["orphan"] is not None,
+                              (l["receipt"] or {}).get("tx_number") or 0))
+    for i, line in enumerate(lines):
+        same = [l for l in lines if l["date"] == line["date"]]
+        line["first_of_day"] = i == 0 or lines[i - 1]["date"] != line["date"]
+        line["day_count"] = len(same)
+        line["day_total"] = round(sum(l["amount"] or 0 for l in same), 2)
+    return lines
+
+
 def _dm(iso):
     return f"{iso[8:10]}/{iso[5:7]}"
 
@@ -206,7 +224,8 @@ def build_month_control(year, month, summaries, deposits, chase_rows, chase_last
         "kinds": kinds,
         "group_labels": {k: GROUP_LABELS.get(k, k) for k in kinds},
         "groups": {kind: {"rows": rows, "total": total(rows, "amount"),
-                          "orphans": [o for o in orphan_deposits if o["group"] == kind]}
+                          "orphans": [o for o in orphan_deposits if o["group"] == kind],
+                          "lines": _day_lines(rows, [o for o in orphan_deposits if o["group"] == kind])}
                    for kind, rows in groups.items()},
         "ice": ice,
         "orphan_payments": orphan_payments,
