@@ -7219,26 +7219,6 @@ def controles_rapidos_caja_limite():
     return jsonify({"ok": True})
 
 
-@app.route("/controles/rapidos/alertas")
-def controles_rapidos_alertas():
-    """Qué botón de la botonera marcar en rojo (mes actual), sin abrir el cuadro."""
-    today = date.today()
-    tarjetas = controles_rapidos.tarjetas_status(
-        reportes_db.get_card_sales_by_date(), eft_db.get_coupon_gross_by_date(), today=today,
-    )
-    caja_data = controles_rapidos.caja_status(today=today)
-    try:
-        kia = any(st["late"] for st in _kia_toyota_ledger()["status"].values())
-    except Exception as exc:
-        print(f"[controles/rapidos] Kia y Toyota: {exc}")
-        kia = False
-    return jsonify({
-        "tarjetas": bool(tarjetas and tarjetas["last"]["status"] == "alert"),
-        "caja": bool(caja_data and caja_data["alert"]),
-        "kia": kia,
-    })
-
-
 # ---------------------------------------------------------------------------
 # Depósitos y Control Depósitos (pedido del usuario, 2026-10-07): en Carga de
 # Datos -> Depósitos se suben todos los PDF de depósitos del cajero (normales,

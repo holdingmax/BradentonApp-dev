@@ -1150,8 +1150,6 @@
     .qc-limit { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 12px; color: var(--text-soft); flex-wrap: wrap; }
     .qc-limit input { width: 96px; padding: 3px 6px; text-align: right; font-variant-numeric: tabular-nums; }
     .qc-limit button { padding: 3px 10px; font-size: 12px; }
-    .qc-item.alert::after { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #DC2626; }
-    .qc.has-alert .qc-fab { box-shadow: 0 0 0 3px #FCA5A5, 0 6px 18px rgba(15, 23, 42, 0.25); }
     .qc-note { margin: 8px 0 0; font-size: 12px; color: var(--text-soft); }
     .qc-warn { color: var(--warning); }
     .qc-good { color: var(--success); }
@@ -3386,27 +3384,11 @@
           .then(function (result) {
             if (!result.ok) { showMessage(result.data.error || 'No se pudo guardar.'); return; }
             loadPanel(month);
-            loadAlerts();
           })
           .catch(function () { showMessage('No se pudo guardar: el servidor no responde.'); });
       });
-      // Punto rojo en el botón con alerta en el mes actual, sin abrir el cuadro.
-      function loadAlerts() {
-        fetch('/controles/rapidos/alertas', { credentials: 'same-origin' })
-          .then(function (response) { return response.ok && !response.redirected ? response.json() : null; })
-          .then(function (alerts) {
-            if (!alerts) return;
-            var any = false;
-            root.querySelectorAll('.qc-item').forEach(function (item) {
-              var on = !!alerts[item.getAttribute('data-qc')];
-              item.classList.toggle('alert', on);
-              any = any || on;
-            });
-            root.classList.toggle('has-alert', any);
-          })
-          .catch(function () {});
-      }
-      loadAlerts();
+      // Sin marcas rojas en la botonera (pedido del usuario, 2026-10-09): el
+      // rojo se ve solo dentro del cuadro de cada control, al abrirlo.
       document.addEventListener('click', function (event) {
         // Un botón del cuadro que ya se reemplazó (las flechas de mes) no es "afuera".
         if (event.target.isConnected && !root.contains(event.target)) closeAll();
