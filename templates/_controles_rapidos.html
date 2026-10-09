@@ -29,7 +29,7 @@
   <div class="qc-status {{ 'bad' if last.status == 'alert' else 'ok' }}">
     <span>Pendiente de acreditar al {{ dmy(last.date) }}</span>
     <strong>{{ money(last.pending) }}</strong>
-    <span class="qc-sub">{{ "Pasa" if last.status == "alert" else "No pasa" }} el límite de {{ money(data.threshold) }}</span>
+    <span class="qc-sub">{% if last.kia_recent %}De esto, {{ money(last.kia_recent) }} son pagos de Kia/Toyota (no cuentan). {% endif %}{{ "Pasa" if last.status == "alert" else "No pasa" }} el límite de {{ money(data.threshold) }}</span>
   </div>
   {{ behind(data.days_behind, last.date) }}
   <table class="qc-table">
@@ -38,7 +38,7 @@
     {% for row in data.recent %}
       <tr class="{{ 'qc-row-bad' if row.status == 'alert' else ('qc-row-off' if row.status == 'missing' else '') }}">
         <td>{{ dm(row.date) }}</td>
-        <td>{{ money(row.sale) if row.sale is not none else "sin cargar" }}</td>
+        <td>{{ money(row.sale) if row.sale is not none else "sin cargar" }}{% if row.kia %}<span class="qc-sub" style="display:block">Kia/Toyota {{ money(row.kia) }}</span>{% endif %}</td>
         <td>{{ money(row.coupon_gross) if row.coupon_gross else "—" }}</td>
         <td>{{ money(row.pending) }}</td>
       </tr>

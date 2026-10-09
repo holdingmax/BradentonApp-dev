@@ -103,7 +103,7 @@ def _month_prefix(today):
     return f"{today.year:04d}-{today.month:02d}-"
 
 
-def tarjetas_status(card_sales, coupons, today=None):
+def tarjetas_status(card_sales, coupons, today=None, kia_sales=None):
     """
     Pendiente de acreditar al último día del mes actual con Store Info y los
     días de antes de ese mes; None si el mes todavía no tiene ventas con
@@ -115,7 +115,8 @@ def tarjetas_status(card_sales, coupons, today=None):
         return None
     # El pendiente es un acumulado corrido: se calcula con todo lo cargado
     # (puede arrancar a fin del mes anterior) y se muestra solo este mes.
-    month = control_tarjetas.build_month_control(today.year, today.month, card_sales, coupons, today=today)
+    month = control_tarjetas.build_month_control(today.year, today.month, card_sales, coupons, today=today,
+                                                 kia_sales=kia_sales)
     last_date = max(month_sales)
     rows = [row for row in month["rows"] if row["date"] <= last_date]
     last = next((row for row in reversed(rows) if row["pending"] is not None), None)

@@ -17,6 +17,14 @@ Cálculo, sin UI (la pantalla es /controles/tarjetas en webapp.py):
   siguiente día cargado, porque si no quedaría corrido para siempre en lo que
   se vendió ese día.
 
+Pagos de Kia y Toyota (pedido del usuario, 2026-10-09): pagan los vales con
+una Amex (LOCAL ACCT = VS en Ventas por Departamento) y ese día las ventas
+con tarjeta suben en ese monto (01/09/2026: $16,901.39 con $11,455.29 de
+Kia). Un pago grande hacía pasar el límite sin nada raro: la alerta mira el
+pendiente sin los pagos de los últimos 3 días, que se muestran aparte. Un
+día con VS mayor que todo lo vendido con tarjeta (07/08/2026) es un pago que
+no entró como tarjeta: se avisa (kia_not_in_cards).
+
 No se compara día contra día: cada DDC es un lote de tarjetas que no siempre
 cierra con el día del POS (solo 12 de 45 días coinciden al centavo). En
 agosto-septiembre 2026 el pendiente estuvo entre -$3,000 y +$15,000, con los
@@ -33,8 +41,9 @@ COUPON_START_LAG_DAYS = 2
 TRANSIT_DAYS = 3
 
 
-def _running(card_sales, coupons, until):
+def _running(card_sales, coupons, until, kia_sales=None):
     """{fecha: fila} desde el primer día con ventas con tarjeta hasta `until`, con el pendiente acumulado."""
+    kia_sales = kia_sales or {}
     if not card_sales:
         return {}
     day = date.fromisoformat(min(card_sales))
@@ -56,6 +65,9 @@ def _running(card_sales, coupons, until):
             "last3": round(sum(v for v in last3 if v is not None), 2),
             "pending": None,
             "counted": False,
+            "kia": kia_sales.get(key, 0.0) if sale is not None else 0.0,
+            "kia_recent": 0.0,
+            "pending_without_kia": None,
         }
         if sale is None:
             pending = segment_start = None
@@ -70,13 +82,25 @@ def _running(card_sales, coupons, until):
                 row["counted"] = True
             pending = round(pending, 2)
             row["pending"] = pending
-            row["status"] = "alert" if abs(pending) > ALERT_THRESHOLD else "ok"
+            # Lo pendiente que son pagos de Kia/Toyota de los últimos días
+            # (nunca más que el propio pendiente).
+            kia_recent = sum(kia_sales.get((day - timedelta(days=k)).isoformat(), 0.0)
+                             for k in range(TRANSIT_DAYS) if (day - timedelta(days=k)) >= segment_start)
+            row["kia_recent"] = round(min(kia_recent, max(pending, 0.0)), 2)
+            row["pending_without_kia"] = round(pending - row["kia_recent"], 2)
+            row["status"] = "alert" if abs(row["pending_without_kia"]) > ALERT_THRESHOLD else "ok"
         rows[key] = row
         day += timedelta(days=1)
     return rows
 
 
-def build_month_control(year, month, card_sales, coupons, today=None):
+def kia_not_in_cards(card_sales, kia_sales, days):
+    """Días (de `days`) con un pago de Kia/Toyota mayor que todo lo vendido con tarjeta: no entró como tarjeta."""
+    return [{"date": d, "kia": kia_sales[d], "sale": card_sales[d]} for d in days
+            if kia_sales.get(d) and card_sales.get(d) is not None and card_sales[d] < kia_sales[d] - 0.005]
+
+
+def build_month_control(year, month, card_sales, coupons, today=None, kia_sales=None):
     """
     Control de un mes: una fila por día (hasta hoy) y el resumen del último
     día con Store Info. `card_sales` y `coupons` vienen de
@@ -85,7 +109,7 @@ def build_month_control(year, month, card_sales, coupons, today=None):
     today = today or date.today()
     month_end = date(year, month, calendar.monthrange(year, month)[1])
     until = min(month_end, today)
-    running = _running(card_sales, coupons, until) if until >= date(year, month, 1) else {}
+    running = _running(card_sales, coupons, until, kia_sales) if until >= date(year, month, 1) else {}
     rows = [row for key, row in sorted(running.items()) if key[:7] == f"{year:04d}-{month:02d}"]
     evaluated = [row for row in rows if row["pending"] is not None]
     last = evaluated[-1] if evaluated else None
@@ -94,6 +118,8 @@ def build_month_control(year, month, card_sales, coupons, today=None):
         "last": last,
         "alert_days": [row for row in evaluated if row["status"] == "alert"],
         "max_pending": max((row["pending"] for row in evaluated), default=None),
+        "kia_total": round(sum(row["kia"] for row in rows), 2),
+        "kia_not_in_cards": kia_not_in_cards(card_sales, kia_sales or {}, [row["date"] for row in rows]),
         "missing_days": [row["date"] for row in rows if row["status"] == "missing"],
         "unknown_coupons": sum(row["coupon_unknown"] for row in rows),
         "sales_total": round(sum(row["sale"] or 0.0 for row in rows), 2),
@@ -102,12 +128,12 @@ def build_month_control(year, month, card_sales, coupons, today=None):
     }
 
 
-def latest_status(card_sales, coupons, today=None):
+def latest_status(card_sales, coupons, today=None, kia_sales=None):
     """Fila del último día con Store Info (con su pendiente y estado), o None si no hay datos."""
     if not card_sales:
         return None
     last_day = date.fromisoformat(max(card_sales))
-    return _running(card_sales, coupons, last_day).get(last_day.isoformat())
+    return _running(card_sales, coupons, last_day, kia_sales).get(last_day.isoformat())
 
 
 # ---------------------------------------------------------------------------
@@ -133,7 +159,7 @@ def in_store_info(batch):
     return bool(re.fullmatch(r"\d{4}", batch or ""))
 
 
-def build_detail_by_day(year, month, card_sales, batches, covered_from, covered_to, today=None):
+def build_detail_by_day(year, month, card_sales, batches, covered_from, covered_to, today=None, kia_sales=None):
     """
     Una fila por día del mes (hasta hoy): vendido con tarjeta (Store Info)
     contra los batches del POS de ese día, y los otros batches aparte.
@@ -167,6 +193,7 @@ def build_detail_by_day(year, month, card_sales, batches, covered_from, covered_
         key = day.isoformat()
         sold = card_sales.get(key)
         row = {"date": key, "sold": sold, "pos": pos.get(key, 0.0), "other": other.get(key, 0.0),
+               "kia": (kia_sales or {}).get(key, 0.0) if sold is not None else 0.0,
                "diff": None, "status": "no_sales" if sold is None else None}
         if sold is not None:
             row["diff"] = round(row["pos"] - sold, 2)

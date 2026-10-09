@@ -3047,9 +3047,10 @@ def controles():
     # La tarjeta de un control muestra su alerta sin tener que entrar.
     alerts = {}
     try:
-        latest = control_tarjetas.latest_status(reportes_db.get_card_sales_by_date(), eft_db.get_coupon_gross_by_date())
+        latest = control_tarjetas.latest_status(reportes_db.get_card_sales_by_date(), eft_db.get_coupon_gross_by_date(),
+                                                kia_sales=reportes_db.get_local_account_sales_by_date())
         if latest and latest["status"] == "alert":
-            alerts["control_tarjetas"] = f"Alerta: pendiente ${latest['pending']:,.2f} al {_fmt_ddmmyyyy(latest['date'])}"
+            alerts["control_tarjetas"] = f"Alerta: pendiente ${latest['pending_without_kia']:,.2f} al {_fmt_ddmmyyyy(latest['date'])}"
     except Exception as exc:
         print(f"[controles] estado de Tarjetas y Cupones: {exc}")
     try:
@@ -6981,6 +6982,7 @@ def _card_detail_by_day(year, month, detail_groups, today=None):
             (month_first + timedelta(days=45)).isoformat(),
         ),
         covered[0] if covered else None, covered[-1] if covered else None, today=today or date.today(),
+        kia_sales=reportes_db.get_local_account_sales_by_date(),
     )
 
 
@@ -6996,6 +6998,7 @@ def controles_tarjetas():
     year, month = _cierre_month()
     control = control_tarjetas.build_month_control(
         year, month, reportes_db.get_card_sales_by_date(), eft_db.get_coupon_gross_by_date(), today=today,
+        kia_sales=reportes_db.get_local_account_sales_by_date(),
     )
     for row in control["rows"]:
         row["date_display"] = _fmt_ddmmyyyy(row["date"])
@@ -7110,6 +7113,10 @@ def controles_cierre():
         account_tax_bgs=control_cierre.ACCOUNT_TAX_BGS,
         account_sale_tax=control_cierre.ACCOUNT_SALE_TAX,
         sale_tax_record=control_cierre.sale_tax_record(year, month),
+        kia_not_in_cards=control_tarjetas.kia_not_in_cards(
+            reportes_db.get_card_sales_by_date(), reportes_db.get_local_account_sales_by_date(),
+            [f"{year:04d}-{month:02d}-{d:02d}" for d in range(1, calendar.monthrange(year, month)[1] + 1)],
+        ) if entries else [],
         year=year,
         month=month,
         month_name=_MONTH_NAMES_ES[month - 1],
@@ -7193,6 +7200,7 @@ def controles_rapidos_panel(kind):
     elif kind == "tarjetas":
         data = controles_rapidos.tarjetas_status(
             reportes_db.get_card_sales_by_date(), eft_db.get_coupon_gross_by_date(), today=day,
+            kia_sales=reportes_db.get_local_account_sales_by_date(),
         )
     elif kind == "caja":
         data = controles_rapidos.caja_status(today=day)

@@ -540,6 +540,24 @@ def get_card_sales_by_date():
     return result
 
 
+def get_local_account_sales_by_date():
+    """
+    {fecha ISO: VS del día} -- LOCAL ACCT (y GETTEL) de Ventas por
+    Departamento: los pagos de Kia y Toyota con su Amex, que entran en las
+    ventas con tarjeta de ese día (pedido del usuario, 2026-10-09). Solo los
+    días con un monto distinto de cero.
+    """
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT date, SUM(amount) AS amount FROM daily_report_departments "
+            "WHERE UPPER(TRIM(department)) IN ('LOCAL ACCT', 'GETTEL') GROUP BY date"
+        ).fetchall()
+    finally:
+        conn.close()
+    return {row["date"]: round(row["amount"], 2) for row in rows if row["amount"]}
+
+
 def get_month_store_info(year, month):
     """
     Un renglón por CADA día del mes, haya datos o no -- para el reporte

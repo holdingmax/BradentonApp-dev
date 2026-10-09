@@ -107,6 +107,7 @@
     <p>{{ period_label }}{% if not entries.complete_month %} (el mes todavía no está completo){% endif %}.</p>
     {% if not balanced %}<p>La diferencia no depende de LOTTO ni de VS: es Total Revenue contra Total Ventas de Store Info. Buscá el día que no cierra en Store Info (un importe de tarjeta mal cargado, por ejemplo).</p>{% endif %}
     {% if notice %}<p>{{ notice }} Se completa subiendo esos Reporte Diario. Los importes que quedan cortos llevan un <span class="ci-short">*</span>.</p>{% endif %}
+    {% if kia_not_in_cards %}<p class="ci-bad">Pago de Kia/Toyota que no aparece en tarjetas: {% for k in kia_not_in_cards %}{{ fmt_ddmm(k.date) }} (LOCAL ACCT {{ money(k.kia) }}, tarjetas del día {{ money(k.sale) }}){{ ', ' if not loop.last else '.' }}{% endfor %} {{ account_jh }} (Tarjetas − VS) queda corto ese día: revisá si se cobró de otra forma o si el LOCAL ACCT está mal cargado.</p>{% endif %}
   </div>
 
   <div class="ci-entries">
@@ -227,7 +228,7 @@
           <tr><td>Sin controlar todavía (días que el detalle de J.H. no cubre)</td><td>{{ money(d.unchecked) }}</td><td>—</td><td>—</td></tr>
           {% endif %}
           {% if d.bad %}<tr><td class="ci-bad">Sin explicar: {{ fmt_days(d.bad) }}{% if d.bad|length > 1 %}<span class="ci-cross-sub">Entre esos días se compensan los batches corridos de fecha, salvo {{ money(d.diff_bad|abs) }}.</span>{% endif %}</td><td></td><td></td><td class="ci-bad">{{ money(d.diff_bad) }}</td></tr>{% endif %}
-          {% if d.pending %}<tr><td>De días todavía sin depositar enteros (72 hs): {{ fmt_days(d.pending) }}</td><td></td><td></td><td>{{ money(d.diff_pending) }}</td></tr>{% endif %}
+          {% if d.pending %}<tr><td>De días todavía sin depositar enteros (72 hs): {{ fmt_days(d.pending) }}{% if d.kia_pending %}<span class="ci-cross-sub">Incluye pagos de Kia/Toyota con tarjeta: {% for day, amount in d.kia_pending %}{{ money(amount) }} ({{ fmt_ddmm(day) }}){{ ', ' if not loop.last else '.' }}{% endfor %}</span>{% endif %}</td><td></td><td></td><td>{{ money(d.diff_pending) }}</td></tr>{% endif %}
           {% if d.edge %}<tr><td>De días que no se pueden comparar (falta el día de al lado): {{ fmt_days(d.edge) }}</td><td></td><td></td><td>{{ money(d.diff_edge) }}</td></tr>{% endif %}
           {% if (d.diff - d.diff_bad - d.diff_pending - d.diff_edge)|abs >= 0.005 %}<tr><td class="muted">De batches que cruzan la medianoche (se compensan con el día siguiente)</td><td></td><td></td><td>{{ money(d.diff - d.diff_bad - d.diff_pending - d.diff_edge) }}</td></tr>{% endif %}
           {% else %}

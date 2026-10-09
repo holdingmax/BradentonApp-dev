@@ -69,24 +69,32 @@
   {% if last %}
   <div class="tc-control {{ 'bad' if last.status == 'alert' or control.alert_days else 'ok' }}">
     <div class="tc-control-title">
-      {% if last.status == 'alert' %}Alerta: al {{ last.date[8:10] }}/{{ last.date[5:7] }} quedan {{ money(last.pending) }} sin acreditar, más de {{ money(control.threshold) }}.
+      {% if last.status == 'alert' %}Alerta: al {{ last.date[8:10] }}/{{ last.date[5:7] }} quedan {{ money(last.pending_without_kia) }} sin acreditar{% if last.kia_recent %} sin contar los pagos de Kia/Toyota{% endif %}, más de {{ money(control.threshold) }}.
       {% elif control.alert_days %}Al {{ last.date[8:10] }}/{{ last.date[5:7] }} está bien, pero en el mes hubo {{ control.alert_days|length }} día{{ "s" if control.alert_days|length != 1 else "" }} con alerta.
       {% else %}Bien: al {{ last.date[8:10] }}/{{ last.date[5:7] }} lo pendiente está dentro de lo normal.{% endif %}
     </div>
     <div class="tc-control-grid">
       <span>Pendiente de acreditar al {{ last.date[8:10] }}/{{ last.date[5:7] }}: <strong>{{ money(last.pending) }}</strong></span>
+      {% if last.kia_recent %}<span>De esto, pagos de Kia/Toyota: <strong>{{ money(last.kia_recent) }}</strong> (no cuentan para el límite)</span>{% endif %}
       <span>Vendido con tarjeta los últimos 3 días: <strong>{{ money(last.last3) }}</strong></span>
       <span>Máximo del mes: <strong>{{ money(control.max_pending) }}</strong></span>
       <span>Límite: <strong>{{ money(control.threshold) }}</strong></span>
     </div>
     {% if control.alert_days %}
-    <p class="tc-note">Días con alerta: {% for row in control.alert_days %}{{ row.date[8:10] }}/{{ row.date[5:7] }} ({{ money(row.pending) }}){{ ", " if not loop.last else "." }}{% endfor %}</p>
+    <p class="tc-note">Días con alerta: {% for row in control.alert_days %}{{ row.date[8:10] }}/{{ row.date[5:7] }} ({{ money(row.pending_without_kia) }}){{ ", " if not loop.last else "." }}{% endfor %}</p>
     {% endif %}
+    <p class="tc-note">Los pagos de Kia y Toyota (LOCAL ACCT) se cobran con su Amex y suben las ventas con tarjeta de ese día; el límite se mira sin ellos.</p>
   </div>
   {% else %}
   <div class="tc-control none">
     <div class="tc-control-title">Sin datos para controlar en {{ month_name }} {{ year }}.</div>
     <p class="tc-note" style="margin-top:0;">Hace falta Store Info del mes (Reporte Diario) con las tarjetas leídas, y los cupones (EFT y Cupones).</p>
+  </div>
+  {% endif %}
+  {% if control.kia_not_in_cards %}
+  <div class="tc-control bad" style="margin-top: 12px;">
+    <div class="tc-control-title" style="margin:0;">Pago de Kia/Toyota que no aparece en tarjetas: {% for k in control.kia_not_in_cards %}{{ k.date[8:10] }}/{{ k.date[5:7] }} (LOCAL ACCT {{ money(k.kia) }}, tarjetas del día {{ money(k.sale) }}){{ ", " if not loop.last else "." }}{% endfor %}</div>
+    <p class="tc-note">El pago se cobra con tarjeta, así que las ventas con tarjeta del día tendrían que ser al menos ese monto. Revisá si se cobró de otra forma o en otro día, o si el LOCAL ACCT está mal cargado.</p>
   </div>
   {% endif %}
   {% if missing_days_display %}
@@ -106,11 +114,11 @@
         {% for row in control.rows %}
         <tr class="{{ 'tc-row-alert' if row.status == 'alert' else ('tc-row-off' if row.status in ('missing', 'later') else '') }}">
           <td><strong>{{ row.date_display }}</strong></td>
-          <td>{{ money(row.sale) }}</td>
+          <td>{{ money(row.sale) }}{% if row.kia %}<span class="tc-sub">incluye Kia/Toyota {{ money(row.kia) }}</span>{% endif %}</td>
           <td>
             {% if row.coupon_count %}{{ money(row.coupon_gross) }}<span class="tc-sub">{{ row.coupon_count }} DDC{% if row.pending is not none and not row.counted %} · paga ventas anteriores{% endif %}</span>{% else %}—{% endif %}
           </td>
-          <td class="{{ 'tc-pending-alert' if row.status == 'alert' else '' }}">{{ money(row.pending) }}{% if row.segment_start %}<span class="tc-sub">arranca acá</span>{% endif %}</td>
+          <td class="{{ 'tc-pending-alert' if row.status == 'alert' else '' }}">{{ money(row.pending) }}{% if row.kia_recent %}<span class="tc-sub">de esto, Kia/Toyota {{ money(row.kia_recent) }}</span>{% endif %}{% if row.segment_start %}<span class="tc-sub">arranca acá</span>{% endif %}</td>
           <td>{{ money(row.last3) if row.sale is not none else '—' }}</td>
           <td>
             {% if row.status == 'alert' %}<span class="tc-badge tc-badge-alert">Alerta</span>
@@ -154,7 +162,7 @@
             {% for r in detail.rows %}
             <tr class="{{ 'tc-row-alert' if r.status == 'diff' else ('tc-row-off' if r.status == 'no_sales' else '') }}">
               <td class="tc-left">{{ r.date_display }}</td>
-              <td>{{ smoney(r.sold) }}</td>
+              <td>{{ smoney(r.sold) }}{% if r.kia %}<span class="tc-sub">incluye Kia/Toyota {{ smoney(r.kia) }}</span>{% endif %}</td>
               <td>{{ smoney(r.pos) }}</td>
               <td class="{{ 'tc-diff' if r.status == 'diff' else '' }}">{{ smoney(r.diff) }}</td>
               <td>{{ smoney(r.other) if r.other else '—' }}</td>
