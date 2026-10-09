@@ -220,11 +220,12 @@
           {% if d %}
           <tr><td>Vendido con tarjeta {% if d.from %}del {{ fmt_ddmm(d.from) }} al {{ fmt_ddmm(d.until) }}{% endif %}</td>
             <td>{{ money(d.sold) }}</td><td>{{ money(d.jh) }}</td>
-            <td class="{{ 'ci-ok' if d.diff|abs < 0.005 else ('ci-bad' if d.bad else '') }}">{{ money(d.diff) }}</td></tr>
+            {# Rojo solo si todo el total es diferencia real (pedido del usuario, 2026-10-09): mezclado con lo sin depositar, neutro. #}
+            <td class="{{ 'ci-ok' if d.diff|abs < 0.005 else ('ci-bad' if d.bad and (d.diff - d.diff_bad)|abs < 0.005 else '') }}">{{ money(d.diff) }}</td></tr>
           {% if d.unchecked|abs >= 0.005 %}
           <tr><td>Sin controlar todavía (días que el detalle de J.H. no cubre)</td><td>{{ money(d.unchecked) }}</td><td>—</td><td>—</td></tr>
           {% endif %}
-          {% if d.bad %}<tr><td class="ci-bad">De días con diferencia: {{ fmt_days(d.bad) }}</td><td></td><td></td><td class="ci-bad">{{ money(d.diff_bad) }}</td></tr>{% endif %}
+          {% if d.bad %}<tr><td class="ci-bad">Sin explicar: {{ money(d.diff_bad) }} ({% if d.bad|length > 1 %}{{ fmt_days(d.bad) }}: entre esos días se compensan los batches corridos de fecha, salvo {{ money(d.diff_bad|abs) }}{% else %}{{ fmt_days(d.bad) }}{% endif %})</td><td></td><td></td><td class="ci-bad">{{ money(d.diff_bad) }}</td></tr>{% endif %}
           {% if d.pending %}<tr><td>De días todavía sin depositar enteros (72 hs): {{ fmt_days(d.pending) }}</td><td></td><td></td><td>{{ money(d.diff_pending) }}</td></tr>{% endif %}
           {% if d.edge %}<tr><td>De días que no se pueden comparar (falta el día de al lado): {{ fmt_days(d.edge) }}</td><td></td><td></td><td>{{ money(d.diff_edge) }}</td></tr>{% endif %}
           {% if (d.diff - d.diff_bad - d.diff_pending - d.diff_edge)|abs >= 0.005 %}<tr><td class="muted">De batches que cruzan la medianoche (se compensan con el día siguiente)</td><td></td><td></td><td>{{ money(d.diff - d.diff_bad - d.diff_pending - d.diff_edge) }}</td></tr>{% endif %}
