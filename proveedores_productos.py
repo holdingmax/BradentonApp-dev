@@ -4004,6 +4004,7 @@ _CC_NUMBER = re.compile(r"INV\w{0,4}\s*[#A-Z]?\s*#?\s*(\d{11})(?!\d)", re.IGNORE
 _CC_TOP_NUMBER = re.compile(r"^\W*(\d{11})\W*$")
 _CC_SHIP = re.compile(r"SH\w{0,2}\W{0,3}\s*(\d{8})(?!\d)")
 _CC_DATE = re.compile(r"DEL\s*DATE\W*(\d{1,2})/(\d{1,2})/(20\d{2})")
+_CC_FOOTER_LABEL = re.compile(r"AMOUNT\s*(?:DUE|PAID)\b", re.IGNORECASE)
 
 
 def _cc_page_score(text):
@@ -4060,8 +4061,11 @@ def _cc_blocks(readings):
     tolerance = _median([row["height"] for row in all_rows]) if all_rows else 10
     # El documento termina en AMOUNT DUE y el AMOUNT PAID de abajo (que va en el
     # mismo grupo): si no, el PAID quedaba en la factura siguiente (50511242049).
+    # El rótulo solo también corta: con el pie borroso (43266738012, "AMOUNT
+    # DUE" sin número en todas las pasadas) la factura desaparecía entera y
+    # quedaba solo la devolución; ahora sale, aunque sea para cargar a mano.
     ends = [{"page": row["page"], "y": row["y"]} for row in all_rows
-            if {"due", "paid"} & set(_cc_footer(row["text"]))]
+            if {"due", "paid"} & set(_cc_footer(row["text"])) or _CC_FOOTER_LABEL.search(row["text"])]
     boundaries = [(c[0]["page"], max(e["y"] for e in c) + tolerance)
                   for c in _ticket_clusters(ends, tolerance * 6)]
     if not boundaries:
