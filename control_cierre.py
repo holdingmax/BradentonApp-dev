@@ -294,6 +294,12 @@ def jh_cards_check(entries, detail, coupons):
             "diff_edge": round(sum(r["diff"] for r in detail["edge"]), 2),
             # Lo sin depositar que son pagos de Kia/Toyota (suben las tarjetas del día).
             "kia_pending": [(r["date"], r["kia"]) for r in detail["pending"] if r.get("kia")],
+            # Lo sin depositar sacando esos pagos (pedido del usuario,
+            # 2026-10-09: "cuánto realmente falta que es solo de J.H."). De
+            # cada día se saca como mucho lo que le falta.
+            "diff_pending_without_kia": round(
+                sum(r["diff"] for r in detail["pending"])
+                + sum(min(r.get("kia") or 0.0, -r["diff"]) for r in detail["pending"] if r["diff"] < 0), 2),
             "ok": detail["ok"],
         }
     if coupons:

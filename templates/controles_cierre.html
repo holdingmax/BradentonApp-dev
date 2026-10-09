@@ -228,7 +228,8 @@
           <tr><td>Sin controlar todavía (días que el detalle de J.H. no cubre)</td><td>{{ money(d.unchecked) }}</td><td>—</td><td>—</td></tr>
           {% endif %}
           {% if d.bad %}<tr><td class="ci-bad">Sin explicar: {{ fmt_days(d.bad) }}{% if d.bad|length > 1 %}<span class="ci-cross-sub">Entre esos días se compensan los batches corridos de fecha, salvo {{ money(d.diff_bad|abs) }}.</span>{% endif %}</td><td></td><td></td><td class="ci-bad">{{ money(d.diff_bad) }}</td></tr>{% endif %}
-          {% if d.pending %}<tr><td>De días todavía sin depositar enteros (72 hs): {{ fmt_days(d.pending) }}{% if d.kia_pending %}<span class="ci-cross-sub">Incluye pagos de Kia/Toyota con tarjeta: {% for day, amount in d.kia_pending %}{{ money(amount) }} ({{ fmt_ddmm(day) }}){{ ', ' if not loop.last else '.' }}{% endfor %}</span>{% endif %}</td><td></td><td></td><td>{{ money(d.diff_pending) }}</td></tr>{% endif %}
+          {% if d.pending %}<tr><td>De días todavía sin depositar enteros (72 hs): {{ fmt_days(d.pending) }}{% if d.kia_pending %}<span class="ci-cross-sub">Incluye pagos de Kia/Toyota con tarjeta: {% for day, amount in d.kia_pending %}{{ money(amount) }} ({{ fmt_ddmm(day) }}){{ ', ' if not loop.last else '.' }}{% endfor %}</span>{% endif %}</td><td></td><td></td><td>{{ money(d.diff_pending) }}</td></tr>
+          {% if d.kia_pending %}<tr><td>Sin depositar sin los pagos de Kia/Toyota<span class="ci-cross-sub">Lo que falta de las ventas con tarjeta del negocio.</span></td><td></td><td></td><td><strong>{{ money(d.diff_pending_without_kia) }}</strong></td></tr>{% endif %}{% endif %}
           {% if d.edge %}<tr><td>De días que no se pueden comparar (falta el día de al lado): {{ fmt_days(d.edge) }}</td><td></td><td></td><td>{{ money(d.diff_edge) }}</td></tr>{% endif %}
           {% if (d.diff - d.diff_bad - d.diff_pending - d.diff_edge)|abs >= 0.005 %}<tr><td class="muted">De batches que cruzan la medianoche (se compensan con el día siguiente)</td><td></td><td></td><td>{{ money(d.diff - d.diff_bad - d.diff_pending - d.diff_edge) }}</td></tr>{% endif %}
           {% else %}
@@ -236,7 +237,7 @@
           {% endif %}
           <tr class="ci-cross-section"><td colspan="4">Credit Card Daily Summary de J.H. del mes</td></tr>
           {% if c %}
-          <tr><td>{{ c.ddc_count }} DDC, Gross / Neto</td><td colspan="2">{{ money(c.gross) }} / {{ money(c.net) }}</td>
+          <tr><td>{{ c.ddc_count }} DDC: Gross − Fee (comisiones) = Neto</td><td colspan="2">{{ money(c.gross) }} − {{ money(c.gross - c.net) }} = {{ money(c.net) }}</td>
             <td class="{{ 'ci-ok' if c.ok else 'ci-bad' }}">{{ 'Coincide con Cupones' if c.ok else 'No coincide' }}</td></tr>
           {% if c.bad %}<tr><td colspan="4" class="ci-bad" style="text-align:left">Días que no coinciden con los cupones cargados o con lo aplicado en los EFT: {{ fmt_days(c.bad) }}</td></tr>{% endif %}
           {% if c.open.days %}<tr><td>Sin aplicar todavía en un EFT ({{ c.open.days }} día(s), pasa al mes siguiente por las 72 hs)</td><td colspan="2">{{ money(c.open.gross) }} / {{ money(c.open.net) }}</td><td>—</td></tr>{% endif %}
