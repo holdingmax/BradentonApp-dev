@@ -38,7 +38,8 @@
   .ci-cross-wrap { overflow-x: auto; margin-top: 14px; border: 1px solid var(--border); border-radius: 10px; }
   .ci-cross-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
   .ci-cross-table th, .ci-cross-table td { padding: 7px 12px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .ci-cross-table th:first-child, .ci-cross-table td:first-child { text-align: left; }
+  .ci-cross-table th:first-child, .ci-cross-table td:first-child { text-align: left; white-space: normal; min-width: 260px; }
+  .ci-cross-sub { display: block; margin-top: 2px; font-size: 12px; font-weight: 400; color: var(--text-soft); }
   .ci-cross-table thead th { background: var(--accent-soft); font-weight: 700; }
   .ci-cross-table tr.ci-cross-section td { background: var(--surface-alt); font-weight: 700; text-align: left; }
   .ci-jh-tag { font-size: 11.5px; font-style: normal; font-weight: 600; margin-left: 8px; text-decoration: none; color: var(--text-soft); }
@@ -225,7 +226,7 @@
           {% if d.unchecked|abs >= 0.005 %}
           <tr><td>Sin controlar todavía (días que el detalle de J.H. no cubre)</td><td>{{ money(d.unchecked) }}</td><td>—</td><td>—</td></tr>
           {% endif %}
-          {% if d.bad %}<tr><td class="ci-bad">Sin explicar: {{ money(d.diff_bad) }} ({% if d.bad|length > 1 %}{{ fmt_days(d.bad) }}: entre esos días se compensan los batches corridos de fecha, salvo {{ money(d.diff_bad|abs) }}{% else %}{{ fmt_days(d.bad) }}{% endif %})</td><td></td><td></td><td class="ci-bad">{{ money(d.diff_bad) }}</td></tr>{% endif %}
+          {% if d.bad %}<tr><td class="ci-bad">Sin explicar: {{ fmt_days(d.bad) }}{% if d.bad|length > 1 %}<span class="ci-cross-sub">Entre esos días se compensan los batches corridos de fecha, salvo {{ money(d.diff_bad|abs) }}.</span>{% endif %}</td><td></td><td></td><td class="ci-bad">{{ money(d.diff_bad) }}</td></tr>{% endif %}
           {% if d.pending %}<tr><td>De días todavía sin depositar enteros (72 hs): {{ fmt_days(d.pending) }}</td><td></td><td></td><td>{{ money(d.diff_pending) }}</td></tr>{% endif %}
           {% if d.edge %}<tr><td>De días que no se pueden comparar (falta el día de al lado): {{ fmt_days(d.edge) }}</td><td></td><td></td><td>{{ money(d.diff_edge) }}</td></tr>{% endif %}
           {% if (d.diff - d.diff_bad - d.diff_pending - d.diff_edge)|abs >= 0.005 %}<tr><td class="muted">De batches que cruzan la medianoche (se compensan con el día siguiente)</td><td></td><td></td><td>{{ money(d.diff - d.diff_bad - d.diff_pending - d.diff_edge) }}</td></tr>{% endif %}
