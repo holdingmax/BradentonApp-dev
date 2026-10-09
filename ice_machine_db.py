@@ -7,11 +7,12 @@ el módulo Depósitos. Capa de datos pura: lectura y control en ice_machine.py.
 reportes_data/ice_machine.db (gitignored, como las demás bases).
 """
 
+import app_paths
 import os
 import sqlite3
 from datetime import datetime
 
-_BASE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reportes_data")
+_BASE_DIR = app_paths.DATA_DIR
 _DB_PATH = os.path.join(_BASE_DIR, "ice_machine.db")
 
 FIELDS = ("summary_no", "reference", "from_date", "to_date", "transactions", "gross",

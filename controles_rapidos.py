@@ -29,6 +29,7 @@ cálculo queda acá y en /controles/rapidos/precios.
 import calendar
 import json
 import math
+import app_paths
 import os
 from datetime import date
 
@@ -46,7 +47,7 @@ _PACK_SUSPECT_RATIO = 2.0
 
 # Límite de la alerta de Caja: se cambia desde el cuadro y se guarda en
 # reportes_data (gitignored, como las bases).
-_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reportes_data", "controles_rapidos.json")
+_CONFIG_PATH = os.path.join(app_paths.DATA_DIR, "controles_rapidos.json")
 DEFAULT_CAJA_LIMIT = 10500.0  # lo más alto que se ve un fin de semana normal
 
 

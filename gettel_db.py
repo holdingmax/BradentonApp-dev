@@ -17,11 +17,12 @@ antes siempre quedaba en $0 porque esa venta nunca sale del PDF de cierre
 diario -- viene de estos reportes de cupones.
 """
 
+import app_paths
 import os
 import sqlite3
 from datetime import date, datetime
 
-_BASE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reportes_data")
+_BASE_DIR = app_paths.DATA_DIR
 _DB_PATH = os.path.join(_BASE_DIR, "gettel_toyota.db")
 
 

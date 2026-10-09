@@ -10,11 +10,12 @@ DIF EFECT/Saldo en Caja.
 reportes_data/horas_trabajo.db (mismo directorio gitignored de siempre).
 """
 
+import app_paths
 import os
 import sqlite3
 from datetime import datetime
 
-_BASE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reportes_data")
+_BASE_DIR = app_paths.DATA_DIR
 _DB_PATH = os.path.join(_BASE_DIR, "horas_trabajo.db")
 
 DEFAULT_HOURLY_RATE = 15.0

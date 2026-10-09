@@ -9,11 +9,12 @@ importe) no se duplica, y la empresa asignada a mano nunca se pisa.
 reportes_data/cuenta_kia_toyota.db (gitignored, como las demás bases).
 """
 
+import app_paths
 import os
 import sqlite3
 from datetime import datetime
 
-_BASE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reportes_data")
+_BASE_DIR = app_paths.DATA_DIR
 _DB_PATH = os.path.join(_BASE_DIR, "cuenta_kia_toyota.db")
 
 

@@ -11,7 +11,9 @@ igual que el desktop, probando cada uno antes de seguir con el próximo.
 """
 
 import calendar
+import hmac
 import json
+import app_paths
 import os
 import math
 import re
@@ -159,7 +161,7 @@ def _load_or_create_secret_key():
     regenerating it on every restart — otherwise every reload of the dev
     server (Flask's debug reloader restarts often) would log everyone out.
     """
-    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".flask_secret_key")
+    path = app_paths.config_file(".flask_secret_key")
     if os.path.isfile(path):
         with open(path, "rb") as handle:
             key = handle.read()
@@ -294,7 +296,7 @@ app.jinja_env.globals["SESSION_IDLE_SECONDS"] = SESSION_IDLE_SECONDS  # el aviso
 
 @app.before_request
 def require_login():
-    if request.endpoint in ("login", "static") or request.endpoint is None:
+    if request.endpoint in ("login", "primer_admin", "static") or request.endpoint is None:
         return None
     if not current_user.is_authenticated:
         return redirect(url_for("login"))
@@ -430,6 +432,8 @@ def _block_document_routes():
 def login():
     if current_user.is_authenticated:
         return redirect(url_for("home"))
+    if not auth.has_users():
+        return redirect(url_for("primer_admin"))
 
     if request.method == "POST":
         username = request.form.get("username", "").strip()
@@ -451,6 +455,53 @@ def login():
             return redirect(url_for("home"))
 
     return render_template("login.html")
+
+
+# Primer administrador (pedido de la jefa, 2026-10-09): en un servidor nuevo
+# (Render con el disco de datos vacío) no hay ningún usuario y nadie podría
+# entrar. Mientras no exista ninguno, el login manda acá y se crea el primer
+# admin desde la propia página; apenas existe uno, esta pantalla deja de
+# andar y los demás se dan de alta en Usuarios (/admin/users). En Render la
+# URL es pública: se exige la clave de instalación BRADENTON_SETUP_KEY
+# (variable de entorno que pone quien publica), así nadie de afuera se
+# adelanta. En la PC no hace falta.
+_FIRST_ADMIN_LOCK = threading.Lock()
+
+
+def _setup_key():
+    return os.environ.get("BRADENTON_SETUP_KEY", "")
+
+
+@app.route("/primer-admin", methods=["GET", "POST"])
+def primer_admin():
+    if auth.has_users():
+        return redirect(url_for("login"))
+    setup_key = _setup_key()
+    blocked = bool(os.environ.get("RENDER")) and not setup_key
+    if blocked:
+        flash("Falta configurar la clave de instalación (variable BRADENTON_SETUP_KEY) en el servidor.", "warning")
+    elif request.method == "POST":
+        username = request.form.get("username", "").strip()
+        password = request.form.get("password", "")
+        if setup_key and not hmac.compare_digest(request.form.get("setup_key", "").encode(), setup_key.encode()):
+            flash("La clave de instalación no es correcta.", "error")
+        elif password != request.form.get("confirm_password", ""):
+            flash("Las contraseñas no coinciden.", "error")
+        else:
+            with _FIRST_ADMIN_LOCK:
+                if auth.has_users():
+                    return redirect(url_for("login"))
+                try:
+                    auth.create_user(username, password, is_admin=True, must_change_password=False)
+                except ValueError as exc:
+                    flash(str(exc), "error")
+                else:
+                    login_user(WebUser(username, True, False), remember=False)
+                    session["_last_seen"] = time.time()
+                    return redirect(url_for("home"))
+    return render_template(
+        "login.html", setup=True, setup_blocked=blocked, setup_key_required=bool(setup_key),
+    )
 
 
 # POST: con GET cualquier página externa podía cerrar la sesión con un link

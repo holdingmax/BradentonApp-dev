@@ -11,6 +11,7 @@ reportes_data/pdfs/{año}/{mes}/ guarda una copia de cada PDF ya subido.
 
 import calendar
 import json
+import app_paths
 import os
 import re
 import shutil
@@ -19,7 +20,7 @@ from datetime import date, datetime
 
 import documents_db
 
-_BASE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reportes_data")
+_BASE_DIR = app_paths.DATA_DIR
 _DB_PATH = os.path.join(_BASE_DIR, "reportes_diarios.db")
 _PDF_DIR = os.path.join(_BASE_DIR, "pdfs")
 

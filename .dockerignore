@@ -12,3 +12,7 @@ users.json
 
 # Copias de prueba/scratch que no deben viajar a ningún lado.
 *.testeo.xlsx
+
+# Los datos (bases SQLite) nunca viajan dentro de la imagen: en Render viven
+# en el disco persistente (BRADENTON_DATA_DIR, ver app_paths.py).
+reportes_data/

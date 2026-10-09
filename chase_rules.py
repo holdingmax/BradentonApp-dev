@@ -4,6 +4,7 @@ Chase bank activity engine: keyword-to-Detalle categorization rules
 """
 
 import json
+import app_paths
 import os
 import warnings
 import re
@@ -17,7 +18,7 @@ MASTER_RULES_FILENAME = "chase_master_rules.json"  # Maestra -- seeded once from
 
 
 def _rules_file_path(filename):
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
+    return app_paths.config_file(filename, seed_from_repo=True)
 
 
 def normalize_rule_text(value):

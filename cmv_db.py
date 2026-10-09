@@ -27,11 +27,12 @@ copia el catálogo COMPLETO de cmv_costs con la fecha del CMV. Una foto por
 fecha -- volver a cargar el mismo día reemplaza la foto de ese día.
 """
 
+import app_paths
 import os
 import sqlite3
 from datetime import datetime
 
-_BASE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reportes_data")
+_BASE_DIR = app_paths.DATA_DIR
 _DB_PATH = os.path.join(_BASE_DIR, "cmv.db")
 
 

@@ -10,13 +10,14 @@ la fecha).
 reportes_data/depositos.db + reportes_data/depositos/{año}/{mes}/*.pdf
 """
 
+import app_paths
 import os
 import re
 import sqlite3
 import uuid
 from datetime import datetime
 
-_BASE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "reportes_data")
+_BASE_DIR = app_paths.DATA_DIR
 _DB_PATH = os.path.join(_BASE_DIR, "depositos.db")
 _FILES_DIR = os.path.join(_BASE_DIR, "depositos")
 

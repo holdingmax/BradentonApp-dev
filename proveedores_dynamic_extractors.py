@@ -19,6 +19,7 @@ texto crudo.
 """
 
 import json
+import app_paths
 import os
 import re
 from datetime import datetime
@@ -62,7 +63,7 @@ except ImportError:
 # ---- Persistencia (mismo patrón atómico que chase_rules.py) ----
 
 def _dynamic_suppliers_file_path():
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), DYNAMIC_SUPPLIERS_FILENAME)
+    return app_paths.config_file(DYNAMIC_SUPPLIERS_FILENAME, seed_from_repo=True)
 
 
 def _load_dynamic_suppliers_file():

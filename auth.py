@@ -6,6 +6,7 @@ users) live in webapp.py's routes, not here.
 """
 
 import json
+import app_paths
 import os
 
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -14,7 +15,7 @@ USERS_FILENAME = "users.json"
 
 
 def _users_file_path():
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), USERS_FILENAME)
+    return app_paths.config_file(USERS_FILENAME)
 
 
 def load_users():
@@ -38,6 +39,10 @@ def save_users(users):
         handle.flush()
         os.fsync(handle.fileno())
     os.replace(temp_path, path)
+
+
+def has_users():
+    return bool(load_users())
 
 
 def get_user(username):
@@ -69,7 +74,7 @@ def verify_user(username, password):
     return user
 
 
-def create_user(username, password, is_admin=False):
+def create_user(username, password, is_admin=False, must_change_password=True):
     username = username.strip()
     if not username:
         raise ValueError("El usuario no puede estar vacío.")
@@ -84,8 +89,9 @@ def create_user(username, password, is_admin=False):
         # La contraseña la eligió el admin, no la persona -- se le exige
         # cambiarla ella misma la primera vez que entre (pedido explícito
         # del usuario, 2026-09-16). Se limpia sola en set_password() salvo
-        # que se pida lo contrario (ver el reseteo manual de un admin).
-        "must_change_password": True,
+        # que se pida lo contrario (ver el reseteo manual de un admin). El
+        # primer administrador elige la suya (webapp.primer_admin): False.
+        "must_change_password": bool(must_change_password),
     }
     save_users(users)
 

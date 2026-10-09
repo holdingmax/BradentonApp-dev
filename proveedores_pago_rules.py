@@ -7,6 +7,7 @@ instead of a Detalle category.
 """
 
 import json
+import app_paths
 import os
 import re
 import unicodedata
@@ -50,7 +51,7 @@ DEFAULT_RULES = [
 
 
 def _rules_file_path():
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), RULES_FILENAME)
+    return app_paths.config_file(RULES_FILENAME, seed_from_repo=True)
 
 
 def normalize_rule_text(value):
