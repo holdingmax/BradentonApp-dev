@@ -7107,6 +7107,9 @@ def controles_cierre():
         account_jh=control_cierre.ACCOUNT_JH,
         account_gettel=control_cierre.ACCOUNT_GETTEL,
         lottery_note=control_cierre.LOTTERY_NOTE,
+        account_tax_bgs=control_cierre.ACCOUNT_TAX_BGS,
+        account_sale_tax=control_cierre.ACCOUNT_SALE_TAX,
+        sale_tax_record=control_cierre.sale_tax_record(year, month),
         year=year,
         month=month,
         month_name=_MONTH_NAMES_ES[month - 1],
@@ -7117,6 +7120,15 @@ def controles_cierre():
         accent=section["accent"],
         accent_soft=section["accent_soft"],
     )
+
+
+@app.route("/controles/cierre/sale-tax", methods=["POST"])
+def controles_cierre_sale_tax():
+    """Marca o desmarca como registrado el devengamiento de Sale Tax del mes."""
+    year, month = _cierre_month()
+    registered = request.form.get("registered") == "1"
+    control_cierre.set_sale_tax_record(year, month, registered, request.form.get("asiento", ""))
+    return redirect(url_for("controles_cierre", year=year, month=month) + "#ci-sale-tax")
 
 
 @app.route("/controles/cierre/exportar/pdf")

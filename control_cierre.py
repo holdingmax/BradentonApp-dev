@@ -15,6 +15,12 @@ Debajo, los dos totales sumando LOTTO (el asiento no considera Lottery) y la
 diferencia Debe − Haber. Segundo asiento: J.H. Williams a Cuenta Corriente a
 Cobrar-Gettel KIA por VS, "por lo cobrado" al último día.
 
+Tercer asiento (pedido del usuario, 2026-10-09): el devengamiento de Sale
+Tax del mes, al último día: 5.13.00.00 TAX BGS a 2.02.01.00 SALE TAX A PAGAR
+por el Tax Collect del mes (julio 2026: 4,671.10, igual que el Excel Cierre).
+Más que un control es un recordatorio: hay meses que se olvidaba registrarlo,
+así que el aviso queda hasta que se marca como registrado (sale_tax_record).
+
 LOTTO y VS no son de Store Info: salen de Ventas por Departamento (las
 categorías "LOTERY/LOTTO" y "Gettel"). Un día sin departamentos los deja
 cortos (y con ellos Caja, J.H. Williams y Venta C-Store); la pantalla y el
@@ -23,11 +29,18 @@ Total Revenue contra Total Ventas + VS, el mismo chequeo que el Excel.
 """
 
 import calendar
+import json
+import os
+from datetime import datetime
+
+import app_paths
 
 ENTRY_TITLE = "Asiento NºZXXX"
 ACCOUNT_CAJA = "Caja"
 ACCOUNT_JH = "J.H. WILIAMS-RECAUD A LIQ"
 ACCOUNT_GETTEL = "Cuenta Corriente a Cobrar-Gettel KIA"
+ACCOUNT_TAX_BGS = "5.13.00.00 - TAX BGS"
+ACCOUNT_SALE_TAX = "2.02.01.00 - SALE TAX A PAGAR"
 LOTTERY_NOTE = "**No se considera la incidencia de Lottery en este asiento"
 LOTTO_LABEL = "LOTERY/LOTTO"
 VS_LABEL = "Gettel"
@@ -147,6 +160,8 @@ def build_month_entries(rows, year, month):
         "difference": round(debit_total - credit_total, 2),
         "collected": t["vs"],
         "collected_label": f"por lo cobrado al {_ddmm(last_day)}",
+        "sale_tax": {"date": month_last_day, "amount": t["tax_collect"],
+                     "empty_days": [r["date"] for r in loaded if _is_empty(r, "tax_collect")]},
         "missing_store_info": [r["date"] for r in rows if not r.get("store_info_source") and r["date"] <= last_day],
         "missing_departments": [r["date"] for r in loaded if not r.get("has_departments")],
         "empty_fields": [
@@ -154,6 +169,41 @@ def build_month_entries(rows, year, month):
             for r in loaded if any(_is_empty(r, key) for key, _label in _STORE_INFO_REQUIRED)
         ],
     }
+
+
+# Qué meses ya tienen registrado el devengamiento de Sale Tax:
+# {"2026-07": {"asiento": "11457", "marked_at": "2026-10-09 10:15"}}.
+_SALE_TAX_PATH = os.path.join(app_paths.DATA_DIR, "control_cierre_sale_tax.json")
+
+
+def _load_sale_tax_records():
+    try:
+        with open(_SALE_TAX_PATH, encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def sale_tax_record(year, month):
+    """El registro del devengamiento del mes, o None si todavía no se marcó."""
+    return _load_sale_tax_records().get(f"{year:04d}-{month:02d}")
+
+
+def set_sale_tax_record(year, month, registered, asiento=""):
+    """Marca (o desmarca) el devengamiento de Sale Tax del mes como registrado."""
+    records = _load_sale_tax_records()
+    key = f"{year:04d}-{month:02d}"
+    if registered:
+        records[key] = {"asiento": (asiento or "").strip()[:30],
+                        "marked_at": datetime.now().strftime("%Y-%m-%d %H:%M")}
+    else:
+        records.pop(key, None)
+    os.makedirs(os.path.dirname(_SALE_TAX_PATH), exist_ok=True)
+    temp_path = f"{_SALE_TAX_PATH}.tmp"
+    with open(temp_path, "w", encoding="utf-8") as handle:
+        json.dump(records, handle, indent=2, ensure_ascii=False)
+    os.replace(temp_path, _SALE_TAX_PATH)
 
 
 def missing_notice(entries):
