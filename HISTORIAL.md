@@ -2422,3 +2422,73 @@ Pedido de la jefa (audios pasados a texto): en Render cada deploy o reinicio dej
   - Con los datos reales las alertas no cambian (30/08 $15,000.21 sigue; septiembre ninguna). **07/08/2026**: VS $8,050.09 con tarjetas $4,547.90: el pago no entró como tarjeta ese día (otra forma de cobro, otro día o LOCAL ACCT mal cargado): queda avisado, sin resolver.
 - **Lo sin depositar sin Kia/Toyota** (pedido del usuario: "cuánto realmente falta que es solo de J.H."): `jh_cards_check` suma `diff_pending_without_kia` (a cada día pendiente se le saca como mucho lo que le falta); renglón nuevo en el Cierre: septiembre −$15,537.84 (de −$22,948.44, con $7,410.60 de Kia el 28/09). Tarjetas y Cupones: "Pendiente sin los pagos de Kia/Toyota" en el resumen ($7,048.89 al 30/09, de $14,459.49). Son cifras distintas: el Cierre compara contra los batches del detalle día por día; Tarjetas lleva un pendiente acumulado contra los cupones. El pago de Kia también lo deposita J.H. (Amex): el renglón muestra lo que falta de las ventas propias del negocio.
 - **Credit Card Daily Summary**: el usuario preguntó por qué "Coincide con Cupones" con ~$4,000 de diferencia entre Gross y Neto: son las comisiones (Fee, $4,316.21, ~2.35%). El renglón ahora dice "55 DDC: Gross − Fee (comisiones) = Neto".
+
+## Sesión 2026-10-13, chat 28 (el usuario lo llamó "chat 22"): revisión de bugs, Tangible Tax, Kia por día exacto, Próximos EFT y los $70 del 04/10
+
+Commits `2563d82` (Tangible Tax), `69433fa` (Kia/Toyota por día de depósito), `928885a` (Cierre centrado), `91fc5ef` (Próximos EFT) y la documentación; pusheados a `origin`.
+
+- **Revisión de bugs** (pedido: "lo que faltó revisar, si ya fue revisado hace poco no hace falta"):
+  - Zonas: Render/datos/login/sesión, Reportes mensuales, lo agregado a Controles después del 08/10, carga de Proveedores y Coca-Cola contra Chase, JS de `base.html` y cargas en segundo plano.
+  - Todo probado sobre copias (`BRADENTON_DATA_DIR` al scratchpad). Hallazgos en `AUDITORIA_2026-10.md`.
+  - Respuestas del usuario:
+    - El PDF de Gettel ya no se usa ("se usa solo lo que se manda en el excel"). Falta saber si es el Excel de la app, que tiene el mismo error de pagos (B1).
+    - La carga a mano de facturas en Proveedores quedó aprobada, sin hacer.
+- **Manatee County Tax Collector**: es el tangible tax anual (llega en enero) y la regla "manatee" (AGUA, el agua de Manatee) se lo comía.
+  - Dos reglas Maestras nuevas ("manatee county + tax coll", "manatee county ta") lo pasan a **TANGIBLE TAX**.
+  - El usuario pidió que el detalle lleve el comentario **"Otros gastos varios"**: `chase_rules.DETALLE_NOTES = {"TANGIBLE TAX": "Otros gastos varios"}` y `detalle_note(detalle)`.
+  - Dónde se ve: debajo del badge en el historial (global de Jinja `chase_detalle_note`), en la columna nueva "Comentario" del Excel y entre paréntesis en el PDF.
+  - Chase real recategorizado, con respaldo `chase_antes_tangible_tax_*`.
+- **Kia/Toyota en Tarjetas por día exacto** (pedido: "cuanto mejor precisión... más exactos en la cantidad de días que se cuentan los jueves y viernes"):
+  - J.H. deposita la venta del día D el D + 2, corrido al siguiente día hábil (`JH_DEPOSIT_LAG_DAYS`, `jh_deposit_day`).
+  - `bank_holidays(year)` = feriados de la Fed. Fijos: 1/1, 19/6, 4/7, 11/11 y 25/12; si caen domingo pasan al lunes, si caen sábado no se corren. Móviles: MLK, Presidents, Memorial, Labor, Columbus y Thanksgiving.
+  - Jueves, viernes y sábado se depositan juntos el lunes; Labor Day los pasó al martes. Verificado: el 98 % del monto de septiembre cae el día calculado.
+  - En `_running`, el pago del día se topea con lo vendido con tarjeta ese día. `kia_recent` suma los pagos de hasta 10 días atrás del tramo cuyo día de depósito todavía no llegó.
+  - Resultados:
+    - Se va la alerta de agosto (30/08 sin Kia: $10,735.03).
+    - 30/09 sin Kia pasa de $7,048.89 a $14,459.49: el pago del 28/09 ya se depositó y no se descuenta más.
+  - Validado sobre 31 páginas sin errores.
+  - Pantallas: "Máximo del mes" aclara "sin los pagos de Kia/Toyota", y el estado del Cierre avisa "El asiento cierra, pero hay un pago de Kia/Toyota para revisar" (`kia_not_in_cards`).
+- **Próximos EFT** (pedido: "que nos avise qué días van a llegar los EFT siguientes con un aproximado... para estar preparados para una acreditación en el Chase o un débito por la falta de cupones"; después: "mejorar al máximo la precisión"). Todo está en `eft_pronostico.py`:
+  - **Fecha**: vencimiento de la factura de combustible (entrega + 5 días, siguiente día hábil). Las facturas salen de `fisico_db.list_all_invoices()` (≥ $1,000); se saltean las ya pagadas en un EFT cargado. Sin factura, el EFT siguiente se estima a +7 días.
+  - **Cupones que entran** (regla sacada de los 34 EFT de mar-sep 2026; da 1 DDC de $9.89 de más):
+    - Corte = 2 días hábiles antes del EFT.
+    - DDC principales (gross ≥ $1,000): los depositados en (corte anterior, corte].
+    - DDC chicos: entran si su N° es ≤ el del último principal con fecha ≤ corte, o si tienen fecha ≤ corte − 2 días y N° menor que el del siguiente principal.
+    - Un grupo del detalle sin monto propio le da el neto del grupo al miembro pendiente de N° más bajo.
+  - **Neto**:
+    - Los DDC cargados (`eft_db.list_cupones_for_forecast`).
+    - Días sin cupones: Store Info (tarjetas) × (1 − comisión de los principales), más los cupones chicos por día. La comisión es ~2.30-2.33 % (promedio de los últimos 4 EFT); los cupones chicos, ~$87-106 por día (últimos 2).
+    - `data_to` = fecha del último DDC **principal**. Con cualquier DDC desaparecían las ventas del lunes 28/09.
+    - Días sin Store Info: promedio por día de la semana de las últimas 4 semanas, avisado como estimado.
+  - **Resultado** = neto − factura − cargos mensuales recurrentes de J.H. que se debitan en el EFT: red Chevron $171, VPN $7 y Mako $131. Se detectan en Chase con `chase_db.get_detalle_transactions` cada 24-38 días y pueden caer un EFT antes o después.
+  - **Factura sin cargar**: se estima con la última (error medio $1,069; el promedio de 4 daba $1,719).
+  - **Estado en Chase**: cruce ±1 día con factura real y ±3 con estimada (llegó / atrasado / sin Chase / por venir).
+  - **Prueba** (`backtest`):
+    - Con los cupones conocidos hasta 1 día hábil antes: 6 de 6 exactos en ago-sep.
+    - Solo con Store Info: ±$162 en promedio, con sesgo negativo porque los cupones chicos vienen creciendo.
+  - **Octubre real** (Chase 10-2026 del Drive):
+    - 05/10: pronóstico −$8,160.99 contra −$8,468.96 (con SI-229447 ya cargada).
+    - 13/10, con las ventas reales de octubre leídas de los Close Store: +$10,906.24 con la factura estimada ($32,952.08) contra +$9,810.37. La diferencia es la de estimar la factura.
+    - La fecha 13/10 confirmó que Columbus Day es feriado bancario.
+  - **Pantallas**:
+    - `/controles/eft` (`controles_eft.html`): cuadro del próximo EFT (verde crédito / rojo débito, con el error típico); notas en ámbar (atrasados, facturas que faltan, hasta qué día hay cupones de J.H., días de Store Info estimados); tabla de eventos y tabla de la prueba.
+    - Botonera: botón "EFT" (`data-qc="eft"`, sin flechas de mes).
+    - Menú de Controles: "El EFT del dd/mm puede venir con un débito de $X".
+- **Facturas de combustible de septiembre** cargadas en la base real: SI-222039, SI-223973, SI-226087, SI-228142 y SI-229447 (respaldo `fisico_antes_facturas_septiembre_*`). En la base, agosto llega solo hasta el 11/08.
+- **Total Sales ≠ Total Revenue (Close Store 04/10, +$70)**:
+  - Pregunta del usuario: ¿es un producto que por la hora no entró, o una pérdida?
+  - Período: 03/10 10:58 PM – 04/10 9:34 PM (cierre más temprano que lo habitual).
+  - El reporte mismo lo muestra: Total Store Accountability $6,058.93 contra Store Tender Accountability $6,128.93.
+  - Descartado: no hay refunds, drive offs, post/transaction voids ni paid in, y los 7 line voids ($148.08) se anulan dentro de su transacción. Un producto y su pago van siempre en la misma transacción: si cruzan el cierre, pasan juntos.
+  - Lo único que cobra sin venta es un **prepago de combustible**: la venta se registra al terminar el surtidor.
+    - En 64 días de jul-sep pasó una sola vez: el 10/08 (+$42.86), compensado el 11/08 (−$42.86). Fue un prepago que cruzó el cierre.
+    - El del 04/10 **no se compensó** en ningún día hasta el 12/10: los otros 11 Close Store de octubre, leídos por OCR, dan exacto. El prepago nunca se terminó en el POS.
+  - La plata está, según la hoja a mano de la cajera (Devonne):
+    - Las dos cajas dan 3,962.82 + 4,301.11 = Total Sales.
+    - Lo contado da 3,968.30 + 4,358.84 = $8,327.14; contra lo cobrado faltan solo **$6.79**.
+  - No es una pérdida: en el Cierre de octubre el Debe supera al Haber en $70. Es un sobrante, o una deuda con el cliente si vuelve.
+  - Para el manager: ¿quedó un prepago de $70 sin terminar ese día? Ofrecido y sin respuesta: que el Control Cierre marque estos días y diga si se compensaron.
+- **Notas técnicas**:
+  - `daily_reports.total_sales` no es el Total Sales del resumen: se recalcula como Sales Fuel + Desc. Comb + Non Fuel + Desc. Otros + Tax.
+  - El `tc.py` del scratchpad hace `os.chdir` a la app: las salidas de prueba se escriben con ruta absoluta al scratchpad.
+  - `pdftoppm` no está instalado: para ver un PDF, renderizarlo con PyMuPDF (`fitz`).
