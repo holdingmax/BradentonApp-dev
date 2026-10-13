@@ -57,6 +57,8 @@ import eft_pronostico
 import cupones_detalle
 import jh_mensual
 import jh_mensual_db
+import jh_facturas
+import jh_facturas_db
 import lottery_mensual
 import controles_rapidos
 from cheques import check_number_from_chase_description, extract_checks_from_pdf
@@ -5166,11 +5168,13 @@ def carga_datos_eft():
     _active_job = jobs.get_active_job("eft")
     _jh_job = jobs.get_active_job("jh_mensual")
     _batch_job = jobs.get_active_job("cupones_detalle")
+    _misc_job = jobs.get_active_job("jh_varias")
     return render_template(
         "carga_datos_eft.html",
         resume_job_id=(_active_job["id"] if _active_job else None),
         resume_jh_job_id=(_jh_job["id"] if _jh_job else None),
         resume_batch_job_id=(_batch_job["id"] if _batch_job else None),
+        resume_misc_job_id=(_misc_job["id"] if _misc_job else None),
         **THEME_BY_KEY["carga_eft"],
     )
 
@@ -5320,6 +5324,95 @@ def carga_datos_eft_jh_eliminar():
     if year and month and kind in jh_mensual.KINDS:
         jh_mensual_db.delete_report(kind, year, month)
     return redirect(url_for("carga_datos_eft_jh", year=year, month=month))
+
+
+def _save_jh_misc_invoice(path):
+    """Una factura varia de J.H. (Mako, VPN, gift cards...): queda en el mes de su fecha."""
+    invoice = jh_facturas.extract_invoice(path)
+    status = jh_facturas_db.save_invoice(invoice, os.path.basename(path))
+    day = invoice["invoice_date"]
+    label = f"{jh_facturas.label(invoice)} {invoice['invoice_number']} ${invoice['amount']:,.2f}"
+    if status == "same":
+        label += " (ya estaba)"
+    return label, (day.year, day.month), []
+
+
+@app.route("/carga-datos/eft/varias/subir", methods=["POST"])
+def carga_datos_eft_varias_subir():
+    """
+    Facturas varias de J.H. (pedido del usuario, 2026-10-13): las que no son
+    de combustible y también paga el EFT, todos los meses (Mako, VPN,
+    Chevron Network Fee) o sueltas (gift cards, charge backs...). Cada una
+    queda en el mes de su fecha y Próximos EFT la suma en el EFT que la paga.
+    """
+    uploads = request.files.getlist("misc_files")
+    if not uploads or not any(u.filename for u in uploads):
+        return _error_response("Seleccioná los PDF de las facturas de J.H.")
+    paths = _save_uploads_to_workspace(uploads)
+    job_id = jobs.create_job(len(paths), kind="jh_varias")
+    threading.Thread(
+        target=_run_monthly_upload_job,
+        args=(job_id, paths, _save_jh_misc_invoice, "Facturas varias cargadas",
+              lambda y, m: f"/carga-datos/eft/varias?year={y}&month={m}", "/carga-datos/eft/varias"),
+        daemon=True,
+    ).start()
+    return jsonify({"job_id": job_id, "total": len(paths)})
+
+
+@app.route("/carga-datos/eft/varias")
+def carga_datos_eft_varias():
+    """Las facturas varias de J.H. de un mes: qué EFT las pagó o en cuál se esperan."""
+    year, month = _cierre_month()
+    nav = _month_nav(year, month)
+    digits = lambda value: "".join(ch for ch in str(value or "") if ch.isdigit())
+    invoices = jh_facturas_db.get_month_invoices(year, month)
+    paid_by = {}
+    for deposit in eft_db.list_deposits_with_lines():
+        for line in deposit["invoices"]:
+            paid_by[digits(line["invoice"])] = deposit
+    expected = {}
+    if any(digits(inv["invoice_number"]) not in paid_by for inv in invoices):
+        try:
+            for event in (eft_pronostico.build_forecast() or {}).get("events", []):
+                for item in event["misc"]:
+                    expected[item["number"]] = event["date"]
+        except Exception as exc:
+            print(f"[carga-datos/eft/varias] Próximos EFT: {exc}")
+    rows = []
+    for inv in invoices:
+        deposit = paid_by.get(digits(inv["invoice_number"]))
+        rows.append(dict(
+            inv, label=jh_facturas.label(inv),
+            paid_rcv=deposit["rcv_number"] if deposit else None,
+            paid_date=deposit["eft_date"] if deposit else None,
+            expected=expected.get(inv["invoice_number"]),
+        ))
+    # Las de todos los meses que vinieron el mes anterior y de este todavía no se cargaron.
+    today = date.today()
+    missing = []
+    if (year, month) <= (today.year, today.month):
+        before = {inv["kind"] for inv in jh_facturas_db.get_month_invoices(nav["prev_year"], nav["prev_month"])}
+        have = {inv["kind"] for inv in invoices}
+        missing = [jh_facturas.KINDS[k] for k in jh_facturas.MONTHLY_KINDS if k in before and k not in have]
+    return render_template(
+        "carga_datos_eft_varias.html",
+        rows=rows,
+        total=round(sum(r["amount"] for r in rows), 2),
+        missing=missing,
+        today=today,
+        **nav,
+        **THEME_BY_KEY["carga_eft"],
+    )
+
+
+@app.route("/carga-datos/eft/varias/eliminar", methods=["POST"])
+def carga_datos_eft_varias_eliminar():
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    number = (request.form.get("invoice_number") or "").strip()
+    if number:
+        jh_facturas_db.delete_invoice(number)
+    return redirect(url_for("carga_datos_eft_varias", year=year, month=month))
 
 
 def _jh_month_checks(year, month, detail_groups=()):

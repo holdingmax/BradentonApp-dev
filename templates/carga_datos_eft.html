@@ -59,4 +59,17 @@
     </div>
   </form>
 </div>
+
+<div class="card">
+  <h2>Facturas varias de J.H. (PDF)</h2>
+  <p class="muted">Las facturas de J.H. que no son de combustible y también se pagan en el EFT: las de todos los meses (Mako Network $131, VPN $7, Chevron Network Fee $171) y las que vienen de vez en cuando (gift gas cards, charge backs, mystery shop, ajustes). Cada una queda en el mes de su fecha y <a href="{{ url_for('carga_datos_eft_proximos') }}">Próximos EFT</a> la suma en el EFT que la va a pagar. Se pueden elegir varias juntas; una que ya estaba no se duplica. <a href="{{ url_for('carga_datos_eft_varias') }}">Ver las facturas varias</a>.</p>
+  <form method="post" action="{{ url_for('carga_datos_eft_varias_subir') }}" enctype="multipart/form-data" class="background-job-form" data-resume-job="{{ resume_misc_job_id or '' }}">
+    <label class="muted">PDF de las facturas (una o más)</label>
+    <input type="file" name="misc_files" id="jh-varias-input" multiple accept="application/pdf" class="accumulate-files" required>
+    <div class="form-actions">
+      <button type="submit">Guardar</button>
+      <button type="button" class="btn-secondary clear-file-btn" data-target="jh-varias-input">Limpiar</button>
+    </div>
+  </form>
+</div>
 {% endblock %}

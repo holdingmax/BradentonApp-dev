@@ -27,10 +27,17 @@ Cómo arma J.H. un EFT (medido con los 19 EFT de junio a septiembre 2026):
   comisión de los cupones principales (~2.33%), más lo que vienen dando
   por día los cupones chicos. Un día sin Store Info se estima con el
   promedio de ese día de la semana (sin los pagos de Kia/Toyota).
-- Cargos fijos de J.H. que también paga el EFT: los que se repiten todos
-  los meses con el mismo importe (Chevron network $171 a fin de mes, VPN $7
-  y Mako $131 a mitad de mes) se suman en el EFT del mes que corresponde.
-  Uno suelto (gift cards $100) no se puede prever.
+- Las facturas varias de J.H. (Mako, VPN, Chevron network, gift cards...)
+  cargadas en Carga de Datos -> EFT y Cupones -> Facturas varias
+  (jh_facturas_db) que ningún EFT cargado pagó entran en el primer EFT desde
+  su vencimiento (la fecha + 5); Mako y VPN, desde 3 días después del
+  vencimiento (J.H. las fecha el 4 de cada mes y las cobra más tarde).
+  Medido con las 72 de 2025-2026 del Drive: acierta el EFT en 56 (39 de 47
+  desde agosto 2025); las otras caen en el EFT siguiente.
+- Cargos fijos sin su factura cargada: los que se repiten todos los meses
+  con el mismo importe (Chevron network $171 a fin de mes, VPN $7 y Mako
+  $131 a mitad de mes) se estiman en el EFT del mes que corresponde. Uno
+  suelto (gift cards $100) solo entra si se carga su factura.
 """
 
 from datetime import date, datetime, timedelta
@@ -38,6 +45,8 @@ from datetime import date, datetime, timedelta
 import chase_db
 import eft_db
 import fisico_db
+import jh_facturas
+import jh_facturas_db
 import reportes_db
 from control_tarjetas import bank_holidays, jh_deposit_day
 
@@ -53,6 +62,7 @@ AVERAGE_WEEKS = 4
 SMALL_LOOKBACK_DAYS = 10  # un cupón chico de antes del corte anterior sin usar: ya lo pagó un EFT no cargado
 RECURRING_LOOKBACK_DAYS = 120
 RECURRING_GAP = (24, 38)  # un cargo que vuelve cada 24-38 días es mensual
+MISC_PAY_DELAY = {"mako": 3, "vpn": 3}  # días después del vencimiento desde los que J.H. cobra la factura
 EFT_DETALLE = "EFT RCV-"
 
 
@@ -195,6 +205,22 @@ def _fuel_invoices(paid_numbers):
                        "due": due, "eft_day": next_business_day(due), "amount": inv["amount"] or 0.0,
                        "gallons": inv.get("gallons")})
     return result
+
+
+def _misc_invoices(paid_numbers):
+    """Facturas varias cargadas que ningún EFT cargado pagó, con el día desde el que J.H. las cobra."""
+    result = []
+    for inv in jh_facturas_db.list_all_invoices():
+        if _digits(inv["invoice_number"]) in paid_numbers:
+            continue
+        due = date.fromisoformat(inv["due_date"])
+        result.append({
+            "number": inv["invoice_number"], "date": date.fromisoformat(inv["invoice_date"]), "due": due,
+            "amount": inv["amount"], "kind": inv["kind"], "label": jh_facturas.label(inv),
+            "description": inv["description"],
+            "eft_from": due + timedelta(days=MISC_PAY_DELAY.get(inv["kind"], 0)),
+        })
+    return sorted(result, key=lambda m: (m["eft_from"], m["number"]))
 
 
 def _recurring_charges(history, today):
@@ -378,13 +404,16 @@ def build_forecast(today=None):
     # última erró en promedio $1,069 (el promedio de 4, $1,719).
     known = [(h["date"], h["fuel"][-1]) for h in history if h["fuel"]] +             [(f["eft_day"], f["amount"]) for f in loaded_fuel]
     estimated_invoice = round(max(known)[1], 2) if known else 0.0
-    charges = _recurring_charges(history, today)
+    misc = _misc_invoices(paid)
+    # Un cargo mensual cuya factura ya está cargada entra con la factura, no estimado.
+    misc_amounts = {round(m["amount"], 2) for m in misc}
+    charges = [c for c in _recurring_charges(history, today) if round(c["amount"], 2) not in misc_amounts]
     chase_last = chase_db.get_last_posting_date()
     chase_moves = chase_db.get_detalle_transactions(EFT_DETALLE, last["date"] + timedelta(days=1),
                                                     today + timedelta(days=HORIZON_DAYS)) if chase_last else []
 
     events = []
-    used_moves, consumed, taken = [], set(), set()
+    used_moves, consumed, taken, misc_taken = [], set(), set(), set()
     covered_to = cutoff(last["date"])
     cursor = last["date"]
     pending = sorted(fuel, key=lambda f: f["eft_day"])
@@ -408,15 +437,19 @@ def build_forecast(today=None):
             day = move[0]
         coupons = _event_coupons(day, covered_to, items, consumed, data_to, ctx)
         extra = _charges_for(day, charges, taken)
+        # Las facturas varias cargadas: en el primer EFT desde el día en que J.H. las cobra
+        # (una vencida que no pagó ningún EFT cargado entra en el primero).
+        misc_here = [m for m in misc if m["number"] not in misc_taken and m["eft_from"] <= day]
+        misc_taken.update(m["number"] for m in misc_here)
         fuel_total = sum(f["amount"] for f in invoices) if invoices else estimated_invoice
-        invoice_total = round(fuel_total + sum(c["amount"] for c in extra), 2)
+        invoice_total = round(fuel_total + sum(c["amount"] for c in extra) + sum(m["amount"] for m in misc_here), 2)
         if move is None and day < today:
             status = "overdue" if chase_last and chase_last >= day else "unknown"
         else:
             status = "arrived" if move is not None else "upcoming"
         events.append(dict(
             coupons, date=day, invoices=invoices, invoice_estimated=not invoices, fuel_total=round(fuel_total, 2),
-            charges=extra, invoice_total=invoice_total, result=round(coupons["net"] - invoice_total, 2),
+            charges=extra, misc=misc_here, invoice_total=invoice_total, result=round(coupons["net"] - invoice_total, 2),
             arrived=move[1] if move else None, status=status,
         ))
         consumed |= {i["id"] for i in coupons["coupons"]}
@@ -436,6 +469,7 @@ def build_forecast(today=None):
         "main_fee": ctx["main_fee"],
         "small_per_day": ctx["small_per_day"],
         "estimated_invoice": estimated_invoice,
+        "misc": misc,
         "coupons_to": data_to,
         "store_info_last": date.fromisoformat(max(ctx["card_sales"])) if ctx["card_sales"] else None,
         "chase_last": chase_last,

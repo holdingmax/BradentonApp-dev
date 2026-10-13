@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ url_for('carga_datos_eft') }}">EFT y Cupones</a><span class="current">Facturas varias</span></nav>
+{% endblock %}
+{% block head_extra %}
+<style>
+  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .historial-nav-btn { text-decoration: none; display: inline-block; }
+  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
+  .fv-missing { margin-top: 16px; padding: 10px 14px; border-radius: 10px; background: #FFFBEB; border: 1px solid #FDE68A; font-size: 13px; }
+  .fv-empty { margin-top: 16px; padding: 14px 16px; border-radius: 10px; background: var(--surface-alt); border: 1px solid var(--border); font-size: 13px; color: var(--text-soft); }
+  .fv-table-wrap { overflow-x: auto; margin-top: 16px; border: 1px solid var(--border); border-radius: 10px; }
+  .fv-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .fv-table th, .fv-table td { padding: 7px 10px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; vertical-align: top; }
+  .fv-table th.fv-left, .fv-table td.fv-left { text-align: left; }
+  .fv-table td.fv-wrap { white-space: normal; min-width: 180px; }
+  .fv-table thead th { background: var(--accent-soft); font-weight: 700; }
+  .fv-table tfoot td { font-weight: 700; background: var(--accent-soft); }
+  .fv-sub { display: block; font-size: 11.5px; color: var(--text-soft); }
+  .fv-badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .fv-badge-ok { background: #DCFCE7; color: #166534; }
+  .fv-badge-next { background: var(--accent-soft); color: var(--accent); }
+  .fv-badge-off { background: var(--surface-alt); color: var(--text-soft); border: 1px solid var(--border); }
+  .fv-delete { margin: 0; }
+</style>
+{% endblock %}
+{% block content %}
+{% from "_month_jump.html" import month_jump %}
+{% macro money(x) -%}{%- if x is none -%}—{%- elif x < 0 -%}-${{ "{:,.2f}".format(-x) }}{%- else -%}${{ "{:,.2f}".format(x) }}{%- endif -%}{%- endmacro %}
+{% macro dmy(iso) -%}{{ iso[8:10] }}/{{ iso[5:7] }}/{{ iso[:4] }}{%- endmacro %}
+{% macro dm(d) -%}{{ "%02d/%02d"|format(d.day, d.month) }}{%- endmacro %}
+<div class="page-header">
+  <span class="eyebrow">EFT y Cupones</span>
+  <h1>Facturas varias de J.H.</h1>
+  <p class="page-subtitle">Las facturas de J.H. que no son de combustible: las de todos los meses (Mako, VPN, Chevron Network Fee) y las sueltas. Se cargan en <a href="{{ url_for('carga_datos_eft') }}">Carga de Datos &rarr; EFT y Cupones</a> y <a href="{{ url_for('carga_datos_eft_proximos') }}">Próximos EFT</a> suma las que todavía no pagó ningún EFT cargado.</p>
+</div>
+
+<div class="card">
+  <div class="historial-nav">
+    <a href="{{ url_for('carga_datos_eft_varias', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
+    <div class="historial-nav-title">
+      {{ month_jump('carga_datos_eft_varias', year, month) }}
+      {% if year == today.year and month == today.month %}
+      <span class="muted">Mes actual</span>
+      {% else %}
+      <a href="{{ url_for('carga_datos_eft_varias') }}" class="muted">Ir al mes actual</a>
+      {% endif %}
+    </div>
+    <a href="{{ url_for('carga_datos_eft_varias', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
+  </div>
+
+  {% if missing %}
+  <div class="fv-missing">De {{ month_name|lower }} todavía no se cargó: {{ missing|join(", ") }} (el mes anterior {{ "vinieron" if missing|length > 1 else "vino" }}). Mientras tanto, Próximos EFT {{ "lo estima" if missing|length == 1 else "los estima" }} con los EFT anteriores.</div>
+  {% endif %}
+
+  {% if not rows %}
+  <div class="fv-empty">No hay facturas varias cargadas de {{ month_name|lower }} {{ year }}.</div>
+  {% else %}
+  <div class="fv-table-wrap">
+    <table class="fv-table">
+      <thead><tr><th class="fv-left">Fecha</th><th class="fv-left">Factura</th><th class="fv-left">Qué es</th><th class="fv-left">Vence</th><th>Importe</th><th class="fv-left">EFT</th><th></th></tr></thead>
+      <tbody>
+      {% for r in rows %}
+        <tr>
+          <td class="fv-left">{{ dmy(r.invoice_date) }}</td>
+          <td class="fv-left">{{ r.invoice_number }}</td>
+          <td class="fv-left fv-wrap">{{ r.label }}{% if r.detail %}<span class="fv-sub">{{ r.detail }}</span>{% endif %}</td>
+          <td class="fv-left">{{ dmy(r.due_date) }}</td>
+          <td>{{ money(r.amount) }}</td>
+          <td class="fv-left">
+            {% if r.paid_rcv %}<span class="fv-badge fv-badge-ok">Pagada</span><span class="fv-sub">{{ r.paid_rcv }} del {{ dm(r.paid_date) }}</span>
+            {% elif r.expected %}<span class="fv-badge fv-badge-next">Entra en el del {{ dm(r.expected) }}</span><span class="fv-sub">según Próximos EFT</span>
+            {% else %}<span class="fv-badge fv-badge-off">Sin pagar</span><span class="fv-sub">ningún EFT cargado la pagó</span>{% endif %}
+          </td>
+          <td>
+            <form method="post" action="{{ url_for('carga_datos_eft_varias_eliminar') }}" class="fv-delete" onsubmit="return confirm('¿Eliminar la factura {{ r.invoice_number }}? Lo demás no se toca.');">
+              <input type="hidden" name="invoice_number" value="{{ r.invoice_number }}">
+              <input type="hidden" name="year" value="{{ year }}">
+              <input type="hidden" name="month" value="{{ month }}">
+              <button type="submit" class="btn-secondary">Eliminar</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+      <tfoot><tr><td class="fv-left" colspan="4">Total de {{ month_name|lower }}</td><td>{{ money(total) }}</td><td colspan="2"></td></tr></tfoot>
+    </table>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

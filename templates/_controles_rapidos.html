@@ -35,7 +35,7 @@
   <div class="qc-status {{ 'bad' if n.result < 0 else 'ok' }}">
     <span>Próximo EFT: {{ data.weekdays[n.date.weekday()] }} {{ dm_date(n.date) }}{{ " (fecha estimada)" if n.invoice_estimated }}</span>
     <strong>{% if n.result < 0 %}Débito ≈ {{ money(-n.result) }}{% else %}Crédito ≈ {{ money(n.result) }}{% endif %}</strong>
-    <span class="qc-sub">Cupones {{ money(n.net) }} menos {{ "la factura" if not n.charges else "las facturas" }} {{ money(n.invoice_total) }}{{ " (estimada)" if n.invoice_estimated }}.{% if n.store_days and f.typical_error %} Con Store Info: ± {{ money(f.typical_error) }} aprox.{% elif not n.store_days %} Con los cupones cargados.{% endif %}</span>
+    <span class="qc-sub">Cupones {{ money(n.net) }} menos {{ "la factura" if not n.charges and not n.misc else "las facturas" }} {{ money(n.invoice_total) }}{{ " (estimada)" if n.invoice_estimated }}.{% if n.store_days and f.typical_error %} Con Store Info: ± {{ money(f.typical_error) }} aprox.{% elif not n.store_days %} Con los cupones cargados.{% endif %}</span>
   </div>
   {% set later = f.events|selectattr("date", "gt", n.date)|list %}
   {% if later %}
