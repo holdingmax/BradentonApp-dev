@@ -1238,6 +1238,8 @@
           <a class="app-rail-panel-link app-rail-panel-link-upload" href="{{ url_for('carga_datos_eft') }}">Cargar EFT / Cupones</a>
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_eft_historial') }}">Aplicacion TC y EFT</a>
           <a class="app-rail-panel-link" href="{{ url_for('carga_datos_eft_cupones_historial') }}">Cupones (por mes)</a>
+          {# Próximos EFT en la barra lateral y no en Controles (pedido del usuario, 2026-10-13). #}
+          <a class="app-rail-panel-link" href="{{ url_for('carga_datos_eft_proximos') }}">Próximos EFT</a>
         </div>
       </div>
       <div class="app-rail-item" data-rail-key="caja">

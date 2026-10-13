@@ -50,7 +50,7 @@
   <p class="qc-note qc-warn">Hay datos sin cargar (EFT, facturas de combustible o Reporte Diario): el importe es aproximado.</p>
   {% endif %}
   {% endif %}
-  <a class="qc-link" href="{{ url_for('controles_eft') }}">Ver Próximos EFT &rarr;</a>
+  <a class="qc-link" href="{{ url_for('carga_datos_eft_proximos') }}">Ver Próximos EFT &rarr;</a>
 
 {% elif kind == "tarjetas" %}
   {% if not data %}

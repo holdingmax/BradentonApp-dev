@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block crumbs %}
-<nav class="crumbs"><span class="current">Próximos EFT</span></nav>
+<nav class="crumbs"><a href="{{ url_for('carga_datos_eft') }}">EFT y Cupones</a><span class="current">Próximos EFT</span></nav>
 {% endblock %}
 {% block head_extra %}
 <style>
@@ -44,7 +44,7 @@
 {% macro day_name(d) -%}{{ weekdays[d.weekday()] }} {{ dm(d) }}{%- endmacro %}
 {% macro chase_text(x) -%}{%- if x is none -%}—{%- elif x < 0 -%}<span class="ef-neg">Débito {{ money(-x) }}</span>{%- else -%}<span class="ef-pos">Crédito {{ money(x) }}</span>{%- endif -%}{%- endmacro %}
 <div class="page-header">
-  <span class="eyebrow">Control de EFT</span>
+  <span class="eyebrow">EFT y Cupones</span>
   <h1>Próximos EFT</h1>
   <p class="page-subtitle">Qué días llegan los próximos EFT de J.H. y cuánto se acredita en Chase, o cuánto se debita si los cupones no alcanzan para pagar la factura de combustible.</p>
 </div>

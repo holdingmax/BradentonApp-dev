@@ -2,8 +2,8 @@
 Próximos EFT de J.H. Williams (pedido del usuario, 2026-10-13): qué días
 llegan los EFT siguientes y cuánto van a dar, para tener fondos en Chase si
 viene un débito (los cupones no alcanzan para la factura) o saber cuánto se
-acredita. Solo cálculo; la pantalla es /controles/eft y el cuadro de la
-botonera.
+acredita. Solo cálculo; la pantalla es /carga-datos/eft/proximos (barra
+lateral de EFT y Cupones) y el cuadro de la botonera.
 
 Cómo arma J.H. un EFT (medido con los 19 EFT de junio a septiembre 2026):
 - Cae el día que vence una factura de combustible (la entrega + 5 días; si
