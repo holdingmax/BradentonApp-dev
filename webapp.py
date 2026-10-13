@@ -53,6 +53,7 @@ import control_cierre
 import reporte_mensual
 import reporte_mensual_db
 import control_tarjetas
+import eft_pronostico
 import cupones_detalle
 import jh_mensual
 import jh_mensual_db
@@ -784,6 +785,16 @@ CONTROLES_SECTIONS = [
         "description": "Las ventas con tarjeta contra lo que acredita J.H.",
         "accent": "#3B5BDB",
         "accent_soft": "#DDE3FA",
+    },
+    {
+        "key": "control_eft",
+        "code": "EF",
+        "icon": _ICON_CALENDAR,
+        "label": "Próximos EFT",
+        "url": "/controles/eft",
+        "description": "Qué días llegan los próximos EFT de J.H. y cuánto se acredita o se debita en Chase.",
+        "accent": "#0284C7",
+        "accent_soft": "#DCEFFB",
     },
     {
         "key": "control_depositos",
@@ -3062,7 +3073,36 @@ def controles():
             alerts["control_depositos"] = f"{len(deposits_control['issues'])} cosa(s) para revisar este mes"
     except Exception as exc:
         print(f"[controles] estado de Control Depósitos: {exc}")
+    try:
+        forecast = eft_pronostico.build_forecast()
+        upcoming = forecast and forecast["next"]
+        if upcoming and upcoming["result"] < 0:
+            alerts["control_eft"] = (f"El EFT del {upcoming['date']:%d/%m} puede venir con un débito de "
+                                     f"${-upcoming['result']:,.2f}")
+    except Exception as exc:
+        print(f"[controles] estado de Próximos EFT: {exc}")
     return render_template("controles_index.html", controls=CONTROLES_SECTIONS, alerts=alerts)
+
+
+_WEEKDAYS_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+
+
+@app.route("/controles/eft")
+def controles_eft():
+    """
+    Próximos EFT (pedido del usuario, 2026-10-13): qué días llegan los EFT
+    siguientes de J.H. y cuánto darían en Chase (crédito o débito), con lo
+    que falta cargar para que el cálculo sea exacto. Cálculo en
+    eft_pronostico.py.
+    """
+    section = next(s for s in CONTROLES_SECTIONS if s["key"] == "control_eft")
+    return render_template(
+        "controles_eft.html",
+        forecast=eft_pronostico.build_forecast(),
+        weekdays=_WEEKDAYS_ES,
+        accent=section["accent"],
+        accent_soft=section["accent_soft"],
+    )
 
 
 @app.route("/controles/cierre-mensual", methods=["GET", "POST"])
@@ -7191,7 +7231,10 @@ def controles_rapidos_panel(kind):
     day = controles_rapidos.reference_day(year, month, today)
     if day is None:  # mes futuro: el actual
         year, month, day = today.year, today.month, today
-    if kind == "kia":
+    if kind == "eft":
+        # Próximos EFT (pedido del usuario, 2026-10-13): no depende del mes.
+        data = {"forecast": eft_pronostico.build_forecast(today=today), "weekdays": _WEEKDAYS_ES}
+    elif kind == "kia":
         # Kia y Toyota (pedido del usuario, 2026-10-08): lo que debe cada una
         # hoy y la cuenta del mes elegido.
         ledger = _kia_toyota_ledger()

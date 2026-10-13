@@ -6,13 +6,15 @@
 {% macro cost(x) -%}{%- if x is none -%}—{%- else -%}{%- set s = "{:,.4f}".format(x) -%}${{ s[:-2] if s.endswith("00") else (s[:-1] if s.endswith("0") else s) }}{%- endif -%}{%- endmacro %}
 {% macro dmy(iso) -%}{{ iso[8:10] }}/{{ iso[5:7] }}/{{ iso[:4] }}{%- endmacro %}
 {% macro dm(iso) -%}{{ iso[8:10] }}/{{ iso[5:7] }}{%- endmacro %}
+{% macro dm_date(d) -%}{{ "%02d/%02d"|format(d.day, d.month) }}{%- endmacro %}
 {% macro behind(days, iso) -%}
   {%- if days > 1 %}<p class="qc-note qc-warn">El Reporte Diario {{ "del mes " if not is_current }}está cargado hasta el {{ dmy(iso) }}{{ " (hace %d días)"|format(days) if is_current }}.</p>{% endif -%}
 {%- endmacro %}
 {% macro empty_month(what, endpoint) -%}
   <p class="qc-note">{{ month_label }} {{ "todavía " if is_current }}no tiene {{ what }}.</p>
 {%- endmacro %}
-{# Cambio de mes (pedido del usuario, 2026-10-07): las flechas piden el cuadro de otro mes. #}
+{# Cambio de mes (pedido del usuario, 2026-10-07): las flechas piden el cuadro de otro mes. Próximos EFT no depende del mes. #}
+{% if kind != "eft" %}
 <div class="qc-month" data-month="{{ '' if is_current else this_month }}">
   <button type="button" class="qc-month-btn" data-qc-month="{{ prev_month }}" aria-label="Mes anterior"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 6 9 12 15 18"/></svg></button>
   <span class="qc-month-label">{{ month_label }}</span>
@@ -20,8 +22,37 @@
   {% else %}<span class="qc-month-btn off"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="9 6 15 12 9 18"/></svg></span>{% endif %}
   {% if not is_current %}<button type="button" class="qc-month-today" data-qc-month="">Mes actual</button>{% endif %}
 </div>
+{% endif %}
 
-{% if kind == "tarjetas" %}
+{% if kind == "eft" %}
+  {% set f = data.forecast %}
+  {% if not f %}
+  <p class="qc-note">Todavía no hay ningún EFT cargado (Carga de Datos &rarr; EFT y Cupones).</p>
+  {% elif not f.next %}
+  <p class="qc-note">No hay un próximo EFT para mostrar.</p>
+  {% else %}
+  {% set n = f.next %}
+  <div class="qc-status {{ 'bad' if n.result < 0 else 'ok' }}">
+    <span>Próximo EFT: {{ data.weekdays[n.date.weekday()] }} {{ dm_date(n.date) }}{{ " (fecha estimada)" if n.invoice_estimated }}</span>
+    <strong>{% if n.result < 0 %}Débito ≈ {{ money(-n.result) }}{% else %}Crédito ≈ {{ money(n.result) }}{% endif %}</strong>
+    <span class="qc-sub">Cupones {{ money(n.net) }} menos {{ "la factura" if not n.charges else "las facturas" }} {{ money(n.invoice_total) }}{{ " (estimada)" if n.invoice_estimated }}.{% if n.store_days and f.typical_error %} Con Store Info: ± {{ money(f.typical_error) }} aprox.{% elif not n.store_days %} Con los cupones cargados.{% endif %}</span>
+  </div>
+  {% set later = f.events|selectattr("date", "gt", n.date)|list %}
+  {% if later %}
+  <table class="qc-table">
+    <thead><tr><th>Después</th><th>En Chase</th></tr></thead>
+    <tbody>
+    {% for e in later %}<tr><td>{{ data.weekdays[e.date.weekday()] }} {{ dm_date(e.date) }}</td><td>{% if e.result < 0 %}Débito {{ money(-e.result) }}{% else %}Crédito {{ money(e.result) }}{% endif %}</td></tr>{% endfor %}
+    </tbody>
+  </table>
+  {% endif %}
+  {% if f.events|selectattr("invoice_estimated")|list or f.estimated_past or f.events|selectattr("status", "in", ["overdue", "unknown"])|list %}
+  <p class="qc-note qc-warn">Hay datos sin cargar (EFT, facturas de combustible o Reporte Diario): el importe es aproximado.</p>
+  {% endif %}
+  {% endif %}
+  <a class="qc-link" href="{{ url_for('controles_eft') }}">Ver Próximos EFT &rarr;</a>
+
+{% elif kind == "tarjetas" %}
   {% if not data %}
   {{ empty_month("ventas con tarjeta cargadas (Store Info del Reporte Diario)", "controles_tarjetas") }}
   {% else %}

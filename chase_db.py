@@ -576,6 +576,20 @@ def get_posting_dates(first, last):
     return {date.fromisoformat(row["posting_date"]) for row in rows}
 
 
+def get_detalle_transactions(detalle, first, last):
+    """[(fecha date, monto)] de los movimientos con ese Detalle entre first y last (date), inclusive."""
+    conn = _connect()
+    try:
+        rows = conn.execute(
+            "SELECT posting_date, amount FROM chase_transactions WHERE detalle = ? AND posting_date BETWEEN ? AND ? "
+            "ORDER BY posting_date",
+            (detalle, first.isoformat(), last.isoformat()),
+        ).fetchall()
+    finally:
+        conn.close()
+    return [(date.fromisoformat(row["posting_date"]), row["amount"]) for row in rows]
+
+
 def get_first_posting_date():
     """Fecha del primer movimiento guardado (date), o None: desde dónde está cargado Chase."""
     conn = _connect()

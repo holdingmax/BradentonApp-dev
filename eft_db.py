@@ -358,6 +358,70 @@ def list_all_deposits():
         conn.close()
 
 
+def list_cupones_for_forecast():
+    """
+    Los DDC cargados en Cupones con fecha (date), gross, fees y neto, para el
+    pronóstico de los próximos EFT (eft_pronostico.py). Un DDC que vino en un
+    grupo sin monto propio (gross y neto en 0) trae `group_net`: lo que le
+    falta al total del grupo, para todos los del grupo que no tienen monto.
+    """
+    conn = _connect()
+    try:
+        rows = [dict(r) for r in conn.execute(
+            "SELECT coupon_id, date, gross, fees, net, reported_group_text, reported_group_total FROM cupones"
+        ).fetchall()]
+    finally:
+        conn.close()
+    groups = {}
+    for row in rows:
+        row["date"] = _parse_cupon_date(row["date"])
+        row["group_net"] = None
+        if row["reported_group_text"]:
+            groups.setdefault(row["reported_group_text"], []).append(row)
+    for members in groups.values():
+        total = next((m["reported_group_total"] for m in members if m["reported_group_total"] is not None), None)
+        pending = [m for m in members if not (m["net"] or 0.0)]
+        if total is None or not pending:
+            continue
+        remaining = round(total - sum(m["net"] or 0.0 for m in members), 2)
+        for m in pending:
+            m["group_net"] = remaining
+    return [row for row in rows if row["date"] is not None]
+
+
+def list_deposits_with_lines():
+    """
+    Todos los EFT con fecha, del más viejo al más nuevo, cada uno con sus
+    cupones (fecha de venta, gross, fees, neto) y sus facturas pagadas: lo
+    usa el pronóstico de los próximos EFT (eft_pronostico.py).
+    """
+    conn = _connect()
+    try:
+        deposits = conn.execute("SELECT * FROM eft_deposits").fetchall()
+        result = []
+        for dep in deposits:
+            parsed = _parse_eft_date(dep["eft_date"])
+            if parsed is None:
+                continue
+            coupons = conn.execute(
+                "SELECT date, coupon, gross_amount, fees_amount, paid_amount FROM eft_coupons WHERE deposit_id = ?",
+                (dep["id"],),
+            ).fetchall()
+            invoices = conn.execute(
+                "SELECT invoice, paid_amount FROM eft_paid_invoices WHERE deposit_id = ?", (dep["id"],)
+            ).fetchall()
+            result.append({
+                "rcv_number": dep["rcv_number"],
+                "eft_date": parsed.date(),
+                "coupons": [dict(c) for c in coupons],
+                "invoices": [dict(i) for i in invoices],
+            })
+        result.sort(key=lambda d: d["eft_date"])
+        return result
+    finally:
+        conn.close()
+
+
 def backfill_grouped_cupones_from_eft():
     """
     Completa cupones "agrupados" con los montos reales de gross/fees/net

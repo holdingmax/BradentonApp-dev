@@ -298,6 +298,16 @@ def get_invoice_years():
         conn.close()
 
 
+def list_all_invoices():
+    """Todas las facturas de combustible (sin el detalle por grado), por fecha: el pronóstico de los EFT."""
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT * FROM fuel_invoices ORDER BY invoice_date, id").fetchall()
+    finally:
+        conn.close()
+    return [dict(row) for row in rows]
+
+
 def get_month_settings(year, month):
     conn = _connect()
     try:

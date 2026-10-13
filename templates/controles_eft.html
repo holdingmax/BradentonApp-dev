@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block crumbs %}
+<nav class="crumbs"><span class="current">Próximos EFT</span></nav>
+{% endblock %}
+{% block head_extra %}
+<style>
+  .ef-status { margin-top: 4px; padding: 14px 16px; border-radius: 10px; border: 1px solid var(--border); }
+  .ef-status.credit { background: #F0FDF4; border-color: #BBF7D0; }
+  .ef-status.debit { background: #FEF2F2; border-color: #FECACA; }
+  .ef-status.none { background: var(--surface-alt); }
+  .ef-status-title { font-weight: 700; font-size: 15px; }
+  .ef-status p { margin: 6px 0 0; font-size: 13px; color: var(--text-soft); }
+  .ef-amount { font-size: 22px; font-weight: 700; margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .ef-amount.credit { color: var(--success); }
+  .ef-amount.debit { color: var(--error); }
+  .ef-notes { margin-top: 14px; padding: 12px 16px; border-radius: 10px; background: #FFFBEB; border: 1px solid #FDE68A; font-size: 13px; }
+  .ef-notes ul { margin: 4px 0 0; padding-left: 18px; }
+  .ef-notes li { margin: 3px 0; }
+  .ef-section { margin-top: 26px; padding-top: 16px; border-top: 1px solid var(--border); }
+  .ef-section h2 { margin: 0; }
+  .ef-section > p { margin: 6px 0 0; font-size: 13px; color: var(--text-soft); }
+  .ef-table-wrap { overflow-x: auto; margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; }
+  .ef-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  .ef-table th, .ef-table td { padding: 7px 12px; border-bottom: 1px solid var(--border); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; vertical-align: top; }
+  .ef-table th:first-child, .ef-table td:first-child, .ef-table .ef-left { text-align: left; }
+  .ef-table td.ef-left, .ef-table td .ef-sub { white-space: normal; }
+  .ef-table thead th { background: var(--accent-soft); font-weight: 700; }
+  .ef-sub { display: block; font-size: 11.5px; color: var(--text-soft); font-weight: 400; }
+  .ef-pos { color: var(--success); font-weight: 600; }
+  .ef-neg { color: var(--error); font-weight: 600; }
+  .ef-badge { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+  .ef-badge-ok { background: #DCFCE7; color: #166534; }
+  .ef-badge-next { background: var(--accent-soft); color: var(--accent); }
+  .ef-badge-off { background: var(--surface-alt); color: var(--text-soft); border: 1px solid var(--border); }
+  .ef-badge-bad { background: #FEE2E2; color: #991B1B; }
+  .ef-explain { margin-top: 26px; font-size: 12.5px; color: var(--text-soft); }
+  .ef-explain p { margin: 4px 0; }
+</style>
+{% endblock %}
+{% block content %}
+{% macro money(x) -%}{%- if x is none -%}—{%- elif x < 0 -%}-${{ "{:,.2f}".format(-x) }}{%- else -%}${{ "{:,.2f}".format(x) }}{%- endif -%}{%- endmacro %}
+{% macro dm(d) -%}{{ "%02d/%02d"|format(d.day, d.month) }}{%- endmacro %}
+{% macro dmy(d) -%}{{ "%02d/%02d/%d"|format(d.day, d.month, d.year) }}{%- endmacro %}
+{% macro day_name(d) -%}{{ weekdays[d.weekday()] }} {{ dm(d) }}{%- endmacro %}
+{% macro chase_text(x) -%}{%- if x is none -%}—{%- elif x < 0 -%}<span class="ef-neg">Débito {{ money(-x) }}</span>{%- else -%}<span class="ef-pos">Crédito {{ money(x) }}</span>{%- endif -%}{%- endmacro %}
+<div class="page-header">
+  <span class="eyebrow">Control de EFT</span>
+  <h1>Próximos EFT</h1>
+  <p class="page-subtitle">Qué días llegan los próximos EFT de J.H. y cuánto se acredita en Chase, o cuánto se debita si los cupones no alcanzan para pagar la factura de combustible.</p>
+</div>
+
+<div class="card">
+{% if not forecast %}
+  <div class="ef-status none">
+    <div class="ef-status-title">Todavía no hay ningún EFT cargado.</div>
+    <p>El cálculo arranca desde el último EFT: se cargan en Carga de Datos &rarr; EFT y Cupones.</p>
+  </div>
+{% else %}
+  {% set f = forecast %}
+  {% set n = f.next %}
+  {% if n %}
+  <div class="ef-status {{ 'debit' if n.result < 0 else 'credit' }}">
+    <div class="ef-status-title">Próximo EFT: {{ day_name(n.date) }}{% if n.date == f.today %} (hoy){% endif %}{% if n.invoice_estimated %} (fecha estimada){% endif %}</div>
+    <div class="ef-amount {{ 'debit' if n.result < 0 else 'credit' }}">{% if n.result < 0 %}Débito en Chase de ≈ {{ money(-n.result) }}{% else %}Crédito en Chase de ≈ {{ money(n.result) }}{% endif %}</div>
+    <p>Cupones {{ money(n.net) }} menos {{ "la factura de combustible" if not n.charges else "las facturas" }} {{ money(n.invoice_total) }}{% if n.invoice_estimated %} (estimada){% endif %}.</p>
+    <p>{% if n.store_days %}Lo vendido con tarjeta del {{ dm(n.store_days[0]) }} al {{ dm(n.store_days[-1]) }} sale de Store Info{% if f.typical_error %}: con los últimos EFT, así se erró en promedio {{ money(f.typical_error) }}{% endif %}. Con los cupones de J.H. cargados hasta el día anterior al EFT, da exacto.{% else %}Todos los cupones que entran ya están cargados: el importe es exacto{% if n.invoice_estimated %} salvo la factura{% endif %}.{% endif %}</p>
+  </div>
+  {% endif %}
+
+  {% set overdue = f.events|selectattr("status", "in", ["overdue", "unknown"])|list %}
+  {% set estimated_invoice = f.events|selectattr("invoice_estimated")|list %}
+  {% set estimated_sales = f.estimated_past %}
+  {% if overdue or estimated_invoice or estimated_sales or (n and n.store_days) %}
+  <div class="ef-notes">
+    <strong>Para que el cálculo sea exacto falta cargar:</strong>
+    <ul>
+      {% if overdue %}<li>El último EFT cargado es el del {{ dmy(f.last.date) }} ({{ f.last.rcv }}). {% for e in overdue %}{{ dm(e.date) }}{{ ", " if not loop.last }}{% endfor %}: {{ "ya tendría que haber llegado" if overdue|length == 1 else "ya tendrían que haber llegado" }}. Cargá los EFT en Carga de Datos &rarr; EFT y Cupones{% if overdue|selectattr("status", "equalto", "unknown")|list %} y el extracto de Chase (cargado hasta el {{ dmy(f.chase_last) if f.chase_last else '—' }}){% endif %}.</li>{% endif %}
+      {% if estimated_invoice %}<li>Las facturas de combustible de J.H.: sin la factura, la fecha del EFT se estima una semana después del anterior y el importe con el de la última ({{ money(f.estimated_invoice) }}; el precio cambia cada semana y así se erra unos $1,000). Se cargan en Carga de Datos &rarr; Combustible.</li>{% endif %}
+      <li>Los cupones de J.H. (Credit Card Daily Summary, en Carga de Datos &rarr; EFT y Cupones): con ellos el importe es exacto. Están cargados hasta el {{ dmy(f.coupons_to) if f.coupons_to else '—' }}.</li>
+      {% if estimated_sales %}<li>El Reporte Diario del {{ dm(estimated_sales[0]) }}{% if estimated_sales|length > 1 %} al {{ dm(estimated_sales[-1]) }}{% endif %}: lo vendido con tarjeta de {{ estimated_sales|length }} día(s) ya pasados se estimó con el promedio de ese día de la semana.</li>{% endif %}
+    </ul>
+  </div>
+  {% endif %}
+
+  <div class="ef-section" style="border-top: 0; padding-top: 0;">
+    <h2>EFT desde el último cargado</h2>
+    <p>El último EFT cargado es el del {{ dmy(f.last.date) }} ({{ f.last.rcv }}): pagó los cupones depositados hasta el {{ dm(f.last.cut) }}. Positivo es lo que se acredita en Chase; negativo, lo que se debita.</p>
+    <div class="ef-table-wrap">
+      <table class="ef-table">
+        <thead><tr><th>Fecha</th><th class="ef-left">Facturas</th><th class="ef-left">Cupones cargados</th><th class="ef-left">Con Store Info</th><th>Neto de cupones</th><th>En Chase</th><th class="ef-left">Estado</th></tr></thead>
+        <tbody>
+        {% for e in f.events %}
+          <tr>
+            <td><strong>{{ day_name(e.date) }}</strong>{% if e.invoice_estimated %}<span class="ef-sub">fecha estimada</span>{% endif %}<span class="ef-sub">cupones depositados hasta el {{ dm(e.cut) }}</span></td>
+            <td class="ef-left">{% if e.invoice_estimated %}{{ money(e.fuel_total) }}<span class="ef-sub">combustible sin cargar (la última)</span>{% else %}{% for inv in e.invoices %}{{ inv.number }}: {{ money(inv.amount) }}<span class="ef-sub">entrega {{ dm(inv.delivered) if inv.delivered else '—' }}, vence {{ dm(inv.due) }}</span>{% endfor %}{% endif %}{% for c in e.charges %}<span class="ef-sub">+ cargo mensual {{ money(c.amount) }} (puede caer en el EFT siguiente)</span>{% endfor %}</td>
+            <td class="ef-left">{% if e.coupons %}{{ e.coupons|length }} DDC: {{ money(e.coupons_net) }}<span class="ef-sub">{{ e.coupons|map(attribute="id")|join(", ") }}</span>{% else %}—{% endif %}</td>
+            <td class="ef-left">{% if e.store_days %}ventas del {{ dm(e.store_days[0]) }} al {{ dm(e.store_days[-1]) }}: {{ money(e.store_gross) }}<span class="ef-sub">neto ≈ {{ money(e.store_net) }}{% if e.estimated_days %}, {{ e.estimated_days|length }} día(s) estimados{% endif %}</span>{% else %}—{% endif %}</td>
+            <td>{{ money(e.net) }}</td>
+            <td>{{ chase_text(e.result) }}</td>
+            <td class="ef-left">
+              {% if e.status == "arrived" %}<span class="ef-badge ef-badge-ok">En Chase: {{ money(e.arrived) }}</span><span class="ef-sub">falta cargar el EFT</span>
+              {% elif e.status == "overdue" %}<span class="ef-badge ef-badge-bad">No está en Chase</span>
+              {% elif e.status == "unknown" %}<span class="ef-badge ef-badge-off">Chase sin cargar</span>
+              {% elif n and e.date == n.date %}<span class="ef-badge ef-badge-next">Próximo</span>
+              {% else %}<span class="ef-badge ef-badge-off">Más adelante</span>{% endif %}
+            </td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {% if f.backtest %}
+  <div class="ef-section">
+    <h2>Cómo dio el cálculo con los últimos EFT</h2>
+    <p>Los últimos EFT cargados, calculados como si todavía no hubieran llegado, contra lo que fue de verdad a Chase.</p>
+    <div class="ef-table-wrap">
+      <table class="ef-table">
+        <thead><tr><th>EFT</th><th>Real en Chase</th><th>Solo con Store Info</th><th>Diferencia</th><th>Con los cupones cargados</th><th>Diferencia</th></tr></thead>
+        <tbody>
+        {% for b in f.backtest %}
+          <tr>
+            <td><strong>{{ dmy(b.date) }}</strong><span class="ef-sub">{{ b.rcv }}</span></td>
+            <td>{{ money(b.real) }}</td>
+            <td>{{ money(b.store) }}</td>
+            <td>{{ money(b.store - b.real) }}</td>
+            <td>{{ money(b.coupons) }}</td>
+            <td>{{ money(b.coupons - b.real) }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="ef-explain">
+    <p><strong>Cómo se calcula.</strong> Cada EFT cae el día que vence una factura de combustible de J.H. (5 días después de la entrega, o el día hábil siguiente) y la paga con los cupones que J.H. depositó hasta 2 días hábiles antes: lo que sobra se acredita en Chase y lo que falta se debita. Se verificó con los 34 EFT de marzo a septiembre 2026: entraron exactamente esos cupones en todos, salvo uno chico de $9.89.</p>
+    <p>Los cupones cargados se toman tal cual. Lo que falta cargar sale de lo vendido con tarjeta en Store Info menos la comisión ({{ "%.2f"|format(f.main_fee * 100) }}%, la de los últimos EFT), más lo que vienen dando por día los cupones chicos ({{ money(f.small_per_day) }}). Se suman los cargos que J.H. cobra todos los meses (Chevron network, VPN, Mako); uno suelto, como las gift cards, no se puede prever. Se cuenta que J.H. no deposita sábados, domingos ni feriados bancarios.</p>
+  </div>
+{% endif %}
+</div>
+{% endblock %}
