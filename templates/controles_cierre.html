@@ -98,10 +98,11 @@
 
   {% if entries %}
   {% set balanced = entries.difference|abs < 0.005 %}
-  <div class="ci-status {{ 'ok' if balanced and not notice else 'bad' }}">
+  <div class="ci-status {{ 'ok' if balanced and not notice and not kia_not_in_cards else 'bad' }}">
     <div class="ci-status-title">
       {% if not balanced %}El asiento no cierra: Debe y Haber difieren en {{ money(entries.difference) }}.
       {% elif notice %}El asiento cierra, pero faltan datos.
+      {% elif kia_not_in_cards %}El asiento cierra, pero hay un pago de Kia/Toyota para revisar.
       {% else %}Bien: el asiento cierra y no falta ningún dato.{% endif %}
     </div>
     <p>{{ period_label }}{% if not entries.complete_month %} (el mes todavía no está completo){% endif %}.</p>

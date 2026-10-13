@@ -21,7 +21,10 @@ Pagos de Kia y Toyota (pedido del usuario, 2026-10-09): pagan los vales con
 una Amex (LOCAL ACCT = VS en Ventas por Departamento) y ese día las ventas
 con tarjeta suben en ese monto (01/09/2026: $16,901.39 con $11,455.29 de
 Kia). Un pago grande hacía pasar el límite sin nada raro: la alerta mira el
-pendiente sin los pagos de los últimos 3 días, que se muestran aparte. Un
+pendiente sin los pagos que J.H. todavía no depositó, que se muestran aparte
+(desde 2026-10-13, hasta el día exacto en que deposita, ver jh_deposit_day;
+antes eran los últimos 3 días fijos y un pago de jueves volvía a contar el
+domingo: la alerta del 30/08/2026 era ese pago). Un
 día con VS mayor que todo lo vendido con tarjeta (07/08/2026) es un pago que
 no entró como tarjeta: se avisa (kia_not_in_cards).
 
@@ -39,6 +42,49 @@ from datetime import date, timedelta
 ALERT_THRESHOLD = 15000.0
 COUPON_START_LAG_DAYS = 2
 TRANSIT_DAYS = 3
+JH_DEPOSIT_LAG_DAYS = 2
+
+
+def _nth_weekday(year, month, weekday, n):
+    """El n-ésimo `weekday` (0 = lunes) del mes; n = -1 es el último."""
+    if n > 0:
+        first = date(year, month, 1)
+        return first + timedelta(days=(weekday - first.weekday()) % 7 + 7 * (n - 1))
+    last = date(year, month, calendar.monthrange(year, month)[1])
+    return last - timedelta(days=(last.weekday() - weekday) % 7)
+
+
+def bank_holidays(year):
+    """
+    Feriados de la Reserva Federal (sin ACH: J.H. no deposita). Uno que cae
+    domingo se pasa al lunes; uno que cae sábado no cierra (la Fed abre el
+    viernes).
+    """
+    fixed = [date(year, 1, 1), date(year, 6, 19), date(year, 7, 4), date(year, 11, 11), date(year, 12, 25)]
+    days = {d + timedelta(days=1) if d.weekday() == 6 else d for d in fixed if d.weekday() != 5}
+    days.update({
+        _nth_weekday(year, 1, 0, 3),   # Martin Luther King
+        _nth_weekday(year, 2, 0, 3),   # Presidents' Day
+        _nth_weekday(year, 5, 0, -1),  # Memorial Day
+        _nth_weekday(year, 9, 0, 1),   # Labor Day
+        _nth_weekday(year, 10, 0, 2),  # Columbus Day
+        _nth_weekday(year, 11, 3, 4),  # Thanksgiving
+    })
+    return days
+
+
+def jh_deposit_day(sale_day):
+    """
+    Día en que J.H. deposita lo vendido con tarjeta el `sale_day`: dos días
+    después, corrido al día hábil siguiente si cae sábado, domingo o feriado
+    bancario. Medido con el detalle de cupones de septiembre 2026: lunes a
+    miércoles a los 2 días; jueves, viernes y sábado juntos el lunes; domingo
+    el martes; con el Labor Day (07/09) jueves a sábado pasaron al martes.
+    """
+    day = sale_day + timedelta(days=JH_DEPOSIT_LAG_DAYS)
+    while day.weekday() >= 5 or day in bank_holidays(day.year):
+        day += timedelta(days=1)
+    return day
 
 
 def _running(card_sales, coupons, until, kia_sales=None):
@@ -65,7 +111,9 @@ def _running(card_sales, coupons, until, kia_sales=None):
             "last3": round(sum(v for v in last3 if v is not None), 2),
             "pending": None,
             "counted": False,
-            "kia": kia_sales.get(key, 0.0) if sale is not None else 0.0,
+            # Un pago que no entró como tarjeta (kia_not_in_cards) cuenta
+            # solo hasta lo vendido con tarjeta ese día.
+            "kia": min(kia_sales.get(key, 0.0), sale) if sale is not None else 0.0,
             "kia_recent": 0.0,
             "pending_without_kia": None,
         }
@@ -82,10 +130,12 @@ def _running(card_sales, coupons, until, kia_sales=None):
                 row["counted"] = True
             pending = round(pending, 2)
             row["pending"] = pending
-            # Lo pendiente que son pagos de Kia/Toyota de los últimos días
-            # (nunca más que el propio pendiente).
-            kia_recent = sum(kia_sales.get((day - timedelta(days=k)).isoformat(), 0.0)
-                             for k in range(TRANSIT_DAYS) if (day - timedelta(days=k)) >= segment_start)
+            # Lo pendiente que son pagos de Kia/Toyota que J.H. todavía no
+            # depositó (nunca más que el propio pendiente).
+            kia_recent = sum(rows[paid.isoformat()]["kia"] for paid in
+                             (day - timedelta(days=k) for k in range(10))
+                             if paid >= segment_start and paid != day and jh_deposit_day(paid) > day)
+            kia_recent += row["kia"]
             row["kia_recent"] = round(min(kia_recent, max(pending, 0.0)), 2)
             row["pending_without_kia"] = round(pending - row["kia_recent"], 2)
             row["status"] = "alert" if abs(row["pending_without_kia"]) > ALERT_THRESHOLD else "ok"
@@ -117,7 +167,8 @@ def build_month_control(year, month, card_sales, coupons, today=None, kia_sales=
         "rows": rows,
         "last": last,
         "alert_days": [row for row in evaluated if row["status"] == "alert"],
-        "max_pending": max((row["pending"] for row in evaluated), default=None),
+        # Mismo pendiente que mira la alerta (sin los pagos de Kia/Toyota).
+        "max_pending": max((row["pending_without_kia"] for row in evaluated), default=None),
         "kia_total": round(sum(row["kia"] for row in rows), 2),
         "kia_not_in_cards": kia_not_in_cards(card_sales, kia_sales or {}, [row["date"] for row in rows]),
         "missing_days": [row["date"] for row in rows if row["status"] == "missing"],

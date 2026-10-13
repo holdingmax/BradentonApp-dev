@@ -78,7 +78,7 @@
       {% if last.kia_recent %}<span>De esto, pagos de Kia/Toyota: <strong>{{ money(last.kia_recent) }}</strong> (no cuentan para el límite)</span>
       <span>Pendiente sin los pagos de Kia/Toyota: <strong>{{ money(last.pending_without_kia) }}</strong></span>{% endif %}
       <span>Vendido con tarjeta los últimos 3 días: <strong>{{ money(last.last3) }}</strong></span>
-      <span>Máximo del mes: <strong>{{ money(control.max_pending) }}</strong></span>
+      <span>Máximo del mes{% if control.kia_total %} sin los pagos de Kia/Toyota{% endif %}: <strong>{{ money(control.max_pending) }}</strong></span>
       <span>Límite: <strong>{{ money(control.threshold) }}</strong></span>
     </div>
     {% if control.alert_days %}
