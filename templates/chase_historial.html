@@ -69,6 +69,7 @@
      la derecha de la celda, simétrico en todas las filas. */
   .chase-detalle-cell { min-width: 240px; }
   .chase-detalle-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .chase-detalle-note { font-size: 11.5px; color: var(--text-soft); margin-top: 3px; }
 
   /* "corregir"/"categorizar" -- pedido explícito del usuario (2026-09-16):
      antes era un <details> que empujaba el resto del extracto hacia abajo
@@ -168,6 +169,7 @@
               {% endif %}
               <button type="button" class="popover-trigger chase-categorize-trigger" data-popover-target="chase-cat-{{ loop.index }}">{{ 'corregir' if tx.detalle else 'categorizar' }}</button>
             </div>
+            {% if chase_detalle_note(tx.detalle) %}<div class="chase-detalle-note">{{ chase_detalle_note(tx.detalle) }}</div>{% endif %}
             {% if is_proveedores or tx.supplier_key %}
             <div class="popover-panel chase-supplier-panel" id="chase-sup-{{ loop.index }}">
               {% if tx.supplier_key %}

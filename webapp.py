@@ -64,6 +64,7 @@ from chase_rules import (
     build_chase_export_workbook,
     build_chase_pdf_report,
     categorize_chase_description,
+    detalle_note as chase_detalle_note,
     delete_dynamic_rule_by_index as delete_chase_custom_rule,
     delete_master_rule_by_index as delete_chase_master_rule,
     edit_dynamic_rule_by_index as edit_chase_custom_rule,
@@ -239,6 +240,7 @@ app.config.update(
 
 # Costos por unidad sin redondear (Productos, Precios de la botonera).
 app.jinja_env.filters["exact_money"] = proveedores_productos.exact_money
+app.jinja_env.globals["chase_detalle_note"] = chase_detalle_note  # comentario fijo de un Detalle de Chase
 
 login_manager = LoginManager(app)
 login_manager.login_view = "login"

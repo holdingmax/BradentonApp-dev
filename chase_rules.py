@@ -412,6 +412,16 @@ def _is_deposit_id_number(desc):
 # categorizar" para que el usuario le ponga a mano "DEPOSITO VENTA ICE"
 # (corregido por el usuario el mismo día: no adivinar los de hielo).
 # Mismos Detalle que ya usa Caja (caja.py: CHASE_DETALLE_FOOD_TRUCK/_ICE).
+# Comentario fijo de un Detalle (pedido del usuario, 2026-10-13): el pago al
+# Manatee County Tax Collector va como TANGIBLE TAX y se registra en Otros
+# gastos varios. Se muestra al lado del Detalle en Chase, su Excel y su PDF.
+DETALLE_NOTES = {"TANGIBLE TAX": "Otros gastos varios"}
+
+
+def detalle_note(detalle):
+    return DETALLE_NOTES.get((detalle or "").strip())
+
+
 SMALL_DEPOSIT_MAX = 1030.0
 FOOD_TRUCK_FIXED_AMOUNTS = (1000.0, 1030.0)
 DETALLE_DEPOSITO = "DEPOSITO"
@@ -671,7 +681,7 @@ def build_chase_export_workbook(rows, year, month, dest_path):
     sheet = workbook.active
     sheet.title = "Chase"
 
-    headers = ["Posting Date", "Description", "Amount", "Balance", "Type", "Detalle"]
+    headers = ["Posting Date", "Description", "Amount", "Balance", "Type", "Detalle", "Comentario"]
     sheet.append(headers)
     for cell in sheet[1]:
         cell.font = Font(bold=True)
@@ -686,13 +696,14 @@ def build_chase_export_workbook(rows, year, month, dest_path):
                 row.get("balance"),
                 row.get("type") or "",
                 row.get("detalle") or "",
+                detalle_note(row.get("detalle")) or "",
             ]
         )
         new_row = sheet[sheet.max_row]
         new_row[2].alignment = center  # Amount
         new_row[3].alignment = center  # Balance
 
-    for col_letter, width in zip("ABCDEF", (13, 42, 12, 12, 16, 24)):
+    for col_letter, width in zip("ABCDEFG", (13, 42, 12, 12, 16, 24, 22)):
         sheet.column_dimensions[col_letter].width = width
 
     sheet.auto_filter.ref = sheet.dimensions
@@ -808,6 +819,8 @@ def build_chase_pdf_report(rows, year, month, dest_path):
     posting_dates = []
     for row in rows:
         label = (row.get("detalle") or "").strip() or "Sin categorizar"
+        if detalle_note(label):
+            label = f"{label} ({detalle_note(label)})"
         amount = row.get("amount") or 0.0
         totals_by_detalle[label] = totals_by_detalle.get(label, 0.0) + amount
         if row.get("posting_date"):
