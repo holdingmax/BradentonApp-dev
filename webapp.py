@@ -7415,9 +7415,12 @@ def _depositos_month_control(year, month):
     chase_rows = chase_db.get_month_transactions(year, month) + [
         r for r in chase_db.get_month_transactions(next_year, next_month) if r["posting_date"][8:10] <= "07"
     ]
+    # El control compara y muestra la fecha como texto ISO; get_last_posting_date
+    # devuelve un date (un recibo posterior al último día de Chase daba 500).
+    chase_last = chase_db.get_last_posting_date()
     return control_depositos.build_month_control(
         year, month, ice_machine_db.list_month(year, month), depositos_db.list_month(year, month),
-        chase_rows, chase_db.get_last_posting_date(),
+        chase_rows, chase_last.isoformat() if chase_last else None,
         known_references=[s["reference"] for s in ice_machine_db.list_month(prev_year, prev_month)],
     )
 
