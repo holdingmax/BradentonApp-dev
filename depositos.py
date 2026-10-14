@@ -26,7 +26,7 @@ import pdfplumber
 import pytesseract
 from pypdf import PdfReader, PdfWriter
 
-from ocr_utils import ensure_pytesseract, extract_largest_page_image
+from ocr_utils import apply_osd_rotation, detect_osd_rotation, ensure_pytesseract, largest_page_image
 
 FOOD_TRUCK = "Food Truck"
 ICE_MACHINE = "Ice Machine"
@@ -35,8 +35,12 @@ _FOOD_TRUCK_AMOUNTS = (1000.0, 1030.0)
 # "$2,973.00" -- tolera los espacios que a veces mete el OCR ("$626 .00", "$2, 140.00").
 _AMOUNT = r"\$\s?(\d[\d,\s]*\.\s?\d{2})"
 _TX_RE = re.compile(r"Transaction\s*#\s*(\d+)", re.I)
-_DEPOSIT_RE = re.compile(r"Checking\s+Deposit\s*" + _AMOUNT, re.I)
-_CASH_IN_RE = re.compile(r"Cash\s+In\s*" + _AMOUNT, re.I)
+# Entre el rótulo y el importe el OCR a veces mete un símbolo suelto
+# ("Checking Deposit ~ $1,000.00", recibo #269 del 05/10/2026): se tolera, sin
+# letras ni dígitos en el medio.
+_LABEL_GAP = r"[\s~\-—–:.,_|*'\"]*"
+_DEPOSIT_RE = re.compile(r"Checking\s+Deposit" + _LABEL_GAP + _AMOUNT, re.I)
+_CASH_IN_RE = re.compile(r"Cash\s+In" + _LABEL_GAP + _AMOUNT, re.I)
 _BUSINESS_DATE_RE = re.compile(r"Business\s+Date\s*(\d{2}/\d{2}/\d{4})", re.I)
 # Fecha al final del nombre, DD-MM-YYYY (ej. "... 15-09-2026.pdf" o "(03-08-2026)").
 _FILENAME_DATE_RE = re.compile(r"(\d{1,2})[-./](\d{1,2})[-./](\d{4})(?!.*\d{1,2}[-./]\d{1,2}[-./]\d{4})")
@@ -110,6 +114,22 @@ def read_receipt_text(text):
     }
 
 
+def _read_receipt_image(image):
+    """
+    Campos de la foto de un recibo. Primero se lee tal cual: si ya trae los
+    tres datos (N°, monto y fecha), la foto está derecha y no hace falta la
+    detección de orientación de Tesseract (~2 s por recibo, 2026-10-14). Si
+    falta alguno, se endereza y se vuelve a leer, como antes.
+    """
+    fields = read_receipt_text(pytesseract.image_to_string(image, config="--psm 6"))
+    if all(fields[key] is not None for key in ("tx_number", "amount", "date")):
+        return fields
+    rotate = detect_osd_rotation(image)
+    if not rotate:
+        return fields
+    return read_receipt_text(pytesseract.image_to_string(apply_osd_rotation(image, rotate), config="--psm 6"))
+
+
 def default_description(tx_number, kind):
     text = f"Transacción #{tx_number}" if tx_number is not None else "Depósito"
     return f"{text} ({kind})" if kind else text
@@ -129,9 +149,9 @@ def extract_deposits_from_pdf(pdf_path, filename):
         for index, page in enumerate(pdf.pages):
             fields = {"tx_number": None, "amount": None, "date": None}
             try:
-                image = extract_largest_page_image(page)
+                image = largest_page_image(page)
                 if image is not None:
-                    fields = read_receipt_text(pytesseract.image_to_string(image, config="--psm 6"))
+                    fields = _read_receipt_image(image)
             except Exception as exc:
                 print(f"[depositos] {filename} página {index + 1}: {exc}")
             kind = annotations.get(fields["tx_number"]) if fields["tx_number"] is not None else None

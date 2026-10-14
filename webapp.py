@@ -49,6 +49,7 @@ import control_cmv_db
 import control_depositos
 import ice_machine
 import ice_machine_db
+import ocr_utils
 import control_cierre
 import reporte_mensual
 import reporte_mensual_db
@@ -7754,31 +7755,44 @@ def _link_ice_deposits_to_chase():
     return changed
 
 
+def _read_deposit_file(pdf_path):
+    """Lo leído de un archivo de Depósitos, sin guardar nada: ("summary", resumen) o ("receipts", recibos)."""
+    text = _pdf_text(pdf_path)
+    if ice_machine.is_payment_summary_text(text):
+        return "summary", ice_machine.read_payment_summary_text(text)
+    return "receipts", depositos.extract_deposits_from_pdf(pdf_path, os.path.basename(pdf_path))
+
+
 def _run_depositos_job(job_id, pdf_paths, fallback_period):
-    """Cada PDF es un Payment Summary (con texto) o un PDF de recibos de depósito (fotos); aislado por archivo."""
+    """
+    Cada PDF es un Payment Summary (con texto) o un PDF de recibos de depósito (fotos); aislado por archivo.
+    Los archivos se leen de a varios a la vez (un OCR por núcleo, 2026-10-14) y se guardan de a uno, en el
+    orden subido: la detección de duplicados y los avisos quedan como antes.
+    """
     try:
         summaries = replaced = deposits = incomplete = duplicates = failed = retyped = kept = 0
         problems, last_period = [], None
-        for index, pdf_path in enumerate(pdf_paths, start=1):
-            filename = os.path.basename(pdf_path)
-            try:
-                text = _pdf_text(pdf_path)
-                if ice_machine.is_payment_summary_text(text):
-                    summary = ice_machine.read_payment_summary_text(text)
-                    replaced += ice_machine_db.save_summary(summary, filename)
-                    summaries += 1
-                    last_period = ice_machine.month_of(summary["to_date"])
-                else:
-                    s, i, d, period, r, k = import_deposit_pdf(pdf_path, filename, fallback_period)
-                    deposits, incomplete, duplicates = deposits + s, incomplete + i, duplicates + d
-                    retyped, kept = retyped + r, kept + k
-                    last_period = period or last_period
-            except ValueError as exc:
-                problems.append(str(exc))
-            except Exception as exc:
-                print(f"[carga-datos/depositos] {pdf_path}: {exc}")
-                failed += 1
-            jobs.update_job(job_id, done=index, total=len(pdf_paths))
+        with ThreadPoolExecutor(max_workers=ocr_utils.ocr_process_limit()) as pool:
+            readings = [pool.submit(_read_deposit_file, pdf_path) for pdf_path in pdf_paths]
+            for index, (pdf_path, reading) in enumerate(zip(pdf_paths, readings), start=1):
+                filename = os.path.basename(pdf_path)
+                try:
+                    kind, data = reading.result()
+                    if kind == "summary":
+                        replaced += ice_machine_db.save_summary(data, filename)
+                        summaries += 1
+                        last_period = ice_machine.month_of(data["to_date"])
+                    else:
+                        s, i, d, period, r, k = import_deposit_pdf(pdf_path, filename, fallback_period, items=data)
+                        deposits, incomplete, duplicates = deposits + s, incomplete + i, duplicates + d
+                        retyped, kept = retyped + r, kept + k
+                        last_period = period or last_period
+                except ValueError as exc:
+                    problems.append(str(exc))
+                except Exception as exc:
+                    print(f"[carga-datos/depositos] {pdf_path}: {exc}")
+                    failed += 1
+                jobs.update_job(job_id, done=index, total=len(pdf_paths))
 
         parts = []
         if summaries:
@@ -7821,15 +7835,18 @@ def carga_datos_resumen_eliminar(summary_no):
     return redirect(url_for("carga_datos_depositos"))
 
 
-def import_deposit_pdf(pdf_path, filename, fallback_period):
+def import_deposit_pdf(pdf_path, filename, fallback_period, items=None):
     """
     Divide un PDF en depósitos y los guarda. Devuelve (guardados,
     incompletos, duplicados, primer_período, aclaraciones cambiadas,
     aclaraciones que no se cambiaron porque el recibo se corrigió a mano).
+    `items`: los recibos ya leídos (depositos.extract_deposits_from_pdf).
     """
     saved = incomplete = duplicates = retyped = kept = 0
     first_period = None
-    for item in depositos.extract_deposits_from_pdf(pdf_path, filename):
+    if items is None:
+        items = depositos.extract_deposits_from_pdf(pdf_path, filename)
+    for item in items:
         deposit_date = item["date"]
         iso = deposit_date.isoformat() if deposit_date else None
         complete = item["amount"] is not None and deposit_date is not None and item["tx_number"] is not None
