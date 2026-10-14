@@ -594,9 +594,9 @@ def _kings_find_invoice_and_date(info_crop, filename_numbers=()):
         cleaned = word.strip()
         if date_idx is None:
             match = date_full_re.match(cleaned)
-            if match:
+            if match and _kings_date(match):
                 date_idx = i
-                invoice_date = datetime(int(match.group(3)), int(match.group(1)), int(match.group(2)))
+                invoice_date = _kings_date(match)
 
     if invoice_no is not None and invoice_date is not None:
         return invoice_no, invoice_date
@@ -629,8 +629,16 @@ def _kings_find_invoice_and_date(info_crop, filename_numbers=()):
     if invoice_date is None:
         match = date_loose_re.search(row_text)
         if match:
-            invoice_date = datetime(int(match.group(3)), int(match.group(1)), int(match.group(2)))
+            invoice_date = _kings_date(match)
     return invoice_no, invoice_date
+
+
+def _kings_date(match):
+    """M/D/AAAA del OCR, o None si no es una fecha posible (ej. "10/91/2026" daba "day is out of range")."""
+    try:
+        return datetime(int(match.group(3)), int(match.group(1)), int(match.group(2)))
+    except ValueError:
+        return None
 
 
 def _extract_kings_invoice(pdf_path):
