@@ -2336,6 +2336,32 @@ def _detect_manatee(text):
     return "manatee county utilities" in lowered or "100082705" in lowered
 
 
+def _manatee_text_layer(pdf_path):
+    """
+    El texto de la factura de Manatee leído con pypdf, o None si no sirve y
+    hay que ir al OCR. pypdf lo devuelve con un "\\x00" antes de cada letra
+    (UTF-16 mal decodificado) y espacios duros: se limpian. Solo se usa si
+    trae el período, la fecha de emisión y un único Total Amount Due --
+    sobre las 50 facturas del Drive (2024-2026), 31 lo traen y dan el
+    importe del PDF; las de ene-jun 2024 y feb-2025 siguen por OCR.
+    """
+    from pypdf import PdfReader
+
+    try:
+        text = "\n".join(page.extract_text() or "" for page in PdfReader(pdf_path).pages)
+    except Exception:
+        return None
+    text = text.replace("\x00", "").replace("\xa0", " ")
+    amounts = {m.replace(",", "") for m in re.findall(r"Total\s+Amount\s+Due\s*\$?\s*([\d,]+\.\d{2})", text, flags=re.IGNORECASE)}
+    if (
+        len(amounts) == 1
+        and re.search(r"Service\s+Period\s+\d{1,2}/\d{1,2}\s*-\s*\d{1,2}/\d{1,2}", text, flags=re.IGNORECASE)
+        and re.search(r"BILLING\s+DATE\s+\d{1,2}-[A-Za-z]{3}-\d{4}", text, flags=re.IGNORECASE)
+    ):
+        return text
+    return None
+
+
 def _extract_manatee_invoice(pdf_path):
     """
     Manatee County Utilities (agua, cloaca y contenedor) -- 1 o 2 páginas,
@@ -2350,13 +2376,20 @@ def _extract_manatee_invoice(pdf_path):
     emitida en enero). El monto es "Total Amount Due" (resumen + talón,
     se exige que coincidan). El nombre de archivo trae la fecha de
     vencimiento o de emisión (no coincide con el período), no se usa.
+
+    2026-10-14: las facturas desde jul-2024 traen capa de texto (pdfplumber
+    no la lee; pypdf sí, ver _manatee_text_layer). Si está completa se usa
+    esa y no el OCR, que en la de oct-2026 leía "$5,848.46" en un renglón
+    y la mandaba a mano ($848.46 en el PDF).
     """
-    _ensure_pdfplumber()
-    _ensure_pytesseract()
-    with pdfplumber.open(pdf_path) as pdf:
-        text = "\n".join(
-            pytesseract.image_to_string(_render_page_for_ocr(page)) for page in pdf.pages
-        )
+    text = _manatee_text_layer(pdf_path)
+    if text is None:
+        _ensure_pdfplumber()
+        _ensure_pytesseract()
+        with pdfplumber.open(pdf_path) as pdf:
+            text = "\n".join(
+                pytesseract.image_to_string(_render_page_for_ocr(page)) for page in pdf.pages
+            )
 
     period_match = re.search(
         r"Service\s+Period\s+(\d{1,2})/(\d{1,2})\s*-\s*(\d{1,2})/(\d{1,2})", text, flags=re.IGNORECASE
