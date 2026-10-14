@@ -20,6 +20,8 @@ inventa un número.
 """
 
 import io
+import itertools
+import os
 import re
 
 from ocr_utils import (
@@ -179,21 +181,91 @@ def _orientations(image):
         yield first.rotate(angle, expand=True)
 
 
+def _retry_variants(image):
+    """
+    Segundo intento sobre la orientación que sugiere Tesseract, cuando la foto
+    tal cual no muestra el encabezado: con más contraste (el fondo ondulado del
+    cheque tapaba "BRADENTON GAS STATION", cheque 1768) y agrandada al doble
+    (una foto de 696 px de alto dejaba ilegible la dirección, cheque 1767).
+    """
+    from PIL import ImageOps
+
+    oriented = correct_image_orientation(image)
+    yield ImageOps.autocontrast(oriented.convert("L"), cutoff=2).convert("RGB")
+    yield oriented.resize((oriented.width * 2, oriented.height * 2), Image.LANCZOS)
+
+
+def _check_number_from_filename(pdf_path):
+    """'Cheque 1765. SweetHeart Ice Cream.pdf' -> 1765; None si el nombre no lo trae."""
+    match = re.search(r"che(?:que|ck)\s*#?\s*0*(\d{3,5})\b", os.path.basename(pdf_path), re.IGNORECASE)
+    return int(match.group(1)) if match else None
+
+
+def _find_stubs(image):
+    """
+    Talones de la chequera (la hoja que queda en la chequera, con el N°
+    impreso debajo del renglón "53220N Deluxe ... www.deluxe.com/shop").
+    Devuelve [(número, recorte)] de cada talón con el N° legible; una foto
+    suele mostrar dos talones (el del cheque y el siguiente, vacío).
+    """
+    words = _ocr_words(image)
+    stubs = []
+    for idx, (text, left, top, width, height) in enumerate(words):
+        if not text.startswith("53220N"):
+            continue
+        line = [w for w in words[idx + 1: idx + 4] if abs(w[2] - top) < height * 2]
+        if not any("DELUXE" in w[0] for w in line):
+            continue
+        shop = next((w for w in line if "DELUXE.COM" in w[0]), None)
+        span = (shop[1] + shop[3] - left) if shop is not None and shop[1] > left else width * 8
+        numbers = [
+            value
+            for w in words
+            if top + height * 0.5 < w[2] <= top + 0.3 * span and left <= w[1] <= left + 0.8 * span
+            for value in _clean_number_tokens(w[0])
+        ]
+        if len(set(numbers)) != 1:
+            continue
+        w, h = image.size
+        box = (
+            max(0, int(left - 0.3 * span)), max(0, int(top - 0.1 * span)),
+            min(w, int(left + 2.15 * span)), min(h, int(top + 1.85 * span)),
+        )
+        stubs.append((numbers[0], image.crop(box)))
+    return stubs
+
+
+def _stub_matching_filename(image, expected):
+    """El talón cuyo N° impreso es el del nombre del archivo, o None."""
+    for oriented in _orientations(image):
+        stubs = _find_stubs(oriented)
+        if stubs:
+            return next((crop for number, crop in stubs if number == expected), None)
+    return None
+
+
 def extract_checks_from_pdf(pdf_path):
     """
     Busca cheques propios en cada página del PDF. Devuelve una lista de
     {"page": índice, "number": int o None, "image": PIL.Image del cheque ya derecho}.
     Una página sin cheque no aporta nada.
+
+    Si en todo el PDF no hay un cheque pero sí el talón de la chequera, el
+    talón cuenta como el cheque solo si su N° impreso es el del nombre del
+    archivo ("Cheque 1765. ….pdf"): dos lecturas que coinciden. La foto suele
+    mostrar también el talón siguiente, así que sin el nombre no se adivina.
     """
     ensure_pdfplumber()
     ensure_pytesseract()
     found = []
+    raw_pages = []
     with pdfplumber.open(pdf_path) as pdf:
         for page_index, page in enumerate(pdf.pages):
             raw = _page_images(page)
             if raw is None:
                 continue
-            for oriented in _orientations(raw):
+            raw_pages.append((page_index, raw))
+            for oriented in itertools.chain(_orientations(raw), _retry_variants(raw)):
                 anchors = _find_anchors(oriented)
                 if not anchors:
                     continue
@@ -203,6 +275,13 @@ def extract_checks_from_pdf(pdf_path):
                         "number": _read_number_near_anchor(oriented, anchor),
                         "image": _crop_check(oriented, anchor),
                     })
+                break
+    expected = _check_number_from_filename(pdf_path)
+    if not found and expected is not None:
+        for page_index, raw in raw_pages:
+            crop = _stub_matching_filename(raw, expected)
+            if crop is not None:
+                found.append({"page": page_index, "number": expected, "image": crop})
                 break
     return found
 
