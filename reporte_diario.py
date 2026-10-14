@@ -14,8 +14,10 @@ import os
 import re
 import statistics
 import tempfile
+import threading
 import unicodedata
-from collections import Counter
+from collections import Counter, OrderedDict
+from contextlib import contextmanager
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from difflib import SequenceMatcher, get_close_matches
 from datetime import date, datetime, time, timedelta
@@ -216,8 +218,10 @@ FUSED_DEPT_TRAILING_COUNT_RE = re.compile(
 
 
 from ocr_utils import (
+    apply_osd_rotation as _apply_osd_rotation,
+    detect_osd_rotation as _detect_osd_rotation,
     ensure_pytesseract as _ensure_pytesseract,
-    extract_largest_page_image as _extract_page_image,
+    ocr_process_limit as _ocr_process_limit,
 )
 
 
@@ -251,6 +255,7 @@ class _LazyPdfPageImages:
     def __init__(self, pdf_path):
         _ensure_pdfplumber()
         _ensure_pytesseract()
+        self._path = pdf_path
         self._pdf = pdfplumber.open(pdf_path)
         self._cache = {}
 
@@ -263,7 +268,7 @@ class _LazyPdfPageImages:
         return self._cache[index]
 
     def _load(self, index):
-        return _extract_page_image(self._pdf.pages[index])
+        return _oriented_page_image(self._pdf.pages[index], _page_key(self._path, index))
 
     def close(self):
         self._pdf.close()
@@ -273,6 +278,158 @@ class _LazyPdfPageImages:
 
     def __exit__(self, exc_type, exc, tb):
         self.close()
+
+
+# Lecturas compartidas por hoja (2026-10-14). Un Close Store se lee en dos
+# partes que pasan por la misma hoja: Ventas por Departamento y Store Info
+# (Network/Total Revenue está arriba de la hoja de los departamentos). Antes
+# cada parte volvía a enderezar la hoja (OSD, ~2 s) y a pasarle el OCR con las
+# mismas cuatro configuraciones (~8 s): un tercio del tiempo de cada PDF. Ahora
+# el giro y el texto de cada lectura se guardan por hoja (archivo, fecha de
+# modificación, tamaño y N° de hoja) y se reusan. Las lecturas de una hoja
+# corren en paralelo (cada una es un proceso de Tesseract aparte) con el tope
+# de ocr_utils.ocr_process_limit (núcleos, hasta 4). Mismos resultados que antes: la
+# OSD se calcula sobre la imagen a la mitad (si no la puede leer, sobre la
+# completa; mismo giro en 54 hojas reales) y la imagen se pasa a Tesseract
+# como el mismo PNG sin pérdida que armaba pytesseract.
+_PAGE_CACHE_LOCK = threading.Lock()
+_PAGE_ROTATIONS = OrderedDict()
+_PAGE_OCR_TEXTS = OrderedDict()
+_PAGE_CACHE_MAX_ENTRIES = 512
+_TESSERACT_SLOTS = threading.BoundedSemaphore(_ocr_process_limit())
+
+
+def _page_key(pdf_path, index):
+    try:
+        stat = os.stat(pdf_path)
+    except OSError:
+        return None
+    return (os.path.abspath(pdf_path), stat.st_mtime_ns, stat.st_size, index)
+
+
+def _cache_put(cache, key, value):
+    with _PAGE_CACHE_LOCK:
+        cache[key] = value
+        cache.move_to_end(key)
+        while len(cache) > _PAGE_CACHE_MAX_ENTRIES:
+            cache.popitem(last=False)
+
+
+def _cache_get(cache, key):
+    with _PAGE_CACHE_LOCK:
+        if key not in cache:
+            return None
+        cache.move_to_end(key)
+        return cache[key]
+
+
+def _oriented_page_image(page, key):
+    """La imagen más grande de la hoja, ya derecha (como ocr_utils.extract_largest_page_image)."""
+    if not page.images:
+        return None
+    biggest = max(page.images, key=lambda im: im["width"] * im["height"])
+    image = Image.open(io.BytesIO(biggest["stream"].get_data())).convert("RGB")
+    rotate = _cache_get(_PAGE_ROTATIONS, key) if key is not None else None
+    if rotate is None:
+        half = image.resize((max(1, image.width // 2), max(1, image.height // 2)), Image.LANCZOS)
+        rotate = _detect_osd_rotation(half)
+        if rotate is None:
+            rotate = _detect_osd_rotation(image) or 0
+        if key is not None:
+            _cache_put(_PAGE_ROTATIONS, key, rotate)
+    image = _apply_osd_rotation(image, rotate)
+    # La clave viaja con la imagen: un giro o recorte posterior es otra
+    # imagen, sin clave, y se lee aparte.
+    image.bradenton_page_key = key
+    return image
+
+
+@contextmanager
+def _tesseract_source(image, uses):
+    """
+    Lo que se le pasa a pytesseract: con una sola lectura, la imagen; con
+    varias, un PNG escrito una vez (pytesseract escribía uno por lectura).
+    """
+    if uses < 2:
+        yield image
+        return
+    handle, path = tempfile.mkstemp(prefix="bradenton_ocr_", suffix=".png")
+    os.close(handle)
+    try:
+        image.save(path, format="PNG", compress_level=1)
+        yield path
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def _tesseract_text_and_data(source, config):
+    """Texto (image_to_string) y palabras (image_to_data, DICT) de una sola pasada de Tesseract."""
+    try:
+        tess = pytesseract.pytesseract
+        with tess.save(source) as (temp_name, input_filename):
+            tess.run_tesseract(input_filename, temp_name, "tsv", None,
+                               f"-c tessedit_create_tsv=1 -c tessedit_create_txt=1 {config}")
+            text = tess._read_output(f"{temp_name}.txt", False)
+            data = tess.file_to_dict(tess._read_output(f"{temp_name}.tsv", False), "\t", -1)
+        return text, data
+    except AttributeError:
+        # Otra versión de pytesseract sin estas funciones: dos pasadas.
+        return (pytesseract.image_to_string(source, config=config),
+                pytesseract.image_to_data(source, config=config, output_type=pytesseract.Output.DICT))
+
+
+def _page_ocr_texts(image, configs, data_config=None):
+    """
+    ({config: texto}, palabras) de una hoja: el texto de cada configuración
+    (image_to_string; la que falla no está) y, si se pide data_config, el
+    DICT de image_to_data de esa lectura (None si falló). Lo ya leído de la
+    misma hoja sale de la caché.
+    """
+    key = getattr(image, "bradenton_page_key", None)
+    texts = {}
+    for config in configs:
+        if key is not None and config != data_config:
+            cached = _cache_get(_PAGE_OCR_TEXTS, (key, config))
+            if cached is not None:
+                texts[config] = cached
+    pending = [config for config in configs if config not in texts]
+    data = None
+    if not pending:
+        return texts, data
+
+    with _tesseract_source(image, len(pending)) as source:
+        def read(config):
+            with _TESSERACT_SLOTS:
+                if config == data_config:
+                    return _tesseract_text_and_data(source, config)
+                return pytesseract.image_to_string(source, config=config), None
+
+        if len(pending) == 1:
+            outcomes = {}
+            try:
+                outcomes[pending[0]] = read(pending[0])
+            except Exception:
+                pass
+        else:
+            with ThreadPoolExecutor(max_workers=len(pending)) as executor:
+                futures = {config: executor.submit(read, config) for config in pending}
+            outcomes = {}
+            for config, future in futures.items():
+                try:
+                    outcomes[config] = future.result()
+                except Exception:
+                    pass
+
+    for config, (text, config_data) in outcomes.items():
+        texts[config] = text or ""
+        if config == data_config:
+            data = config_data
+        if key is not None:
+            _cache_put(_PAGE_OCR_TEXTS, (key, config), texts[config])
+    return texts, data
 
 
 def _strip_cell(value):
@@ -1421,20 +1578,26 @@ def _ocr_page_readings(image):
     if image is None:
         return readings
     _ensure_pytesseract()
+    # Las cuatro lecturas salen juntas (en paralelo y compartidas con Store
+    # Info, ver _page_ocr_texts); el texto de --psm 6 se arma con sus palabras.
+    texts, data = _page_ocr_texts(image, _OCR_TEXT_CONFIGS, data_config="--psm 6")
     for config in _OCR_TEXT_CONFIGS:
-        try:
-            if config == "--psm 6":
-                data = pytesseract.image_to_data(image, config=config, output_type=pytesseract.Output.DICT)
+        if config == "--psm 6":
+            if data is None:
+                continue
+            try:
                 words = [
                     (str(data["text"][i]), data["left"][i], data["top"][i], data["width"][i], data["height"][i],
                      (data["block_num"][i], data["par_num"][i], data["line_num"][i]))
                     for i in range(len(data["text"])) if str(data["text"][i]).strip()
                 ]
-                readings["words"] = words
-                text = "\n".join(" ".join(word[0] for word in line) for line in _ocr_word_lines(words))
-            else:
-                text = pytesseract.image_to_string(image, config=config) or ""
-        except Exception:
+            except Exception:
+                continue
+            readings["words"] = words
+            text = "\n".join(" ".join(word[0] for word in line) for line in _ocr_word_lines(words))
+        elif config in texts:
+            text = texts[config]
+        else:
             continue
         readings["texts"][config] = text
     best_score = (-1, -1)
@@ -1812,6 +1975,23 @@ def _reconcile_ocr_departments(records, total_options):
     return status
 
 
+# Alto de la franja de arriba de la hoja siguiente a la tabla (fracción de la hoja).
+_CONTINUATION_STRIP = 0.2
+_TOTAL_LINE_RE = re.compile(r"\b100(?:[.,]0+)?\s*%")
+
+
+def _has_total_line(readings):
+    """Alguna lectura de la hoja trae el renglón del total ("... 100%")."""
+    return any(_TOTAL_LINE_RE.search(text) for text in readings["texts"].values())
+
+
+def _vote_closes(vote):
+    """True si la votación de _vote_ocr_departments encontró el total impreso y cierra contra él."""
+    voted, printed_totals, status = vote
+    return bool(voted) and printed_totals is not None and all(
+        status.get(field) in ("ok", "corregido") for field in ("count", "amount"))
+
+
 def parse_elistar_daily_pdf_ocr(pdf_path, start_page_index=DEFAULT_PDF_PAGE_INDEX):
     """
     OCR-based extraction for photographed/scanned daily PDFs (no
@@ -1869,11 +2049,24 @@ def parse_elistar_daily_pdf_ocr(pdf_path, start_page_index=DEFAULT_PDF_PAGE_INDE
             "borroso o girado."
         )
 
+    def continuation_readings(idx):
+        # La hoja que sigue a la de la tabla casi siempre empieza con el
+        # renglón del total y "Safe Drop Report" (2026-10-14): se lee primero
+        # su franja de arriba y, solo si ahí no termina la tabla, la hoja
+        # entera.
+        image = images[idx]
+        if image is not None:
+            strip = _ocr_page_readings(image.crop((0, 0, image.width, int(image.height * _CONTINUATION_STRIP))))
+            if any(_line_contains_stop_marker(line) for line in strip["best"].splitlines()):
+                return strip
+        return page_readings(idx)
+
     table_pages = []
     pages_used = []
+    closed_vote = None
     idx = anchor_page
     while idx < total_pages:
-        readings = page_readings(idx)
+        readings = page_readings(idx) if idx == anchor_page else continuation_readings(idx)
         table_pages.append(readings)
         pages_used.append(idx + 1)
         past_anchor = idx != anchor_page
@@ -1887,10 +2080,22 @@ def parse_elistar_daily_pdf_ocr(pdf_path, start_page_index=DEFAULT_PDF_PAGE_INDE
                 break
         if reached_stop:
             break
+        # La tabla ya terminó en estas hojas (2026-10-14): el total impreso
+        # está y los departamentos cierran contra él. En el Close Store el
+        # "Safe Drop Report" suele quedar arriba de la hoja siguiente, que se
+        # leía entera (OSD y cuatro lecturas, ~10 s) solo para encontrarlo.
+        if idx + 1 < total_pages and _has_total_line(readings):
+            try:
+                vote = _vote_ocr_departments(table_pages)
+            except Exception:
+                vote = None
+            if vote is not None and _vote_closes(vote):
+                closed_vote = vote
+                break
         idx += 1
 
     try:
-        voted, printed_totals, status = _vote_ocr_departments(table_pages)
+        voted, printed_totals, status = closed_vote or _vote_ocr_departments(table_pages)
     finally:
         images.close()
 
@@ -2084,6 +2289,12 @@ class DepartmentPagePrefetch:
             _parse_elistar_daily_pdf_page_cached(*key)
         except Exception as exc:
             _PREFETCH_ERRORS[key] = exc
+        # Store Info también (2026-10-14): reusa la hoja de los departamentos
+        # recién leída. Si falla, la carga lo vuelve a intentar y avisa.
+        try:
+            _extract_store_info_from_pdf_cached(key[0], DEFAULT_STORE_INFO_PAGE_INDEX)
+        except Exception:
+            pass
 
     def _fill(self, current):
         while self._executor and self._submitted < len(self._keys) and self._submitted <= current + self._ahead:
@@ -3399,13 +3610,13 @@ def _ocr_store_info_page_text(image):
     if image is None:
         return ""
     _ensure_pytesseract()
+    texts, _ = _page_ocr_texts(image, _OCR_TEXT_CONFIGS)
     best_text = ""
     best_score = -1
     for config in _OCR_TEXT_CONFIGS:
-        try:
-            text = pytesseract.image_to_string(image, config=config) or ""
-        except Exception:
+        if config not in texts:
             continue
+        text = texts[config]
         score = _score_store_info_page_text(text)
         if score > best_score:
             best_score = score

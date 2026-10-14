@@ -102,25 +102,53 @@ def correct_image_orientation(image):
     no está instalado, ese error sí se propaga.
     """
     ensure_pytesseract()
+    return apply_osd_rotation(image, detect_osd_rotation(image) or 0)
+
+
+def ocr_process_limit():
+    """
+    Cuántos procesos de Tesseract correr a la vez (2026-10-14): uno por núcleo,
+    hasta 4. Cada uno ocupa ~100 MB y en un contenedor os.cpu_count() puede
+    ser el del servidor entero: en Render se baja con BRADENTON_OCR_PROCESOS.
+    """
+    try:
+        configured = int(os.environ.get("BRADENTON_OCR_PROCESOS", "0"))
+    except ValueError:
+        configured = 0
+    return configured if configured > 0 else max(1, min(os.cpu_count() or 1, 4))
+
+
+def detect_osd_rotation(image):
+    """El giro (0/90/180/270) que pide la OSD de Tesseract, o None si no la pudo leer."""
+    ensure_pytesseract()
     try:
         osd = pytesseract.image_to_osd(image, output_type=pytesseract.Output.DICT)
-        rotate = int(osd.get("rotate", 0) or 0)
+        return int(osd.get("rotate", 0) or 0)
     except Exception:
-        return image
+        return None
+
+
+def apply_osd_rotation(image, rotate):
+    """Endereza la imagen con el giro de detect_osd_rotation (transpose: remapeo exacto, ver arriba)."""
     transpose_const = _OSD_ROTATE_TO_TRANSPOSE.get(rotate)
     if transpose_const is not None:
         image = image.transpose(transpose_const)
     return image
 
 
-def extract_largest_page_image(page):
-    """La imagen más grande incrustada en una página de pdfplumber, ya orientada, o None."""
+def largest_page_image(page):
+    """La imagen más grande incrustada en una página de pdfplumber, tal cual (sin orientar), o None."""
     if not page.images:
         return None
     biggest = max(page.images, key=lambda im: im["width"] * im["height"])
     raw = biggest["stream"].get_data()
-    image = Image.open(io.BytesIO(raw)).convert("RGB")
-    return correct_image_orientation(image)
+    return Image.open(io.BytesIO(raw)).convert("RGB")
+
+
+def extract_largest_page_image(page):
+    """La imagen más grande incrustada en una página de pdfplumber, ya orientada, o None."""
+    image = largest_page_image(page)
+    return None if image is None else correct_image_orientation(image)
 
 
 def crop_relative(image, left, top, right, bottom):
