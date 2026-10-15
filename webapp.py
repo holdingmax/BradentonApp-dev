@@ -7544,20 +7544,14 @@ def carga_datos_ice():
 
 
 def _depositos_month_control(year, month):
-    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
-    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
-    # Un resumen que termina a fin de mes (o en un feriado) se acredita los
-    # primeros días del mes siguiente: el cruce mira también esa semana.
-    chase_rows = chase_db.get_month_transactions(year, month) + [
-        r for r in chase_db.get_month_transactions(next_year, next_month) if r["posting_date"][8:10] <= "07"
-    ]
+    # Los pagos de Cantaloupe ya no van en este control (pedido del usuario,
+    # 2026-10-15: no son depósitos de efectivo).
     # El control compara y muestra la fecha como texto ISO; get_last_posting_date
     # devuelve un date (un recibo posterior al último día de Chase daba 500).
     chase_last = chase_db.get_last_posting_date()
     return control_depositos.build_month_control(
-        year, month, ice_machine_db.list_month(year, month), depositos_db.list_month(year, month),
-        chase_rows, chase_last.isoformat() if chase_last else None,
-        known_references=[s["reference"] for s in ice_machine_db.list_month(prev_year, prev_month)],
+        year, month, depositos_db.list_month(year, month), chase_db.get_month_transactions(year, month),
+        chase_last.isoformat() if chase_last else None,
     )
 
 

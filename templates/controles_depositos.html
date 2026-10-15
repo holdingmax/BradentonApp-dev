@@ -16,7 +16,7 @@
   .ice-status ul { margin: 8px 0 0; padding-left: 20px; font-size: 13px; }
   .ice-status p { margin: 6px 0 0; font-size: 13px; color: var(--text-soft); }
   .ice-section { margin-top: 22px; }
-  .ice-section h2 { font-size: 16px; margin: 0 0 4px; }
+  .ice-section h2 { font-size: 16px; margin: 0 0 10px; }
   .ice-section > p { margin: 0 0 8px; font-size: 13px; color: var(--text-soft); }
   .ice-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
   .ice-table { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -37,8 +37,6 @@
   .ice-table td.ice-day { vertical-align: top; font-weight: 600; }
   .ice-table td.ice-rcpt { text-align: right; }
   .ice-table td.ice-day-total { vertical-align: top; font-weight: 600; border-left: 1px solid var(--border); border-right: 1px solid var(--border); }
-  .ice-notice { margin-top: 10px; padding: 9px 14px; border-radius: 10px; background: var(--surface-alt); border: 1px solid var(--border); font-size: 13px; color: var(--text-soft); }
-  .ice-notice b { color: var(--text); font-weight: 600; }
   .ice-empty { padding: 12px; font-size: 13px; color: var(--text-soft); }
 </style>
 {% endblock %}
@@ -55,7 +53,7 @@
 {%- endmacro %}
 <div class="page-header">
   <h1>Control Depósitos</h1>
-  <p class="page-subtitle">Todos los depósitos del mes contra Chase: cada recibo (normal, Ice Machine, Food Truck, Vaccumms) con su depósito, cada pago de Cantaloupe (la tarjeta de la máquina de hielo) con su Payment Summary, y al revés lo de Chase que no tiene su papel. Se carga en <a href="{{ url_for('carga_datos_depositos', year=year, month=month) }}">Carga de Datos → Depósitos</a>.</p>
+  <p class="page-subtitle">Los depósitos de efectivo del mes contra Chase: cada recibo (normal, Ice Machine, Food Truck, Vaccumms) con su depósito, y al revés lo de Chase que no tiene su recibo. Se carga en <a href="{{ url_for('carga_datos_depositos', year=year, month=month) }}">Carga de Datos → Depósitos</a>.</p>
 </div>
 
 <div class="card">
@@ -72,25 +70,22 @@
     <a href="{{ url_for('controles_depositos', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
   </div>
 
-  {% set loaded = control.overview_total.count or control.overview_total.chase or control.issues or control.notices %}
+  {% set loaded = control.overview_total.count or control.overview_total.chase or control.issues or control.overview_total.orphans %}
   {% if not loaded %}
   <div class="ice-status none">
     <div class="ice-status-title">{{ month_name }} {{ year }} no tiene nada cargado todavía.</div>
-    <p>Ni recibos de depósito ni Payment Summary, y en Chase no hay depósitos ni pagos de Cantaloupe.</p>
+    <p>Ni recibos de depósito, y en Chase no hay depósitos.</p>
   </div>
   {% else %}
   <div class="ice-status {{ 'ok' if control.ok else 'bad' }}">
     <div class="ice-status-title">
-      {% if control.ok %}Bien: todos los recibos y Payment Summary de {{ month_name }} están en Chase.
+      {% if control.ok %}Bien: todos los recibos de {{ month_name }} están en Chase.
       {% else %}Hay {{ control.issues|length }} cosa{{ 's' if control.issues|length > 1 }} para revisar:{% endif %}
     </div>
     {% if control.issues %}<ul>{% for issue in control.issues %}<li>{{ issue }}</li>{% endfor %}</ul>{% endif %}
     {% if control.uncategorized %}<p>En Chase quedaron sin la categoría de su tipo: {% for d in control.uncategorized %}{{ control.group_labels[d.group] }} {{ money(d.amount) }} del {{ dm(d.deposit_date) }}{{ ', ' if not loop.last else '.' }}{% endfor %} Conviene categorizarlos en Chase.</p>{% endif %}
     {% if control.pending_after %}<p>{{ control.pending_after|length }} todavía no se pueden controlar: Chase está cargado hasta el {{ dm(control.chase_last_date) }}.</p>{% endif %}
   </div>
-  {% if control.notices %}
-  <div class="ice-notice"><b>Sin recibo físico:</b> {{ control.notices|join(', ') }}. Están en Chase pero no tienen su recibo cargado.</div>
-  {% endif %}
 
   <div class="ice-table-wrap" style="margin-top: 14px;">
     <table class="ice-table">
@@ -99,7 +94,7 @@
       {% for r in control.overview %}
         <tr><td>{{ r.label }}</td><td>{{ r.count }}</td><td>{{ money(r.papers) }}</td><td>{{ money(r.chase) }}</td>
           <td class="{{ 'ice-ok' if r.ok else 'ice-bad' }}">{{ money(r.diff) if r.diff else ('$0.00' if r.ok else 'revisar') }}</td>
-          <td class="{{ 'ice-bad' if r.orphans and r.key == 'cantaloupe' else 'ice-soft' }}">{% if r.orphans %}{{ money(r.orphans_total) }} ({{ r.orphans }}){% else %}—{% endif %}</td></tr>
+          <td class="ice-soft">{% if r.orphans %}{{ money(r.orphans_total) }} ({{ r.orphans }}){% else %}—{% endif %}</td></tr>
       {% endfor %}
       </tbody>
       {% set t = control.overview_total %}
@@ -110,29 +105,6 @@
   </div>
   {% if control.pending_after %}<p class="muted" style="font-size: 12.5px; margin: 6px 0 0;">Lo posterior al {{ dm(control.chase_last_date) }} (último día cargado de Chase) no entra en el cuadro.</p>{% endif %}
   {% endif %}
-
-  <div class="ice-section">
-    <h2>Ice Machine — Payment Summary</h2>
-    <p>Uno por semana. El Net entra a Chase como pago de Cantaloupe el mismo día del "Hasta", con el Reference del resumen.</p>
-    <div class="ice-table-wrap">
-      {% if control.summaries %}
-      <table class="ice-table">
-        <thead><tr><th>N°</th><th>Desde</th><th>Hasta</th><th>Ventas</th><th>Gross</th><th>Fee 5.95%</th><th>Service fee</th><th>Net</th><th>Chase</th></tr></thead>
-        <tbody>
-        {% for s in control.summaries %}
-          <tr>
-            <td>#{{ s.summary_no }}</td><td>{{ dm(s.from_date) }}</td><td>{{ dm(s.to_date) }}</td><td>{{ s.transactions }}</td>
-            <td>{{ money(s.gross) }}</td><td>{{ money(s.process_fees) }}</td><td>{{ money(s.service_fees) if s.service_fees else '—' }}</td>
-            <td>{{ money(s.net) }}</td><td>{{ chase_cell(s) }}</td>
-            
-          </tr>
-        {% endfor %}
-        </tbody>
-        <tfoot><tr><td colspan="3">Total</td><td>{{ control.ice.transactions }}</td><td>{{ money(control.ice.gross) }}</td><td>{{ money(control.ice.process_fees) }}</td><td>{{ money(control.ice.service_fees) }}</td><td>{{ money(control.ice.net) }}</td><td></td></tr></tfoot>
-      </table>
-      {% else %}<div class="ice-empty">No hay Payment Summary pagados en {{ month_name }}.</div>{% endif %}
-    </div>
-  </div>
 
   {% for kind in control.kinds %}
   {% set group = control.groups[kind] %}
@@ -160,7 +132,11 @@
           </tr>
         {% endfor %}
         </tbody>
-        <tfoot><tr><td colspan="2">Total de recibos</td><td>{{ money(group.total) }}</td><td></td><td></td></tr></tfoot>
+        <tfoot>
+          <tr><td colspan="2">Total de recibos</td><td>{{ money(group.total) }}</td><td></td><td></td></tr>
+          {# Lo que entró a Chase de este tipo, al pie de "Total del día" (pedido del usuario, 2026-10-15). #}
+          <tr><td colspan="3">Total en Chase</td><td>{{ money(group.chase_total) }}</td><td></td></tr>
+        </tfoot>
       </table>
       {% else %}<div class="ice-empty">No hay recibos ni depósitos de este tipo en {{ month_name }}.</div>{% endif %}
     </div>
