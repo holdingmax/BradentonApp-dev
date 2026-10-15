@@ -180,10 +180,24 @@
 {% endif %}
 
 {% if months %}
-{% for block in months %}
-<details class="ledger-month"{% if loop.index0 == open_index %} open data-ledger-current{% endif %}>
+{# Con el historial de varios años (FPL, Manatee, Airgas desde 2023-2024, chat 33)
+   cada mes muestra cerrado lo facturado, lo pagado y el saldo, con un título por año. #}
+{% macro amount(x) %}${{ "{:,.2f}".format(x) }}{% endmacro %}
+{% for year, year_blocks in months|groupby('year') %}
+{% set year_entries = year_blocks|map(attribute='entries')|sum(start=[]) %}
+<div class="ledger-year">
+  <span>{{ year }}</span>
+  <span class="ledger-year-figures">Facturado {{ amount(year_entries|sum(attribute='debe')) }} · Pagado {{ amount(year_entries|sum(attribute='haber')) }}</span>
+</div>
+{% for block in year_blocks %}
+<details class="ledger-month"{% if months.index(block) == open_index %} open data-ledger-current{% endif %}>
   <summary class="ledger-month-summary">
     <span class="ledger-month-title">{{ block.month_name }} {{ block.year }}</span>
+    <span class="ledger-month-figures">
+      <span>Facturado <strong>{{ amount(block.entries|sum(attribute='debe')) }}</strong></span>
+      <span>Pagado <strong>{{ amount(block.entries|sum(attribute='haber')) }}</strong></span>
+      <span>Saldo <strong class="{{ 'ledger-balance-debe' if block.saldo_final > 0.01 or block.saldo_final < -0.01 else 'ledger-balance-cero' }}">{{ amount(block.saldo_final) }}</strong></span>
+    </span>
     <svg class="ledger-month-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
   </summary>
   <div class="historial-table-wrap">
@@ -217,6 +231,7 @@
   </div>
 </details>
 {% endfor %}
+{% endfor %}
 {% else %}
 <div class="card">
   <p class="muted" style="margin-top: 0;">Todavía no hay ninguna factura ni ningún pago vinculado a este proveedor -- si una descripción del banco lo nombra, se vincula solo; si no (ej. un cheque sin ningún dato), se puede vincular a mano desde <a href="{{ url_for('chase_historial') }}">Chase Bank</a>.</p>
@@ -243,12 +258,19 @@
 
   .ledger-month { border: 1px solid var(--border); border-radius: 10px; margin-top: 14px; overflow: hidden; }
   .ledger-month-summary {
-    list-style: none; cursor: pointer; user-select: none;
+    list-style: none; cursor: default; user-select: none;
     display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;
     padding: 12px 16px; background: var(--surface-alt); font-weight: 700; font-size: 15px;
   }
   .ledger-month-summary::-webkit-details-marker { display: none; }
   .ledger-month-title { white-space: nowrap; }
+  .ledger-month-figures { display: flex; gap: 22px; margin-left: auto; font-size: 13px; font-weight: 500; color: var(--text-soft); flex-wrap: wrap; }
+  .ledger-month-figures strong { color: var(--text); font-variant-numeric: tabular-nums; }
+  .ledger-month-figures strong.ledger-balance-debe { color: var(--error); }
+  .ledger-month-figures strong.ledger-balance-cero { color: var(--success); }
+  .ledger-year { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+                 margin: 26px 2px 0; padding-bottom: 6px; border-bottom: 2px solid var(--accent-soft); font-size: 17px; font-weight: 800; }
+  .ledger-year-figures { font-size: 13px; font-weight: 600; color: var(--text-soft); }
   /* Mismo ancho de columnas en todos los meses -- cada mes es su propia
      tabla y, sin esto, cada una repartía el ancho según su contenido. */
   .ledger-table { table-layout: fixed; width: 100%; }
