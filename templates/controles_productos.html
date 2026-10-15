@@ -72,7 +72,7 @@
 <div class="page-header">
   <span class="eyebrow">Control de precios</span>
   <h1>Productos de proveedores</h1>
-  <p class="page-subtitle">Una carpeta por proveedor cuyas facturas se leen bien renglón por renglón (hoy H.T. Hackney, CEC, Colonial, Gold Coast Eagle, Red Bull, Frito-Lay, J.J. Taylor y Midtown). Adentro, sus facturas por fecha: cada una compara el precio de cada producto contra su compra anterior <strong>por fecha de factura</strong>, no por el orden en que se subieron. J.J. Taylor y Midtown no traen el UPC del POS: sus productos se reconocen por el nombre, que tiene que ser igual al de la factura anterior (si no, el producto figura como nuevo).</p>
+  <p class="page-subtitle">Cada factura compara el costo de cada producto contra su compra anterior.</p>
 </div>
 {% if folders %}
 <div class="pf-grid">
@@ -88,15 +88,15 @@
   {% endfor %}
 </div>
 {% else %}
-<div class="card"><p class="muted" style="margin:0;">Todavía no hay productos: se cargan solos al subir facturas de H.T. Hackney, CEC, Colonial, Gold Coast Eagle, Red Bull, Frito-Lay, J.J. Taylor o Midtown en <a href="{{ url_for('carga_datos_proveedores') }}">Proveedores</a>.</p></div>
+<div class="card"><p class="muted" style="margin:0;">Todavía no hay productos: se cargan solos al subir facturas en <a href="{{ url_for('carga_datos_proveedores') }}">Proveedores</a>.</p></div>
 {% endif %}
-<p class="pf-actions"><a href="{{ url_for('controles_productos_lista') }}">Ver todos los productos en una sola lista (con costo y precio del POS) →</a></p>
+<p class="pf-actions"><a href="{{ url_for('controles_productos_lista') }}">Ver todos los productos →</a></p>
 
 {% elif view == 'invoices' %}
 <div class="page-header">
   <span class="eyebrow">Productos de proveedores</span>
   <h1>{{ supplier_label }}</h1>
-  <p class="page-subtitle">{{ invoice_count }} factura(s) con productos guardados, de la más nueva a la más vieja. Cada una está comparada contra la compra anterior de cada producto, por fecha de factura.</p>
+  <p class="page-subtitle">{{ invoice_count }} factura(s), de la más nueva a la más vieja.</p>
 </div>
 {% for y in years %}
 <details class="pf-year"{% if loop.first %} open{% endif %}>
@@ -130,8 +130,8 @@
   <span class="eyebrow">{{ supplier_label }}</span>
   <h1>Factura N° {{ invoice.invoice_no }} — {{ ddmmyyyy(invoice.invoice_date) }}</h1>
   <p class="page-subtitle">
-    {% if invoice.previous_date %}Comparada contra la factura anterior por fecha: {{ ddmmyyyy(invoice.previous_date) }} (N° {{ invoice.previous_invoice_no }}). Si un producto no venía en esa, se compara con su última compra anterior (la fecha se ve en la columna "Compra anterior").
-    {% else %}Es la primera factura guardada de este proveedor: no hay contra qué comparar.{% endif %}
+    {% if invoice.previous_date %}Comparada contra la del {{ ddmmyyyy(invoice.previous_date) }} (N° {{ invoice.previous_invoice_no }}).
+    {% else %}Primera factura de este proveedor: no hay contra qué comparar.{% endif %}
   </p>
 </div>
 <div class="card">
@@ -145,11 +145,11 @@
   </div>
   <div class="pf-report">
     {% if invoice.up or invoice.down %}
-    <span class="muted">Reporte para el manager, solo los {{ invoice.up + invoice.down }} que cambiaron de precio:</span>
+    <span class="muted">Reporte para el manager ({{ invoice.up + invoice.down }} con otro precio):</span>
     <a class="btn-accent" href="{{ url_for('controles_productos_cambios', supplier_key=supplier_key, invoice_date=invoice.invoice_date, invoice_no=invoice.invoice_no, fmt='pdf') }}">Descargar PDF</a>
     <a class="btn-accent" href="{{ url_for('controles_productos_cambios', supplier_key=supplier_key, invoice_date=invoice.invoice_date, invoice_no=invoice.invoice_no, fmt='xlsx') }}">Descargar Excel</a>
     {% else %}
-    <span class="muted">Ningún producto cambió de precio en esta factura: no hay reporte para el manager.</span>
+    <span class="muted">Ningún producto cambió de precio.</span>
     {% endif %}
   </div>
   {{ filter_config_button("factura-table") }}
