@@ -953,6 +953,21 @@ def save_coupon_detail(groups, source_filename=None):
                         existing = conn.execute("SELECT id, coupons FROM cupon_detail_groups WHERE id = ?",
                                                 (holders.pop(),)).fetchone()
                         coupons = None  # los DDC de un cupón no son los del grupo entero
+                    else:
+                        # Al revés: el grupo nuevo trae enteros a otros ya cargados
+                        # (el detalle de un cupón, o el del depósito antes de que J.H.
+                        # le sumara el último cupón): esos se reemplazan por el nuevo
+                        # en vez de quedar los dos (revisión 2026-10-14, J4).
+                        new_keys = {(b["batch_date"], b["batch"], round(b["gross"], 2), round(b["fees"], 2),
+                                     round(b["net"], 2)) for b in batches}
+                        for old_id in {h for h in holders if h is not None}:
+                            old_keys = {(r["batch_date"], r["batch"], round(r["gross"], 2), round(r["fees"], 2),
+                                         round(r["net"], 2))
+                                        for r in conn.execute("SELECT batch_date, batch, gross, fees, net FROM "
+                                                              "cupon_detail_batches WHERE group_id = ?", (old_id,))}
+                            if old_keys and old_keys <= new_keys:
+                                conn.execute("DELETE FROM cupon_detail_batches WHERE group_id = ?", (old_id,))
+                                conn.execute("DELETE FROM cupon_detail_groups WHERE id = ?", (old_id,))
                 if existing is not None:
                     if coupons and existing["coupons"] != coupons:
                         conn.execute(
