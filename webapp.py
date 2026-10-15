@@ -246,6 +246,27 @@ app.config.update(
 app.jinja_env.filters["exact_money"] = proveedores_productos.exact_money
 app.jinja_env.globals["chase_detalle_note"] = chase_detalle_note  # comentario fijo de un Detalle de Chase
 
+# Las advertencias de fin de mes (reporte mensual, Sale Tax, Elistar, reportes
+# mensuales de J.H., facturas mensuales) recién aparecen desde el día 24 del
+# mes en curso; en un mes ya terminado, siempre (pedido del usuario,
+# 2026-10-15). Lo demás (comprobantes que faltan, diferencias reales) avisa
+# siempre.
+MONTH_END_WARNINGS_FROM_DAY = 24
+
+
+def month_end_warnings_due(year, month, today=None):
+    today = today or date.today()
+    try:
+        year, month = int(year), int(month)
+    except (TypeError, ValueError):
+        return True
+    if (year, month) != (today.year, today.month):
+        return (year, month) < (today.year, today.month)
+    return today.day >= MONTH_END_WARNINGS_FROM_DAY
+
+
+app.jinja_env.globals["month_end_warnings_due"] = month_end_warnings_due
+
 login_manager = LoginManager(app)
 login_manager.login_view = "login"
 login_manager.login_message = "Iniciá sesión para continuar."

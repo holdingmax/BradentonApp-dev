@@ -91,17 +91,23 @@
     <div class="cv-status-title">{{ month_name }} {{ year }} no tiene ventas por departamento cargadas.</div>
   </div>
   {% else %}
+  {# Elistar, el reporte mensual y las ventas de CMV son de fin de mes: en el mes en curso se avisan desde el 24. #}
+  {% set cv_due = month_end_warnings_due(year, month) %}
+  {% if control.ok or control.issues or cv_due or (control.has_cmv and control.cmv_problems) %}
   <div class="cv-status {{ 'ok' if control.ok else ('bad' if control.issues else 'none') }}">
+    {% if control.ok or control.issues or cv_due %}
     <div class="cv-status-title">
       {% if control.ok %}Bien: las ventas de cada departamento coinciden en los reportes diarios, el reporte mensual y Elistar.
       {% elif control.issues %}Hay {{ control.issues|length }} cosa{{ 's' if control.issues|length > 1 }} para revisar:
       {% else %}Falta el reporte de Elistar de {{ month_name }} para el control completo.{% endif %}
     </div>
+    {% endif %}
     {% if control.issues %}<ul>{% for issue in control.issues %}<li>{{ issue }}</li>{% endfor %}</ul>{% endif %}
-    {% if not control.has_monthly %}<p>Sin reporte mensual del POS de {{ month_name }} (se sube en Carga de Datos → Reporte C-Store).</p>{% endif %}
-    {% if not control.has_cmv %}<p>Sin ventas cargadas en CMV de {{ month_name }} (se suben en Carga de Datos → CMV).</p>
+    {% if cv_due and not control.has_monthly %}<p>Sin reporte mensual del POS de {{ month_name }} (se sube en Carga de Datos → Reporte C-Store).</p>{% endif %}
+    {% if not control.has_cmv %}{% if cv_due %}<p>Sin ventas cargadas en CMV de {{ month_name }} (se suben en Carga de Datos → CMV).</p>{% endif %}
     {% elif control.cmv_problems %}<p>CMV: {{ control.cmv_problems|length }} departamento(s) no coinciden con los reportes diarios (abajo, en la tabla por departamento).</p>{% endif %}
   </div>
+  {% endif %}
 
   {% if control.groups %}
   <div class="cv-section">

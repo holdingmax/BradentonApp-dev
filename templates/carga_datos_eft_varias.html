@@ -50,7 +50,7 @@
     <a href="{{ url_for('carga_datos_eft_varias', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
   </div>
 
-  {% if missing %}
+  {% if missing and month_end_warnings_due(year, month) %}
   <div class="fv-missing">De {{ month_name|lower }} todavía no se cargó: {{ missing|join(", ") }} (el mes anterior {{ "vinieron" if missing|length > 1 else "vino" }}). Mientras tanto, Próximos EFT {{ "lo estima" if missing|length == 1 else "los estima" }} con los EFT anteriores.</div>
   {% endif %}
 

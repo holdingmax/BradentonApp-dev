@@ -175,11 +175,14 @@
   {% set st = entries.sale_tax %}
   <div class="ci-sale-tax" id="ci-sale-tax">
     <h2>Devengamiento de Sale Tax</h2>
-    <div class="ci-status {{ 'ok' if sale_tax_record else 'bad' }}">
+    {% set st_due = month_end_warnings_due(year, month) %}
+    <div class="ci-status {{ 'ok' if sale_tax_record else ('bad' if st_due else 'none') }}">
+      {% if sale_tax_record or st_due %}
       <div class="ci-status-title">
         {% if sale_tax_record %}Registrado{% if sale_tax_record.asiento %} (asiento Nº {{ sale_tax_record.asiento }}){% endif %}.
         {% else %}Falta registrar el devengamiento de Sale Tax de {{ month_name }} {{ year }}.{% endif %}
       </div>
+      {% endif %}
       <p>El Tax Collect del mes (Store Info) se devenga al último día: {{ account_tax_bgs }} a {{ account_sale_tax }}.{% if not entries.complete_month %} El mes todavía no está completo: el importe puede cambiar.{% endif %}{% if st.empty_days %} Tax Collect vacío (cuenta como 0): {{ fmt_days(st.empty_days) }}.{% endif %}</p>
     </div>
     <table class="ci-st-table">
@@ -280,7 +283,7 @@
         </tbody>
       </table>
     </div>
-    {% else %}
+    {% elif month_end_warnings_due(year, month) %}
     <div class="ci-status none">
       <div class="ci-status-title">Sin reporte mensual de {{ month_name }} {{ year }}.</div>
       <p>Cargalo en <a href="{{ url_for('carga_datos_reporte_diario') }}">Carga de Datos → Reporte C-Store</a> para cruzar la suma de los reportes diarios contra lo que imprime el POS para el mes entero.</p>

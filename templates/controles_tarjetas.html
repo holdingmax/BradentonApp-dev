@@ -193,7 +193,7 @@
     <h3>EFT del mes</h3>
     {% set e = jh.eft %}
     {% if not e %}
-    <div class="tc-control none"><div class="tc-control-title" style="margin:0;">Sin {{ jh_labels['eft'] }} de {{ month_name }} {{ year }}.</div></div>
+    {% if month_end_warnings_due(year, month) %}<div class="tc-control none"><div class="tc-control-title" style="margin:0;">Sin {{ jh_labels['eft'] }} de {{ month_name }} {{ year }}.</div></div>{% endif %}
     {% else %}
     {% set e_bad = e.rows|selectattr('status', 'in', ['diff', 'no_eft', 'no_chase'])|list %}
     <div class="tc-control {{ 'ok' if e.ok else ('bad' if e_bad or e.extra_loaded or e.extra_chase else 'warn') }}">
@@ -242,7 +242,7 @@
     <h3>Facturas del mes</h3>
     {% set inv = jh.invoices %}
     {% if not inv %}
-    <div class="tc-control none"><div class="tc-control-title" style="margin:0;">Sin {{ jh_labels['invoices'] }} de {{ month_name }} {{ year }}.</div></div>
+    {% if month_end_warnings_due(year, month) %}<div class="tc-control none"><div class="tc-control-title" style="margin:0;">Sin {{ jh_labels['invoices'] }} de {{ month_name }} {{ year }}.</div></div>{% endif %}
     {% else %}
     <div class="tc-control {{ 'ok' if inv.ok else ('bad' if inv.bad else 'warn') }}">
       <div class="tc-control-title" style="margin:0;">
@@ -289,7 +289,7 @@
     <h3>Cupones del mes</h3>
     {% set cp = jh.coupons %}
     {% if not cp %}
-    <div class="tc-control none"><div class="tc-control-title" style="margin:0;">Sin {{ jh_labels['coupons'] }} de {{ month_name }} {{ year }}.</div></div>
+    {% if month_end_warnings_due(year, month) %}<div class="tc-control none"><div class="tc-control-title" style="margin:0;">Sin {{ jh_labels['coupons'] }} de {{ month_name }} {{ year }}.</div></div>{% endif %}
     {% else %}
     <div class="tc-control {{ 'ok' if cp.ok and not cp.pending else ('bad' if cp.bad else 'warn') }}">
       <div class="tc-control-title" style="margin:0;">

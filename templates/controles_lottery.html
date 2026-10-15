@@ -84,7 +84,7 @@
         </tbody>
       </table>
     </div>
-    {% else %}
+    {% elif month_end_warnings_due(year, month) %}
     <div class="lt-status none">
       <div class="lt-status-title">Todavía no hay reporte mensual de {{ month_name }} {{ year }}.</div>
       <p>Subí el Monthly Sales Report del portal en <a href="{{ url_for('carga_datos_lottery') }}">Carga de Datos → Lottery</a> para cruzarlo con la suma de los reportes diarios.</p>
