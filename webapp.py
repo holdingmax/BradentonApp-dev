@@ -112,7 +112,7 @@ from controles_mercaderia import check_mercaderia_invoices
 from controles_valuacion import check_and_complete_valuation
 from monthly_sales import _resolve_sheet_name, parse_monthly_sales_file, process_monthly_sales
 from proveedores import append_supplier_invoices, append_supplier_payments, extract_invoices_from_pdf
-from proveedores import _PDF_EXTRACTION_EXCEPTIONS, invoice_errors
+from proveedores import _PDF_EXTRACTION_EXCEPTIONS, invoice_errors, split_attached_invoices
 from proveedores import list_supplier_registry_entries, match_supplier_for_chase_description
 import proveedores_pago_rules
 from proveedores_dynamic_extractors import (
@@ -2425,6 +2425,56 @@ def _load_lottery_sales_reports(pdf_paths, progress=None):
     return {"saved": saved, "review": review, "failed": failed}
 
 
+def _load_attached_invoices(pdf_path, day, tally):
+    """
+    Las facturas de proveedores abrochadas al final de un Close Store
+    (pedido del usuario, 2026-10-15): cada una se carga en Proveedores igual
+    que si se subiera ahí (mismo lector, duplicados por N°, productos), y
+    lo que no se pudo cargar queda en `tally` con el proveedor que se
+    reconoció. Cada item lleva el día del Close Store para el aviso.
+    """
+    workdir = _new_workspace_dir()
+    try:
+        groups = split_attached_invoices(pdf_path, workdir, workers=ocr_utils.ocr_process_limit())
+        for group in groups:
+            lengths = {key: len(value) for key, value in tally.items() if isinstance(value, list)}
+            filename = os.path.basename(group["path"])
+            try:
+                _save_supplier_read(_read_supplier_pdf(group["path"]), group["path"], filename, tally)
+            except Exception as exc:
+                print(f"[carga-datos/reporte-diario] factura abrochada {filename} ({group['supplier_label']}): {exc}")
+                tally["failed"].append({"filename": filename, "supplier": group["supplier_label"]})
+            for key, before in lengths.items():
+                for item in tally[key][before:]:
+                    item["day"] = day
+    except Exception as exc:
+        print(f"[carga-datos/reporte-diario] facturas abrochadas de {pdf_path}: {exc}")
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
+def _attached_invoices_notice(tally):
+    """Los renglones del aviso del reporte diario sobre las facturas abrochadas (vacío si no había)."""
+    def ref(item):
+        number = f" {item['invoice_no']}" if item.get("invoice_no") else ""
+        day = f" (Close Store {item['day']:%d/%m})" if item.get("day") else ""
+        return f"{item['supplier']}{number}{day}"
+
+    lines = []
+    if tally["saved"]:
+        lines.append("Facturas abrochadas cargadas en Proveedores: " + ", ".join(ref(i) for i in tally["saved"]) + ".")
+    if tally["duplicates"]:
+        lines.append("Ya estaban en Proveedores: " + ", ".join(ref(i) for i in tally["duplicates"]) + ".")
+    for item in tally["failed"] + tally["date_mismatches"] + tally["without_invoice"]:
+        lines.append(f"Había una factura de {ref(item)} y no se pudo cargar: cargala a mano en Proveedores.")
+    # Una que ya estaba cargada no se tocó: su detalle (si tenía) sigue igual.
+    already = {(i["supplier"], str(i.get("invoice_no"))) for i in tally["duplicates"]}
+    for item in tally["lines_failed"]:
+        if (item["supplier"], str(item.get("invoice_no"))) not in already:
+            lines.append(f"Factura de {ref(item)} cargada sin el detalle de productos (los renglones no cerraban).")
+    return lines
+
+
 def _run_carga_datos_reporte_diario_job(job_id, pdf_paths, origin="reporte"):
     """
     Corre en su propio hilo (ver carga_datos_reporte_diario_subir) -- mismo
@@ -2464,6 +2514,7 @@ def _run_carga_datos_reporte_diario_job(job_id, pdf_paths, origin="reporte"):
         files_unreadable = 0
         date_mismatches = 0
         first_date = None
+        invoice_tally = _new_supplier_tally()
 
         for index, pdf_path in enumerate(reporte_paths, start=1):
             prefetch.wait(index - 1)
@@ -2554,6 +2605,11 @@ def _run_carga_datos_reporte_diario_job(job_id, pdf_paths, origin="reporte"):
                         lottery_unreadable += 1
                     print(f"[carga-datos/reporte-diario] ONLINE/SKOFF de {pdf_path}: {exc}")
 
+            # Las facturas de proveedores abrochadas al final del cierre se
+            # cargan solas en Proveedores (2026-10-15).
+            if not file_had_mismatch and day_date is not None:
+                _load_attached_invoices(pdf_path, day_date, invoice_tally)
+
             if file_had_mismatch:
                 date_mismatches += 1
                 files_unreadable += 1
@@ -2582,6 +2638,13 @@ def _run_carga_datos_reporte_diario_job(job_id, pdf_paths, origin="reporte"):
         saved = days_complete | days_partial | set(lottery["saved"])
         bad_files = files_unreadable + lottery["failed"]
         notice, level = _short_upload_notice(saved, review, bad_files, lottery_unreadable)
+        invoice_lines = _attached_invoices_notice(invoice_tally)
+        if invoice_lines:
+            notice = "\n".join([notice] + invoice_lines)
+            invoice_problems = (invoice_tally["failed"] or invoice_tally["date_mismatches"]
+                                or invoice_tally["without_invoice"] or invoice_tally["lines_failed"])
+            if level == "success" and invoice_problems:
+                level = "warning"
 
         if origin == "lottery" and lottery["saved"]:
             first = min(lottery["saved"])
@@ -8220,6 +8283,108 @@ def _invoice_notice_line(text, item):
     return f"{text} ({ref}, proveedor no reconocido)"
 
 
+def _new_supplier_tally():
+    """Lo que va pasando con las facturas de un lote de Proveedores (para el aviso final)."""
+    return {"saved": [], "duplicates": [], "failed": [], "date_mismatches": [], "lines_saved": 0,
+            "lines_failed": [], "without_invoice": []}
+
+
+def _save_supplier_read(read, path, filename, tally):
+    """
+    Guarda lo leído de un PDF de proveedor (_read_supplier_pdf) y anota en
+    `tally` cómo salió cada factura. Lo usan la carga de Proveedores y la del
+    reporte diario, que trae facturas abrochadas (2026-10-15).
+    """
+    saved, duplicates, failed = tally["saved"], tally["duplicates"], tally["failed"]
+    lines_failed = tally["lines_failed"]
+    supplier_key, supplier_label = read["supplier_key"], read["supplier_label"]
+    invoices, unreadable, valid_invoices = read["invoices"], read["unreadable"], read["valid_invoices"]
+    for bad in unreadable:
+        print(f"[carga-datos/proveedores] {filename}, factura {bad.get('invoice_no')}: {bad['error']}")
+        failed.append({"filename": filename, "supplier": supplier_label, "invoice_no": bad.get("invoice_no")})
+    if not invoices and not unreadable:
+        # Un PDF sin ninguna factura (por ejemplo, solo una devolución
+        # de Coca-Cola) no es un error, pero tampoco puede desaparecer
+        # del lote sin que se note (auditoría 2026-09).
+        tally["without_invoice"].append({"filename": filename, "supplier": supplier_label})
+    for invoice in read["mismatched_invoices"]:
+        tally["date_mismatches"].append({"filename": filename, "supplier": supplier_label,
+                                         "invoice_no": invoice["invoice_no"]})
+
+    saved_before = len(saved)
+    for invoice in valid_invoices:
+        ok = proveedores_db.save_invoice(
+            supplier_key, supplier_label, invoice["date"], invoice["invoice_no"],
+            invoice["amount"], source_filename=filename,
+        )
+        if ok:
+            saved.append({"filename": filename, "supplier": supplier_label, "date": invoice["date"],
+                          "invoice_no": invoice["invoice_no"], "amount": invoice["amount"]})
+        else:
+            duplicates.append({"filename": filename, "supplier": supplier_label, "invoice_no": invoice["invoice_no"]})
+
+    # Detalle de productos (proveedores_productos.py, pedido explícito
+    # del usuario 2026-09-28). Corre también si la factura ya estaba
+    # cargada -- volver a subirla completa su detalle sin duplicar
+    # nada. Si el detalle no cierra contra la factura no se guarda
+    # ningún renglón, pero la factura en sí queda guardada.
+    if any("lines" in inv for inv in valid_invoices):
+        # Gold Coast y Red Bull: el mismo lector que leyó cada factura ya
+        # trae su detalle (o None si los renglones no cerraron).
+        for invoice in valid_invoices:
+            if invoice.get("lines"):
+                proveedores_db.replace_invoice_lines(
+                    supplier_key, str(invoice["invoice_no"]), invoice["date"], invoice["lines"]
+                )
+                tally["lines_saved"] += 1
+            else:
+                print(f"[carga-datos/proveedores] detalle de productos de {filename}, factura "
+                      f"{invoice['invoice_no']}: {invoice.get('lines_error')}")
+                lines_failed.append({"filename": filename, "supplier": supplier_label,
+                                     "invoice_no": invoice["invoice_no"]})
+    elif valid_invoices and supplier_key in proveedores_productos.LINE_EXTRACTORS:
+        try:
+            if read["detail_error"] is not None:
+                raise read["detail_error"]
+            detail = read["detail"]
+            invoice = next(
+                (inv for inv in valid_invoices if str(inv["invoice_no"]) == detail["invoice_no"]), None
+            )
+            if invoice is None:
+                raise ValueError("el N° de invoice del detalle no coincide con el de la factura.")
+            proveedores_db.replace_invoice_lines(
+                supplier_key, detail["invoice_no"], invoice["date"], detail["lines"]
+            )
+            tally["lines_saved"] += 1
+        except Exception as exc:
+            print(f"[carga-datos/proveedores] detalle de productos de {filename}: {exc}")
+            lines_failed.append({"filename": filename, "supplier": supplier_label,
+                                 "invoice_no": ", ".join(str(inv["invoice_no"]) for inv in valid_invoices)})
+
+    # Solo si se guardó alguna factura de este PDF: volver a subir uno
+    # ya cargado no archiva otra copia (auditoría 2026-09).
+    if len(saved) > saved_before:
+        try:
+            doc_when = valid_invoices[0]["date"]
+            documents_db.store_document(
+                "proveedores", path, filename, doc_when.year, doc_when.month, label=supplier_label
+            )
+        except Exception as exc:
+            print(f"[documents_db] no se pudo guardar el documento de Proveedores {filename}: {exc}")
+
+
+def _supplier_failure_lines(tally):
+    """Los renglones del aviso con lo que no se pudo cargar (un renglón por factura)."""
+    parts = [_invoice_notice_line("No se pudo cargar factura", item) for item in tally["failed"]]
+    parts.extend(_invoice_notice_line("No se pudo cargar factura", item)
+                 + ": la fecha no coincide con el nombre del archivo" for item in tally["date_mismatches"])
+    parts.extend(_invoice_notice_line("Sin ninguna factura para guardar (por ejemplo, solo devolución) en el PDF",
+                                      item) for item in tally["without_invoice"])
+    parts.extend(_invoice_notice_line("Sin detalle de productos (los renglones no cerraban): factura", item)
+                 for item in tally["lines_failed"])
+    return parts
+
+
 def _run_carga_datos_proveedores_job(job_id, paths):
     """
     Corre en su propio hilo -- mismo patrón que _run_carga_datos_reporte_diario_job, ver ese docstring.
@@ -8232,21 +8397,14 @@ def _run_carga_datos_proveedores_job(job_id, paths):
     # Los PDF se leen de a varios a la vez (_read_ahead, 2026-10-14) y se
     # guardan de a uno, en el orden subido: duplicados y avisos como antes.
     try:
-        saved = []
-        duplicates = []
-        failed = []
-        date_mismatches = []
-        lines_saved = 0
-        lines_failed = []
-        without_invoice = []
-
+        tally = _new_supplier_tally()
         for index, (path, reading) in enumerate(_read_ahead(_read_supplier_pdf, paths), start=1):
             filename = os.path.basename(path)
             try:
                 read = reading.result()
             except _PDF_EXTRACTION_EXCEPTIONS as exc:
                 print(f"[carga-datos/proveedores] {filename}: {exc}")
-                failed.append({"filename": filename, "supplier": getattr(exc, "supplier_label", None)})
+                tally["failed"].append({"filename": filename, "supplier": getattr(exc, "supplier_label", None)})
                 jobs.update_job(job_id, done=index, total=len(paths))
                 continue
             except Exception as exc:
@@ -8254,84 +8412,13 @@ def _run_carga_datos_proveedores_job(job_id, paths):
                 # la base de Chase bloqueada en el control de Coca-Cola) queda en
                 # ese archivo: antes cortaba el lote entero (revisión 2026-10-08).
                 print(f"[carga-datos/proveedores] {filename}: {type(exc).__name__}: {exc}")
-                failed.append({"filename": filename, "supplier": None})
+                tally["failed"].append({"filename": filename, "supplier": None})
                 jobs.update_job(job_id, done=index, total=len(paths))
                 continue
-            supplier_key, supplier_label = read["supplier_key"], read["supplier_label"]
-            invoices, unreadable, valid_invoices = read["invoices"], read["unreadable"], read["valid_invoices"]
-            for bad in unreadable:
-                print(f"[carga-datos/proveedores] {filename}, factura {bad.get('invoice_no')}: {bad['error']}")
-                failed.append({"filename": filename, "supplier": supplier_label, "invoice_no": bad.get("invoice_no")})
-            if not invoices and not unreadable:
-                # Un PDF sin ninguna factura (por ejemplo, solo una devolución
-                # de Coca-Cola) no es un error, pero tampoco puede desaparecer
-                # del lote sin que se note (auditoría 2026-09).
-                without_invoice.append({"filename": filename, "supplier": supplier_label})
-            for invoice in read["mismatched_invoices"]:
-                date_mismatches.append({"filename": filename, "supplier": supplier_label,
-                                        "invoice_no": invoice["invoice_no"]})
-
-            saved_before = len(saved)
-            for invoice in valid_invoices:
-                ok = proveedores_db.save_invoice(
-                    supplier_key, supplier_label, invoice["date"], invoice["invoice_no"],
-                    invoice["amount"], source_filename=filename,
-                )
-                if ok:
-                    saved.append({"filename": filename, "supplier": supplier_label, "date": invoice["date"]})
-                else:
-                    duplicates.append({"filename": filename, "supplier": supplier_label})
-
-            # Detalle de productos (proveedores_productos.py, pedido explícito
-            # del usuario 2026-09-28). Corre también si la factura ya estaba
-            # cargada -- volver a subirla completa su detalle sin duplicar
-            # nada. Si el detalle no cierra contra la factura no se guarda
-            # ningún renglón, pero la factura en sí queda guardada.
-            if any("lines" in inv for inv in valid_invoices):
-                # Gold Coast y Red Bull: el mismo lector que leyó cada factura ya
-                # trae su detalle (o None si los renglones no cerraron).
-                for invoice in valid_invoices:
-                    if invoice.get("lines"):
-                        proveedores_db.replace_invoice_lines(
-                            supplier_key, str(invoice["invoice_no"]), invoice["date"], invoice["lines"]
-                        )
-                        lines_saved += 1
-                    else:
-                        print(f"[carga-datos/proveedores] detalle de productos de {filename}, factura "
-                              f"{invoice['invoice_no']}: {invoice.get('lines_error')}")
-                        lines_failed.append({"filename": filename, "supplier": supplier_label,
-                                             "invoice_no": invoice["invoice_no"]})
-            elif valid_invoices and supplier_key in proveedores_productos.LINE_EXTRACTORS:
-                try:
-                    if read["detail_error"] is not None:
-                        raise read["detail_error"]
-                    detail = read["detail"]
-                    invoice = next(
-                        (inv for inv in valid_invoices if str(inv["invoice_no"]) == detail["invoice_no"]), None
-                    )
-                    if invoice is None:
-                        raise ValueError("el N° de invoice del detalle no coincide con el de la factura.")
-                    proveedores_db.replace_invoice_lines(
-                        supplier_key, detail["invoice_no"], invoice["date"], detail["lines"]
-                    )
-                    lines_saved += 1
-                except Exception as exc:
-                    print(f"[carga-datos/proveedores] detalle de productos de {filename}: {exc}")
-                    lines_failed.append({"filename": filename, "supplier": supplier_label,
-                                         "invoice_no": ", ".join(str(inv["invoice_no"]) for inv in valid_invoices)})
-
-            # Solo si se guardó alguna factura de este PDF: volver a subir uno
-            # ya cargado no archiva otra copia (auditoría 2026-09).
-            if len(saved) > saved_before:
-                try:
-                    doc_when = valid_invoices[0]["date"]
-                    documents_db.store_document(
-                        "proveedores", path, filename, doc_when.year, doc_when.month, label=supplier_label
-                    )
-                except Exception as exc:
-                    print(f"[documents_db] no se pudo guardar el documento de Proveedores {filename}: {exc}")
+            _save_supplier_read(read, path, filename, tally)
             jobs.update_job(job_id, done=index, total=len(paths))
 
+        saved, duplicates, lines_saved = tally["saved"], tally["duplicates"], tally["lines_saved"]
         parts = []
         if saved:
             parts.append(f"{len(saved)} factura(s) guardada(s)"
@@ -8340,19 +8427,12 @@ def _run_carga_datos_proveedores_job(job_id, paths):
             parts.append(f"Detalle de productos guardado en {lines_saved} factura(s).")
         if duplicates:
             parts.append(f"{len(duplicates)} factura(s) ya estaban cargadas y se omitieron.")
-        parts.extend(_invoice_notice_line("No se pudo cargar factura", item) for item in failed)
-        parts.extend(_invoice_notice_line("No se pudo cargar factura", item)
-                     + ": la fecha no coincide con el nombre del archivo" for item in date_mismatches)
-        parts.extend(_invoice_notice_line("Sin ninguna factura para guardar (por ejemplo, solo devolución) en el PDF",
-                                          item) for item in without_invoice)
-        parts.extend(_invoice_notice_line("Sin detalle de productos (los renglones no cerraban): factura", item)
-                     for item in lines_failed)
+        parts.extend(_supplier_failure_lines(tally))
         if not parts:
             parts.append("No se guardó ninguna factura de este lote.")
-        level = (
-            "success" if (saved and not duplicates and not failed and not date_mismatches and not lines_failed and not without_invoice)
-            else ("error" if not saved and not lines_saved else "warning")
-        )
+        problems = (duplicates or tally["failed"] or tally["date_mismatches"] or tally["lines_failed"]
+                    or tally["without_invoice"])
+        level = "success" if (saved and not problems) else ("error" if not saved and not lines_saved else "warning")
 
         if saved:
             d = saved[0]["date"]

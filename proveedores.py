@@ -2838,6 +2838,70 @@ def _detect_supplier(pdf_path):
     raise ValueError(f"{os.path.basename(pdf_path)}: proveedor no reconocido.")
 
 
+# Facturas abrochadas al reporte diario (pedido del usuario, 2026-10-15): el
+# manager escanea el Close Store y a veces le agrega al final las facturas que
+# llegaron ese día. Las 11 primeras hojas son siempre el cierre (las dos
+# planillas, el reporte del POS y los dos tickets de Lottery: así en los 106
+# Close Store de julio a octubre 2026); lo que sigue puede ser una factura de
+# proveedor (CEC, King's, Bimbo, Gold Coast...), el Weekly Settlement de
+# Lottery, tickets de Paid Out, recibos de compras o remitos de combustible.
+# Solo se toman las hojas que se reconocen como de un proveedor de la app.
+CLOSE_STORE_PAGES = 11
+
+
+def split_attached_invoices(pdf_path, dest_dir, first_page=CLOSE_STORE_PAGES, workers=1):
+    """
+    Las hojas de `pdf_path` desde `first_page` que son de un proveedor
+    conocido, agrupadas (hojas seguidas del mismo proveedor = una factura) y
+    escritas como PDF aparte en `dest_dir`:
+    [{"supplier_key", "supplier_label", "path", "pages": [números de hoja]}].
+    El proveedor se reconoce igual que al subir el PDF en Proveedores
+    (_detect_supplier, también con la hoja girada 180°).
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    from pypdf import PdfReader, PdfWriter
+
+    reader = PdfReader(pdf_path)
+    indexes = list(range(first_page, len(reader.pages)))
+    if not indexes:
+        return []
+
+    def write(pages, name):
+        writer = PdfWriter()
+        for index in pages:
+            writer.add_page(reader.pages[index])
+        path = os.path.join(dest_dir, name)
+        with open(path, "wb") as handle:
+            writer.write(handle)
+        return path
+
+    singles = {index: write([index], f"hoja_{index + 1}.pdf") for index in indexes}
+
+    def detect(index):
+        try:
+            return _detect_supplier(singles[index])
+        except ValueError:  # proveedor no reconocido: no es una factura de la app
+            return None
+
+    with ThreadPoolExecutor(max(1, workers)) as pool:
+        keys = list(pool.map(detect, indexes))
+
+    registry = _effective_supplier_registry()
+    groups = []
+    for index, key in zip(indexes, keys):
+        if key is None:
+            continue
+        if groups and groups[-1]["supplier_key"] == key and groups[-1]["pages"][-1] == index:
+            groups[-1]["pages"].append(index + 1)
+        else:
+            groups.append({"supplier_key": key, "supplier_label": registry[key]["label"], "pages": [index + 1]})
+    for group in groups:
+        pages = group["pages"]
+        label = f"hoja {pages[0]}" if len(pages) == 1 else f"hojas {pages[0]}-{pages[-1]}"
+        group["path"] = write([p - 1 for p in pages], f"Factura del Close Store ({label}).pdf")
+    return groups
+
+
 def extract_invoices_from_pdf(pdf_path):
     """
     Detecta el proveedor y extrae la(s) factura(s) de un PDF -- SIN tocar
