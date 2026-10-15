@@ -2260,6 +2260,43 @@ def _detect_fpl(text):
     return "electric bill statement" in lowered and ("fpl.com" in lowered or "45746-16308" in lowered)
 
 
+_PREVIOUS_BALANCE_AMOUNT = r"\s*([−-]?)\s*\$?\s*([−-]?)\s*([\d,]+\.\d{2})"
+
+
+def _labeled_signed_amount(pdf_path, text, label_regex, label, supplier):
+    """El importe (con signo) de un rótulo, igual en todas las hojas; None si no está; a mano si da dos distintos."""
+    values = set()
+    for sign_a, sign_b, number in re.findall(label_regex + _PREVIOUS_BALANCE_AMOUNT, text, flags=re.IGNORECASE):
+        value = float(number.replace(",", ""))
+        values.add(-value if (sign_a or sign_b) else value)
+    if len(values) > 1:
+        raise ValueError(
+            f'{os.path.basename(pdf_path)}: el "{label}" no coincide entre las hojas de la factura de '
+            f"{supplier} -- cárguela manualmente."
+        )
+    return values.pop() if values else None
+
+
+def _minus_previous_balance(pdf_path, amount, previous, label, supplier):
+    """
+    Lo nuevo del período: el total a pagar menos el saldo anterior impago
+    (pedido del usuario, 2026-10-15: con el historial cargado, la cuenta
+    corriente contaba dos veces una factura que trae sumada la anterior,
+    como FPL 09/2024: $3,753.74 = $1,830.80 de agosto + $1,922.94). Un
+    saldo anterior negativo (crédito, ej. los intereses del depósito de FPL)
+    no se resta: lo que se paga es el total. Sin saldo anterior leído, el
+    total como siempre.
+    """
+    if previous is None or previous <= 0.005:
+        return amount
+    if previous >= amount:
+        raise ValueError(
+            f'{os.path.basename(pdf_path)}: el "{label}" (${previous:,.2f}) no es menor que el total de la '
+            f"factura de {supplier} -- cárguela manualmente."
+        )
+    return round(amount - previous, 2)
+
+
 def _extract_fpl_invoice(pdf_path):
     """
     FPL (Florida Power & Light) -- "Electric Bill Statement", PDF digital
@@ -2302,6 +2339,9 @@ def _extract_fpl_invoice(pdf_path):
         "Total amount you owe",
         "FPL",
     )
+    # Con una factura anterior impaga, el total la trae sumada: queda lo nuevo del período.
+    previous = _labeled_signed_amount(pdf_path, text, r"Balance before new charges", "Balance before new charges", "FPL")
+    amount = _minus_previous_balance(pdf_path, amount, previous, "Balance before new charges", "FPL")
     return _service_period_invoice(start, end, amount)
 
 
@@ -2436,6 +2476,21 @@ def _extract_manatee_invoice(pdf_path):
         "Total Amount Due",
         "Manatee County",
     )
+    # Con una factura anterior impaga, el total la trae sumada: queda lo nuevo del período.
+    # Si no trae "Balance Forward" (facturas de 2024-2025), es "Previous Amount
+    # Due" menos "Payments Received" (11/2024: $2,026.97 - $1,547.94 = $479.03,
+    # lo mismo que muestra el portal).
+    previous = _labeled_signed_amount(pdf_path, text, r"Balance\s+Forward", "Balance Forward", "Manatee County")
+    label = "Balance Forward"
+    if previous is None:
+        previous_due = _labeled_signed_amount(pdf_path, text, r"Previous\s+Amount\s+Due", "Previous Amount Due",
+                                              "Manatee County")
+        received = _labeled_signed_amount(pdf_path, text, r"Payments\s+Received", "Payments Received",
+                                          "Manatee County")
+        if previous_due is not None and received is not None:
+            previous = round(previous_due - abs(received), 2)
+            label = "Previous Amount Due"
+    amount = _minus_previous_balance(pdf_path, amount, previous, label, "Manatee County")
     return _service_period_invoice(start, end, amount)
 
 
