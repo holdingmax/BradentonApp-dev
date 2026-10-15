@@ -24,6 +24,8 @@ cálculo queda acá y en /controles/rapidos/precios.
   los que hay que revisar de precio. Solo cruza por UPC (sin los ceros de
   adelante, igual que Productos de proveedores), así que J.J. Taylor y
   Midtown, que no traen UPC, no entran.
+- Portales (2026-10-15): cuándo entrar a FPL, Manatee, Airgas y Elistar a
+  bajar lo que no llega solo, y si ya está cargado. No depende del mes.
 """
 
 import calendar
@@ -31,7 +33,7 @@ import json
 import math
 import app_paths
 import os
-from datetime import date
+from datetime import date, timedelta
 
 import caja
 import control_tarjetas
@@ -221,3 +223,172 @@ def price_review(lines, pos_costs, supplier_labels, today=None):
         })
     suppliers.sort(key=lambda s: s["label"].lower())
     return suppliers
+
+
+# ---------------------------------------------------------------------------
+# Portales (pedido del usuario, 2026-10-15): cuándo entrar a cada portal a
+# bajar las facturas que no llegan solas. Las fechas salen del historial de
+# cada portal (2025-2026, revisado ese día):
+# - FPL: la factura sale del 19 al 24 (casi siempre el 22-23); se avisa desde el 23.
+# - Manatee (agua): sale del 9 al 13; se avisa desde el 13. La app la guarda
+#   con la fecha de la lectura (2 al 4 del mismo mes).
+# - Airgas, alquiler del cilindro (RENT): el último día de cada mes; se avisa
+#   desde el 1 del mes siguiente. Las entregas de CO2 no tienen fecha: una
+#   cada 6 a 10 semanas, se avisa a las 8 semanas de la última.
+# - Elistar: el Depts Report y el P & L de un mes están completos el 1 del
+#   mes siguiente (Control CMV).
+# Se mira solo desde la primera factura cargada de cada uno y los últimos
+# 3 meses: lo de antes no se avisa.
+# ---------------------------------------------------------------------------
+
+_MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto",
+          "septiembre", "octubre", "noviembre", "diciembre"]
+_PORTALES_LOOKBACK_DAYS = 100
+_CO2_WARN_DAYS = 56  # 8 semanas: lo que suele pasar entre dos entregas de CO2
+
+PORTAL_URLS = {
+    "fpl": "https://www.fpl.com/my-account/account-landing.html",
+    "manatee": "https://css-prod.mymanatee.org",
+    "airgas": "https://www.airgas.com/login",
+    "elistar": "https://www.elistars.com",
+}
+
+
+def _add_months(year, month, delta):
+    index = year * 12 + (month - 1) + delta
+    return index // 12, index % 12 + 1
+
+
+def _month_end(year, month):
+    return date(year, month, calendar.monthrange(year, month)[1])
+
+
+def _dm(day):
+    return f"{day.day:02d}/{day.month:02d}"
+
+
+def _monthly_portal(label, url, today, first_month, warn_from, expected, loaded, what, pattern):
+    """
+    Un renglón de un portal que publica una vez por mes. warn_from(año, mes):
+    desde qué día tendría que estar; expected(año, mes): el día típico (para
+    mostrar); loaded(año, mes): el monto (o True) si está cargado, o None.
+    """
+    year, month = today.year, today.month
+    # El último mes que ya tendría que estar (este o uno anterior).
+    while warn_from(year, month) > today:
+        year, month = _add_months(year, month, -1)
+    months = []
+    y, m = year, month
+    while (today - warn_from(y, m)).days <= _PORTALES_LOOKBACK_DAYS and (first_month is None or (y, m) >= first_month):
+        months.append((y, m))
+        y, m = _add_months(y, m, -1)
+    if not months:  # nada cargado desde ese mes: se mira solo el último
+        months = [(year, month)]
+    missing = [ym for ym in months if loaded(*ym) is None]
+    last_ok = next((ym for ym in months if loaded(*ym) is not None), None)
+    gender = "o" if what.startswith("el ") else "a"  # "el reporte" / "la factura"
+    if missing:
+        names = [_MESES[m - 1] for _, m in reversed(missing)]
+        if len(names) == 1:
+            text = f"Falta {what} de {names[0]}: entrá a bajarl{gender}."
+        else:
+            plural = ("los " if gender == "o" else "las ") + what.split(" ", 1)[1] + "s"
+            text = f"Faltan {plural} de {', '.join(names[:-1])} y {names[-1]}: entrá a bajarl{gender}s."
+        return {"label": label, "url": url, "state": "warn", "text": text, "sub": pattern}
+    # La próxima: el primer mes después del último que ya tendría que estar
+    # que todavía no está cargado (la factura puede cargarse antes del aviso).
+    ny, nm = _add_months(year, month, 1)
+    while loaded(ny, nm) is not None:
+        ny, nm = _add_months(ny, nm, 1)
+    amount = loaded(*last_ok)
+    amount_text = f" (${amount:,.2f})" if isinstance(amount, (int, float)) and not isinstance(amount, bool) else ""
+    return {"label": label, "url": url, "state": "ok",
+            "text": f"Cargad{gender} {what} de {_MESES[last_ok[1] - 1]}{amount_text}.",
+            "sub": f"Próxima: ~{_dm(expected(ny, nm))} ({_MESES[nm - 1]}). {pattern}"}
+
+
+def _first_month(dates, to_month):
+    months = [to_month(d) for d in dates]
+    return min(months) if months else None
+
+
+def portales_status(invoices, elistar_months, today=None):
+    """
+    invoices: {"fpl": [...], "manatee_county": [...], "airgas": [...]}, las
+    facturas de Proveedores (invoice_date ISO, amount); elistar_months: los
+    (año, mes) con Elistar cargado en Control CMV.
+    """
+    today = today or date.today()
+
+    def dates_of(key):
+        result = []
+        for inv in invoices.get(key) or []:
+            try:
+                result.append((date.fromisoformat(str(inv["invoice_date"])[:10]), inv.get("amount")))
+            except (TypeError, ValueError):
+                continue
+        return result
+
+    def by_month(items, to_month):
+        result = {}
+        for day, amount in items:
+            result.setdefault(to_month(day), amount)
+        return result
+
+    rows = []
+
+    # FPL: la factura lleva la fecha en que sale (fin del período).
+    fpl = by_month(dates_of("fpl"), lambda d: (d.year, d.month))
+    rows.append(_monthly_portal(
+        "FPL (luz)", PORTAL_URLS["fpl"], today, min(fpl) if fpl else None,
+        warn_from=lambda y, m: date(y, m, 23),
+        expected=lambda y, m: date(y, m, 22),
+        loaded=lambda y, m: fpl.get((y, m)),
+        what="la factura", pattern="Sale del 19 al 24 de cada mes.",
+    ))
+
+    # Manatee: la app guarda la fecha de la lectura (2 al 4); una lectura que
+    # cae a fin del mes anterior cuenta para el mes siguiente.
+    manatee = by_month(dates_of("manatee_county"),
+                       lambda d: _add_months(d.year, d.month, 1) if d.day > 20 else (d.year, d.month))
+    rows.append(_monthly_portal(
+        "Manatee (agua)", PORTAL_URLS["manatee"], today, min(manatee) if manatee else None,
+        warn_from=lambda y, m: date(y, m, 13),
+        expected=lambda y, m: date(y, m, 11),
+        loaded=lambda y, m: manatee.get((y, m)),
+        what="la factura", pattern="Sale del 9 al 13 de cada mes.",
+    ))
+
+    # Airgas: el alquiler es la factura del último día del mes; lo demás, CO2.
+    airgas = dates_of("airgas")
+    rent = by_month([(d, a) for d, a in airgas if d == _month_end(d.year, d.month)], lambda d: (d.year, d.month))
+    rows.append(_monthly_portal(
+        "Airgas (alquiler)", PORTAL_URLS["airgas"], today, min(rent) if rent else None,
+        warn_from=lambda y, m: _month_end(y, m) + timedelta(days=1),
+        expected=lambda y, m: _month_end(y, m),
+        loaded=lambda y, m: rent.get((y, m)),
+        what="la factura", pattern="Sale el último día de cada mes.",
+    ))
+    co2 = sorted(d for d, _ in airgas if d != _month_end(d.year, d.month))
+    if co2:
+        last = co2[-1]
+        days = (today - last).days
+        pattern = "No tiene fecha fija: suele haber una cada 6 a 10 semanas."
+        if days >= _CO2_WARN_DAYS:
+            rows.append({"label": "Airgas (CO2)", "url": PORTAL_URLS["airgas"], "state": "warn",
+                         "text": f"Pasaron {days} días desde la última entrega ({_dm(last)}): fijate si hay una nueva.",
+                         "sub": pattern})
+        else:
+            rows.append({"label": "Airgas (CO2)", "url": PORTAL_URLS["airgas"], "state": "ok",
+                         "text": f"Última entrega cargada: {_dm(last)} (hace {days} días).",
+                         "sub": f"Próxima: ~{_dm(last + timedelta(days=_CO2_WARN_DAYS))}. {pattern}"})
+
+    # Elistar: los reportes de un mes, desde el 1 del mes siguiente.
+    rows.append(_monthly_portal(
+        "Elistar (Depts y P & L)", PORTAL_URLS["elistar"], today, min(elistar_months) if elistar_months else None,
+        warn_from=lambda y, m: _month_end(y, m) + timedelta(days=1),
+        expected=lambda y, m: _month_end(y, m) + timedelta(days=1),
+        loaded=lambda y, m: True if (y, m) in elistar_months else None,
+        what="el reporte", pattern="Completos el 1 del mes siguiente; se cargan en Controles → Control CMV.",
+    ))
+    return {"rows": rows, "pending": sum(1 for row in rows if row["state"] == "warn")}

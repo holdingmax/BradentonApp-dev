@@ -13,8 +13,8 @@
 {% macro empty_month(what, endpoint) -%}
   <p class="qc-note">{{ month_label }} {{ "todavía " if is_current }}no tiene {{ what }}.</p>
 {%- endmacro %}
-{# Cambio de mes (pedido del usuario, 2026-10-07): las flechas piden el cuadro de otro mes. Próximos EFT no depende del mes. #}
-{% if kind != "eft" %}
+{# Cambio de mes (pedido del usuario, 2026-10-07): las flechas piden el cuadro de otro mes. Próximos EFT y Portales no dependen del mes. #}
+{% if kind not in ("eft", "portales") %}
 <div class="qc-month" data-month="{{ '' if is_current else this_month }}">
   <button type="button" class="qc-month-btn" data-qc-month="{{ prev_month }}" aria-label="Mes anterior"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polyline points="15 6 9 12 15 18"/></svg></button>
   <span class="qc-month-label">{{ month_label }}</span>
@@ -51,6 +51,27 @@
   {% endif %}
   {% endif %}
   <a class="qc-link" href="{{ url_for('carga_datos_eft_proximos') }}">Ver Próximos EFT &rarr;</a>
+
+{% elif kind == "portales" %}
+  {# El ámbar va solo acá adentro: el botón de la botonera no lleva marcas (pedido del usuario, 2026-10-15). #}
+  <div class="qc-status {{ 'warn' if data.pending else 'ok' }}">
+    <span>{{ "Para revisar en los portales" if data.pending else "Todo lo de los portales está cargado" }}</span>
+    {% if data.pending %}<strong>{{ data.pending }}</strong>{% endif %}
+  </div>
+  <table class="qc-table qc-table-portales">
+    <tbody>
+    {% for p in data.rows %}
+      <tr class="{{ 'qc-row-warn' if p.state == 'warn' }}">
+        <td><a href="{{ p.url }}" target="_blank" rel="noopener">{{ p.label }}</a></td>
+        <td>
+          <span class="{{ 'qc-warn' if p.state == 'warn' else 'qc-good' }}">{{ p.text }}</span>
+          <span class="qc-sub" style="display:block">{{ p.sub }}</span>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  <p class="qc-note">Las fechas salen de cuándo publicó cada portal sus facturas en 2025-2026. El portal se abre en otra pestaña y entrás con tu usuario; lo bajado se carga en Proveedores (Elistar, en Control CMV).</p>
 
 {% elif kind == "tarjetas" %}
   {% if not data %}

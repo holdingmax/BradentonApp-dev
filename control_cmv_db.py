@@ -63,6 +63,16 @@ def get_month(year, month):
             for row in rows}
 
 
+def list_months():
+    """{(año, mes)} de los meses con algún reporte de Elistar cargado."""
+    conn = _connect()
+    try:
+        rows = conn.execute("SELECT DISTINCT year, month FROM elistar_reports").fetchall()
+    finally:
+        conn.close()
+    return {(row["year"], row["month"]) for row in rows}
+
+
 def delete_report(year, month, kind):
     conn = _connect()
     try:
