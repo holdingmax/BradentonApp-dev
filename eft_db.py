@@ -22,6 +22,7 @@ reportes_data/eft.db (gitignored, mismo directorio que las demás bases):
 import calendar
 import hashlib
 import app_paths
+import jh_mensual_db
 import os
 import sqlite3
 from datetime import date, datetime, timedelta
@@ -810,6 +811,12 @@ def get_coupon_gross_by_date():
     (control Tarjetas y Cupones). `unknown` cuenta los cupones de un batch
     que todavía no tienen monto propio (Gross en 0): ese día suma de menos.
 
+    Un grupo con DDC sin monto propio suma lo que le falta para el Gross de
+    su renglón del Credit Card Daily Summary, si está cargado (pedido del
+    usuario, 2026-10-15: el 13/10 daba una alerta falsa de $20,386.03 porque
+    los 4 DDC del día, $19,921.36, sumaban $0 hasta que llegue su EFT). Esos
+    DDC dejan de contar como `unknown`.
+
     Los DDC con detalle de cupones cargado (Credit Card Detail) traen además
     sus batches (`batches`: [{"batch_date", "batch", "gross"}], en el día de
     sus DDC) y suman el Gross del detalle; `no_detail` es lo de los DDC sin
@@ -842,13 +849,14 @@ def get_coupon_gross_by_date():
         batches_by_group.setdefault(b["group_id"], []).append(
             {"batch_date": b["batch_date"], "batch": b["batch"], "gross": b["gross"] or 0.0})
     # Cada grupo de detalle es un depósito: va al día de sus DDC.
-    covered, detail_by_day = set(), {}
+    covered, detail_by_day, detail_sets = set(), {}, []
     for g in detail_groups:
         members = frozenset(ddc_key(c) for c in g["coupons"].split(",") if c.strip())
         days = sorted(coupon_days[c] for c in members if c in coupon_days)
         if not days:
             continue
         covered |= members
+        detail_sets.append((members, g["gross"] or 0.0))
         entry = detail_by_day.setdefault(days[0], {"gross": 0.0, "batches": []})
         entry["gross"] += g["gross"] or 0.0
         entry["batches"].extend(batches_by_group.get(g["id"], []))
@@ -857,6 +865,7 @@ def get_coupon_gross_by_date():
         return {"gross": 0.0, "count": 0, "unknown": 0, "no_detail": 0.0, "batches": []}
 
     result = {}
+    groups = {}
     for row in rows:
         parsed = _parse_cupon_date(row["date"])
         if parsed is None:
@@ -866,8 +875,27 @@ def get_coupon_gross_by_date():
         if ddc_key(row["coupon_id"]) in covered:
             continue  # su monto sale del detalle
         day["no_detail"] = round(day["no_detail"] + (row["gross"] or 0.0), 2)
-        if row["reported_group_text"] and not row["gross"]:
-            day["unknown"] += 1
+        if row["reported_group_text"]:
+            group = groups.setdefault(row["reported_group_text"], {"known": 0.0, "pending": []})
+            group["known"] += row["gross"] or 0.0
+            if not row["gross"]:
+                day["unknown"] += 1
+                group["pending"].append(parsed.date().isoformat())
+    summary = {frozenset(ddc_key(c) for c in r["coupons"]): r for r in jh_mensual_db.get_rows("coupons")}
+    for text, group in groups.items():
+        members = frozenset(ddc_key(c) for c in text.split(",") if c.strip())
+        line = summary.get(members)
+        if not group["pending"] or line is None:
+            continue
+        # Los DDC del renglón que tienen detalle ya suman el Gross del detalle.
+        known = group["known"] + sum(gross for detail_members, gross in detail_sets if detail_members <= members)
+        missing = round(line["gross"] - known, 2)
+        if missing <= 0:
+            continue
+        day = result[group["pending"][0]]
+        day["no_detail"] = round(day["no_detail"] + missing, 2)
+        for pending_day in group["pending"]:
+            result[pending_day]["unknown"] -= 1
     for key, entry in detail_by_day.items():
         day = result.setdefault(key, new_day())
         day["batches"] = entry["batches"]
