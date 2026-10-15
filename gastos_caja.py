@@ -163,7 +163,7 @@ def _page_images(path):
                 except Exception:  # una imagen que Pillow no decodifica (JBIG2/CCITT): se renderiza la página
                     image = None
                 if image is None or image.width * image.height < 300 * 300:
-                    image = ocr_utils.correct_image_orientation(page.to_image(resolution=200).original.convert("RGB"))
+                    image = ocr_utils.correct_image_orientation(ocr_utils.render_page(page, 200))
                 images.append(image)
     out = []
     for image in images:

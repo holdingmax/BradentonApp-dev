@@ -69,6 +69,7 @@ from ocr_utils import (
     extract_largest_page_image as _extract_page_image,
     crop_relative as _crop_relative,
     remove_grid_lines as _remove_grid_lines,
+    render_page as _render_page,
 )
 
 # Excepciones que un extractor de proveedor puede tirar por un PDF con
@@ -2312,7 +2313,7 @@ def _render_page_for_ocr(page, resolution=300):
     más grande" es un logo o un QR, no la factura. Caso real: Manatee
     County Utilities.
     """
-    return page.to_image(resolution=resolution).original.convert("RGB")
+    return _render_page(page, resolution)
 
 
 def _page_is_full_scan(page):

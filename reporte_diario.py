@@ -2281,16 +2281,19 @@ class DepartmentPagePrefetch:
         self._executor = ThreadPoolExecutor(max_workers=workers) if len(self._keys) > 1 else None
         self._futures = {}
         self._submitted = 0
+        self._closed = False
         self._fill(0)
 
-    @staticmethod
-    def _warm(key):
+    def _warm(self, key):
         try:
             _parse_elistar_daily_pdf_page_cached(*key)
         except Exception as exc:
             _PREFETCH_ERRORS[key] = exc
         # Store Info también (2026-10-14): reusa la hoja de los departamentos
-        # recién leída. Si falla, la carga lo vuelve a intentar y avisa.
+        # recién leída. Si falla, la carga lo vuelve a intentar y avisa. Con
+        # la carga ya cancelada o terminada, no.
+        if self._closed:
+            return
         try:
             _extract_store_info_from_pdf_cached(key[0], DEFAULT_STORE_INFO_PAGE_INDEX)
         except Exception:
@@ -2309,6 +2312,7 @@ class DepartmentPagePrefetch:
             future.result()
 
     def close(self):
+        self._closed = True
         if self._executor:
             self._executor.shutdown(wait=False, cancel_futures=True)
         for key in self._keys:

@@ -9,8 +9,13 @@ tres por separado. Ahora vive acá una sola vez; cada módulo solo importa lo
 que necesita.
 """
 
+import copy
+import functools
+import hashlib
 import io
 import os
+import threading
+from collections import OrderedDict
 
 try:
     import pdfplumber
@@ -42,6 +47,88 @@ _OSD_ROTATE_TO_TRANSPOSE = {
     180: Image.ROTATE_180 if Image is not None else None,
     270: Image.ROTATE_90 if Image is not None else None,
 }
+
+
+# Lecturas de Tesseract guardadas por el contenido exacto de la imagen
+# (2026-10-14). Varios lectores le pasaban el OCR a la misma imagen con la
+# misma configuración más de una vez (el reconocimiento del proveedor y
+# después su lector, el encabezado y después los renglones, la orientación de
+# la misma hoja en cada pasada): Frito-Lay repetía 5 de sus 7 lecturas,
+# Midtown 5 de 13. Tesseract da siempre lo mismo para la misma imagen y la
+# misma configuración, así que la segunda vez se devuelve lo ya leído. Se
+# instala una sola vez sobre pytesseract.image_to_string/_data/_osd (todos los
+# módulos llaman por ahí); la clave es la función, sus argumentos y el MD5 de
+# los píxeles (una imagen recortada, girada o retocada es otra imagen). Una
+# ruta de archivo en vez de imagen no se guarda.
+_OCR_MEMO = OrderedDict()
+_OCR_MEMO_LOCK = threading.Lock()
+_OCR_MEMO_MAX_BYTES = 64 * 1024 * 1024
+_ocr_memo_bytes = 0
+
+
+def _image_digest(image):
+    if Image is not None and isinstance(image, Image.Image):
+        palette = image.getpalette() if image.mode in ("P", "PA") else None
+        return ("pil", image.mode, image.size, hashlib.md5(image.tobytes()).hexdigest(),
+                hashlib.md5(bytes(palette)).hexdigest() if palette else None, str(image.info.get("transparency")))
+    if np is not None and isinstance(image, np.ndarray):
+        return ("np", str(image.dtype), image.shape, hashlib.md5(np.ascontiguousarray(image).tobytes()).hexdigest())
+    return None
+
+
+def _memo_size(value):
+    if isinstance(value, dict):
+        return 64 + sum(48 * len(v) if isinstance(v, list) else 64 for v in value.values())
+    return 64 + len(value) if isinstance(value, (str, bytes)) else 256
+
+
+def _memoized_ocr(func):
+    # Los errores no se guardan: retendrían en su traceback las imágenes de
+    # quien llamó, y uno pasajero (Tesseract sin memoria, el antivirus con el
+    # PNG temporal) quedaría fijo hasta reiniciar (revisión 2026-10-14).
+    @functools.wraps(func)
+    def wrapper(image, *args, **kwargs):
+        global _ocr_memo_bytes
+        digest = _image_digest(image)
+        try:
+            key = (func.__name__, digest, args, tuple(sorted(kwargs.items())))
+            hash(key)
+        except TypeError:
+            digest = None
+        if digest is None:
+            return func(image, *args, **kwargs)
+        with _OCR_MEMO_LOCK:
+            cached = _OCR_MEMO.get(key)
+            if cached is not None:
+                _OCR_MEMO.move_to_end(key)
+        if cached is not None:
+            return copy.deepcopy(cached[0])
+        value = func(image, *args, **kwargs)
+        size = _memo_size(value)
+        if size <= _OCR_MEMO_MAX_BYTES // 8:
+            with _OCR_MEMO_LOCK:
+                if key not in _OCR_MEMO:
+                    _OCR_MEMO[key] = (copy.deepcopy(value), size)
+                    _ocr_memo_bytes += size
+                while _ocr_memo_bytes > _OCR_MEMO_MAX_BYTES and _OCR_MEMO:
+                    _, (_, old_size) = _OCR_MEMO.popitem(last=False)
+                    _ocr_memo_bytes -= old_size
+        return value
+
+    wrapper.bradenton_memo = True
+    return wrapper
+
+
+def _install_ocr_memo():
+    if pytesseract is None:
+        return
+    for name in ("image_to_string", "image_to_data", "image_to_osd"):
+        func = getattr(pytesseract, name)
+        if not getattr(func, "bradenton_memo", False):
+            setattr(pytesseract, name, _memoized_ocr(func))
+
+
+_install_ocr_memo()
 
 
 def ensure_pdfplumber():
@@ -107,15 +194,32 @@ def correct_image_orientation(image):
 
 def ocr_process_limit():
     """
-    Cuántos procesos de Tesseract correr a la vez (2026-10-14): uno por núcleo,
-    hasta 4. Cada uno ocupa ~100 MB y en un contenedor os.cpu_count() puede
-    ser el del servidor entero: en Render se baja con BRADENTON_OCR_PROCESOS.
+    Cuántos procesos de Tesseract (o archivos) leer a la vez (2026-10-14): uno
+    por núcleo, hasta 4. Cada uno ocupa ~100 MB y en un contenedor
+    os.cpu_count() es el del servidor entero, no el del plan: en Render el
+    valor por defecto es 2. BRADENTON_OCR_PROCESOS lo fija a mano.
     """
     try:
         configured = int(os.environ.get("BRADENTON_OCR_PROCESOS", "0"))
     except ValueError:
         configured = 0
-    return configured if configured > 0 else max(1, min(os.cpu_count() or 1, 4))
+    if configured > 0:
+        return configured
+    return 2 if os.environ.get("RENDER") else max(1, min(os.cpu_count() or 1, 4))
+
+
+# PDFium (pypdfium2, lo que usa pdfplumber para dibujar una página) no admite
+# llamadas desde varios hilos a la vez: con las cargas que leen varios
+# archivos en paralelo daba "access violation" o tiraba el proceso
+# (reproducido en la revisión del 2026-10-14). Toda página que se dibuja pasa
+# por acá, de a una por vez en todo el proceso.
+_RENDER_LOCK = threading.Lock()
+
+
+def render_page(page, resolution):
+    """La página de pdfplumber dibujada como imagen RGB (con el candado de PDFium)."""
+    with _RENDER_LOCK:
+        return page.to_image(resolution=resolution).original.convert("RGB")
 
 
 def detect_osd_rotation(image):

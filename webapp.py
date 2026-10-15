@@ -12,6 +12,7 @@ igual que el desktop, probando cada uno antes de seguir con el próximo.
 
 import calendar
 import hmac
+import itertools
 import json
 import app_paths
 import os
@@ -22,6 +23,7 @@ import shutil
 import tempfile
 import threading
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta
 from urllib.parse import quote, urlsplit
@@ -3871,14 +3873,39 @@ def chase_cheques_subir():
     return jsonify({"job_id": job_id, "total": len(pdf_paths)})
 
 
+def _read_ahead(read, items):
+    """
+    Lee los archivos de una carga en paralelo y los devuelve en el orden
+    subido, de a uno, como (archivo, future): cada carga toma el resultado (o
+    la excepción) con future.result() dentro de su try por archivo y guarda
+    de a uno, así duplicados y avisos quedan como antes (2026-10-14). Nunca
+    lee más de 2 × ocr_process_limit() por adelantado y suelta cada lectura
+    al pasar a la siguiente; si el lote se corta (error o "Cancelar carga")
+    no empieza ninguna lectura más.
+    """
+    workers = ocr_utils.ocr_process_limit()
+    pool = ThreadPoolExecutor(max_workers=workers)
+    remaining = iter(items)
+    pending = deque((item, pool.submit(read, item)) for item in itertools.islice(remaining, workers * 2))
+    try:
+        while pending:
+            current = pending.popleft()
+            for item in itertools.islice(remaining, 1):
+                pending.append((item, pool.submit(read, item)))
+            yield current
+            current = None
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
+
+
 def _run_chase_cheques_job(job_id, pdf_paths):
     """Mismo patrón que _run_carga_datos_lottery_job: aislado por PDF, avisos cortos sin nombres de archivo."""
     try:
         saved = unreadable_number = duplicates = no_check = failed = 0
-        for index, pdf_path in enumerate(pdf_paths, start=1):
+        for index, (pdf_path, reading) in enumerate(_read_ahead(_read_check_pdf, pdf_paths), start=1):
             filename = os.path.basename(pdf_path)
             try:
-                found = extract_checks_from_pdf(pdf_path)
+                found, prefetched_auto = reading.result()
                 if not found:
                     no_check += 1
                 original_rel = None
@@ -3903,7 +3930,12 @@ def _run_chase_cheques_job(job_id, pdf_paths):
                     if original_rel is None:
                         original_rel = cheques_db.store_original(pdf_path, filename)
                         # Un PDF con varios cheques comparte la misma factura -- se lee una vez.
-                        auto = _read_check_invoice(pdf_path, filename, [c["page"] for c in found]) if len(found) == 1 else {}
+                        if len(found) != 1:
+                            auto = {}
+                        elif prefetched_auto is not None:
+                            auto = prefetched_auto
+                        else:
+                            auto = _read_check_invoice(pdf_path, filename, [c["page"] for c in found])
                     cheques_db.add_check(number, item["image"], original_rel, filename, item["page"], auto=auto)
                     saved += 1
                     if number is None:
@@ -3935,6 +3967,28 @@ def _run_chase_cheques_job(job_id, pdf_paths):
         )
     except Exception as exc:
         jobs.update_job(job_id, status="error", error=f"Error: {exc}")
+
+
+def _check_already_loaded(item, filename):
+    """Mismo criterio de duplicado que _run_chase_cheques_job (para no leer de más la factura)."""
+    if item["number"] is None:
+        return bool(cheques_db.find_by_source(filename, item["page"]))
+    existing = cheques_db.find_by_number(item["number"])
+    return bool(existing and (existing["check_pdf"] or existing["number_source"] == "ocr"))
+
+
+def _read_check_pdf(pdf_path):
+    """
+    Los cheques de un PDF y, si trae uno solo y no está cargado, la factura
+    que lo acompaña (lo más lento): corre en paralelo, sin guardar nada. La
+    factura queda en None si no se leyó; la carga la lee si hace falta.
+    """
+    filename = os.path.basename(pdf_path)
+    found = extract_checks_from_pdf(pdf_path)
+    auto = None
+    if len(found) == 1 and not _check_already_loaded(found[0], filename):
+        auto = _read_check_invoice(pdf_path, filename, [found[0]["page"]])
+    return found, auto
 
 
 @app.route("/carga-datos/chase/cheques/<int:check_id>/pdf")
@@ -5979,13 +6033,16 @@ def _run_caja_gastos_job(job_id, paths, year, month):
     fecha o el monto dudoso; un comprobante sin ticket de caja queda
     pendiente de confirmar (caja_db.add_pending_expense), no se carga solo.
     """
+    def read(path):
+        return gastos_caja.extract_cash_expenses(path, os.path.basename(path), default_year=year)
+
     try:
         saved = duplicates = failed = without_detail = 0
         other_months, no_slip, doubtful = [], [], []
-        for index, path in enumerate(paths, start=1):
+        for index, (path, reading) in enumerate(_read_ahead(read, paths), start=1):
             try:
                 filename = os.path.basename(path)
-                result = gastos_caja.extract_cash_expenses(path, filename, default_year=year)
+                result = reading.result()
                 name = result["detail"] or "un comprobante sin nombre"
                 proposal = result["proposal"]
                 if proposal is not None:
@@ -7780,27 +7837,25 @@ def _run_depositos_job(job_id, pdf_paths, fallback_period):
     try:
         summaries = replaced = deposits = incomplete = duplicates = failed = retyped = kept = 0
         problems, last_period = [], None
-        with ThreadPoolExecutor(max_workers=ocr_utils.ocr_process_limit()) as pool:
-            readings = [pool.submit(_read_deposit_file, pdf_path) for pdf_path in pdf_paths]
-            for index, (pdf_path, reading) in enumerate(zip(pdf_paths, readings), start=1):
-                filename = os.path.basename(pdf_path)
-                try:
-                    kind, data = reading.result()
-                    if kind == "summary":
-                        replaced += ice_machine_db.save_summary(data, filename)
-                        summaries += 1
-                        last_period = ice_machine.month_of(data["to_date"])
-                    else:
-                        s, i, d, period, r, k = import_deposit_pdf(pdf_path, filename, fallback_period, items=data)
-                        deposits, incomplete, duplicates = deposits + s, incomplete + i, duplicates + d
-                        retyped, kept = retyped + r, kept + k
-                        last_period = period or last_period
-                except ValueError as exc:
-                    problems.append(str(exc))
-                except Exception as exc:
-                    print(f"[carga-datos/depositos] {pdf_path}: {exc}")
-                    failed += 1
-                jobs.update_job(job_id, done=index, total=len(pdf_paths))
+        for index, (pdf_path, reading) in enumerate(_read_ahead(_read_deposit_file, pdf_paths), start=1):
+            filename = os.path.basename(pdf_path)
+            try:
+                kind, data = reading.result()
+                if kind == "summary":
+                    replaced += ice_machine_db.save_summary(data, filename)
+                    summaries += 1
+                    last_period = ice_machine.month_of(data["to_date"])
+                else:
+                    s, i, d, period, r, k = import_deposit_pdf(pdf_path, filename, fallback_period, items=data)
+                    deposits, incomplete, duplicates = deposits + s, incomplete + i, duplicates + d
+                    retyped, kept = retyped + r, kept + k
+                    last_period = period or last_period
+            except ValueError as exc:
+                problems.append(str(exc))
+            except Exception as exc:
+                print(f"[carga-datos/depositos] {pdf_path}: {exc}")
+                failed += 1
+            jobs.update_job(job_id, done=index, total=len(pdf_paths))
 
         parts = []
         if summaries:
@@ -8167,6 +8222,8 @@ def _run_carga_datos_proveedores_job(job_id, paths):
     cada factura de un PDF se carga o se rechaza por su cuenta -- una
     ilegible no frena las demás del mismo PDF ni del lote.
     """
+    # Los PDF se leen de a varios a la vez (_read_ahead, 2026-10-14) y se
+    # guardan de a uno, en el orden subido: duplicados y avisos como antes.
     try:
         saved = []
         duplicates = []
@@ -8176,10 +8233,10 @@ def _run_carga_datos_proveedores_job(job_id, paths):
         lines_failed = []
         without_invoice = []
 
-        for index, path in enumerate(paths, start=1):
+        for index, (path, reading) in enumerate(_read_ahead(_read_supplier_pdf, paths), start=1):
             filename = os.path.basename(path)
             try:
-                supplier_key, supplier_label, invoices = extract_invoices_from_pdf(path)
+                read = reading.result()
             except _PDF_EXTRACTION_EXCEPTIONS as exc:
                 print(f"[carga-datos/proveedores] {filename}: {exc}")
                 failed.append({"filename": filename, "supplier": getattr(exc, "supplier_label", None)})
@@ -8193,9 +8250,8 @@ def _run_carga_datos_proveedores_job(job_id, paths):
                 failed.append({"filename": filename, "supplier": None})
                 jobs.update_job(job_id, done=index, total=len(paths))
                 continue
-            # Gold Coast y Red Bull devuelven aparte cada factura del PDF que no
-            # se pudo leer con seguridad (proveedores._ticket_invoices).
-            invoices, unreadable = invoice_errors(invoices)
+            supplier_key, supplier_label = read["supplier_key"], read["supplier_label"]
+            invoices, unreadable, valid_invoices = read["invoices"], read["unreadable"], read["valid_invoices"]
             for bad in unreadable:
                 print(f"[carga-datos/proveedores] {filename}, factura {bad.get('invoice_no')}: {bad['error']}")
                 failed.append({"filename": filename, "supplier": supplier_label, "invoice_no": bad.get("invoice_no")})
@@ -8204,28 +8260,9 @@ def _run_carga_datos_proveedores_job(job_id, paths):
                 # de Coca-Cola) no es un error, pero tampoco puede desaparecer
                 # del lote sin que se note (auditoría 2026-09).
                 without_invoice.append({"filename": filename, "supplier": supplier_label})
-
-            # Chequeo de fecha del nombre de archivo (2026-09-15, pedido
-            # explícito del usuario -- "al igual que con las facturas de
-            # proveedores"): varios proveedores ya nombran el PDF con su
-            # propia fecha (Flori-Gas, LMT, SkyHarvest, etc.) -- si el
-            # nombre trae una fecha completa y no coincide con la leída de
-            # la factura, se rechaza esa factura en vez de guardarla/
-            # archivarla bajo un mes que podría no ser el suyo. Un nombre
-            # sin fecha completa (la mayoría de los proveedores) no se
-            # toca -- nada que cruzar.
-            valid_invoices = []
-            for invoice in invoices:
-                # FPL/Manatee (factura por período): el nombre de archivo
-                # trae la fecha de vencimiento/emisión, nunca el fin del
-                # período -- el extractor lo marca para no rechazarla.
-                if not invoice.get("skip_filename_date_check") and _filename_date_mismatch(
-                    filename, invoice["date"]
-                ):
-                    date_mismatches.append({"filename": filename, "supplier": supplier_label,
-                                            "invoice_no": invoice["invoice_no"]})
-                    continue
-                valid_invoices.append(invoice)
+            for invoice in read["mismatched_invoices"]:
+                date_mismatches.append({"filename": filename, "supplier": supplier_label,
+                                        "invoice_no": invoice["invoice_no"]})
 
             saved_before = len(saved)
             for invoice in valid_invoices:
@@ -8259,7 +8296,9 @@ def _run_carga_datos_proveedores_job(job_id, paths):
                                              "invoice_no": invoice["invoice_no"]})
             elif valid_invoices and supplier_key in proveedores_productos.LINE_EXTRACTORS:
                 try:
-                    detail = proveedores_productos.extract_lines(supplier_key, path, invoices=valid_invoices)
+                    if read["detail_error"] is not None:
+                        raise read["detail_error"]
+                    detail = read["detail"]
                     invoice = next(
                         (inv for inv in valid_invoices if str(inv["invoice_no"]) == detail["invoice_no"]), None
                     )
@@ -8320,6 +8359,47 @@ def _run_carga_datos_proveedores_job(job_id, paths):
         )
     except Exception as exc:
         jobs.update_job(job_id, status="error", error=f"Error: {exc}")
+
+
+def _read_supplier_pdf(path):
+    """
+    Lo que la carga de Proveedores lee de un PDF, sin guardar nada (corre en
+    paralelo, ver _run_carga_datos_proveedores_job). Un error de lectura del
+    encabezado sale como excepción; uno del detalle de productos queda en
+    "detail_error" para avisarlo igual que antes.
+    """
+    filename = os.path.basename(path)
+    supplier_key, supplier_label, invoices = extract_invoices_from_pdf(path)
+    # Gold Coast y Red Bull devuelven aparte cada factura del PDF que no
+    # se pudo leer con seguridad (proveedores._ticket_invoices).
+    invoices, unreadable = invoice_errors(invoices)
+    # Chequeo de fecha del nombre de archivo (2026-09-15, pedido explícito del
+    # usuario): varios proveedores ya nombran el PDF con su propia fecha
+    # (Flori-Gas, LMT, SkyHarvest, etc.) -- si el nombre trae una fecha
+    # completa y no coincide con la leída de la factura, esa factura se
+    # rechaza en vez de guardarla bajo un mes que podría no ser el suyo. Un
+    # nombre sin fecha completa (la mayoría) no se toca. FPL/Manatee (factura
+    # por período) traen la fecha de vencimiento/emisión en el nombre: el
+    # extractor las marca para no rechazarlas.
+    valid_invoices, mismatched_invoices = [], []
+    for invoice in invoices:
+        if not invoice.get("skip_filename_date_check") and _filename_date_mismatch(filename, invoice["date"]):
+            mismatched_invoices.append(invoice)
+        else:
+            valid_invoices.append(invoice)
+    detail = detail_error = None
+    if (valid_invoices and not any("lines" in inv for inv in valid_invoices)
+            and supplier_key in proveedores_productos.LINE_EXTRACTORS):
+        try:
+            detail = proveedores_productos.extract_lines(supplier_key, path, invoices=valid_invoices)
+        except Exception as exc:
+            # Sin el traceback: retendría las imágenes de las hojas hasta el fin del lote.
+            detail_error = exc.with_traceback(None)
+    return {
+        "supplier_key": supplier_key, "supplier_label": supplier_label, "invoices": invoices,
+        "unreadable": unreadable, "valid_invoices": valid_invoices, "mismatched_invoices": mismatched_invoices,
+        "detail": detail, "detail_error": detail_error,
+    }
 
 
 @app.route("/carga-datos/proveedores/historial")

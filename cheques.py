@@ -32,6 +32,7 @@ from ocr_utils import (
     pdfplumber,
     pytesseract,
     remove_grid_lines,
+    render_page,
 )
 
 # Rango razonable de un N° de cheque de esta chequera (hoy ~1775). Evita
@@ -52,7 +53,7 @@ def _page_images(page):
         except Exception:
             pass
     try:
-        return page.to_image(resolution=200).original.convert("RGB")
+        return render_page(page, 200)
     except Exception:
         return None
 
