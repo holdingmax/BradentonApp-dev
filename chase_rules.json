@@ -231,6 +231,10 @@
     {
       "keyword": "WAL-MART #3235",
       "detail": "MOVILIDAD Y VIATICOS"
+    },
+    {
+      "keyword": "salary",
+      "detail": "SUELDO"
     }
   ]
 }
