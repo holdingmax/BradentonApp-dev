@@ -7381,10 +7381,10 @@ def controles_rapidos_panel(kind):
         data = {"forecast": eft_pronostico.build_forecast(today=today), "weekdays": _WEEKDAYS_ES}
     elif kind == "portales":
         # Portales (pedido del usuario, 2026-10-15): cuándo entrar a bajar
-        # las facturas de FPL, Manatee, Airgas y Elistar. No depende del mes.
+        # las facturas de FPL, Manatee y Airgas. No depende del mes.
         data = controles_rapidos.portales_status(
             {key: proveedores_db.get_supplier_invoices(key) for key in ("fpl", "manatee_county", "airgas")},
-            control_cmv_db.list_months(), today=today,
+            today=today,
         )
     elif kind == "kia":
         # Kia y Toyota (pedido del usuario, 2026-10-08): lo que debe cada una

@@ -24,8 +24,8 @@ cálculo queda acá y en /controles/rapidos/precios.
   los que hay que revisar de precio. Solo cruza por UPC (sin los ceros de
   adelante, igual que Productos de proveedores), así que J.J. Taylor y
   Midtown, que no traen UPC, no entran.
-- Portales (2026-10-15): cuándo entrar a FPL, Manatee, Airgas y Elistar a
-  bajar lo que no llega solo, y si ya está cargado. No depende del mes.
+- Portales (2026-10-15): cuándo entrar a FPL, Manatee y Airgas a bajar las
+  facturas que no llegan solas, y si ya están cargadas. No depende del mes.
 """
 
 import calendar
@@ -235,8 +235,6 @@ def price_review(lines, pos_costs, supplier_labels, today=None):
 # - Airgas, alquiler del cilindro (RENT): el último día de cada mes; se avisa
 #   desde el 1 del mes siguiente. Las entregas de CO2 no tienen fecha: una
 #   cada 6 a 10 semanas, se avisa a las 8 semanas de la última.
-# - Elistar: el Depts Report y el P & L de un mes están completos el 1 del
-#   mes siguiente (Control CMV).
 # Se mira solo desde la primera factura cargada de cada uno y los últimos
 # 3 meses: lo de antes no se avisa.
 # ---------------------------------------------------------------------------
@@ -250,7 +248,6 @@ PORTAL_URLS = {
     "fpl": "https://www.fpl.com/my-account/account-landing.html",
     "manatee": "https://css-prod.mymanatee.org",
     "airgas": "https://www.airgas.com/login",
-    "elistar": "https://www.elistars.com",
 }
 
 
@@ -312,11 +309,11 @@ def _first_month(dates, to_month):
     return min(months) if months else None
 
 
-def portales_status(invoices, elistar_months, today=None):
+def portales_status(invoices, today=None):
     """
     invoices: {"fpl": [...], "manatee_county": [...], "airgas": [...]}, las
-    facturas de Proveedores (invoice_date ISO, amount); elistar_months: los
-    (año, mes) con Elistar cargado en Control CMV.
+    facturas de Proveedores (invoice_date ISO, amount). Elistar no entra
+    (pedido del usuario, 2026-10-15).
     """
     today = today or date.today()
 
@@ -382,13 +379,4 @@ def portales_status(invoices, elistar_months, today=None):
             rows.append({"label": "Airgas (CO2)", "url": PORTAL_URLS["airgas"], "state": "ok",
                          "text": f"Última entrega cargada: {_dm(last)} (hace {days} días).",
                          "sub": f"Próxima: ~{_dm(last + timedelta(days=_CO2_WARN_DAYS))}. {pattern}"})
-
-    # Elistar: los reportes de un mes, desde el 1 del mes siguiente.
-    rows.append(_monthly_portal(
-        "Elistar (Depts y P & L)", PORTAL_URLS["elistar"], today, min(elistar_months) if elistar_months else None,
-        warn_from=lambda y, m: _month_end(y, m) + timedelta(days=1),
-        expected=lambda y, m: _month_end(y, m) + timedelta(days=1),
-        loaded=lambda y, m: True if (y, m) in elistar_months else None,
-        what="el reporte", pattern="Completos el 1 del mes siguiente; se cargan en Controles → Control CMV.",
-    ))
     return {"rows": rows, "pending": sum(1 for row in rows if row["state"] == "warn")}
