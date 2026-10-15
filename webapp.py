@@ -3050,23 +3050,10 @@ def carga_datos_lottery_resumen_mensual():
 
 @app.route("/controles")
 def controles():
-    # La tarjeta de un control muestra su alerta sin tener que entrar.
-    alerts = {}
-    try:
-        latest = control_tarjetas.latest_status(reportes_db.get_card_sales_by_date(), eft_db.get_coupon_gross_by_date(),
-                                                kia_sales=reportes_db.get_local_account_sales_by_date())
-        if latest and latest["status"] == "alert":
-            alerts["control_tarjetas"] = f"Alerta: pendiente ${latest['pending_without_kia']:,.2f} al {_fmt_ddmmyyyy(latest['date'])}"
-    except Exception as exc:
-        print(f"[controles] estado de Tarjetas y Cupones: {exc}")
-    try:
-        today = date.today()
-        deposits_control = _depositos_month_control(today.year, today.month)
-        if deposits_control["issues"]:
-            alerts["control_depositos"] = f"{len(deposits_control['issues'])} cosa(s) para revisar este mes"
-    except Exception as exc:
-        print(f"[controles] estado de Control Depósitos: {exc}")
-    return render_template("controles_index.html", controls=CONTROLES_SECTIONS, alerts=alerts)
+    # Sin alertas en las tarjetas del menú (pedido del usuario, 2026-10-15):
+    # agrandaban su renglón y las tarjetas dejaban de ser simétricas. Cada
+    # alerta se ve adentro de su control, como en la botonera (chat 27).
+    return render_template("controles_index.html", controls=CONTROLES_SECTIONS)
 
 
 _WEEKDAYS_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
