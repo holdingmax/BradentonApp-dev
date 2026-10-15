@@ -28,6 +28,8 @@ ELISTAR_GROUPS = {
     "Beer/ Wine": ("BEER/WINE",),
     "Cigarette": ("MAJ PAK", "GEN-PAK"),
     "Cigarette Carton": ("GEN-CTN", "MAJ CR"),
+    # El hot dog del 05/08/2026 ($4.59) Elistar lo trae como Deli, no en Taxable Sales.
+    "Deli": ("HOT DOGS & SANDWICH",),
     "E cig": ("E-GIGARETTE",),
     "Fountain/Coffee": ("FOUTAIN", "COFFE"),
     "HBA": ("HBA",),
@@ -35,8 +37,7 @@ ELISTAR_GROUPS = {
     "Non-Tax Sales": ("LOCAL ACCT", "WATER", "JUICE", "MILK", "NONTAX"),
     "Propane": ("PROPANE",),
     "Soda": ("SODA",),
-    "Taxable Sales": ("TAXABLE", "SNACK", "FLOWERS", "CANDY", "ICECREAM", "BOILED PEANUTS", "GROCERIES",
-                      "HOT DOGS & SANDWICH"),
+    "Taxable Sales": ("TAXABLE", "SNACK", "FLOWERS", "CANDY", "ICECREAM", "BOILED PEANUTS", "GROCERIES"),
     "Tobacco": ("CIGARS", "SNUFF"),
 }
 # Elistar trae el combustible como una categoría más: en el Depts Report es
@@ -49,9 +50,12 @@ NOT_IN_ELISTAR = ("CHEVRON GIFT CARD", "STORE COUPON")
 
 
 def dept_key(name):
-    """El mismo departamento aunque cambien signos o espacios ("MAJPAK", "FLOWER")."""
+    """
+    El mismo departamento aunque cambien signos o espacios ("MAJPAK", "FLOWER").
+    Las ventas del CMV llaman "BEER" a lo que el POS llama "BEER/WINE".
+    """
     key = re.sub(r"[^A-Z0-9]", "", (name or "").upper())
-    return {"FLOWER": "FLOWERS"}.get(key, key)
+    return {"FLOWER": "FLOWERS", "BEER": "BEERWINE"}.get(key, key)
 
 
 _GROUP_OF = {dept_key(d): group for group, depts in ELISTAR_GROUPS.items() for d in depts}
@@ -281,6 +285,9 @@ def build_control(days_departments, monthly_departments, cmv_departments, elista
                 continue
             days = days_groups.get(name, 0.0)
             monthly = monthly_groups.get(name, 0.0) if monthly_groups is not None else None
+            # Una categoría sin ventas en ningún lado (Deli casi todos los meses) no se muestra.
+            if max(abs(el), abs(days), abs(monthly or 0.0)) <= TOLERANCE:
+                continue
             row = {"group": name, "departments": list(ELISTAR_GROUPS[name]), "elistar": el, "days": days,
                    "monthly": monthly, "diff_days": _diff(days, el), "diff_monthly": _diff(monthly, el),
                    "unknown": False}
