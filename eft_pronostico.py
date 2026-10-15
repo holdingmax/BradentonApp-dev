@@ -379,6 +379,60 @@ def backtest(history, count=6):
     return rows[-count:]
 
 
+def _money(value):
+    return f"${value:,.2f}"
+
+
+def _dm(day):
+    return f"{day.day:02d}/{day.month:02d}"
+
+
+def _notes(events, nxt, today, chase_last, estimated_invoice, typical_error):
+    """
+    Qué no está cargado de lo que entra en el próximo EFT (y los EFT que ya
+    tendrían que haber llegado), uno por uno (pedido del usuario,
+    2026-10-15: el aviso decía siempre que faltaba todo). "warn" es lo que
+    ya existe y falta cargar; "info", lo que todavía no salió y se estima.
+    """
+    notes = []
+    for e in events:
+        if e["status"] == "overdue":
+            notes.append({"level": "warn", "text": f"Falta cargar el EFT del {_dm(e['date'])}: ya tendría que haber llegado."})
+        elif e["status"] == "unknown":
+            notes.append({"level": "warn", "text": f"Chase está cargado hasta el {_dm(chase_last) if chase_last else '—'}: "
+                                                   f"falta el extracto para saber si llegó el EFT del {_dm(e['date'])}."})
+    if nxt is None:
+        return notes
+    if nxt["invoice_estimated"]:
+        # La factura vence 5 días después de la entrega: si la entrega ya
+        # pasó, la factura existe y falta cargarla; si no, todavía no salió.
+        delivery = nxt["date"] - timedelta(days=5)
+        if delivery < today:
+            notes.append({"level": "warn", "text": f"Falta la factura de combustible del EFT del {_dm(nxt['date'])} "
+                                                   f"(entrega ≈ {_dm(delivery)}): se estima con la última, {_money(estimated_invoice)}."})
+        else:
+            notes.append({"level": "info", "text": f"La factura de combustible del EFT del {_dm(nxt['date'])} todavía no salió "
+                                                   f"(entrega ≈ {_dm(delivery)}): se estima con la última, {_money(estimated_invoice)}."})
+    if nxt["store_days"]:
+        days = nxt["store_days"]
+        deposited = [d for d in days if jh_deposit_day(d) < today]
+        span = f"del {_dm(days[0])} al {_dm(days[-1])}" if len(days) > 1 else f"del {_dm(days[0])}"
+        error = f" (± {_money(typical_error)} aprox.)" if typical_error else ""
+        if deposited:
+            notes.append({"level": "warn", "text": f"Faltan los cupones de J.H. de las ventas hasta el {_dm(deposited[-1])} "
+                                                   f"(Credit Card Daily Summary): salen de Store Info{error}."})
+        else:
+            notes.append({"level": "info", "text": f"Las ventas {span} todavía no se depositaron: salen de Store Info{error}."})
+    missing_store = [d for d in nxt["estimated_days"] if d < today]
+    if missing_store:
+        notes.append({"level": "warn", "text": "Falta el Reporte Diario del " + ", ".join(_dm(d) for d in missing_store)
+                                               + ": se usa el promedio de ese día de la semana."})
+    if nxt["charges"]:
+        amounts = " y ".join(_money(c["amount"]) for c in nxt["charges"])
+        notes.append({"level": "info", "text": f"Cargo de todos los meses estimado: {amounts} (su factura todavía no está cargada)."})
+    return notes
+
+
 def build_forecast(today=None):
     """
     Los EFT que vienen desde el último cargado: fecha, facturas, cupones que
@@ -459,12 +513,15 @@ def build_forecast(today=None):
     upcoming = [e for e in events if e["date"] >= today]
     tests = backtest(history)
     store_errors = [abs(t["store"] - t["real"]) for t in tests]
+    typical_error = round(sum(store_errors) / len(store_errors), 2) if store_errors else None
     return {
+        "notes": _notes(events, upcoming[0] if upcoming else None, today, chase_last, estimated_invoice,
+                        typical_error),
         "today": today,
         "last": last,
         "events": events,
         # Cuánto se suele errar con solo Store Info (los últimos EFT).
-        "typical_error": round(sum(store_errors) / len(store_errors), 2) if store_errors else None,
+        "typical_error": typical_error,
         "next": upcoming[0] if upcoming else None,
         "main_fee": ctx["main_fee"],
         "small_per_day": ctx["small_per_day"],

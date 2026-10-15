@@ -16,6 +16,7 @@
   .ef-notes { margin-top: 14px; padding: 12px 16px; border-radius: 10px; background: #FFFBEB; border: 1px solid #FDE68A; font-size: 13px; }
   .ef-notes ul { margin: 4px 0 0; padding-left: 18px; }
   .ef-notes li { margin: 3px 0; }
+  .ef-notes-info { background: var(--surface-alt); border-color: var(--border); }
   .ef-section { margin-top: 26px; padding-top: 16px; border-top: 1px solid var(--border); }
   .ef-section h2 { margin: 0; }
   .ef-section > p { margin: 6px 0 0; font-size: 13px; color: var(--text-soft); }
@@ -67,20 +68,20 @@
   </div>
   {% endif %}
 
-  {% set overdue = f.events|selectattr("status", "in", ["overdue", "unknown"])|list %}
-  {% set estimated_invoice = f.events|selectattr("invoice_estimated")|list %}
-  {% set estimated_sales = f.estimated_past %}
-  {% set estimated_charges = f.events|selectattr("charges")|list %}
-  {% if overdue or estimated_invoice or estimated_sales or estimated_charges or (n and n.store_days) %}
+  {# Solo lo que de verdad no está cargado de lo que entra en el próximo EFT (eft_pronostico._notes;
+     pedido del usuario, 2026-10-15: antes decía siempre que faltaba todo). #}
+  {% set warns = f.notes|selectattr('level', 'equalto', 'warn')|list %}
+  {% set infos = f.notes|selectattr('level', 'equalto', 'info')|list %}
+  {% if warns %}
   <div class="ef-notes">
-    <strong>Para que el cálculo sea exacto falta cargar:</strong>
-    <ul>
-      {% if overdue %}<li>El último EFT cargado es el del {{ dmy(f.last.date) }} ({{ f.last.rcv }}). {% for e in overdue %}{{ dm(e.date) }}{{ ", " if not loop.last }}{% endfor %}: {{ "ya tendría que haber llegado" if overdue|length == 1 else "ya tendrían que haber llegado" }}. Cargá los EFT en Carga de Datos &rarr; EFT y Cupones{% if overdue|selectattr("status", "equalto", "unknown")|list %} y el extracto de Chase (cargado hasta el {{ dmy(f.chase_last) if f.chase_last else '—' }}){% endif %}.</li>{% endif %}
-      {% if estimated_invoice %}<li>Las facturas de combustible de J.H.: sin la factura, la fecha del EFT se estima una semana después del anterior y el importe con el de la última ({{ money(f.estimated_invoice) }}; el precio cambia cada semana y así se erra unos $1,000). Se cargan en Carga de Datos &rarr; Combustible.</li>{% endif %}
-      {% if estimated_charges %}<li>Las facturas varias de J.H. (Mako, VPN, Chevron network): {% for e in estimated_charges %}{{ dm(e.date) }}{{ ", " if not loop.last }}{% endfor %} {{ "tiene" if estimated_charges|length == 1 else "tienen" }} un cargo de todos los meses estimado con los EFT anteriores. Con la factura cargada en <a href="{{ url_for('carga_datos_eft_varias') }}">Facturas varias</a> entra con su importe y en el EFT que la paga.</li>{% endif %}
-      <li>Los cupones de J.H. (Credit Card Daily Summary, en Carga de Datos &rarr; EFT y Cupones): con ellos el importe es exacto. Están cargados hasta el {{ dmy(f.coupons_to) if f.coupons_to else '—' }}.</li>
-      {% if estimated_sales %}<li>El Reporte Diario del {{ dm(estimated_sales[0]) }}{% if estimated_sales|length > 1 %} al {{ dm(estimated_sales[-1]) }}{% endif %}: lo vendido con tarjeta de {{ estimated_sales|length }} día(s) ya pasados se estimó con el promedio de ese día de la semana.</li>{% endif %}
-    </ul>
+    <strong>Falta cargar:</strong>
+    <ul>{% for note in warns %}<li>{{ note.text }}</li>{% endfor %}</ul>
+  </div>
+  {% endif %}
+  {% if infos %}
+  <div class="ef-notes ef-notes-info">
+    <strong>Se estima porque todavía no salió:</strong>
+    <ul>{% for note in infos %}<li>{{ note.text }}</li>{% endfor %}</ul>
   </div>
   {% endif %}
 

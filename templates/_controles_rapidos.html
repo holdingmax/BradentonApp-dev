@@ -46,9 +46,9 @@
     </tbody>
   </table>
   {% endif %}
-  {% if f.events|selectattr("invoice_estimated")|list or f.estimated_past or f.events|selectattr("status", "in", ["overdue", "unknown"])|list %}
-  <p class="qc-note qc-warn">Hay datos sin cargar (EFT, facturas de combustible o Reporte Diario): el importe es aproximado.</p>
-  {% endif %}
+  {# Uno por uno lo que no está cargado (eft_pronostico._notes, 2026-10-15): ámbar lo que falta cargar, gris lo que todavía no salió. #}
+  {% for note in f.notes %}<p class="qc-note{{ ' qc-warn' if note.level == 'warn' }}">{{ note.text }}</p>{% endfor %}
+  {% if not f.notes %}<p class="qc-note qc-good">Todo lo que entra en este EFT está cargado.</p>{% endif %}
   {% endif %}
   <a class="qc-link" href="{{ url_for('carga_datos_eft_proximos') }}">Ver Próximos EFT &rarr;</a>
 
