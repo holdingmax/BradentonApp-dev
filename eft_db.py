@@ -1087,7 +1087,14 @@ def identify_detail_groups(report_rows=()):
         candidates = {",".join(c["members"]): c for c in candidates.values()}
         for r in report_rows:
             coupons = ",".join(sorted(r["coupons"]))
-            if coupons not in candidates or not candidates[coupons]["complete"]:
+            current = candidates.get(coupons)
+            # Manda el reporte también si en Cupones no están los montos de
+            # todos los DDC del depósito: cuando J.H. le suma un cupón a un
+            # depósito, el nuevo trae el grupo entero y los otros el viejo, y
+            # el candidato sumaba solo el nuevo (05/10/2026: DDC-5677, $116.00
+            # de $24,835.15; revisión 2026-10-15).
+            partial = current is not None and {d.strip().upper() for d in current.get("coupons", [])} != set(current["members"])
+            if current is None or not current["complete"] or partial:
                 candidates[coupons] = {
                     "members": sorted(r["coupons"]), "gross": r["gross"], "fees": r["fees"], "net": r["net"],
                     "complete": True, "group_total": None, "day": date.fromisoformat(r["date"]),
