@@ -11,8 +11,9 @@ Cálculo, sin UI (la pantalla es /controles/tarjetas en webapp.py):
   columna TC de Caja), día por día.
 - Cupones = Gross de los DDC por su fecha.
 - Pendiente acumulado = ventas con tarjeta desde el inicio del tramo menos
-  los cupones que llegaron desde 2 días después de ese inicio (los de los 2
-  primeros días pagan ventas de antes del tramo). Un tramo son días seguidos
+  los batches del POS de esas ventas (con detalle de cupones, ver abajo) o,
+  sin detalle, los cupones que llegaron desde 2 días después de ese inicio
+  (los de los 2 primeros días pagan ventas de antes del tramo). Un tramo son días seguidos
   con Store Info: si falta un día, el pendiente vuelve a arrancar en el
   siguiente día cargado, porque si no quedaría corrido para siempre en lo que
   se vendió ese día.
@@ -24,15 +25,31 @@ Kia). Un pago grande hacía pasar el límite sin nada raro: la alerta mira el
 pendiente sin los pagos que J.H. todavía no depositó, que se muestran aparte
 (desde 2026-10-13, hasta el día exacto en que deposita, ver jh_deposit_day;
 antes eran los últimos 3 días fijos y un pago de jueves volvía a contar el
-domingo: la alerta del 30/08/2026 era ese pago). Un
+domingo: la alerta del 30/08/2026 era ese pago; desde 2026-10-15 la alerta
+mira lo atrasado, que deja afuera todo lo que J.H. todavía no tenía que
+depositar, Kia/Toyota incluidos: ver abajo). Un
 día con VS mayor que todo lo vendido con tarjeta (07/08/2026) es un pago que
 no entró como tarjeta: se avisa (kia_not_in_cards).
 
 No se compara día contra día: cada DDC es un lote de tarjetas que no siempre
-cierra con el día del POS (solo 12 de 45 días coinciden al centavo). En
-agosto-septiembre 2026 el pendiente estuvo entre -$3,000 y +$15,000, con los
-picos en los fines de semana (el lunes llegan juntos los cupones de jueves a
-sábado).
+cierra con el día del POS (solo 12 de 45 días coinciden al centavo).
+
+Con el detalle de cupones (pedido del usuario, 2026-10-15): de cada depósito
+se restan solo los batches del POS (in_store_info) de ventas desde el inicio
+del tramo. Antes se restaba el depósito entero y el pendiente se corría en
+negativo: los batches "slri…"/7 dígitos (unos $70 por día, $5,351.59 del
+01/08 al 13/10/2026) no son ventas de Store Info, y el primer depósito del
+tramo del 01/08 pagaba también las ventas del 30 y 31/07 ($10,098.39). Al
+13/10 daba −$5,387.37 y ahora $10,003.81 (lo vendido el 12 y 13/10,
+$10,277.28, menos $273.47 de batches cruzados de día y de dos DDC sin
+detalle). Los DDC sin detalle se restan enteros, como antes.
+
+Con el pendiente real, los domingos y los fines de semana largos son 4 o 5
+días de ventas ($20,000 a $30,000) y el límite ya no se puede mirar sobre el
+pendiente: se mira sobre lo atrasado, el pendiente menos lo que J.H. todavía
+tiene tiempo de depositar (las ventas cuyo jh_deposit_day no llegó, "en
+camino"; incluye los pagos de Kia/Toyota). Ago-oct 2026: entre −$362 y
++$13,014.80 (30/09: J.H. depositó el 01/10 las ventas del 28 y 29/09).
 """
 
 import calendar
@@ -41,8 +58,10 @@ from datetime import date, timedelta
 
 ALERT_THRESHOLD = 15000.0
 COUPON_START_LAG_DAYS = 2
-TRANSIT_DAYS = 3
 JH_DEPOSIT_LAG_DAYS = 2
+# Hasta cuántos días atrás puede haber ventas que J.H. todavía no tenía que
+# depositar (jueves a lunes feriado son 5).
+TRANSIT_LOOKBACK_DAYS = 10
 
 
 def _nth_weekday(year, month, weekday, n):
@@ -87,6 +106,11 @@ def jh_deposit_day(sale_day):
     return day
 
 
+def in_store_info(batch):
+    """Batch del POS (número de 4 dígitos, 0xxx/82xx/92xx): está en lo vendido con tarjeta de Store Info."""
+    return bool(re.fullmatch(r"\d{4}", batch or ""))
+
+
 def _running(card_sales, coupons, until, kia_sales=None):
     """{fecha: fila} desde el primer día con ventas con tarjeta hasta `until`, con el pendiente acumulado."""
     kia_sales = kia_sales or {}
@@ -101,21 +125,25 @@ def _running(card_sales, coupons, until, kia_sales=None):
         key = day.isoformat()
         sale = card_sales.get(key)
         coupon = coupons.get(key) or {"gross": 0.0, "count": 0, "unknown": 0}
-        last3 = [card_sales.get((day - timedelta(days=k)).isoformat()) for k in range(TRANSIT_DAYS)]
+        batches = coupon.get("batches") or []
+        pos_batches = [b for b in batches if in_store_info(b["batch"])]
         row = {
             "date": key,
             "sale": sale,
             "coupon_gross": coupon["gross"],
             "coupon_count": coupon["count"],
             "coupon_unknown": coupon["unknown"],
-            "last3": round(sum(v for v in last3 if v is not None), 2),
+            # Batches del depósito que no son ventas de Store Info: no se restan.
+            "coupon_other": round(sum(b["gross"] for b in batches if not in_store_info(b["batch"])), 2),
+            # Lo del depósito que paga ventas de antes del tramo: no se resta.
+            "coupon_previous": 0.0,
             "pending": None,
-            "counted": False,
             # Un pago que no entró como tarjeta (kia_not_in_cards) cuenta
             # solo hasta lo vendido con tarjeta ese día.
             "kia": min(kia_sales.get(key, 0.0), sale) if sale is not None else 0.0,
             "kia_recent": 0.0,
-            "pending_without_kia": None,
+            "in_transit": None,
+            "overdue": None,
         }
         if sale is None:
             pending = segment_start = None
@@ -124,21 +152,29 @@ def _running(card_sales, coupons, until, kia_sales=None):
             if segment_start is None:
                 segment_start, pending = day, 0.0
                 row["segment_start"] = True
-            pending += sale
+            start = segment_start.isoformat()
+            credited = sum(b["gross"] for b in pos_batches if b["batch_date"] >= start)
+            previous = sum(b["gross"] for b in pos_batches if b["batch_date"] < start)
+            # Sin detalle no se sabe de qué días son: los DDC de los primeros
+            # días del tramo pagan ventas de antes.
+            no_detail = coupon.get("no_detail", coupon["gross"])
             if day >= segment_start + timedelta(days=COUPON_START_LAG_DAYS):
-                pending -= coupon["gross"]
-                row["counted"] = True
-            pending = round(pending, 2)
+                credited += no_detail
+            else:
+                previous += no_detail
+            pending = round(pending + sale - credited, 2)
             row["pending"] = pending
-            # Lo pendiente que son pagos de Kia/Toyota que J.H. todavía no
-            # depositó (nunca más que el propio pendiente).
-            kia_recent = sum(rows[paid.isoformat()]["kia"] for paid in
-                             (day - timedelta(days=k) for k in range(10))
-                             if paid >= segment_start and paid != day and jh_deposit_day(paid) > day)
-            kia_recent += row["kia"]
+            row["coupon_previous"] = round(previous, 2)
+            # Lo vendido que J.H. todavía no tenía que depositar (los días
+            # del tramo seguidos tienen todos Store Info).
+            recent = [day - timedelta(days=k) for k in range(TRANSIT_LOOKBACK_DAYS)]
+            recent = [d for d in recent if d >= segment_start and jh_deposit_day(d) > day]
+            row["in_transit"] = round(sum(card_sales[d.isoformat()] for d in recent), 2)
+            row["overdue"] = round(pending - row["in_transit"], 2)
+            # De lo en camino, los pagos de Kia/Toyota (nunca más que el pendiente).
+            kia_recent = sum(rows[d.isoformat()]["kia"] for d in recent if d != day) + row["kia"]
             row["kia_recent"] = round(min(kia_recent, max(pending, 0.0)), 2)
-            row["pending_without_kia"] = round(pending - row["kia_recent"], 2)
-            row["status"] = "alert" if abs(row["pending_without_kia"]) > ALERT_THRESHOLD else "ok"
+            row["status"] = "alert" if abs(row["overdue"]) > ALERT_THRESHOLD else "ok"
         rows[key] = row
         day += timedelta(days=1)
     return rows
@@ -167,14 +203,15 @@ def build_month_control(year, month, card_sales, coupons, today=None, kia_sales=
         "rows": rows,
         "last": last,
         "alert_days": [row for row in evaluated if row["status"] == "alert"],
-        # Mismo pendiente que mira la alerta (sin los pagos de Kia/Toyota).
-        "max_pending": max((row["pending_without_kia"] for row in evaluated), default=None),
+        # Lo que mira la alerta: lo atrasado.
+        "max_overdue": max((row["overdue"] for row in evaluated), default=None),
         "kia_total": round(sum(row["kia"] for row in rows), 2),
         "kia_not_in_cards": kia_not_in_cards(card_sales, kia_sales or {}, [row["date"] for row in rows]),
         "missing_days": [row["date"] for row in rows if row["status"] == "missing"],
         "unknown_coupons": sum(row["coupon_unknown"] for row in rows),
         "sales_total": round(sum(row["sale"] or 0.0 for row in rows), 2),
         "coupon_total": round(sum(row["coupon_gross"] for row in rows), 2),
+        "coupon_other_total": round(sum(row["coupon_other"] for row in rows), 2),
         "threshold": ALERT_THRESHOLD,
     }
 
@@ -203,11 +240,6 @@ DETAIL_SETTLE_DAYS = 4
 # Días siguientes con los que una diferencia puede compensarse (en
 # septiembre 2026, una del 07/09 se compensó recién el 10/09).
 COMPENSATE_DAYS = 3
-
-
-def in_store_info(batch):
-    """Batch del POS (número de 4 dígitos, 0xxx/82xx/92xx): está en lo vendido con tarjeta de Store Info."""
-    return bool(re.fullmatch(r"\d{4}", batch or ""))
 
 
 def build_detail_by_day(year, month, card_sales, batches, covered_from, covered_to, today=None, kia_sales=None):

@@ -809,22 +809,71 @@ def get_coupon_gross_by_date():
     {fecha ISO: {"gross", "count", "unknown"}} de los cupones por su fecha
     (control Tarjetas y Cupones). `unknown` cuenta los cupones de un batch
     que todavía no tienen monto propio (Gross en 0): ese día suma de menos.
+
+    Los DDC con detalle de cupones cargado (Credit Card Detail) traen además
+    sus batches (`batches`: [{"batch_date", "batch", "gross"}], en el día de
+    sus DDC) y suman el Gross del detalle; `no_detail` es lo de los DDC sin
+    detalle (pedido del usuario, 2026-10-15: el control restaba entero cada
+    depósito, también los batches "slri…"/7 dígitos que no son ventas de
+    Store Info, y el pendiente se corría en negativo unos $70 por día).
     """
     conn = _connect()
     try:
-        rows = conn.execute("SELECT date, gross, reported_group_text FROM cupones").fetchall()
+        rows = conn.execute("SELECT coupon_id, date, gross, reported_group_text FROM cupones").fetchall()
+        detail_groups = conn.execute(
+            "SELECT id, gross, coupons FROM cupon_detail_groups WHERE coupons IS NOT NULL"
+        ).fetchall()
+        detail_batches = conn.execute(
+            "SELECT group_id, batch_date, batch, gross FROM cupon_detail_batches ORDER BY batch_date, idx"
+        ).fetchall()
     finally:
         conn.close()
+
+    def ddc_key(text):
+        return (text or "").strip().upper()
+
+    coupon_days = {}
+    for row in rows:
+        parsed = _parse_cupon_date(row["date"])
+        if parsed is not None:
+            coupon_days[ddc_key(row["coupon_id"])] = parsed.date().isoformat()
+    batches_by_group = {}
+    for b in detail_batches:
+        batches_by_group.setdefault(b["group_id"], []).append(
+            {"batch_date": b["batch_date"], "batch": b["batch"], "gross": b["gross"] or 0.0})
+    # Cada grupo de detalle es un depósito: va al día de sus DDC.
+    covered, detail_by_day = set(), {}
+    for g in detail_groups:
+        members = frozenset(ddc_key(c) for c in g["coupons"].split(",") if c.strip())
+        days = sorted(coupon_days[c] for c in members if c in coupon_days)
+        if not days:
+            continue
+        covered |= members
+        entry = detail_by_day.setdefault(days[0], {"gross": 0.0, "batches": []})
+        entry["gross"] += g["gross"] or 0.0
+        entry["batches"].extend(batches_by_group.get(g["id"], []))
+
+    def new_day():
+        return {"gross": 0.0, "count": 0, "unknown": 0, "no_detail": 0.0, "batches": []}
+
     result = {}
     for row in rows:
         parsed = _parse_cupon_date(row["date"])
         if parsed is None:
             continue
-        day = result.setdefault(parsed.date().isoformat(), {"gross": 0.0, "count": 0, "unknown": 0})
-        day["gross"] = round(day["gross"] + (row["gross"] or 0.0), 2)
+        day = result.setdefault(parsed.date().isoformat(), new_day())
         day["count"] += 1
+        if ddc_key(row["coupon_id"]) in covered:
+            continue  # su monto sale del detalle
+        day["no_detail"] = round(day["no_detail"] + (row["gross"] or 0.0), 2)
         if row["reported_group_text"] and not row["gross"]:
             day["unknown"] += 1
+    for key, entry in detail_by_day.items():
+        day = result.setdefault(key, new_day())
+        day["batches"] = entry["batches"]
+        day["gross"] = round(entry["gross"], 2)
+    for day in result.values():
+        day["gross"] = round(day["gross"] + day["no_detail"], 2)
     return result
 
 

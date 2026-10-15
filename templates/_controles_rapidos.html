@@ -60,7 +60,7 @@
   <div class="qc-status {{ 'bad' if last.status == 'alert' else 'ok' }}">
     <span>Pendiente de acreditar al {{ dmy(last.date) }}</span>
     <strong>{{ money(last.pending) }}</strong>
-    <span class="qc-sub">{% if last.kia_recent %}De esto, {{ money(last.kia_recent) }} son pagos de Kia/Toyota (no cuentan). {% endif %}{{ "Pasa" if last.status == "alert" else "No pasa" }} el límite de {{ money(data.threshold) }}</span>
+    <span class="qc-sub">En camino {{ money(last.in_transit) }}{% if last.kia_recent %} (Kia/Toyota {{ money(last.kia_recent) }}){% endif %}, atrasado {{ money(last.overdue) }}: {{ "pasa" if last.status == "alert" else "no pasa" }} el límite de {{ money(data.threshold) }}</span>
   </div>
   {{ behind(data.days_behind, last.date) }}
   <table class="qc-table">
