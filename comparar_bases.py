@@ -44,6 +44,9 @@ def _months(path):
 PAGES = {
     "jh_facturas": _months("/carga-datos/eft/varias") + ["/carga-datos/eft/proximos", "/controles/rapidos/eft", "/carga-datos/eft"],
     "ice_machine": _months("/carga-datos/depositos"),
+    "reporte_mensual": [url for path in ("/carga-datos/reporte-mensual", "/carga-datos/reporte-diario", "/reporte/historial",
+                                         "/reporte/store-info/historial", "/controles/cierre", "/controles/cierre/exportar/pdf",
+                                         "/controles/cmv") for url in _months(path)],
 }
 
 
@@ -81,7 +84,25 @@ def _escenario_ice_machine():
     return results
 
 
-SCENARIOS = {"jh_facturas": _escenario_jh_facturas, "ice_machine": _escenario_ice_machine}
+def _escenario_reporte_mensual():
+    """El reporte de septiembre guardado como diciembre, corregido a mano, listado y borrado."""
+    import reporte_mensual_db
+
+    report = reporte_mensual_db.get_report(2026, 9)
+    copy = {**report, "month": 12, "from_date": "2026-12-01", "to_date": "2026-12-31"}
+    reporte_mensual_db.save_report(copy, "Resumen Ventas prueba.pdf")
+    store_info = {**report["store_info"], "cash": (report["store_info"]["cash"] or 0) + 1.5, "network_revenue": None}
+    departments = report["departments"][:5] + [{"department": "PRUEBA 100%", "count": 3, "amount": 0.0}]
+    reporte_mensual_db.update_report(2026, 12, store_info, departments, 123.45, 7, ["aviso de prueba"], from_sheet=True)
+    saved = reporte_mensual_db.get_report(2026, 12)
+    results = [{k: v for k, v in saved.items() if k not in ("updated_at", "edited_at", "sheet_added_at")}, reporte_mensual_db.list_months()]
+    reporte_mensual_db.delete_report(2026, 12)
+    results.append(reporte_mensual_db.get_report(2026, 12))
+    return results
+
+
+SCENARIOS = {"jh_facturas": _escenario_jh_facturas, "ice_machine": _escenario_ice_machine,
+             "reporte_mensual": _escenario_reporte_mensual}
 
 
 # --- Una corrida (proceso aparte por motor) --------------------------------
@@ -208,20 +229,25 @@ def main():
         lite = _run_capture(args.modulos, lite_dir, os.path.join(folder, "sqlite.json"), None)
         pg = _run_capture(args.modulos, pg_dir, os.path.join(folder, "postgres.json"), url)
 
-    differences = 0
-    print(f"\n{'qué':70} {'estado':>11}  resultado")
+    differences, bad_status = 0, []
+    print()
     for key in lite:
         a, b = lite[key], pg.get(key)
         same = b is not None and a == b
         differences += not same
-        status = f"{a['status']}/{b['status'] if b else '-'}"
-        print(f"{key[:70]:70} {status:>11}  {'idéntico' if same else 'DISTINTO'}")
-        if not same and b is not None:
-            diff = difflib.unified_diff(a["body"].splitlines(), b["body"].splitlines(), "SQLite", "Postgres", lineterm="", n=1)
-            for line in list(diff)[:40]:
-                print("    " + line[:200])
-    print("\nTodo idéntico." if not differences else f"\n{differences} diferencias: revisar antes del commit.")
-    sys.exit(1 if differences else 0)
+        if a["status"] not in (0, 200) or (b and b["status"] not in (0, 200)) or 'name="password"' in a["body"]:
+            bad_status.append(f"{key} ({a['status']}/{b['status'] if b else '-'})")
+        if not same:
+            print(f"DISTINTO  {key}  ({a['status']}/{b['status'] if b else '-'})")
+            if b is not None:
+                diff = difflib.unified_diff(a["body"].splitlines(), b["body"].splitlines(), "SQLite", "Postgres", lineterm="", n=1)
+                for line in list(diff)[:40]:
+                    print("    " + line[:200])
+    print(f"{len(lite) - differences} de {len(lite)} comparaciones idénticas.")
+    if bad_status:
+        print("Páginas que no respondieron bien (o pidieron login):\n  " + "\n  ".join(bad_status))
+    print("Todo idéntico." if not differences and not bad_status else "HAY QUE REVISAR antes del commit.")
+    sys.exit(1 if differences or bad_status else 0)
 
 
 if __name__ == "__main__":

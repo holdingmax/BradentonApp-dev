@@ -4,17 +4,20 @@ un reporte por mes, con los totales de Store Info y los departamentos del
 mes tal cual los imprime el "Resumen Ventas". Capa de datos pura: la lectura
 del PDF y el cruce viven en reporte_mensual.py.
 
-reportes_data/reporte_mensual.db (gitignored, como las demás bases).
+reportes_data/reporte_mensual.db (gitignored, como las demás bases), o el
+esquema reporte_mensual de PostgreSQL con DATABASE_URL (db.py; las tablas las
+crea la migración migraciones/versions/0003_reporte_mensual.py).
 """
 
 import json
 import app_paths
 import os
-import sqlite3
 from datetime import datetime
 
-_BASE_DIR = app_paths.DATA_DIR
-_DB_PATH = os.path.join(_BASE_DIR, "reporte_mensual.db")
+import db
+
+_SCHEMA = "reporte_mensual"
+_DB_PATH = os.path.join(app_paths.DATA_DIR, "reporte_mensual.db")
 
 STORE_INFO_FIELDS = (
     "volume", "sales_fuel", "desc_comb", "non_fuel_total", "desc_otros",
@@ -23,11 +26,8 @@ STORE_INFO_FIELDS = (
 )
 
 
-def _connect():
-    os.makedirs(_BASE_DIR, exist_ok=True)
-    conn = sqlite3.connect(_DB_PATH, timeout=30)
+def _init_sqlite(conn):
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.row_factory = sqlite3.Row
     conn.execute(
         f"""
         CREATE TABLE IF NOT EXISTS monthly_reports (
@@ -64,7 +64,10 @@ def _connect():
     # Completado con la hoja pedida de nuevo (pedido del usuario, 2026-10-07).
     if "sheet_added_at" not in columns:
         conn.execute("ALTER TABLE monthly_reports ADD COLUMN sheet_added_at TEXT")
-    return conn
+
+
+def _connect():
+    return db.connect(_SCHEMA, _DB_PATH, _init_sqlite)
 
 
 def update_report(year, month, store_info, departments, printed_amount, printed_count, warnings, from_sheet=False):
@@ -98,7 +101,8 @@ def update_report(year, month, store_info, departments, printed_amount, printed_
             conn.execute("DELETE FROM monthly_report_departments WHERE year = ? AND month = ?", (year, month))
             for record in departments:
                 conn.execute(
-                    "INSERT OR REPLACE INTO monthly_report_departments (year, month, department, count, amount) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO monthly_report_departments (year, month, department, count, amount) VALUES (?, ?, ?, ?, ?) "
+                    "ON CONFLICT (year, month, department) DO UPDATE SET count = excluded.count, amount = excluded.amount",
                     (year, month, record["department"], record.get("count"), record.get("amount")),
                 )
         return True
@@ -131,7 +135,8 @@ def save_report(report, filename=None):
             )
             for record in report.get("departments") or []:
                 conn.execute(
-                    "INSERT OR REPLACE INTO monthly_report_departments (year, month, department, count, amount) VALUES (?, ?, ?, ?, ?)",
+                    "INSERT INTO monthly_report_departments (year, month, department, count, amount) VALUES (?, ?, ?, ?, ?) "
+                    "ON CONFLICT (year, month, department) DO UPDATE SET count = excluded.count, amount = excluded.amount",
                     (report["year"], report["month"], record["department"], record.get("count"), record.get("amount")),
                 )
     finally:
@@ -146,7 +151,7 @@ def get_report(year, month):
         if row is None:
             return None
         departments = conn.execute(
-            "SELECT department, count, amount FROM monthly_report_departments WHERE year = ? AND month = ? ORDER BY amount DESC",
+            "SELECT department, count, amount FROM monthly_report_departments WHERE year = ? AND month = ? ORDER BY amount DESC, department",
             (year, month),
         ).fetchall()
     finally:
