@@ -40,6 +40,7 @@ from flask_login import (
 )
 
 import auth
+import db
 import chase_db
 import cheques_db
 import depositos
@@ -9556,6 +9557,11 @@ if __name__ == "__main__":
     # arrancado pero inalcanzable desde afuera del contenedor. En la PC del
     # usuario, sin PORT seteada, esto sigue exactamente igual que siempre
     # (127.0.0.1:5000).
+    # Con DATABASE_URL (Render), antes de atender se aplican las migraciones
+    # de Alembic que falten (pase a Postgres, ver PLAN_POSTGRES.md). En la
+    # PC, sin la variable, no hace nada.
+    if db.uses_postgres():
+        db.upgrade_schema()
     port_env = os.environ.get("PORT")
     port = int(port_env) if port_env else 5000
     host = "0.0.0.0" if port_env else "127.0.0.1"

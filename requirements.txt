@@ -10,3 +10,10 @@ numpy>=1.24.0
 Flask>=3.0.0
 Flask-Login>=0.6.3
 pypdf
+# PostgreSQL (pase a Postgres, ver PLAN_POSTGRES.md): db.py, migraciones de
+# Alembic y lectura del .env en las herramientas. Versiones fijas.
+psycopg[binary]==3.2.9
+psycopg-pool==3.2.6
+alembic==1.16.2
+SQLAlchemy==2.0.41
+python-dotenv==1.1.1
