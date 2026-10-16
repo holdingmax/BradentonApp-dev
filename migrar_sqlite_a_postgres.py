@@ -176,14 +176,22 @@ def migrate_module(pg, schema, sqlite_path, empty_first):
                 with pg.cursor().copy(copy_sql) as copy:
                     for row in lite.execute(select):
                         copy.write_row(row)
+            # El próximo id sigue desde el último que SQLite ya entregó
+            # (sqlite_sequence recuerda también los de filas borradas), así un
+            # alta nueva recibe el mismo id que habría recibido en SQLite.
+            try:
+                used = dict(lite.execute("SELECT name, seq FROM sqlite_sequence").fetchall())
+            except sqlite3.OperationalError:
+                used = {}
             identities = pg.execute(
                 "SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = %s AND is_identity = 'YES'",
                 (schema,),
             ).fetchall()
             for table, column in identities:
                 pg.execute(
-                    sql.SQL("SELECT setval(pg_get_serial_sequence({}, {}), COALESCE((SELECT MAX({}) FROM {}), 0) + 1, false)").format(
-                        sql.Literal(f"{schema}.{table}"), sql.Literal(column), sql.Identifier(column), sql.Identifier(schema, table)
+                    sql.SQL("SELECT setval(pg_get_serial_sequence({}, {}), GREATEST(COALESCE((SELECT MAX({}) FROM {}), 0), {}) + 1, false)").format(
+                        sql.Literal(f"{schema}.{table}"), sql.Literal(column), sql.Identifier(column), sql.Identifier(schema, table),
+                        sql.Literal(int(used.get(table) or 0)),
                     )
                 )
 

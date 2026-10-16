@@ -16,7 +16,8 @@
 | Módulo 1: jh_facturas | Hecho el 16/10, commit `d515efc`: copia idéntica (10 filas) y 15 comparaciones idénticas |
 | Módulo 2: ice_machine | Hecho el 16/10: copia idéntica (8 Payment Summary) y comparaciones idénticas (Depósitos jul-oct, antes y después de alta / reemplazo / baja). El `INSERT OR REPLACE` pasó a `ON CONFLICT … DO UPDATE` con todas las columnas |
 | Módulo 3: reporte_mensual | Hecho el 16/10: copia idéntica (2 reportes, 59 departamentos) y 57 comparaciones idénticas (Reporte C-Store, Reporte Diario, historiales, Cierre y su PDF, Control CMV; antes y después de guardar, corregir y borrar un reporte). Los 2 `INSERT OR REPLACE` pasaron a `ON CONFLICT`; los departamentos se ordenan por importe y, si empatan, por nombre |
-| Módulos 4 a 19 | Pendientes |
+| Módulo 4: cheques | Hecho el 16/10: copia idéntica (31 cheques) y comparaciones idénticas (cuadro de Cheques, antes y después de cargar a mano, corregir, completar lo automático y borrar). Los 2 `lastrowid` pasaron a `RETURNING id` |
+| Módulos 5 a 19 | Pendientes |
 
 **Cómo se prueba cada módulo** (PC, Postgres local en Docker: contenedor `bradenton-pg`, puerto 55432):
 

@@ -17,10 +17,10 @@ como cobrado sin tocar nada de esta base.
 import app_paths
 import os
 import re
-import sqlite3
 import uuid
 from datetime import datetime
 
+import db
 import documents_db
 
 _BASE_DIR = app_paths.DATA_DIR
@@ -28,11 +28,8 @@ _DB_PATH = os.path.join(_BASE_DIR, "cheques.db")
 _FILES_DIR = os.path.join(_BASE_DIR, "cheques")
 
 
-def _connect():
-    os.makedirs(_BASE_DIR, exist_ok=True)
-    conn = sqlite3.connect(_DB_PATH, timeout=30)
+def _init_sqlite(conn):
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.row_factory = sqlite3.Row
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS cheques (
@@ -53,7 +50,12 @@ def _connect():
         if column not in existing:
             conn.execute(f"ALTER TABLE cheques ADD COLUMN {column} {ddl}")
     conn.commit()
-    return conn
+
+
+def _connect():
+    # Sin DATABASE_URL, cheques.db de siempre; con ella, el esquema cheques de
+    # PostgreSQL (db.py; tabla de migraciones/versions/0004_cheques.py).
+    return db.connect("cheques", _DB_PATH, _init_sqlite)
 
 
 # Columnas agregadas cuando la lista pasó a ser el cuadro de control único
@@ -164,17 +166,18 @@ def add_check(check_number, image, original_rel, source_filename, page_index, au
             )
             conn.commit()
             return existing["id"]
-        cur = conn.execute(
+        new_id = conn.execute(
             f"""
             INSERT INTO cheques (check_number, number_source, check_pdf, original_pdf,
                                  source_filename, page_index, uploaded_at, {", ".join(_AUTO_FIELDS)})
             VALUES (?, ?, ?, ?, ?, ?, ?, {", ".join("?" for _ in _AUTO_FIELDS)})
+            RETURNING id
             """,
             (check_number, "ocr" if check_number is not None else None, rel, original_rel,
              source_filename, page_index, _now()) + auto_values,
-        )
+        ).fetchone()[0]
         conn.commit()
-        return cur.lastrowid
+        return new_id
     finally:
         conn.close()
 
@@ -217,16 +220,17 @@ def save_manual(check_id, check_number, fields):
             if other:
                 raise ValueError(f"El cheque N° {check_number} ya está cargado.")
         if check_id is None:
-            cur = conn.execute(
+            new_id = conn.execute(
                 f"""
                 INSERT INTO cheques (check_number, number_source, check_pdf, original_pdf, uploaded_at,
                                      {", ".join(_MANUAL_FIELDS)})
                 VALUES (?, 'manual', '', '', ?, {", ".join("?" for _ in _MANUAL_FIELDS)})
+                RETURNING id
                 """,
                 (check_number, _now()) + values,
-            )
+            ).fetchone()[0]
             conn.commit()
-            return cur.lastrowid
+            return new_id
         current = conn.execute("SELECT check_number FROM cheques WHERE id = ?", (check_id,)).fetchone()
         if current is None:
             raise ValueError("Ese cheque ya no existe.")

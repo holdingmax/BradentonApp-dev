@@ -47,6 +47,7 @@ PAGES = {
     "reporte_mensual": [url for path in ("/carga-datos/reporte-mensual", "/carga-datos/reporte-diario", "/reporte/historial",
                                          "/reporte/store-info/historial", "/controles/cierre", "/controles/cierre/exportar/pdf",
                                          "/controles/cmv") for url in _months(path)],
+    "cheques": ["/carga-datos/chase/cheques"],
 }
 
 
@@ -101,8 +102,31 @@ def _escenario_reporte_mensual():
     return results
 
 
+def _escenario_cheques():
+    """Cheque cargado a mano, corregido, con datos automáticos, buscado y borrado."""
+    import cheques_db
+
+    fields = {"manual_date": "2026-10-05", "manual_amount": 250.5, "manual_supplier": "Prueba 100%", "manual_invoice": "F-1",
+              "manual_debit_date": None, "voided": False}
+    check_id = cheques_db.save_manual(None, 99901, fields)
+    results = [check_id, cheques_db.save_manual(check_id, 99901, {**fields, "manual_amount": 260.0, "voided": True})]
+    try:
+        cheques_db.save_manual(None, 99901, fields)
+    except ValueError as exc:
+        results.append(str(exc))
+    cheques_db.set_auto_fields(check_id, {"auto_supplier_key": "coca", "auto_supplier_label": "Coca-Cola", "auto_invoice_no": "123",
+                                          "auto_invoice_date": "2026-10-01", "auto_amount": 260.0})
+    results += [cheques_db.find_by_number(99901), cheques_db.get_check(check_id), len(cheques_db.list_checks()),
+                cheques_db.delete_check(check_id), cheques_db.delete_check(check_id), cheques_db.find_by_number(99901)]
+    return [_without(r, "uploaded_at") for r in results]
+
+
+def _without(value, *keys):
+    return {k: v for k, v in value.items() if k not in keys} if isinstance(value, dict) else value
+
+
 SCENARIOS = {"jh_facturas": _escenario_jh_facturas, "ice_machine": _escenario_ice_machine,
-             "reporte_mensual": _escenario_reporte_mensual}
+             "reporte_mensual": _escenario_reporte_mensual, "cheques": _escenario_cheques}
 
 
 # --- Una corrida (proceso aparte por motor) --------------------------------
@@ -127,6 +151,13 @@ def _body(response):
     if "json" in kind or "html" in kind or "text" in kind:
         return _normalize_html(data.decode("utf-8", "replace"))
     return f"<{len(data)} bytes {kind}>"
+
+
+def _jsonable(value):
+    """Filas (sqlite3.Row o db.Row) como dict; lo demás como texto."""
+    if hasattr(value, "keys"):
+        return {k: value[k] for k in value.keys()}
+    return str(value)
 
 
 def _capture(modules, out_path):
@@ -155,7 +186,7 @@ def _capture(modules, out_path):
     result = pages("antes")
     for module in modules:
         if module in SCENARIOS:
-            result[f"escritura {module}"] = {"status": 0, "body": json.dumps(SCENARIOS[module](), ensure_ascii=False, indent=1, default=str)}
+            result[f"escritura {module}"] = {"status": 0, "body": json.dumps(SCENARIOS[module](), ensure_ascii=False, indent=1, default=_jsonable)}
     result.update(pages("después"))
     with open(out_path, "w", encoding="utf-8") as handle:
         json.dump(result, handle, ensure_ascii=False)
