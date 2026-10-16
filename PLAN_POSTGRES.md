@@ -19,7 +19,8 @@
 | Módulo 4: cheques | Hecho el 16/10: copia idéntica (31 cheques) y comparaciones idénticas (cuadro de Cheques, antes y después de cargar a mano, corregir, completar lo automático y borrar). Los 2 `lastrowid` pasaron a `RETURNING id` |
 | Módulo 5: control_cmv | Hecho el 16/10: copia idéntica (4 reportes de Elistar) y 9 comparaciones idénticas (Control CMV jul-oct, antes y después de guardar, reemplazar y borrar). El `INSERT OR REPLACE` pasó a `ON CONFLICT` |
 | Módulo 6: depositos | Hecho el 16/10: copia idéntica (84 recibos) y 25 comparaciones idénticas (Depósitos, Control Depósitos y Chase jul-oct, antes y después de cargar, detectar duplicado, cambiar tipo, editar y borrar). `lastrowid` → `RETURNING id`; los recibos sin N° van primero en el día (`NULLS FIRST`, como SQLite) |
-| Módulos 7 a 19 | Pendientes |
+| Módulo 7: horas_trabajo | Hecho el 16/10: copia idéntica (semanas y empleados) y 11 comparaciones idénticas (Horas e historial jul-oct, antes y después de cargar, volver a subir, agregar, editar y borrar). Los 2 `lastrowid` → `RETURNING id`; los nombres conocidos para el OCR salen en el orden de la primera aparición, como el DISTINCT de SQLite |
+| Módulos 8 a 19 | Pendientes |
 
 **Cómo se prueba cada módulo** (PC, Postgres local en Docker: contenedor `bradenton-pg`, puerto 55432):
 

@@ -50,6 +50,7 @@ PAGES = {
     "cheques": ["/carga-datos/chase/cheques"],
     "control_cmv": _months("/controles/cmv"),
     "depositos": [url for path in ("/carga-datos/depositos", "/controles/depositos", "/carga-datos/chase") for url in _months(path)],
+    "horas_trabajo": ["/carga-datos/horas-trabajo"] + _months("/carga-datos/horas-trabajo/historial"),
 }
 
 
@@ -159,13 +160,32 @@ def _escenario_depositos():
     return results
 
 
+def _escenario_horas_trabajo():
+    """Una semana de prueba cargada, vuelta a subir, con un empleado agregado, editado y borrado."""
+    import horas_trabajo_db
+
+    employees = [{"employee_name": "Prueba Uno", "hours_label": "26:48", "hours": 26.8}, {"employee_name": "Prueba Dos", "hours": 40}]
+    week = horas_trabajo_db.upsert_week("2026-10-12", "2026-10-05", "2026-10-11", employees)
+    again = horas_trabajo_db.upsert_week("2026-10-12", "2026-10-05", "2026-10-11", employees[:1], source="ocr")
+    extra = horas_trabajo_db.add_employee(week, "Prueba Tres 100%", hours=5.5, rate=16.0, deduct=10.0, hours_label="05:30")
+    horas_trabajo_db.update_employee(extra, hours=6.0, deduct=0.0)
+    results = [week == again, horas_trabajo_db.get_employee_week(extra), horas_trabajo_db.known_employee_names(),
+               [[_without(dict(w), "created_at", "employees"), [_without(dict(e), "id") for e in w.get("employees", [])]]
+                for w in horas_trabajo_db.get_month_weeks(2026, 10)]]
+    horas_trabajo_db.delete_employee(extra)
+    horas_trabajo_db.delete_week(week)
+    results += [horas_trabajo_db.get_week(week), len(horas_trabajo_db.get_month_weeks(2026, 10))]
+    return results
+
+
 def _without(value, *keys):
     return {k: v for k, v in value.items() if k not in keys} if isinstance(value, dict) else value
 
 
 SCENARIOS = {"jh_facturas": _escenario_jh_facturas, "ice_machine": _escenario_ice_machine,
              "reporte_mensual": _escenario_reporte_mensual, "cheques": _escenario_cheques,
-             "control_cmv": _escenario_control_cmv, "depositos": _escenario_depositos}
+             "control_cmv": _escenario_control_cmv, "depositos": _escenario_depositos,
+             "horas_trabajo": _escenario_horas_trabajo}
 
 
 # --- Una corrida (proceso aparte por motor) --------------------------------

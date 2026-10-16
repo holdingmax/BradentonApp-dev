@@ -12,8 +12,9 @@ reportes_data/horas_trabajo.db (mismo directorio gitignored de siempre).
 
 import app_paths
 import os
-import sqlite3
 from datetime import datetime
+
+import db
 
 _BASE_DIR = app_paths.DATA_DIR
 _DB_PATH = os.path.join(_BASE_DIR, "horas_trabajo.db")
@@ -21,15 +22,17 @@ _DB_PATH = os.path.join(_BASE_DIR, "horas_trabajo.db")
 DEFAULT_HOURLY_RATE = 15.0
 
 
-def _connect():
-    os.makedirs(_BASE_DIR, exist_ok=True)
+def _init_sqlite(conn):
     # timeout=30 + WAL -- ver reportes_db.py: necesario desde que las cargas
     # en segundo plano (jobs.py) pueden escribir de verdad en paralelo.
-    conn = sqlite3.connect(_DB_PATH, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.row_factory = sqlite3.Row
     _ensure_schema(conn)
-    return conn
+
+
+def _connect():
+    # Sin DATABASE_URL, la base SQLite de siempre; con ella, el esquema horas_trabajo de
+    # PostgreSQL (db.py; tablas de migraciones/versions/0007_horas_trabajo.py).
+    return db.connect("horas_trabajo", _DB_PATH, _init_sqlite)
 
 
 def _ensure_schema(conn):
@@ -102,12 +105,11 @@ def upsert_week(report_date, period_from, period_to, employees, source="ocr", do
             )
             conn.execute("DELETE FROM horas_trabajo_employees WHERE week_id = ?", (week_id,))
         else:
-            cur = conn.execute(
+            week_id = conn.execute(
                 "INSERT INTO horas_trabajo_weeks (report_date, period_from, period_to, source, document_id, created_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
                 (key, _date_key(period_from), _date_key(period_to), source, document_id, _now()),
-            )
-            week_id = cur.lastrowid
+            ).fetchone()[0]
 
         for emp in employees:
             conn.execute(
@@ -133,13 +135,13 @@ def set_week_document(week_id, document_id):
 def add_employee(week_id, employee_name, hours=0.0, rate=DEFAULT_HOURLY_RATE, deduct=0.0, hours_label=None):
     conn = _connect()
     try:
-        cur = conn.execute(
+        new_id = conn.execute(
             "INSERT INTO horas_trabajo_employees (week_id, employee_name, hours_label, hours, rate, deduct) "
-            "VALUES (?, ?, ?, ?, ?, ?)",
+            "VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
             (week_id, employee_name.strip(), hours_label, float(hours or 0.0), float(rate or 0.0), float(deduct or 0.0)),
-        )
+        ).fetchone()[0]
         conn.commit()
-        return cur.lastrowid
+        return new_id
     finally:
         conn.close()
 
@@ -217,7 +219,8 @@ def known_employee_names():
     conn = _connect()
     try:
         return [row[0] for row in conn.execute(
-            "SELECT DISTINCT employee_name FROM horas_trabajo_employees WHERE employee_name <> ''"
+            "SELECT employee_name FROM horas_trabajo_employees WHERE employee_name <> '' "
+            "GROUP BY employee_name ORDER BY MIN(id)"
         ).fetchall()]
     finally:
         conn.close()
