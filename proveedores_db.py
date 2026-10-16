@@ -289,7 +289,7 @@ def list_suppliers_with_counts():
         rows = conn.execute(
             """
             SELECT supplier_key, MAX(supplier_label) AS supplier_label, COUNT(*) AS n, SUM(amount) AS total
-            FROM supplier_invoices GROUP BY supplier_key ORDER BY supplier_label
+            FROM supplier_invoices GROUP BY supplier_key ORDER BY supplier_label, supplier_key
             """
         ).fetchall()
     finally:

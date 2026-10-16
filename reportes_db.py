@@ -15,7 +15,6 @@ import app_paths
 import os
 import re
 import shutil
-import sqlite3
 from datetime import date, datetime
 
 import documents_db
@@ -430,7 +429,7 @@ def get_month_departments_by_date(year, month):
     conn = _connect()
     try:
         rows = conn.execute(
-            "SELECT date, department, count, amount FROM daily_report_departments WHERE date LIKE ? ORDER BY date",
+            "SELECT date, department, count, amount FROM daily_report_departments WHERE date LIKE ? ORDER BY date, department",
             (f"{year:04d}-{month:02d}-%",),
         ).fetchall()
     finally:

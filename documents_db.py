@@ -132,7 +132,7 @@ def list_documents(module, year, month):
     conn = _connect()
     try:
         rows = conn.execute(
-            "SELECT * FROM documents WHERE module = ? AND year = ? AND month = ? ORDER BY uploaded_at ASC",
+            "SELECT * FROM documents WHERE module = ? AND year = ? AND month = ? ORDER BY uploaded_at ASC, id",
             (module, year, month),
         ).fetchall()
     finally:
@@ -152,7 +152,7 @@ def list_all_documents(module):
     conn = _connect()
     try:
         rows = conn.execute(
-            "SELECT * FROM documents WHERE module = ? ORDER BY uploaded_at ASC", (module,)
+            "SELECT * FROM documents WHERE module = ? ORDER BY uploaded_at ASC, year, month, id", (module,)
         ).fetchall()
     finally:
         conn.close()
@@ -175,7 +175,7 @@ def search_documents(query, limit=20):
     try:
         rows = conn.execute(
             "SELECT * FROM documents WHERE LOWER(filename) LIKE LOWER(?) OR LOWER(label) LIKE LOWER(?) "
-            "ORDER BY uploaded_at DESC LIMIT ?",
+            "ORDER BY uploaded_at DESC, id LIMIT ?",
             (like, like, limit),
         ).fetchall()
     finally:

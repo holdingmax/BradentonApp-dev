@@ -18,7 +18,6 @@ import app_paths
 import os
 import math
 import re
-import sqlite3
 import shutil
 import tempfile
 import threading
@@ -7090,7 +7089,7 @@ def carga_datos_cmv_ventas_subir():
     for dept_name, rows in rows_by_dept.items():
         try:
             cmv_db.replace_month_department_sales(year, month, dept_name, rows)
-        except sqlite3.Error as exc:
+        except db.Error as exc:
             print(f"[carga-datos/cmv/ventas] {dept_name}: {exc}")
             files_failed += 1
 

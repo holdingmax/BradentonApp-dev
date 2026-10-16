@@ -75,7 +75,7 @@ def list_month(year, month):
     """Los Payment Summary pagados en el mes (por la fecha "To", que es la del pago en Chase)."""
     conn = _connect()
     try:
-        rows = conn.execute("SELECT * FROM payment_summaries WHERE to_date LIKE ? ORDER BY to_date",
+        rows = conn.execute("SELECT * FROM payment_summaries WHERE to_date LIKE ? ORDER BY to_date, rowid",
                             (f"{year:04d}-{month:02d}-%",)).fetchall()
         return [dict(r) for r in rows]
     finally:
