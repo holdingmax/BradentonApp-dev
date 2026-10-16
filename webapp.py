@@ -223,6 +223,13 @@ def _temp_cleanup_loop():
 
 threading.Thread(target=_temp_cleanup_loop, daemon=True, name="temp-cleanup").start()
 
+# A2 (AUDITORIA_2026-10.md): en Render el disco del servicio se borra en cada
+# deploy o reinicio. Sin DATABASE_URL todo lo cargado iría a ese disco y se
+# perdería sin aviso, así que la app no arranca y lo dice en el log.
+if os.environ.get("RENDER") and not db.uses_postgres():
+    raise SystemExit("Falta la variable DATABASE_URL: en Render los datos van en la base PostgreSQL "
+                     "(ver PLAN_POSTGRES.md). La app no arranca sin ella.")
+
 app = Flask(__name__)
 app.secret_key = _load_or_create_secret_key()
 # Protección CSRF (auditoría 2026-09, webapp.py:145/302): las cookies de
