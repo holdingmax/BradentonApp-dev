@@ -3,6 +3,7 @@ Copia los datos de las bases SQLite a PostgreSQL y verifica que hayan
 quedado idénticos (pase a Postgres, punto 7 de PLAN_POSTGRES.md).
 
     python migrar_sqlite_a_postgres.py jh_facturas [otro_modulo ...] [--origen CARPETA] [--vaciar]
+    python migrar_sqlite_a_postgres.py todos        las 19 bases y la configuración (usuarios, reglas, ajustes)
 
 - La base de destino es la de DATABASE_URL (variable de entorno o .env).
 - Lee una copia de cada base SQLite (se toma con la API de respaldo de
@@ -295,12 +296,14 @@ def _comparable_config(name, payload):
 
 def main():
     parser = argparse.ArgumentParser(description="Copia bases SQLite a PostgreSQL y verifica que queden idénticas.")
-    parser.add_argument("modulos", nargs="+", help="nombre de la base sin .db (jh_facturas, chase, ...)")
+    parser.add_argument("modulos", nargs="+", help="nombre de la base sin .db (jh_facturas, chase, ...), config, o todos")
     parser.add_argument("--origen", default=app_paths.DATA_DIR, help="carpeta con las bases SQLite (por defecto, la de datos de la app)")
     parser.add_argument("--vaciar", action="store_true", help="vacía antes las tablas del módulo (solo contra un Postgres de esta PC)")
     parser.add_argument("--config-origen", help="para el módulo config: carpeta con los JSON (por defecto, los de la app en esta PC)")
     parser.add_argument("--sin-usuarios", action="store_true", help="para el módulo config: no copia los usuarios")
     args = parser.parse_args()
+    if args.modulos == ["todos"]:
+        args.modulos = [s for s in db.SCHEMAS if s != "config"] + ["config"]
 
     if not db.uses_postgres():
         db.load_dotenv()
