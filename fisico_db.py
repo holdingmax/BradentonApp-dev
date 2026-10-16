@@ -44,20 +44,23 @@ resto de los módulos de Carga de Datos):
 
 import app_paths
 import os
-import sqlite3
 from datetime import date, datetime
+
+import db
 
 _BASE_DIR = app_paths.DATA_DIR
 _DB_PATH = os.path.join(_BASE_DIR, "fisico.db")
 
 
-def _connect():
-    os.makedirs(_BASE_DIR, exist_ok=True)
-    conn = sqlite3.connect(_DB_PATH, timeout=30)
+def _init_sqlite(conn):
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.row_factory = sqlite3.Row
     _ensure_schema(conn)
-    return conn
+
+
+def _connect():
+    # Sin DATABASE_URL, la base SQLite de siempre; con ella, el esquema fisico de
+    # PostgreSQL (db.py; tablas de migraciones/versions/0010_fisico.py).
+    return db.connect("fisico", _DB_PATH, _init_sqlite)
 
 
 def _ensure_schema(conn):
@@ -153,11 +156,12 @@ def add_invoice(invoice_date, due_date, invoice_number, gallons, amount, source=
     now = _now()
     conn = _connect()
     try:
-        conn.execute(
+        invoice_id = conn.execute(
             """
             INSERT INTO fuel_invoices
                 (invoice_date, due_date, invoice_number, gallons, amount, source, bol_number, source_filename, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING id
             """,
             (
                 _date_key(invoice_date),
@@ -171,8 +175,7 @@ def add_invoice(invoice_date, due_date, invoice_number, gallons, amount, source=
                 now,
                 now,
             ),
-        )
-        invoice_id = conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
+        ).fetchone()[0]
         for line in (lines or []):
             conn.execute(
                 """
@@ -263,7 +266,7 @@ def find_invoice_by_number(invoice_number):
     conn = _connect()
     try:
         row = conn.execute(
-            "SELECT * FROM fuel_invoices WHERE invoice_number = ? COLLATE NOCASE", (number,)
+            "SELECT * FROM fuel_invoices WHERE LOWER(invoice_number) = LOWER(?)", (number,)
         ).fetchone()
     finally:
         conn.close()

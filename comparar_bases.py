@@ -55,7 +55,9 @@ PAGES = {
                                     "/carga-datos/reportes/eft/pdf", "/controles/tarjetas", "/controles/cierre",
                                     "/controles/rapidos/tarjetas") for url in _months(path)]
                   + ["/carga-datos/eft/proximos", "/controles/rapidos/eft"],
-    "documents": ["/buscar/documentos?q=close"],  # /documentos/... redirige mientras el guardado esté apagado
+    "documents": ["/buscar/documentos?q=close"],
+    "fisico": [url for path in ("/fisico", "/fisico/exportar", "/fisico/exportar/pdf") for url in _months(path)]
+              + ["/carga-datos/eft/proximos", "/controles/rapidos/eft"],  # /documentos/... redirige mientras el guardado esté apagado
 }
 
 
@@ -223,6 +225,28 @@ def _escenario_documents():
     return results
 
 
+def _escenario_fisico():
+    """Factura de combustible de prueba con renglones, buscada sin distinguir mayúsculas, editada y borrada; ajustes del mes."""
+    import fisico_db
+
+    lines = [{"product_code": "087", "description": "Regular 100%", "qty_billing": 6000, "qty_freight": 6000,
+              "unit_price_wo_tax": 2.1, "unit_price_with_tax": 2.75, "line_total": 16500.0},
+             {"product_code": "093", "description": "Premium", "qty_billing": 2600, "qty_freight": 2600,
+              "unit_price_wo_tax": 2.844, "unit_price_with_tax": 3.494, "line_total": 9084.4}]
+    invoice_id = fisico_db.add_invoice("2026-12-03", "2026-12-08", "SI-PRUEBA1", 8600, 25584.4, source="pdf", bol_number="B1",
+                                       lines=lines, source_filename="Fuel prueba.pdf")
+    clean = lambda d: _without(d, "created_at", "updated_at") if d else d
+    results = [invoice_id, clean(fisico_db.find_invoice_by_number("si-prueba1")), [_without(l, "id") for l in fisico_db.get_invoice_lines(invoice_id)]]
+    fisico_db.update_invoice(invoice_id, "2026-12-04", "2026-12-09", "SI-PRUEBA1", 8601, 25600.0)
+    fisico_db.set_month_initial_override(2026, 12, 2746.15, 7000.5)
+    fisico_db.set_month_real_ending(2026, 12, 3000, "2026-12-31")
+    results += [[clean(i) for i in fisico_db.get_month_invoices(2026, 12)], fisico_db.get_invoice_years(),
+                _without(fisico_db.get_month_settings(2026, 12) or {}, "updated_at"), fisico_db.get_settings_years()]
+    fisico_db.delete_invoice(invoice_id)
+    results += [fisico_db.find_invoice_by_number("SI-PRUEBA1"), len(fisico_db.list_all_invoices())]
+    return results
+
+
 def _without(value, *keys):
     return {k: v for k, v in value.items() if k not in keys} if isinstance(value, dict) else value
 
@@ -231,7 +255,7 @@ SCENARIOS = {"jh_facturas": _escenario_jh_facturas, "ice_machine": _escenario_ic
              "reporte_mensual": _escenario_reporte_mensual, "cheques": _escenario_cheques,
              "control_cmv": _escenario_control_cmv, "depositos": _escenario_depositos,
              "horas_trabajo": _escenario_horas_trabajo, "jh_mensual": _escenario_jh_mensual,
-             "documents": _escenario_documents}
+             "documents": _escenario_documents, "fisico": _escenario_fisico}
 
 
 # --- Una corrida (proceso aparte por motor) --------------------------------
