@@ -41,22 +41,25 @@ se dejó de usar.
 
 import app_paths
 import os
-import sqlite3
 from datetime import date, datetime
+
+import db
 
 _BASE_DIR = app_paths.DATA_DIR
 _DB_PATH = os.path.join(_BASE_DIR, "caja.db")
 
 
-def _connect():
-    os.makedirs(_BASE_DIR, exist_ok=True)
+def _init_sqlite(conn):
     # timeout=30 + WAL -- ver reportes_db.py: necesario desde que las cargas
     # en segundo plano (jobs.py) pueden escribir de verdad en paralelo.
-    conn = sqlite3.connect(_DB_PATH, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.row_factory = sqlite3.Row
     _ensure_schema(conn)
-    return conn
+
+
+def _connect():
+    # Sin DATABASE_URL, la base SQLite de siempre; con ella, el esquema caja de
+    # PostgreSQL (db.py; tablas de migraciones/versions/0011_caja.py).
+    return db.connect("caja", _DB_PATH, _init_sqlite)
 
 
 def _ensure_schema(conn):
@@ -123,12 +126,12 @@ def add_expense_item(report_date, amount, detail, source=None, trans_no=None):
     now = _now()
     conn = _connect()
     try:
-        cur = conn.execute(
-            "INSERT INTO caja_expense_items (date, amount, detail, created_at, source, trans_no) VALUES (?, ?, ?, ?, ?, ?)",
+        new_id = conn.execute(
+            "INSERT INTO caja_expense_items (date, amount, detail, created_at, source, trans_no) VALUES (?, ?, ?, ?, ?, ?) RETURNING id",
             (key, amount, (detail or "").strip() or None, now, source, trans_no),
-        )
+        ).fetchone()[0]
         conn.commit()
-        return cur.lastrowid
+        return new_id
     finally:
         conn.close()
 
@@ -153,7 +156,7 @@ def find_same_expense(report_date, amount, trans_no=None):
         # (dos tickets distintos del mismo día pueden ser del mismo monto).
         row = conn.execute(
             "SELECT * FROM caja_expense_items WHERE date = ? AND ABS(amount - ?) < 0.005"
-            + (" AND (trans_no IS NULL OR trans_no = '')" if trans_no else ""),
+            + (" AND (trans_no IS NULL OR trans_no = '')" if trans_no else "") + " ORDER BY id",
             (key, amount),
         ).fetchone()
         return dict(row) if row else None
@@ -180,13 +183,13 @@ def add_pending_expense(year, month, report_date, amount, detail, filename):
             "SELECT 1 FROM caja_expense_pending WHERE year = ? AND month = ? AND filename = ?", (year, month, filename)
         ).fetchone():
             return None
-        cur = conn.execute(
+        new_id = conn.execute(
             "INSERT INTO caja_expense_pending (year, month, date, amount, detail, filename, created_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            " VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING id",
             (year, month, _date_key(report_date) if report_date else None, amount, detail, filename, _now()),
-        )
+        ).fetchone()[0]
         conn.commit()
-        return cur.lastrowid
+        return new_id
     finally:
         conn.close()
 
@@ -248,8 +251,6 @@ def get_month_expenses(year, month):
         day: round(sum(item["amount"] or 0.0 for item in items), 2)
         for day, items in items_by_date.items()
     }
-
-
 
 
 def get_expense_years():

@@ -23,7 +23,8 @@
 | Módulo 8: jh_mensual | Hecho el 16/10: copia idéntica (9 reportes) y 61 comparaciones idénticas (J.H., historiales de EFT y Cupones, PDF de EFT, Tarjetas, Cierre, botonera; antes y después de sumar renglones y borrar). `INSERT OR REPLACE` → `ON CONFLICT`; los renglones de todos los meses salen de mes en mes, como en SQLite |
 | Módulo 9: documents | Hecho el 16/10: migrada igual (43 filas, guardado apagado) para que no quede ningún módulo en SQLite. Comparaciones idénticas del buscador y de un escenario con el guardado prendido solo en la copia (listar, buscar, guardar, leer, borrar). `lastrowid` → `RETURNING id`; la búsqueda por nombre no distingue mayúsculas en los dos (`LOWER … LIKE LOWER`) |
 | Módulo 10: fisico | Hecho el 16/10: copia idéntica (físico, facturas de combustible y renglones) y 29 comparaciones idénticas (Físico y sus exportaciones jul-oct, Próximos EFT, botonera EFT; antes y después de cargar, buscar, editar y borrar una factura y fijar los ajustes del mes). `last_insert_rowid()` → `RETURNING id`; `COLLATE NOCASE` → `LOWER() = LOWER()` |
-| Módulos 11 a 19 | Pendientes |
+| Módulo 11: caja | Hecho el 16/10: copia idéntica y 41 comparaciones idénticas (Caja ene-oct, sus exportaciones y su PDF, Control Caja viejo, botonera; antes y después de gastos con N° de ticket como número, repetidos, pendientes y saldos del mes). Los 2 `lastrowid` → `RETURNING id`; el gasto repetido se busca con `ORDER BY id` |
+| Módulos 12 a 19 | Pendientes |
 
 **Cómo se prueba cada módulo** (PC, Postgres local en Docker: contenedor `bradenton-pg`, puerto 55432):
 

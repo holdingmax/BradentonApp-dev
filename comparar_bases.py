@@ -55,9 +55,13 @@ PAGES = {
                                     "/carga-datos/reportes/eft/pdf", "/controles/tarjetas", "/controles/cierre",
                                     "/controles/rapidos/tarjetas") for url in _months(path)]
                   + ["/carga-datos/eft/proximos", "/controles/rapidos/eft"],
-    "documents": ["/buscar/documentos?q=close"],
+    "documents": ["/buscar/documentos?q=close"],  # /documentos/... redirige mientras el guardado esté apagado
     "fisico": [url for path in ("/fisico", "/fisico/exportar", "/fisico/exportar/pdf") for url in _months(path)]
-              + ["/carga-datos/eft/proximos", "/controles/rapidos/eft"],  # /documentos/... redirige mientras el guardado esté apagado
+              + ["/carga-datos/eft/proximos", "/controles/rapidos/eft"],
+    "caja": [f"/carga-datos/caja?year=2026&month={m}" for m in range(1, 7)]
+            + [url for path in ("/carga-datos/caja", "/carga-datos/caja/exportar", "/carga-datos/caja/exportar/pdf",
+                                "/carga-datos/reportes/caja/pdf", "/controles/caja", "/controles/rapidos/caja") for url in _months(path)]
+            + ["/carga-datos/reportes"],
 }
 
 
@@ -247,6 +251,28 @@ def _escenario_fisico():
     return results
 
 
+def _escenario_caja():
+    """Gastos de prueba (con N° de ticket como número), repetidos, pendientes y saldos del mes."""
+    import caja_db
+
+    a = caja_db.add_expense_item("2026-12-05", 50.0, "Gasto con 100%", source="ocr", trans_no=77)
+    b = caja_db.add_expense_item("2026-12-05", 50.0, None)
+    results = [caja_db.find_same_expense("2026-12-05", 50.0, trans_no=77), caja_db.find_same_expense("2026-12-05", 50.004),
+               caja_db.find_same_expense("2026-12-05", 50.0, trans_no="78")]
+    caja_db.update_expense_detail(b, "detalle nuevo")
+    pending = caja_db.add_pending_expense(2026, 12, "2026-12-06", 12.5, "ticket dudoso", "Gasto prueba.pdf")
+    results += [caja_db.add_pending_expense(2026, 12, "2026-12-06", 12.5, "otra vez", "Gasto prueba.pdf"),
+                caja_db.get_month_pending_expenses(2026, 12), caja_db.delete_pending_expense(pending), caja_db.delete_pending_expense(pending)]
+    caja_db.set_month_opening_balance(2026, 12, 1234.56)
+    caja_db.set_month_closing_override(2026, 12, 999.99)
+    results += [caja_db.get_month_expense_items(2026, 12), caja_db.get_month_expenses(2026, 12), caja_db.get_expense_years(),
+                _without(caja_db.get_month_settings(2026, 12) or {}, "updated_at")]
+    for item in (a, b):
+        caja_db.delete_expense_item(item)
+    results.append(caja_db.get_month_expense_items(2026, 12))
+    return [[_without(x, "created_at") for x in r] if isinstance(r, list) else _without(r, "created_at") for r in results]
+
+
 def _without(value, *keys):
     return {k: v for k, v in value.items() if k not in keys} if isinstance(value, dict) else value
 
@@ -255,7 +281,8 @@ SCENARIOS = {"jh_facturas": _escenario_jh_facturas, "ice_machine": _escenario_ic
              "reporte_mensual": _escenario_reporte_mensual, "cheques": _escenario_cheques,
              "control_cmv": _escenario_control_cmv, "depositos": _escenario_depositos,
              "horas_trabajo": _escenario_horas_trabajo, "jh_mensual": _escenario_jh_mensual,
-             "documents": _escenario_documents, "fisico": _escenario_fisico}
+             "documents": _escenario_documents, "fisico": _escenario_fisico,
+             "caja": _escenario_caja}
 
 
 # --- Una corrida (proceso aparte por motor) --------------------------------
