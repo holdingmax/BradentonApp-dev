@@ -195,6 +195,23 @@ def _row_factory(cursor):
     return lambda values: Row(values, names, index)
 
 
+try:
+    from psycopg.adapt import Dumper as _Dumper
+except ImportError:
+    _Dumper = object
+
+
+class _UntypedNumberDumper(_Dumper):
+    """Números sin tipo: Postgres los toma del tipo de la columna, como hace
+    SQLite con su afinidad. Así `WHERE texto = ?` con un número compara como
+    texto (en vez de dar error) y en una columna numérica sigue siendo número."""
+
+    oid = 0
+
+    def dump(self, obj):
+        return (repr(obj) if isinstance(obj, float) else str(int(obj))).encode()
+
+
 class _NumberLoader(NumericLoader):
     """NUMERIC como en SQLite: entero si no tiene decimales, float si tiene."""
 
@@ -308,6 +325,8 @@ _pool_lock = threading.Lock()
 
 def _configure(conn):
     conn.adapters.register_loader("numeric", _NumberLoader)
+    conn.adapters.register_dumper(int, _UntypedNumberDumper)
+    conn.adapters.register_dumper(float, _UntypedNumberDumper)
     conn.autocommit = True
     conn.execute("SET search_path TO " + ", ".join(SCHEMAS) + ", public")
     conn.autocommit = False
