@@ -4,25 +4,24 @@ VPN, Chevron Network Fee, gift cards y las que vengan sueltas, leídas por
 jh_facturas.py. Una fila por factura; el mes de cada una es el de su fecha.
 Próximos EFT (eft_pronostico.py) suma las que ningún EFT cargado pagó.
 
-<carpeta de datos>/jh_facturas.db (app_paths.DATA_DIR).
+<carpeta de datos>/jh_facturas.db (app_paths.DATA_DIR), o el esquema
+jh_facturas de PostgreSQL con DATABASE_URL (db.py; la tabla la crea la
+migración migraciones/versions/0001_jh_facturas.py).
 """
 
 import os
-import sqlite3
 from datetime import datetime
 
 import app_paths
+import db
 
-_BASE_DIR = app_paths.DATA_DIR
-_DB_PATH = os.path.join(_BASE_DIR, "jh_facturas.db")
+_SCHEMA = "jh_facturas"
+_DB_PATH = os.path.join(app_paths.DATA_DIR, "jh_facturas.db")
 _FIELDS = ("invoice_number", "invoice_date", "due_date", "amount", "kind", "description", "detail", "source_filename", "uploaded_at")
 
 
-def _connect():
-    os.makedirs(_BASE_DIR, exist_ok=True)
-    conn = sqlite3.connect(_DB_PATH, timeout=30)
+def _init_sqlite(conn):
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.row_factory = sqlite3.Row
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS jh_misc_invoices (
@@ -38,7 +37,10 @@ def _connect():
         )
         """
     )
-    return conn
+
+
+def _connect():
+    return db.connect(_SCHEMA, _DB_PATH, _init_sqlite)
 
 
 def _row(row):
