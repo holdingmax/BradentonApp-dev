@@ -7,3 +7,4 @@ users.json
 .env.*
 reportes_data/
 backups/
+.pytest_cache/
