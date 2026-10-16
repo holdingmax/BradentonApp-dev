@@ -9,10 +9,14 @@ __pycache__/
 users.json
 .flask_secret_key
 .env
+.env.*
 
 # Copias de prueba/scratch que no deben viajar a ningún lado.
 *.testeo.xlsx
+Claude outputs/
 
-# Los datos (bases SQLite) nunca viajan dentro de la imagen: en Render viven
-# en el disco persistente (BRADENTON_DATA_DIR, ver app_paths.py).
+# Los datos nunca viajan dentro de la imagen: en Render viven en la base
+# PostgreSQL (DATABASE_URL, ver db.py). Tampoco las bases SQLite de la PC ni
+# los respaldos de Postgres.
 reportes_data/
+backups/

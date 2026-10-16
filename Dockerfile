@@ -16,9 +16,16 @@ FROM python:3.12-slim
 # Proveedores, y los controles mensuales que reusan ese mismo motor) --
 # ver ocr_utils.py. Sin esto, esos módulos fallan con un ImportError claro
 # (no un crash), pero simplemente no pueden usarse.
+# tzdata: la zona horaria de Florida (abajo, TZ). Sin ella, en Render "hoy"
+# es la fecha UTC y después de las 20:00 de Florida la app ya está en el día
+# (o el mes) siguiente (J6 de AUDITORIA_2026-10.md).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends tesseract-ocr \
+    && apt-get install -y --no-install-recommends tesseract-ocr tzdata \
     && rm -rf /var/lib/apt/lists/*
+
+ENV TZ=America/New_York
+# Los print() de la app salen enseguida en los logs de Render (sin buffer).
+ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
@@ -32,5 +39,6 @@ COPY . .
 
 # webapp.py ya lee la variable PORT que Render asigna (ver el "if __name__
 # == '__main__'" al final de ese archivo) y escucha en host="0.0.0.0" --
-# no hace falta ningún argumento extra acá.
+# no hace falta ningún argumento extra acá. Con DATABASE_URL, antes de
+# atender aplica las migraciones de Alembic que falten (db.upgrade_schema).
 CMD ["python", "webapp.py"]
