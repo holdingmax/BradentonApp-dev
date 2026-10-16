@@ -230,6 +230,13 @@ if os.environ.get("RENDER") and not db.uses_postgres():
     raise SystemExit("Falta la variable DATABASE_URL: en Render los datos van en la base PostgreSQL "
                      "(ver PLAN_POSTGRES.md). La app no arranca sin ella.")
 
+# Con DATABASE_URL, antes de nada se aplican las migraciones de Alembic que
+# falten (pase a Postgres, PLAN_POSTGRES.md): la clave de sesión de acá abajo
+# ya vive en la base, y en una base nueva sus tablas todavía no existen. En
+# la PC, sin la variable, no hace nada.
+if db.uses_postgres():
+    db.upgrade_schema()
+
 app = Flask(__name__)
 app.secret_key = _load_or_create_secret_key()
 # Protección CSRF (auditoría 2026-09, webapp.py:145/302): las cookies de
@@ -9557,11 +9564,6 @@ if __name__ == "__main__":
     # arrancado pero inalcanzable desde afuera del contenedor. En la PC del
     # usuario, sin PORT seteada, esto sigue exactamente igual que siempre
     # (127.0.0.1:5000).
-    # Con DATABASE_URL (Render), antes de atender se aplican las migraciones
-    # de Alembic que falten (pase a Postgres, ver PLAN_POSTGRES.md). En la
-    # PC, sin la variable, no hace nada.
-    if db.uses_postgres():
-        db.upgrade_schema()
     port_env = os.environ.get("PORT")
     port = int(port_env) if port_env else 5000
     host = "0.0.0.0" if port_env else "127.0.0.1"

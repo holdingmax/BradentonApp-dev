@@ -11,7 +11,7 @@ import os
 import sys
 
 from alembic import context
-from sqlalchemy import create_engine, pool
+from sqlalchemy import create_engine, pool, text
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import db  # noqa: E402
@@ -28,9 +28,18 @@ url = "postgresql+psycopg://" + url.split("://", 1)[1]
 def run_migrations_online():
     engine = create_engine(url, poolclass=pool.NullPool)
     with engine.connect() as connection:
-        context.configure(connection=connection, transaction_per_migration=True)
-        with context.begin_transaction():
-            context.run_migrations()
+        # Candado de Postgres: si dos procesos arrancan juntos (dos instancias
+        # en Render, o la app y un "alembic upgrade" a mano), el segundo espera
+        # a que el primero termine en lugar de aplicar lo mismo dos veces.
+        connection.execute(text("SELECT pg_advisory_lock(20261016)"))
+        connection.commit()
+        try:
+            context.configure(connection=connection, transaction_per_migration=True)
+            with context.begin_transaction():
+                context.run_migrations()
+        finally:
+            connection.execute(text("SELECT pg_advisory_unlock(20261016)"))
+            connection.commit()
 
 
 if context.is_offline_mode():

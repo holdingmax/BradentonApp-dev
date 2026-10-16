@@ -36,7 +36,9 @@
 | Respaldo (punto 8) | Hecho el 16/10: `respaldo_postgres.py` (pg_dump a `backups/`, verificado con pg_restore; restaurado de prueba en otra base) |
 | Dockerfile (punto 9, parte) | Hecho el 16/10: zona horaria de Florida (J6), salida sin buffer, `.dockerignore` sin `Claude outputs/` ni respaldos |
 | Punto 5: usuarios, clave de sesión y reglas | Hecho el 16/10: `config_store.py` y las tablas del esquema `config` (migración `0023_config`); la copia de datos también pasa la configuración (`migrar_sqlite_a_postgres.py config`); 37 comparaciones idénticas en los dos motores y contra el original |
-| Pendientes | Prueba en Linux limpio con la base vacía (punto 9); A1/A2 adaptados; copia a testing |
+| A1/A2 | Hecho el 16/10: usuarios ilegibles dan error (no "no hay usuarios"); en Render sin `DATABASE_URL` la app no arranca |
+| Punto 9: Linux limpio | Hecho el 16/10: imagen desde cero contra un Postgres vacío, 38 de 38 (primer admin con la clave, Chase, Close Store y depósito por OCR, reinicio y deploy nuevo sin perder datos ni sesión); lo leído por OCR en Linux es idéntico a la PC. Arreglados en el camino: migraciones antes de la clave de sesión y `OMP_THREAD_LIMIT=1` para el OCR |
+| Pendientes | Que Leti cree `bradenton-dev` + `bradenton-dev-db` y cargue `DATABASE_URL` y `BRADENTON_SETUP_KEY`; copiar los datos reales a testing (`migrar_sqlite_a_postgres.py` con todos los módulos y `config`) y que Cande valide |
 
 **Cómo se prueba cada módulo** (PC, Postgres local en Docker: contenedor `bradenton-pg`, puerto 55432):
 

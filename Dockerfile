@@ -26,6 +26,11 @@ RUN apt-get update \
 ENV TZ=America/New_York
 # Los print() de la app salen enseguida en los logs de Render (sin buffer).
 ENV PYTHONUNBUFFERED=1
+# Un hilo por proceso de Tesseract: la app ya lee varias hojas a la vez
+# (ocr_utils.ocr_process_limit) y el Tesseract de Debian abre además un hilo
+# por núcleo en cada una; juntos se pisan. Medido en el contenedor: 4 hojas
+# en paralelo 13.9 s con el límite, más de 10 minutos sin él.
+ENV OMP_THREAD_LIMIT=1
 
 WORKDIR /app
 
