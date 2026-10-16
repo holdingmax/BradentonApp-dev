@@ -43,6 +43,7 @@ def _months(path):
 # Páginas que leen cada módulo. Se agregan a medida que se pasa cada uno.
 PAGES = {
     "jh_facturas": _months("/carga-datos/eft/varias") + ["/carga-datos/eft/proximos", "/controles/rapidos/eft", "/carga-datos/eft"],
+    "ice_machine": _months("/carga-datos/depositos"),
 }
 
 
@@ -65,7 +66,22 @@ def _escenario_jh_facturas():
     return results
 
 
-SCENARIOS = {"jh_facturas": _escenario_jh_facturas}
+def _escenario_ice_machine():
+    """Alta, reemplazo (mismo número) y baja de un Payment Summary de prueba."""
+    import ice_machine_db
+
+    summary = {"summary_no": "999901", "reference": "IND-PRUEBA", "from_date": "2026-10-03", "to_date": "2026-10-09",
+               "transactions": 12, "gross": 150.0, "process_fees": 4.5, "service_fees": 1.0, "net": 144.5,
+               "notes": "con 'comillas' y 100%"}
+    results = [ice_machine_db.save_summary(summary, "Payment Summary prueba.pdf"),
+               ice_machine_db.save_summary({**summary, "net": 140.25, "notes": None})]
+    results.append([{k: v for k, v in s.items() if k != "uploaded_at"} for s in ice_machine_db.list_month(2026, 10)])
+    results += [ice_machine_db.delete_summary("999901"), ice_machine_db.delete_summary("999901")]
+    results.append(len(ice_machine_db.list_month(2026, 10)))
+    return results
+
+
+SCENARIOS = {"jh_facturas": _escenario_jh_facturas, "ice_machine": _escenario_ice_machine}
 
 
 # --- Una corrida (proceso aparte por motor) --------------------------------

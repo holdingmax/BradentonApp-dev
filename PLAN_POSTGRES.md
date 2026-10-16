@@ -12,9 +12,10 @@
 
 | Paso | Estado |
 |---|---|
-| Paso 0: `db.py`, Alembic, Postgres local, copia y comparador | Hecho el 16/10, **sin commit** (espera confirmación) |
-| Módulo 1: jh_facturas | Hecho el 16/10, **sin commit**: copia idéntica (10 filas) y 15 comparaciones idénticas |
-| Módulos 2 a 19 | Pendientes |
+| Paso 0: `db.py`, Alembic, Postgres local, copia y comparador | Hecho el 16/10, commit `c35300a` |
+| Módulo 1: jh_facturas | Hecho el 16/10, commit `d515efc`: copia idéntica (10 filas) y 15 comparaciones idénticas |
+| Módulo 2: ice_machine | Hecho el 16/10: copia idéntica (8 Payment Summary) y comparaciones idénticas (Depósitos jul-oct, antes y después de alta / reemplazo / baja). El `INSERT OR REPLACE` pasó a `ON CONFLICT … DO UPDATE` con todas las columnas |
+| Módulos 3 a 19 | Pendientes |
 
 **Cómo se prueba cada módulo** (PC, Postgres local en Docker: contenedor `bradenton-pg`, puerto 55432):
 
