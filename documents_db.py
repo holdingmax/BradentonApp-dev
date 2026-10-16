@@ -30,8 +30,9 @@ sin que listar "los documentos de este módulo este mes" se vuelva lento
 import app_paths
 import os
 import re
-import sqlite3
 from datetime import datetime
+
+import db
 
 _BASE_DIR = app_paths.DATA_DIR
 _DB_PATH = os.path.join(_BASE_DIR, "documents.db")
@@ -49,15 +50,17 @@ _FILES_DIR = os.path.join(_BASE_DIR, "documents")
 GUARDAR_DOCUMENTOS = False
 
 
-def _connect():
-    os.makedirs(_BASE_DIR, exist_ok=True)
+def _init_sqlite(conn):
     # timeout=30 + WAL -- ver reportes_db.py: necesario desde que las cargas
     # en segundo plano (jobs.py) pueden escribir de verdad en paralelo.
-    conn = sqlite3.connect(_DB_PATH, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.row_factory = sqlite3.Row
     _ensure_schema(conn)
-    return conn
+
+
+def _connect():
+    # Sin DATABASE_URL, la base SQLite de siempre; con ella, el esquema documents de
+    # PostgreSQL (db.py; tablas de migraciones/versions/0009_documents.py).
+    return db.connect("documents", _DB_PATH, _init_sqlite)
 
 
 def _ensure_schema(conn):
@@ -109,15 +112,16 @@ def store_document(module, source_path, original_filename, year, month, label=No
     now = _now()
     conn = _connect()
     try:
-        cur = conn.execute(
+        new_id = conn.execute(
             """
             INSERT INTO documents (module, year, month, label, filename, stored_path, uploaded_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
+            RETURNING id
             """,
             (module, year, month, label, os.path.basename(original_filename), _portable_relpath(dest_path), now),
-        )
+        ).fetchone()[0]
         conn.commit()
-        return cur.lastrowid
+        return new_id
     finally:
         conn.close()
 
@@ -170,7 +174,7 @@ def search_documents(query, limit=20):
     conn = _connect()
     try:
         rows = conn.execute(
-            "SELECT * FROM documents WHERE filename LIKE ? OR label LIKE ? "
+            "SELECT * FROM documents WHERE LOWER(filename) LIKE LOWER(?) OR LOWER(label) LIKE LOWER(?) "
             "ORDER BY uploaded_at DESC LIMIT ?",
             (like, like, limit),
         ).fetchall()

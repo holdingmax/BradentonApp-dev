@@ -55,6 +55,7 @@ PAGES = {
                                     "/carga-datos/reportes/eft/pdf", "/controles/tarjetas", "/controles/cierre",
                                     "/controles/rapidos/tarjetas") for url in _months(path)]
                   + ["/carga-datos/eft/proximos", "/controles/rapidos/eft"],
+    "documents": ["/buscar/documentos?q=close"],  # /documentos/... redirige mientras el guardado esté apagado
 }
 
 
@@ -200,6 +201,28 @@ def _escenario_jh_mensual():
     return results
 
 
+def _escenario_documents():
+    """Con el guardado prendido solo en la copia: listar, buscar, guardar uno de prueba, leerlo y borrarlo."""
+    import tempfile as _tempfile
+
+    import documents_db
+
+    documents_db.GUARDAR_DOCUMENTOS = True
+    try:
+        clean = lambda docs: [_without(d, "uploaded_at", "stored_path") for d in docs]
+        results = [clean(documents_db.list_all_documents("lottery")), clean(documents_db.search_documents("CLOSE", limit=5))]
+        with _tempfile.NamedTemporaryFile("wb", suffix=".pdf", delete=False) as handle:
+            handle.write(b"%PDF-1.4 prueba")
+        doc_id = documents_db.store_document("lottery", handle.name, "Prueba 100%.pdf", 2026, 12, label="prueba")
+        results += [doc_id, clean(documents_db.list_documents("lottery", 2026, 12)), _without(documents_db.get_document(doc_id), "uploaded_at", "stored_path")]
+        documents_db.delete_document(doc_id)
+        results.append(documents_db.get_document(doc_id))
+        os.remove(handle.name)
+    finally:
+        documents_db.GUARDAR_DOCUMENTOS = False
+    return results
+
+
 def _without(value, *keys):
     return {k: v for k, v in value.items() if k not in keys} if isinstance(value, dict) else value
 
@@ -207,7 +230,8 @@ def _without(value, *keys):
 SCENARIOS = {"jh_facturas": _escenario_jh_facturas, "ice_machine": _escenario_ice_machine,
              "reporte_mensual": _escenario_reporte_mensual, "cheques": _escenario_cheques,
              "control_cmv": _escenario_control_cmv, "depositos": _escenario_depositos,
-             "horas_trabajo": _escenario_horas_trabajo, "jh_mensual": _escenario_jh_mensual}
+             "horas_trabajo": _escenario_horas_trabajo, "jh_mensual": _escenario_jh_mensual,
+             "documents": _escenario_documents}
 
 
 # --- Una corrida (proceso aparte por motor) --------------------------------
