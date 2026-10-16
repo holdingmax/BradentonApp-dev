@@ -49,6 +49,7 @@ PAGES = {
                                          "/controles/cmv") for url in _months(path)],
     "cheques": ["/carga-datos/chase/cheques"],
     "control_cmv": _months("/controles/cmv"),
+    "depositos": [url for path in ("/carga-datos/depositos", "/controles/depositos", "/carga-datos/chase") for url in _months(path)],
 }
 
 
@@ -140,13 +141,31 @@ def _escenario_control_cmv():
     return results
 
 
+def _escenario_depositos():
+    """Recibos de prueba (uno sin N°, para el orden de los vacíos), duplicado, cambio de tipo, edición y baja."""
+    import depositos_db
+
+    a = depositos_db.add_deposit(2026, 10, "2026-10-08", 1234.5, "Recibo con 100%", "555001", "normal", "", "Dep (prueba).pdf", 0)
+    b = depositos_db.add_deposit(2026, 10, "2026-10-08", 99.99, None, None, "normal", "", "Dep (prueba).pdf", 1)
+    results = [depositos_db.find_duplicate("555001", "2026-10-08", 1234.501), depositos_db.find_duplicate("555001", "2026-10-08", 1234.6),
+               depositos_db.find_by_source_page("Dep (prueba).pdf", 1), depositos_db.find_by_source_page("Dep (prueba).pdf", 0, "555001")]
+    depositos_db.set_kind(a, "ice", "Ice Machine")
+    depositos_db.update_deposit(b, "2026-10-09", 100.0, "editado", "food_truck")
+    results += [[_without(d, "uploaded_at") for d in depositos_db.list_month(2026, 10)],
+                [d["id"] for d in depositos_db.list_kind("ice")], _without(depositos_db.get_deposit(b), "uploaded_at")]
+    for deposit_id in (a, b):
+        depositos_db.delete_deposit(deposit_id)
+    results.append(len(depositos_db.list_month(2026, 10)))
+    return results
+
+
 def _without(value, *keys):
     return {k: v for k, v in value.items() if k not in keys} if isinstance(value, dict) else value
 
 
 SCENARIOS = {"jh_facturas": _escenario_jh_facturas, "ice_machine": _escenario_ice_machine,
              "reporte_mensual": _escenario_reporte_mensual, "cheques": _escenario_cheques,
-             "control_cmv": _escenario_control_cmv}
+             "control_cmv": _escenario_control_cmv, "depositos": _escenario_depositos}
 
 
 # --- Una corrida (proceso aparte por motor) --------------------------------
@@ -273,7 +292,16 @@ def main():
         source = args.datos or app_paths.DATA_DIR
         _copy_data(source, lite_dir)
         _copy_data(source, pg_dir)
-        copy = subprocess.run([sys.executable, os.path.join(APP_DIR, "migrar_sqlite_a_postgres.py"), *args.modulos, "--origen", pg_dir, "--vaciar"],
+        # Se recargan todos los módulos que ya están en Postgres, no solo los
+        # que se comparan: las páginas leen también los otros.
+        with psycopg.connect(url) as pg:
+            migrated = [r[0] for r in pg.execute(
+                "SELECT DISTINCT table_schema FROM information_schema.tables WHERE table_schema = ANY(%s)", (list(db.SCHEMAS),)
+            ).fetchall()]
+        missing = [m for m in args.modulos if m not in migrated]
+        if missing:
+            sys.exit(f"Sin tablas en Postgres para: {', '.join(missing)} (¿falta alembic upgrade head?)")
+        copy = subprocess.run([sys.executable, os.path.join(APP_DIR, "migrar_sqlite_a_postgres.py"), *sorted(migrated), "--origen", pg_dir, "--vaciar"],
                               cwd=APP_DIR, env={**os.environ, "DATABASE_URL": url, "PYTHONIOENCODING": "utf-8"})
         if copy.returncode:
             sys.exit("La copia a Postgres no quedó idéntica: no se compara.")

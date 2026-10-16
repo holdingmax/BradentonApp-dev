@@ -13,20 +13,18 @@ reportes_data/depositos.db + reportes_data/depositos/{año}/{mes}/*.pdf
 import app_paths
 import os
 import re
-import sqlite3
 import uuid
 from datetime import datetime
+
+import db
 
 _BASE_DIR = app_paths.DATA_DIR
 _DB_PATH = os.path.join(_BASE_DIR, "depositos.db")
 _FILES_DIR = os.path.join(_BASE_DIR, "depositos")
 
 
-def _connect():
-    os.makedirs(_BASE_DIR, exist_ok=True)
-    conn = sqlite3.connect(_DB_PATH, timeout=30)
+def _init_sqlite(conn):
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.row_factory = sqlite3.Row
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS deposits (
@@ -48,7 +46,12 @@ def _connect():
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_deposits_period ON deposits (year, month)")
     conn.commit()
-    return conn
+
+
+def _connect():
+    # Sin DATABASE_URL, la base SQLite de siempre; con ella, el esquema depositos de
+    # PostgreSQL (db.py; tablas de migraciones/versions/0006_depositos.py).
+    return db.connect("depositos", _DB_PATH, _init_sqlite)
 
 
 def _now():
@@ -82,17 +85,18 @@ def find_duplicate(tx_number, deposit_date, amount):
 def add_deposit(year, month, deposit_date, amount, description, tx_number, kind, pdf_relpath, source_filename, page_index):
     conn = _connect()
     try:
-        cur = conn.execute(
+        new_id = conn.execute(
             """
             INSERT INTO deposits (year, month, deposit_date, amount, description, tx_number, kind,
                                   pdf_path, source_filename, page_index, uploaded_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING id
             """,
             (year, month, deposit_date, amount, description, tx_number, kind,
              pdf_relpath, source_filename, page_index, _now()),
-        )
+        ).fetchone()[0]
         conn.commit()
-        return cur.lastrowid
+        return new_id
     finally:
         conn.close()
 
@@ -154,7 +158,7 @@ def list_kind(kind):
     try:
         rows = conn.execute(
             "SELECT * FROM deposits WHERE kind = ? AND deposit_date IS NOT NULL AND amount IS NOT NULL "
-            "ORDER BY deposit_date, tx_number, id",
+            "ORDER BY deposit_date, tx_number NULLS FIRST, id",
             (kind,),
         ).fetchall()
         return [dict(r) for r in rows]
@@ -167,7 +171,7 @@ def list_month(year, month):
     try:
         rows = conn.execute(
             "SELECT * FROM deposits WHERE year = ? AND month = ? "
-            "ORDER BY deposit_date IS NULL, deposit_date, tx_number, id",
+            "ORDER BY deposit_date IS NULL, deposit_date, tx_number NULLS FIRST, id",
             (year, month),
         ).fetchall()
         return [dict(r) for r in rows]
