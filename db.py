@@ -28,6 +28,7 @@ consultas de los módulos sean las mismas en los dos:
 """
 
 import atexit
+import datetime
 import functools
 import os
 import re
@@ -124,12 +125,24 @@ def to_postgres(sql):
     return _TOKEN.sub(repl, sql)
 
 
+def _adapt(value):
+    """Lo que sqlite3 convierte solo al guardar: una fecha pasa como texto
+    AAAA-MM-DD (y con hora, "AAAA-MM-DD HH:MM:SS"), True/False como 1/0."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, datetime.datetime):
+        return value.isoformat(" ")
+    if isinstance(value, datetime.date):
+        return value.isoformat()
+    return value
+
+
 def _prepare(sql, params):
     if params is None or (not isinstance(params, dict) and len(params) == 0):
         return sql, None
     if isinstance(params, dict):
         raise ValueError("Parámetros con nombre (:nombre) todavía no están soportados en Postgres")
-    return to_postgres(sql), tuple(params)
+    return to_postgres(sql), tuple(_adapt(v) for v in params)
 
 
 # --- Filas como sqlite3.Row ------------------------------------------------
@@ -243,7 +256,7 @@ class _PgConnection:
 
     def executemany(self, sql, seq_of_params):
         cursor = self._live().cursor()
-        cursor.executemany(to_postgres(sql), [tuple(params) for params in seq_of_params])
+        cursor.executemany(to_postgres(sql), [tuple(_adapt(v) for v in params) for params in seq_of_params])
         return _PgCursor(cursor)
 
     def commit(self):
