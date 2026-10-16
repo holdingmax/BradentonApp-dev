@@ -51,6 +51,10 @@ PAGES = {
     "control_cmv": _months("/controles/cmv"),
     "depositos": [url for path in ("/carga-datos/depositos", "/controles/depositos", "/carga-datos/chase") for url in _months(path)],
     "horas_trabajo": ["/carga-datos/horas-trabajo"] + _months("/carga-datos/horas-trabajo/historial"),
+    "jh_mensual": [url for path in ("/carga-datos/eft/jh", "/carga-datos/eft/historial", "/carga-datos/eft/cupones/historial",
+                                    "/carga-datos/reportes/eft/pdf", "/controles/tarjetas", "/controles/cierre",
+                                    "/controles/rapidos/tarjetas") for url in _months(path)]
+                  + ["/carga-datos/eft/proximos", "/controles/rapidos/eft"],
 }
 
 
@@ -178,6 +182,24 @@ def _escenario_horas_trabajo():
     return results
 
 
+def _escenario_jh_mensual():
+    """Los reportes de J.H. de septiembre sumados a diciembre: primero un renglón, después todos, y la baja."""
+    import jh_mensual_db
+
+    september = jh_mensual_db.get_reports(2026, 9)
+    results = [sorted(september)]
+    for kind, report in sorted(september.items()):
+        month_report = {**report, "month": 12, "from_date": "2026-12-01", "to_date": "2026-12-31"}
+        results.append(jh_mensual_db.merge_report(kind, {**month_report, "rows": report["rows"][:1]}, "prueba.pdf"))
+        results.append(jh_mensual_db.merge_report(kind, month_report, "prueba 2.pdf"))
+        results.append(len(jh_mensual_db.get_rows(kind)))
+    results.append({k: _without(v, "updated_at") for k, v in jh_mensual_db.get_reports(2026, 12).items()})
+    for kind in september:
+        jh_mensual_db.delete_report(kind, 2026, 12)
+    results += [jh_mensual_db.get_reports(2026, 12), len(jh_mensual_db.get_all_invoice_numbers())]
+    return results
+
+
 def _without(value, *keys):
     return {k: v for k, v in value.items() if k not in keys} if isinstance(value, dict) else value
 
@@ -185,7 +207,7 @@ def _without(value, *keys):
 SCENARIOS = {"jh_facturas": _escenario_jh_facturas, "ice_machine": _escenario_ice_machine,
              "reporte_mensual": _escenario_reporte_mensual, "cheques": _escenario_cheques,
              "control_cmv": _escenario_control_cmv, "depositos": _escenario_depositos,
-             "horas_trabajo": _escenario_horas_trabajo}
+             "horas_trabajo": _escenario_horas_trabajo, "jh_mensual": _escenario_jh_mensual}
 
 
 # --- Una corrida (proceso aparte por motor) --------------------------------

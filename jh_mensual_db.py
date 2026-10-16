@@ -10,18 +10,16 @@ reportes_data/jh_mensual.db (gitignored, como las demás bases).
 import json
 import app_paths
 import os
-import sqlite3
 from datetime import datetime
+
+import db
 
 _BASE_DIR = app_paths.DATA_DIR
 _DB_PATH = os.path.join(_BASE_DIR, "jh_mensual.db")
 
 
-def _connect():
-    os.makedirs(_BASE_DIR, exist_ok=True)
-    conn = sqlite3.connect(_DB_PATH, timeout=30)
+def _init_sqlite(conn):
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.row_factory = sqlite3.Row
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS jh_monthly_reports (
@@ -35,7 +33,12 @@ def _connect():
         )
         """
     )
-    return conn
+
+
+def _connect():
+    # Sin DATABASE_URL, la base SQLite de siempre; con ella, el esquema jh_mensual de
+    # PostgreSQL (db.py; tablas de migraciones/versions/0008_jh_mensual.py).
+    return db.connect("jh_mensual", _DB_PATH, _init_sqlite)
 
 
 # Qué identifica a cada renglón, qué es su importe (no se pisa nunca) y qué
@@ -88,9 +91,11 @@ def merge_report(kind, month_report, filename=None):
         try:
             with conn:
                 conn.execute(
-                    "INSERT OR REPLACE INTO jh_monthly_reports "
+                    "INSERT INTO jh_monthly_reports "
                     "(kind, year, month, from_date, to_date, rows_json, totals_json, filename, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (kind, year, month) DO UPDATE SET "
+                    "from_date = excluded.from_date, to_date = excluded.to_date, rows_json = excluded.rows_json, "
+                    "totals_json = excluded.totals_json, filename = excluded.filename, updated_at = excluded.updated_at",
                     (kind, year, month, from_date, to_date, json.dumps(merged), json.dumps(totals_for(kind, merged)),
                      filename, datetime.now().isoformat(timespec="seconds")),
                 )
@@ -117,7 +122,7 @@ def get_reports(year, month):
     """{tipo: reporte} de los reportes guardados del mes (los que falten no están)."""
     conn = _connect()
     try:
-        rows = conn.execute("SELECT * FROM jh_monthly_reports WHERE year = ? AND month = ?", (year, month)).fetchall()
+        rows = conn.execute("SELECT * FROM jh_monthly_reports WHERE year = ? AND month = ? ORDER BY kind", (year, month)).fetchall()
     finally:
         conn.close()
     return {row["kind"]: _row_to_report(row) for row in rows}
@@ -137,7 +142,7 @@ def get_rows(kind):
     """Todos los renglones guardados de un tipo de reporte, de cualquier mes."""
     conn = _connect()
     try:
-        rows = conn.execute("SELECT rows_json FROM jh_monthly_reports WHERE kind = ?", (kind,)).fetchall()
+        rows = conn.execute("SELECT rows_json FROM jh_monthly_reports WHERE kind = ? ORDER BY year, month", (kind,)).fetchall()
     finally:
         conn.close()
     return [r for row in rows for r in json.loads(row["rows_json"] or "[]")]
