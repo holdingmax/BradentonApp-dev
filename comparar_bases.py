@@ -62,6 +62,9 @@ PAGES = {
             + [url for path in ("/carga-datos/caja", "/carga-datos/caja/exportar", "/carga-datos/caja/exportar/pdf",
                                 "/carga-datos/reportes/caja/pdf", "/controles/caja", "/controles/rapidos/caja") for url in _months(path)]
             + ["/carga-datos/reportes"],
+    "gettel_toyota": [url for path in ("/carga-datos/gettel", "/carga-datos/gettel/historial", "/carga-datos/reportes/gettel/excel",
+                                       "/carga-datos/reportes/gettel/pdf", "/controles/kia-toyota", "/controles/rapidos/kia")
+                      for url in _months(path)],
 }
 
 
@@ -273,6 +276,29 @@ def _escenario_caja():
     return [[_without(x, "created_at") for x in r] if isinstance(r, list) else _without(r, "created_at") for r in results]
 
 
+def _escenario_gettel_toyota():
+    """Días de Gettel y Toyota de prueba, pagos (con N° de transacción en otra caja), ajuste del mes y bajas."""
+    from datetime import date as _date
+
+    import gettel_db
+
+    results = [gettel_db.upsert_vendor_totals("gettel", {_date(2026, 12, 1): {"amount": 812.34, "gallons": 250.5},
+                                                         _date(2026, 12, 2): {"amount": 0.0, "gallons": 0.0}}),
+               gettel_db.upsert_vendor_totals("toyota", {_date(2026, 12, 1): {"amount": 99.99, "gallons": 30.0}}, source="pdf")]
+    pago = gettel_db.add_pago(_date(2026, 12, 5), 1, "TX-9001", 1234.5, source="pdf", empresa="Kia")
+    gettel_db.update_pago(pago, _date(2026, 12, 6), 2, "TX-9001", 1300.0, empresa="Toyota")
+    gettel_db.set_month_pendiente_anterior_override(2026, 12, 456.78)
+    clean = lambda rows: [_without(r, "created_at", "updated_at") for r in rows]
+    results += [_without(gettel_db.get_day("2026-12-01"), "updated_at"), clean(gettel_db.get_month_days(2026, 12)),
+                gettel_db.get_month_gettel_amount(2026, 12), gettel_db.get_day_gettel_amount("2026-12-01"),
+                _without(gettel_db.find_pago_by_transaction("tx-9001"), "created_at", "updated_at"), clean(gettel_db.get_month_pagos(2026, 12)),
+                gettel_db.get_pago_years(), gettel_db.get_toyota_days_years(), gettel_db.get_earliest_month(),
+                _without(gettel_db.get_pago_month_settings(2026, 12) or {}, "updated_at"), gettel_db.get_pago_settings_years()]
+    gettel_db.delete_pago(pago)
+    results.append(gettel_db.find_pago_by_transaction("TX-9001"))
+    return results
+
+
 def _without(value, *keys):
     return {k: v for k, v in value.items() if k not in keys} if isinstance(value, dict) else value
 
@@ -282,7 +308,7 @@ SCENARIOS = {"jh_facturas": _escenario_jh_facturas, "ice_machine": _escenario_ic
              "control_cmv": _escenario_control_cmv, "depositos": _escenario_depositos,
              "horas_trabajo": _escenario_horas_trabajo, "jh_mensual": _escenario_jh_mensual,
              "documents": _escenario_documents, "fisico": _escenario_fisico,
-             "caja": _escenario_caja}
+             "caja": _escenario_caja, "gettel_toyota": _escenario_gettel_toyota}
 
 
 # --- Una corrida (proceso aparte por motor) --------------------------------

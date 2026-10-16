@@ -19,8 +19,9 @@ diario -- viene de estos reportes de cupones.
 
 import app_paths
 import os
-import sqlite3
 from datetime import date, datetime
+
+import db
 
 _BASE_DIR = app_paths.DATA_DIR
 _DB_PATH = os.path.join(_BASE_DIR, "gettel_toyota.db")
@@ -30,21 +31,25 @@ _schema_ready_for = None
 
 
 def _connect():
-    global _schema_ready_for
+    # Sin DATABASE_URL, la base SQLite de siempre; con ella, el esquema
+    # gettel_toyota de PostgreSQL (db.py; tablas de
+    # migraciones/versions/0012_gettel_toyota.py).
     # El esquema (CREATE TABLE/ALTER) se asegura una sola vez por proceso y
     # por archivo, no en cada conexión (2026-10-02): el Cuadro de Pagos abre
     # cientos de conexiones por página y esto solo le costaba ~2 segundos.
-    if _schema_ready_for == _DB_PATH and os.path.exists(_DB_PATH):
-        conn = sqlite3.connect(_DB_PATH, timeout=30)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        return conn
-    os.makedirs(_BASE_DIR, exist_ok=True)
+    ready = _schema_ready_for == _DB_PATH and os.path.exists(_DB_PATH)
+    return db.connect("gettel_toyota", _DB_PATH, _foreign_keys_on if ready else _init_sqlite)
+
+
+def _foreign_keys_on(conn):
+    conn.execute("PRAGMA foreign_keys = ON")
+
+
+def _init_sqlite(conn):
+    global _schema_ready_for
     # timeout=30 + WAL -- ver reportes_db.py: necesario desde que las cargas
     # en segundo plano (jobs.py) pueden escribir de verdad en paralelo.
-    conn = sqlite3.connect(_DB_PATH, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute(
         """
@@ -105,7 +110,6 @@ def _connect():
     )
     conn.commit()
     _schema_ready_for = _DB_PATH
-    return conn
 
 
 def _day_key(value):
@@ -229,18 +233,19 @@ def add_pago(fecha, pago_n, transc_n, total_cupon, source="manual", empresa=None
     now = datetime.now().isoformat(timespec="seconds")
     conn = _connect()
     try:
-        conn.execute(
+        new_id = conn.execute(
             """
             INSERT INTO gettel_pagos (fecha, pago_n, transc_n, total_cupon, source, empresa, created_at, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING id
             """,
             (
                 _day_key(fecha), pago_n, (transc_n or "").strip() or None, float(total_cupon),
                 source, (empresa or "").strip() or None, now, now,
             ),
-        )
+        ).fetchone()[0]
         conn.commit()
-        return conn.execute("SELECT last_insert_rowid() AS id").fetchone()["id"]
+        return new_id
     finally:
         conn.close()
 
@@ -286,7 +291,7 @@ def find_pago_by_transaction(transc_n):
     conn = _connect()
     try:
         row = conn.execute(
-            "SELECT * FROM gettel_pagos WHERE transc_n = ? COLLATE NOCASE", (number,)
+            "SELECT * FROM gettel_pagos WHERE LOWER(transc_n) = LOWER(?) ORDER BY id", (number,)
         ).fetchone()
     finally:
         conn.close()
@@ -341,15 +346,16 @@ def get_earliest_month():
             SELECT MIN(d) FROM (
                 SELECT MIN(date) AS d FROM gettel_toyota_days
                 UNION ALL SELECT MIN(fecha) FROM gettel_pagos
-                UNION ALL SELECT MIN(printf('%04d-%02d', year, month)) FROM gettel_pagos_months
-            )
+            ) AS fechas
             """
         ).fetchone()
+        months = conn.execute("SELECT MIN(year * 100 + month) FROM gettel_pagos_months").fetchone()
     finally:
         conn.close()
-    if not row or not row[0]:
-        return None
-    return int(row[0][:4]), int(row[0][5:7])
+    candidates = [(int(row[0][:4]), int(row[0][5:7]))] if row and row[0] else []
+    if months and months[0]:
+        candidates.append(divmod(int(months[0]), 100))
+    return min(candidates) if candidates else None
 
 
 def get_pago_month_settings(year, month):
