@@ -11,18 +11,16 @@ reportes_data/cuenta_kia_toyota.db (gitignored, como las demás bases).
 
 import app_paths
 import os
-import sqlite3
 from datetime import datetime
+
+import db
 
 _BASE_DIR = app_paths.DATA_DIR
 _DB_PATH = os.path.join(_BASE_DIR, "cuenta_kia_toyota.db")
 
 
-def _connect():
-    os.makedirs(_BASE_DIR, exist_ok=True)
-    conn = sqlite3.connect(_DB_PATH, timeout=30)
+def _init_sqlite(conn):
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.row_factory = sqlite3.Row
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS charges (
@@ -45,7 +43,12 @@ def _connect():
         );
         """
     )
-    return conn
+
+
+def _connect():
+    # Sin DATABASE_URL, la base SQLite de siempre; con ella, el esquema cuenta_kia_toyota de
+    # PostgreSQL (db.py; tablas de migraciones/versions/0017_cuenta_kia_toyota.py).
+    return db.connect("cuenta_kia_toyota", _DB_PATH, _init_sqlite)
 
 
 def _now():
@@ -69,8 +72,11 @@ def save_import(data, source):
                         continue
                 else:
                     new_days += 1
+                # Como el INSERT OR REPLACE de SQLite: la fila se borra y vuelve al
+                # final (el orden de carga es el que recorre la cuenta corriente).
+                conn.execute("DELETE FROM charges WHERE date = ?", (day,))
                 conn.execute(
-                    "INSERT OR REPLACE INTO charges (date, la, kia, kia_gal, toyota, toyota_gal, main, source, updated_at) "
+                    "INSERT INTO charges (date, la, kia, kia_gal, toyota, toyota_gal, main, source, updated_at) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (day, d["la"], d["kia"], d["kia_gal"], d["toyota"], d["toyota_gal"], int(d.get("main", True)),
                      source, _now()),
@@ -89,7 +95,8 @@ def save_import(data, source):
             for d in data["pos"]:
                 if d["la"] is None and d["vs"] is None:
                     continue
-                conn.execute("INSERT OR REPLACE INTO pos_days (date, la, vs, source) VALUES (?, ?, ?, ?)",
+                conn.execute("DELETE FROM pos_days WHERE date = ?", (d["date"],))
+                conn.execute("INSERT INTO pos_days (date, la, vs, source) VALUES (?, ?, ?, ?)",
                              (d["date"], d["la"], d["vs"], source))
     finally:
         conn.close()
@@ -99,7 +106,7 @@ def save_import(data, source):
 def get_charges():
     conn = _connect()
     try:
-        return {r["date"]: dict(r) for r in conn.execute("SELECT * FROM charges")}
+        return {r["date"]: dict(r) for r in conn.execute("SELECT * FROM charges ORDER BY rowid")}
     finally:
         conn.close()
 
@@ -107,7 +114,7 @@ def get_charges():
 def get_payments():
     conn = _connect()
     try:
-        return [dict(r) for r in conn.execute("SELECT * FROM payments ORDER BY date, transc")]
+        return [dict(r) for r in conn.execute("SELECT * FROM payments ORDER BY date, transc, amount")]
     finally:
         conn.close()
 
@@ -115,7 +122,7 @@ def get_payments():
 def get_pos_days():
     conn = _connect()
     try:
-        return {r["date"]: dict(r) for r in conn.execute("SELECT * FROM pos_days")}
+        return {r["date"]: dict(r) for r in conn.execute("SELECT * FROM pos_days ORDER BY rowid")}
     finally:
         conn.close()
 
@@ -124,7 +131,7 @@ def get_pos_only_assignments():
     """{fecha: empresa} de lo cobrado en el POS sin recibo, elegido a mano."""
     conn = _connect()
     try:
-        return {r["date"]: r["company"] for r in conn.execute("SELECT * FROM pos_only_assignments")}
+        return {r["date"]: r["company"] for r in conn.execute("SELECT * FROM pos_only_assignments ORDER BY rowid")}
     finally:
         conn.close()
 
@@ -133,7 +140,8 @@ def assign_pos_only(day, company):
     conn = _connect()
     try:
         with conn:
-            conn.execute("INSERT OR REPLACE INTO pos_only_assignments (date, company, updated_at) VALUES (?, ?, ?)",
+            conn.execute("DELETE FROM pos_only_assignments WHERE date = ?", (day,))
+            conn.execute("INSERT INTO pos_only_assignments (date, company, updated_at) VALUES (?, ?, ?)",
                          (day, company, _now()))
     finally:
         conn.close()

@@ -79,6 +79,8 @@ PAGES = {
                                             "/controles/cierre/exportar", "/controles/cierre/exportar/pdf", "/controles/cmv",
                                             "/controles/kia-toyota", "/carga-datos/caja", "/controles/rapidos/tarjetas",
                                             "/controles/rapidos/caja") for url in _months(path)],
+    "cuenta_kia_toyota": ["/carga-datos/gettel"]
+                         + [url for path in ("/controles/kia-toyota", "/controles/rapidos/kia", "/carga-datos/gettel") for url in _months(path)],
 }
 
 
@@ -363,6 +365,29 @@ def _escenario_reportes_diarios():
     return results
 
 
+def _escenario_cuenta_kia_toyota():
+    """Un Excel de prueba que reemplaza días ya cargados (vuelven al final, como en SQLite), pagos nuevos y repetidos,
+    días del POS, asignaciones a mano; y la cuenta corriente que arma la página con eso."""
+    import cuenta_kia_toyota_db
+
+    charges = cuenta_kia_toyota_db.get_charges()
+    payments = cuenta_kia_toyota_db.get_payments()
+    days = [{**{k: c[k] for k in ("la", "kia", "kia_gal", "toyota", "toyota_gal")}, "date": d, "main": True, "kia": (c["kia"] or 0) + 1.25}
+            for d, c in list(charges.items())[:3]]
+    days.append({"date": "2026-12-05", "la": 812.5, "kia": 500.0, "kia_gal": 150.0, "toyota": 312.5, "toyota_gal": 90.0, "main": True})
+    data = {"days": days, "payments": [{k: p[k] for k in ("date", "transc", "amount", "company")} for p in payments[:2]]
+            + [{"date": "2026-12-06", "transc": "9001", "amount": 999.0, "company": None}],
+            "pos": [{"date": "2026-12-05", "la": 812.5, "vs": 812.5}, {"date": "2026-12-06", "la": None, "vs": None}]}
+    results = [cuenta_kia_toyota_db.save_import(data, "Cierre prueba.xlsx")]
+    new = [p["id"] for p in cuenta_kia_toyota_db.get_payments() if p["transc"] == "9001"]
+    cuenta_kia_toyota_db.assign_company(new, "Toyota")
+    cuenta_kia_toyota_db.assign_pos_only("2026-12-05", "Kia")
+    cuenta_kia_toyota_db.assign_pos_only("2026-12-05", "Toyota")
+    results += [list(cuenta_kia_toyota_db.get_charges())[-5:], cuenta_kia_toyota_db.get_payments()[-3:],
+                list(cuenta_kia_toyota_db.get_pos_days().items())[-2:], cuenta_kia_toyota_db.get_pos_only_assignments()]
+    return results
+
+
 def _without(value, *keys):
     return {k: v for k, v in value.items() if k not in keys} if isinstance(value, dict) else value
 
@@ -374,7 +399,7 @@ SCENARIOS = {"jh_facturas": _escenario_jh_facturas, "ice_machine": _escenario_ic
              "documents": _escenario_documents, "fisico": _escenario_fisico,
              "caja": _escenario_caja, "gettel_toyota": _escenario_gettel_toyota,
              "lottery": _escenario_lottery,
-             "reportes_diarios": _escenario_reportes_diarios}
+             "reportes_diarios": _escenario_reportes_diarios, "cuenta_kia_toyota": _escenario_cuenta_kia_toyota}
 
 
 # --- Una corrida (proceso aparte por motor) --------------------------------

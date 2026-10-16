@@ -27,7 +27,8 @@
 | Módulo 12: gettel_toyota | Hecho el 16/10: copia idéntica y 49 comparaciones idénticas (Gettel, historial, su Excel y PDF, Kia y Toyota, botonera; antes y después de cargar días, pagos y el ajuste del mes; julio redirige igual en los dos porque no tiene datos). `last_insert_rowid()` → `RETURNING id`, `COLLATE NOCASE` → `LOWER()`, `printf` → `MIN(year * 100 + month)` |
 | Módulo 13: lottery | Hecho el 16/10: copia idéntica y 81 comparaciones idénticas en los dos motores **y contra el código original** (Lottery, días, historial, exportaciones, mensual, resumen, PDF, Control Lottery, Caja; antes y después de cargar un día por sus tres caminos, fechas de pago con reajuste y reporte mensual) |
 | Módulo 14: reportes_diarios | Hecho el 16/10: copia idéntica (1.924 filas) y 135 comparaciones idénticas en los dos motores y contra el código original (días, Reporte C-Store, historiales, Store Info y sus exportaciones, PDF, Tarjetas, Cierre y sus exportaciones, Control CMV, Kia y Toyota, Caja, botonera; antes y después de cargar un día completo, corregir, márgenes y bajas). La suma de decimales de Postgres ahora es la de SQLite (migración `0015`) |
-| Módulos 15 a 19 | Pendientes |
+| Módulo 15: cuenta_kia_toyota | Hecho el 16/10: copia idéntica (2.173 filas) y 27 comparaciones idénticas en los dos motores y contra el código original (Kia y Toyota jul-oct, botonera, Gettel; antes y después de un Excel que reemplaza días, pagos nuevos y repetidos, POS y asignaciones a mano). Los `INSERT OR REPLACE` pasaron a borrar + insertar, para conservar el orden de carga de SQLite que recorre la cuenta corriente |
+| Módulos 16 a 19 | Pendientes |
 
 **Cómo se prueba cada módulo** (PC, Postgres local en Docker: contenedor `bradenton-pg`, puerto 55432):
 
