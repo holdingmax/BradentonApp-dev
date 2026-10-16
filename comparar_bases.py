@@ -94,6 +94,13 @@ PAGES = {
     "cmv": ["/carga-datos/cmv", "/carga-datos/cmv/costo/historial", "/carga-datos/cmv/costo/comparar", "/controles/ventas-costos",
             "/controles/productos/lista"]
            + [url for path in ("/carga-datos/cmv/ventas/historial", "/controles/cmv") for url in _months(path)],
+    "proveedores": ["/carga-datos/proveedores/guardado", "/controles/productos", "/controles/productos/lista", "/controles/ventas-costos",
+                    "/carga-datos/chase/cheques", "/controles/productos/ht_hackney", "/controles/productos/cec",
+                    "/controles/productos/ht_hackney/2026-10-09/916761", "/controles/productos/ht_hackney/2026-10-09/916761/cambios.pdf",
+                    "/controles/productos/ht_hackney/2026-10-09/916761/cambios.xlsx", "/controles/productos/cec/2026-10-06/1900656"]
+                   + [f"/carga-datos/proveedores/guardado/{key}" for key in ("ht_hackney", "airgas", "fpl", "manatee_county", "gce", "cec",
+                                                                             "coca", "bimbo", "red_bull", "kooler_ice")]
+                   + [url for path in ("/carga-datos/proveedores/historial", "/carga-datos/reportes/proveedores/pdf") for url in _months(path)],
 }
 
 
@@ -485,6 +492,49 @@ def _escenario_cmv():
     return results
 
 
+def _escenario_proveedores():
+    """Facturas nuevas y repetidas (la repetida da IntegrityError y la conexión sigue andando), renglones,
+    ocultar, configuración, credit memos, pagos históricos y a mano, y las bajas."""
+    import proveedores_db
+
+    results = [proveedores_db.save_invoice("cec", "CEC", "2026-12-03", "PRUEBA-1", 1546.8, "CEC prueba.pdf"),
+               proveedores_db.save_invoice("cec", "CEC", "2026-12-03", "PRUEBA-1", 9.99),
+               proveedores_db.save_invoice("cec", "CEC", "2026-12-04", "PRUEBA-2", 10.0),
+               proveedores_db.invoice_exists("cec", "PRUEBA-1")]
+    lines = [{"line_no": i, "upc": f"0000{i}", "description": f"Producto {i} 100%", "pack": 10, "qty": 2, "unit_cost": 1.234 * i,
+              "line_total": 2.468 * i} for i in range(1, 4)]
+    try:
+        results.append(proveedores_db.replace_invoice_lines("cec", "PRUEBA-1", "2026-12-03", lines))
+    except Exception as exc:  # el formato de renglones lo valida el módulo: alcanza con que falle igual en los dos
+        results.append(f"{type(exc).__name__}: {exc}")
+    proveedores_db.set_supplier_hidden("prueba_oculto", True)
+    proveedores_db.set_supplier_hidden("prueba_oculto", True)
+    proveedores_db.set_supplier_settings("cec", True, True)
+    memo = proveedores_db.save_credit_memo("cec", "CEC", "2026-12-05", "CM-1", 15.22, "devolución 100%")
+    proveedores_db.replace_history_payments("cec", [{"date": "2026-01-02", "amount": 100.0, "detail": "OP"},
+                                                    {"date": "2026-01-02", "amount": 50.0, "detail": "OP 2"}], "Excel prueba")
+    manual = proveedores_db.save_manual_payment("bimbo", "Bimbo", "2026-12-06", 75.5, "pago en caja", caja_expense_item_id=999901)
+    # Sin ids de factura: en Postgres el INSERT rechazado por duplicado consume un número de la secuencia
+    # (los ids pueden saltear números; el orden no cambia).
+    def no_ids(value):
+        if isinstance(value, dict):
+            return {k: no_ids(v) for k, v in value.items() if k != "id"}
+        return [no_ids(v) for v in value] if isinstance(value, list) else value
+    results += [no_ids(proveedores_db.get_month_invoices(2026, 12)), proveedores_db.list_suppliers_with_counts(), no_ids(proveedores_db.get_supplier_invoices("cec")[:4]),
+                len(proveedores_db.get_all_invoice_lines()), proveedores_db.list_hidden_suppliers(), proveedores_db.get_supplier_settings("cec"),
+                proveedores_db.get_supplier_credit_memos("cec"), proveedores_db.get_supplier_history_payments("cec"),
+                proveedores_db.get_supplier_manual_payments("bimbo")[:3], proveedores_db.get_available_years()]
+    proveedores_db.delete_credit_memo(memo)
+    proveedores_db.delete_manual_payment(manual)
+    proveedores_db.delete_manual_payment_by_caja_item(999901)
+    proveedores_db.set_supplier_hidden("prueba_oculto", False)
+    for inv in proveedores_db.get_supplier_invoices("cec"):
+        if inv["invoice_no"].startswith("PRUEBA-"):
+            proveedores_db.delete_invoice(inv["id"])
+    results += [proveedores_db.get_month_invoices(2026, 12), proveedores_db.list_hidden_suppliers()]
+    return results
+
+
 def _without(value, *keys):
     return {k: v for k, v in value.items() if k not in keys} if isinstance(value, dict) else value
 
@@ -498,7 +548,7 @@ SCENARIOS = {"jh_facturas": _escenario_jh_facturas, "ice_machine": _escenario_ic
              "lottery": _escenario_lottery,
              "reportes_diarios": _escenario_reportes_diarios, "cuenta_kia_toyota": _escenario_cuenta_kia_toyota,
              "eft": _escenario_eft, "chase": _escenario_chase,
-             "cmv": _escenario_cmv}
+             "cmv": _escenario_cmv, "proveedores": _escenario_proveedores}
 
 
 # --- Una corrida (proceso aparte por motor) --------------------------------
@@ -543,6 +593,8 @@ def _jsonable(value):
     """Filas (sqlite3.Row o db.Row) como dict; lo demás como texto."""
     if hasattr(value, "keys"):
         return {k: value[k] for k in value.keys()}
+    if isinstance(value, (set, frozenset)):  # el orden de un set cambia en cada corrida de Python
+        return sorted(value, key=repr)
     return str(value)
 
 

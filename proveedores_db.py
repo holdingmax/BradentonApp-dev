@@ -32,20 +32,18 @@ igual que EFT/Gettel/CMV -- no se duplica esa pieza acá.
 
 import app_paths
 import os
-import sqlite3
 from datetime import date, datetime
+
+import db
 
 _BASE_DIR = app_paths.DATA_DIR
 _DB_PATH = os.path.join(_BASE_DIR, "proveedores.db")
 
 
-def _connect():
-    os.makedirs(_BASE_DIR, exist_ok=True)
+def _init_sqlite(conn):
     # timeout=30 + WAL -- ver reportes_db.py: necesario desde que las cargas
     # en segundo plano (jobs.py) pueden escribir de verdad en paralelo.
-    conn = sqlite3.connect(_DB_PATH, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.row_factory = sqlite3.Row
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS supplier_invoices (
@@ -192,7 +190,12 @@ def _connect():
     )
     conn.execute("CREATE INDEX IF NOT EXISTS idx_invoice_lines_upc ON supplier_invoice_lines (upc)")
     conn.commit()
-    return conn
+
+
+def _connect():
+    # Sin DATABASE_URL, la base SQLite de siempre; con ella, el esquema proveedores de
+    # PostgreSQL (db.py; tablas de migraciones/versions/0021_proveedores.py).
+    return db.connect("proveedores", _DB_PATH, _init_sqlite)
 
 
 def _date_key(value):
@@ -237,7 +240,7 @@ def save_invoice(supplier_key, supplier_label, invoice_date, invoice_no, amount,
             )
             conn.commit()
             return True
-        except sqlite3.IntegrityError:
+        except db.IntegrityError:
             return False
     finally:
         conn.close()
@@ -261,7 +264,7 @@ def get_month_invoices(year, month):
     conn = _connect()
     try:
         rows = conn.execute(
-            "SELECT * FROM supplier_invoices WHERE invoice_date LIKE ? ORDER BY supplier_label, invoice_date DESC",
+            "SELECT * FROM supplier_invoices WHERE invoice_date LIKE ? ORDER BY supplier_label, invoice_date DESC, id",
             (f"{prefix}%",),
         ).fetchall()
     finally:
@@ -285,7 +288,7 @@ def list_suppliers_with_counts():
     try:
         rows = conn.execute(
             """
-            SELECT supplier_key, supplier_label, COUNT(*) AS n, SUM(amount) AS total
+            SELECT supplier_key, MAX(supplier_label) AS supplier_label, COUNT(*) AS n, SUM(amount) AS total
             FROM supplier_invoices GROUP BY supplier_key ORDER BY supplier_label
             """
         ).fetchall()
@@ -299,7 +302,7 @@ def get_supplier_invoices(supplier_key):
     conn = _connect()
     try:
         rows = conn.execute(
-            "SELECT * FROM supplier_invoices WHERE supplier_key = ? ORDER BY invoice_date DESC",
+            "SELECT * FROM supplier_invoices WHERE supplier_key = ? ORDER BY invoice_date DESC, invoice_no",
             (supplier_key,),
         ).fetchall()
     finally:
@@ -380,7 +383,7 @@ def set_supplier_hidden(supplier_key, hidden):
     try:
         if hidden:
             conn.execute(
-                "INSERT OR IGNORE INTO supplier_hidden (supplier_key, hidden_at) VALUES (?, ?)",
+                "INSERT INTO supplier_hidden (supplier_key, hidden_at) VALUES (?, ?) ON CONFLICT (supplier_key) DO NOTHING",
                 (supplier_key, datetime.now().isoformat(timespec="seconds")),
             )
         else:
@@ -436,19 +439,20 @@ def set_supplier_settings(supplier_key, allow_manual_payments, allow_credit_memo
 def save_credit_memo(supplier_key, supplier_label, credit_date, credit_no, amount, note=None):
     conn = _connect()
     try:
-        cur = conn.execute(
+        new_id = conn.execute(
             """
             INSERT INTO supplier_credit_memos
                 (supplier_key, supplier_label, credit_date, credit_no, amount, note, uploaded_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
+            RETURNING id
             """,
             (
                 supplier_key, supplier_label, _date_key(credit_date), credit_no, float(amount),
                 note, datetime.now().isoformat(timespec="seconds"),
             ),
-        )
+        ).fetchone()[0]
         conn.commit()
-        return cur.lastrowid
+        return new_id
     finally:
         conn.close()
 
@@ -457,7 +461,7 @@ def get_supplier_credit_memos(supplier_key):
     conn = _connect()
     try:
         rows = conn.execute(
-            "SELECT * FROM supplier_credit_memos WHERE supplier_key = ? ORDER BY credit_date DESC",
+            "SELECT * FROM supplier_credit_memos WHERE supplier_key = ? ORDER BY credit_date DESC, id",
             (supplier_key,),
         ).fetchall()
     finally:
@@ -498,7 +502,7 @@ def get_supplier_history_payments(supplier_key):
     conn = _connect()
     try:
         rows = conn.execute(
-            "SELECT * FROM supplier_history_payments WHERE supplier_key = ? ORDER BY payment_date",
+            "SELECT * FROM supplier_history_payments WHERE supplier_key = ? ORDER BY payment_date, id",
             (supplier_key,),
         ).fetchall()
     finally:
@@ -509,19 +513,20 @@ def get_supplier_history_payments(supplier_key):
 def save_manual_payment(supplier_key, supplier_label, payment_date, amount, note=None, caja_expense_item_id=None):
     conn = _connect()
     try:
-        cur = conn.execute(
+        new_id = conn.execute(
             """
             INSERT INTO supplier_manual_payments
                 (supplier_key, supplier_label, payment_date, amount, note, caja_expense_item_id, uploaded_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
+            RETURNING id
             """,
             (
                 supplier_key, supplier_label, _date_key(payment_date), float(amount),
                 note, caja_expense_item_id, datetime.now().isoformat(timespec="seconds"),
             ),
-        )
+        ).fetchone()[0]
         conn.commit()
-        return cur.lastrowid
+        return new_id
     finally:
         conn.close()
 
@@ -530,7 +535,7 @@ def get_supplier_manual_payments(supplier_key):
     conn = _connect()
     try:
         rows = conn.execute(
-            "SELECT * FROM supplier_manual_payments WHERE supplier_key = ? ORDER BY payment_date DESC",
+            "SELECT * FROM supplier_manual_payments WHERE supplier_key = ? ORDER BY payment_date DESC, id",
             (supplier_key,),
         ).fetchall()
     finally:

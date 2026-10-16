@@ -31,6 +31,12 @@ import db
 
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 
+# Tablas que las migraciones ya cargan con filas iniciales (lo que en SQLite
+# se carga al abrir la conexión). Antes de copiar se sacan las que SQLite
+# también tiene, así quedan las de SQLite; cualquier otra fila sigue
+# frenando la copia.
+SEED_TABLES = {"proveedores": {"supplier_settings"}}
+
 
 def _fail(message):
     print(f"ERROR: {message}")
@@ -165,6 +171,16 @@ def migrate_module(pg, schema, sqlite_path, empty_first):
             if empty_first:
                 names = sql.SQL(", ").join(sql.Identifier(schema, t) for t in lite_tables)
                 pg.execute(sql.SQL("TRUNCATE {} RESTART IDENTITY CASCADE").format(names))
+            for table in SEED_TABLES.get(schema, ()):
+                pk = lite_tables[table]["pk"]
+                keys = [list(r) for r in lite.execute(f"SELECT {', '.join(_quote(c) for c in pk)} FROM {_quote(table)}")]
+                with pg.cursor() as cur:
+                    cur.executemany(
+                        sql.SQL("DELETE FROM {} WHERE ({}) = ({})").format(
+                            sql.Identifier(schema, table), sql.SQL(", ").join(sql.Identifier(c) for c in pk),
+                            sql.SQL(", ").join(sql.Placeholder() for _ in pk)),
+                        keys,
+                    )
             for table in lite_tables:
                 count = pg.execute(sql.SQL("SELECT COUNT(*) FROM {}").format(sql.Identifier(schema, table))).fetchone()[0]
                 if count:
