@@ -29,20 +29,18 @@ fecha -- volver a cargar el mismo día reemplaza la foto de ese día.
 
 import app_paths
 import os
-import sqlite3
 from datetime import datetime
+
+import db
 
 _BASE_DIR = app_paths.DATA_DIR
 _DB_PATH = os.path.join(_BASE_DIR, "cmv.db")
 
 
-def _connect():
-    os.makedirs(_BASE_DIR, exist_ok=True)
+def _init_sqlite(conn):
     # timeout=30 + WAL -- ver reportes_db.py: necesario desde que las cargas
     # en segundo plano (jobs.py) pueden escribir de verdad en paralelo.
-    conn = sqlite3.connect(_DB_PATH, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     conn.execute(
         """
@@ -110,7 +108,12 @@ def _connect():
         )
         """
     )
-    return conn
+
+
+def _connect():
+    # Sin DATABASE_URL, la base SQLite de siempre; con ella, el esquema cmv de
+    # PostgreSQL (db.py; tablas de migraciones/versions/0020_cmv.py).
+    return db.connect("cmv", _DB_PATH, _init_sqlite)
 
 
 def _now():
@@ -231,7 +234,7 @@ def get_costs_by_department(dept_name):
     conn = _connect()
     try:
         rows = conn.execute(
-            "SELECT * FROM cmv_costs WHERE dept_name = ? COLLATE NOCASE ORDER BY name",
+            "SELECT * FROM cmv_costs WHERE LOWER(dept_name) = LOWER(?) ORDER BY name, rowid",
             (dept_name,),
         ).fetchall()
     finally:
@@ -254,16 +257,16 @@ def save_snapshot(loaded_on):
                 conn.execute("DELETE FROM cmv_snapshot_items WHERE snapshot_id = ?", (old["id"],))
                 conn.execute("DELETE FROM cmv_snapshots WHERE id = ?", (old["id"],))
             count = conn.execute("SELECT COUNT(*) FROM cmv_costs").fetchone()[0]
-            cur = conn.execute(
-                "INSERT INTO cmv_snapshots (loaded_on, products, created_at) VALUES (?, ?, ?)",
+            snapshot_id = conn.execute(
+                "INSERT INTO cmv_snapshots (loaded_on, products, created_at) VALUES (?, ?, ?) RETURNING id",
                 (key, count, _now()),
-            )
+            ).fetchone()[0]
             conn.execute(
                 """
                 INSERT INTO cmv_snapshot_items (snapshot_id, upc, upc_mod, name, dept_name, dept_id, cost, price)
-                SELECT ?, upc, upc_mod, name, dept_name, dept_id, cost, price FROM cmv_costs
+                SELECT ?, upc, upc_mod, name, dept_name, dept_id, cost, price FROM cmv_costs ORDER BY rowid
                 """,
-                (cur.lastrowid,),
+                (snapshot_id,),
             )
         return count
     finally:
@@ -288,6 +291,7 @@ def get_snapshot_items(loaded_on):
             SELECT i.* FROM cmv_snapshot_items i
             JOIN cmv_snapshots s ON s.id = i.snapshot_id
             WHERE s.loaded_on = ?
+            ORDER BY i.upc
             """,
             (loaded_on,),
         ).fetchall()
@@ -300,7 +304,7 @@ def get_all_costs():
     """Todos los productos del POS (costo/precio), para cruzar con las compras a proveedores."""
     conn = _connect()
     try:
-        rows = conn.execute("SELECT * FROM cmv_costs").fetchall()
+        rows = conn.execute("SELECT * FROM cmv_costs ORDER BY rowid").fetchall()
     finally:
         conn.close()
     return [dict(row) for row in rows]
@@ -312,7 +316,7 @@ def get_all_monthly_sales():
     try:
         rows = conn.execute(
             "SELECT year, month, upc, SUM(count) AS count, SUM(amount) AS amount "
-            "FROM cmv_monthly_sales GROUP BY year, month, upc ORDER BY year, month"
+            "FROM cmv_monthly_sales GROUP BY year, month, upc ORDER BY year, month, upc"
         ).fetchall()
     finally:
         conn.close()
@@ -327,8 +331,12 @@ def get_monthly_sales_rows(year_months):
     try:
         rows = conn.execute(
             "SELECT year, month, dept_name, upc, name, count, amount FROM cmv_monthly_sales "
-            "WHERE " + " OR ".join("(year = ? AND month = ?)" for _ in year_months),
-            [value for ym in year_months for value in ym],
+            "WHERE " + " OR ".join("(year = ? AND month = ?)" for _ in year_months)
+            # Mes por mes en el orden pedido y, dentro de cada uno, por la clave:
+            # el orden en que SQLite los devolvía.
+            + " ORDER BY CASE " + " ".join(f"WHEN year = ? AND month = ? THEN {i}" for i in range(len(year_months)))
+            + " END, dept_name, upc",
+            [value for ym in year_months for value in ym] * 2,
         ).fetchall()
     finally:
         conn.close()
@@ -350,7 +358,7 @@ def get_recent_price_changes(limit=30):
 def _cost_lookup_index(conn):
     by_upc = {}
     by_name = {}
-    for row in conn.execute("SELECT upc, name, cost FROM cmv_costs").fetchall():
+    for row in conn.execute("SELECT upc, name, cost FROM cmv_costs ORDER BY rowid").fetchall():
         if row["cost"] is None:
             continue
         by_upc[row["upc"]] = row["cost"]
@@ -380,7 +388,7 @@ def replace_month_department_sales(year, month, dept_name, rows):
     conn = _connect()
     try:
         conn.execute(
-            "DELETE FROM cmv_monthly_sales WHERE year = ? AND month = ? AND dept_name = ? COLLATE NOCASE",
+            "DELETE FROM cmv_monthly_sales WHERE year = ? AND month = ? AND LOWER(dept_name) = LOWER(?)",
             (year, month, dept_name),
         )
         for upc, entry in by_upc.items():
@@ -406,7 +414,7 @@ def get_month_department_totals(year, month):
     try:
         by_upc, by_name = _cost_lookup_index(conn)
         rows = conn.execute(
-            "SELECT dept_name, upc, name, count, amount FROM cmv_monthly_sales WHERE year = ? AND month = ?",
+            "SELECT dept_name, upc, name, count, amount FROM cmv_monthly_sales WHERE year = ? AND month = ? ORDER BY dept_name, upc",
             (year, month),
         ).fetchall()
     finally:

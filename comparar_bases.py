@@ -91,6 +91,9 @@ PAGES = {
              + [url for path in ("/carga-datos/chase/historial", "/carga-datos/chase/exportar", "/carga-datos/reportes/chase/pdf",
                                  "/controles/depositos", "/carga-datos/caja", "/controles/lottery", "/controles/tarjetas",
                                  "/controles/cierre", "/controles/rapidos/caja") for url in _months(path)],
+    "cmv": ["/carga-datos/cmv", "/carga-datos/cmv/costo/historial", "/carga-datos/cmv/costo/comparar", "/controles/ventas-costos",
+            "/controles/productos/lista"]
+           + [url for path in ("/carga-datos/cmv/ventas/historial", "/controles/cmv") for url in _months(path)],
 }
 
 
@@ -459,6 +462,29 @@ def _escenario_chase(client):
     return results
 
 
+def _escenario_cmv():
+    """El CMV entero vuelto a cargar con precios cambiados y un producto nuevo, foto del día, ventas de un
+    departamento cargadas dos veces y lo que se calcula con eso."""
+    import cmv_db
+
+    costs = cmv_db.get_all_costs()
+    keys = ("upc", "upc_mod", "name", "cost", "price", "dept_id", "dept_name")
+    records = [{k: c[k] for k in keys} for c in costs]
+    for r in records[:3]:
+        r["price"] = (r["price"] or 0) + 0.5
+    records.append({**records[0], "upc": "999999999901", "name": "PRUEBA 100%", "cost": 1.234, "price": 2.5})
+    results = [cmv_db.replace_costs_for_departments(records), cmv_db.save_snapshot("2026-12-01"), cmv_db.list_snapshots()[:2],
+               len(cmv_db.get_snapshot_items("2026-12-01")), cmv_db.get_snapshot_items("2026-12-01")[:3]]
+    dept = records[0]["dept_name"]
+    rows = [{"upc": r["upc"], "name": r["name"], "count": i + 1, "amount": round(1.1 * (i + 1), 2)} for i, r in enumerate(records[:6])]
+    cmv_db.replace_month_department_sales(2026, 12, dept, rows + rows[:1])
+    cmv_db.replace_month_department_sales(2026, 12, dept.lower(), rows[:4])
+    results += [cmv_db.get_costs_by_department(dept.upper())[:5], cmv_db.get_month_department_totals(2026, 12),
+                cmv_db.get_monthly_sales_rows([(2026, 12), (2026, 9)])[:8], len(cmv_db.get_all_monthly_sales()),
+                cmv_db.get_recent_price_changes(5), cmv_db.list_departments()[:5], cmv_db.get_month_years_with_data()]
+    return results
+
+
 def _without(value, *keys):
     return {k: v for k, v in value.items() if k not in keys} if isinstance(value, dict) else value
 
@@ -471,7 +497,8 @@ SCENARIOS = {"jh_facturas": _escenario_jh_facturas, "ice_machine": _escenario_ic
              "caja": _escenario_caja, "gettel_toyota": _escenario_gettel_toyota,
              "lottery": _escenario_lottery,
              "reportes_diarios": _escenario_reportes_diarios, "cuenta_kia_toyota": _escenario_cuenta_kia_toyota,
-             "eft": _escenario_eft, "chase": _escenario_chase}
+             "eft": _escenario_eft, "chase": _escenario_chase,
+             "cmv": _escenario_cmv}
 
 
 # --- Una corrida (proceso aparte por motor) --------------------------------

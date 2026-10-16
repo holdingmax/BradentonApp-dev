@@ -30,7 +30,8 @@
 | Módulo 15: cuenta_kia_toyota | Hecho el 16/10: copia idéntica (2.173 filas) y 27 comparaciones idénticas en los dos motores y contra el código original (Kia y Toyota jul-oct, botonera, Gettel; antes y después de un Excel que reemplaza días, pagos nuevos y repetidos, POS y asignaciones a mano). Los `INSERT OR REPLACE` pasaron a borrar + insertar, para conservar el orden de carga de SQLite que recorre la cuenta corriente |
 | Módulo 16: eft | Hecho el 16/10: copia idéntica (3.432 filas) y 79 comparaciones idénticas en los dos motores y contra el código original (EFT y Cupones, historiales, J.H., Facturas varias, PDF de EFT, Próximos EFT, Tarjetas, Cierre, botonera; antes y después de un EFT copiado de uno real, DDC a mano, cupones nuevos y repetidos y detalle de cupones). Arreglado un `MAX()` con columnas sueltas que Postgres no acepta |
 | Módulo 17: chase | Hecho el 16/10: copia idéntica (636 movimientos, con su rowid) y 89 comparaciones idénticas en los dos motores y contra el código original (Chase, historial, exportación, PDF, Cheques, Proveedores, Control Depósitos, Caja, Lottery, Tarjetas, Cierre, botonera; antes y después de **volver a subir el extracto real de octubre por la página**, correcciones a mano y recategorizar). La tabla lleva en Postgres una columna `rowid` con el mismo valor que en SQLite, así los 13 `rowid` del código no cambian |
-| Módulos 18 a 19 | Pendientes |
+| Módulo 18: cmv | Hecho el 16/10: copia idéntica (14.539 filas) y 27 comparaciones idénticas en los dos motores y contra el código original (CMV, historiales de costo y ventas, comparación de fotos, Control CMV, Ventas y costos, lista de productos; antes y después de recargar el CMV entero con precios cambiados, foto del día y ventas de un departamento cargadas dos veces) |
+| Módulos 19 a 19 | Pendientes |
 
 **Cómo se prueba cada módulo** (PC, Postgres local en Docker: contenedor `bradenton-pg`, puerto 55432):
 
