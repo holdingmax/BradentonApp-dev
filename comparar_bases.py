@@ -48,6 +48,7 @@ PAGES = {
                                          "/reporte/store-info/historial", "/controles/cierre", "/controles/cierre/exportar/pdf",
                                          "/controles/cmv") for url in _months(path)],
     "cheques": ["/carga-datos/chase/cheques"],
+    "control_cmv": _months("/controles/cmv"),
 }
 
 
@@ -121,12 +122,31 @@ def _escenario_cheques():
     return [_without(r, "uploaded_at") for r in results]
 
 
+def _escenario_control_cmv():
+    """Un reporte de Elistar de septiembre copiado a diciembre, reemplazado y borrado."""
+    import control_cmv_db
+
+    september = control_cmv_db.get_month(2026, 9)
+    results = [sorted(september)]
+    for kind, report in september.items():
+        copy = {k: v for k, v in report.items() if k not in ("filename", "uploaded_at")}
+        copy.update(month=12)
+        control_cmv_db.save_report(copy, "Depts prueba.xls")
+        control_cmv_db.save_report({**copy, "nota": "reemplazo con 100%"}, "Depts prueba 2.xls")
+    results.append({k: _without(v, "uploaded_at") for k, v in control_cmv_db.get_month(2026, 12).items()})
+    for kind in september:
+        control_cmv_db.delete_report(2026, 12, kind)
+    results.append(control_cmv_db.get_month(2026, 12))
+    return results
+
+
 def _without(value, *keys):
     return {k: v for k, v in value.items() if k not in keys} if isinstance(value, dict) else value
 
 
 SCENARIOS = {"jh_facturas": _escenario_jh_facturas, "ice_machine": _escenario_ice_machine,
-             "reporte_mensual": _escenario_reporte_mensual, "cheques": _escenario_cheques}
+             "reporte_mensual": _escenario_reporte_mensual, "cheques": _escenario_cheques,
+             "control_cmv": _escenario_control_cmv}
 
 
 # --- Una corrida (proceso aparte por motor) --------------------------------

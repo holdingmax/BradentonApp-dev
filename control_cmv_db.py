@@ -10,18 +10,16 @@ reportes_data/control_cmv.db (gitignored, como las demás bases).
 import json
 import app_paths
 import os
-import sqlite3
 from datetime import datetime
+
+import db
 
 _BASE_DIR = app_paths.DATA_DIR
 _DB_PATH = os.path.join(_BASE_DIR, "control_cmv.db")
 
 
-def _connect():
-    os.makedirs(_BASE_DIR, exist_ok=True)
-    conn = sqlite3.connect(_DB_PATH, timeout=30)
+def _init_sqlite(conn):
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.row_factory = sqlite3.Row
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS elistar_reports (
@@ -35,7 +33,12 @@ def _connect():
         )
         """
     )
-    return conn
+
+
+def _connect():
+    # Sin DATABASE_URL, la base SQLite de siempre; con ella, el esquema control_cmv de
+    # PostgreSQL (db.py; tablas de migraciones/versions/0005_control_cmv.py).
+    return db.connect("control_cmv", _DB_PATH, _init_sqlite)
 
 
 def save_report(report, filename=None):
@@ -43,8 +46,9 @@ def save_report(report, filename=None):
     try:
         with conn:
             conn.execute(
-                "INSERT OR REPLACE INTO elistar_reports (year, month, kind, data_json, filename, uploaded_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
+                "INSERT INTO elistar_reports (year, month, kind, data_json, filename, uploaded_at) "
+                "VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT (year, month, kind) DO UPDATE SET "
+                "data_json = excluded.data_json, filename = excluded.filename, uploaded_at = excluded.uploaded_at",
                 (report["year"], report["month"], report["kind"], json.dumps(report), filename,
                  datetime.now().isoformat(timespec="seconds")),
             )
@@ -56,7 +60,7 @@ def get_month(year, month):
     """{kind: reporte} del mes ("depts" y/o "pl"), con filename y uploaded_at."""
     conn = _connect()
     try:
-        rows = conn.execute("SELECT * FROM elistar_reports WHERE year = ? AND month = ?", (year, month)).fetchall()
+        rows = conn.execute("SELECT * FROM elistar_reports WHERE year = ? AND month = ? ORDER BY kind", (year, month)).fetchall()
     finally:
         conn.close()
     return {row["kind"]: dict(json.loads(row["data_json"]), filename=row["filename"], uploaded_at=row["uploaded_at"])
