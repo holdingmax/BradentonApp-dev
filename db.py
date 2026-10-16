@@ -204,12 +204,16 @@ except ImportError:
 class _UntypedNumberDumper(_Dumper):
     """Números sin tipo: Postgres los toma del tipo de la columna, como hace
     SQLite con su afinidad. Así `WHERE texto = ?` con un número compara como
-    texto (en vez de dar error) y en una columna numérica sigue siendo número."""
+    texto (en vez de dar error) y en una columna numérica sigue siendo número.
+    Un decimal sin parte fraccionaria (1.0) va como entero, que es como lo
+    guarda SQLite en una columna INTEGER (Postgres no acepta "1.0" ahí)."""
 
     oid = 0
 
     def dump(self, obj):
-        return (repr(obj) if isinstance(obj, float) else str(int(obj))).encode()
+        if isinstance(obj, float) and not (obj.is_integer() and abs(obj) < 2 ** 63):
+            return repr(obj).encode()
+        return str(int(obj)).encode()
 
 
 class _NumberLoader(NumericLoader):
