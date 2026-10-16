@@ -153,6 +153,8 @@ def migrate_module(pg, schema, sqlite_path, empty_first):
             _fail(f"{schema}: las tablas no coinciden. Solo en SQLite: {sorted(set(lite_tables) - set(pg_tables))}; "
                   f"solo en Postgres: {sorted(set(pg_tables) - set(lite_tables))}")
         for table, info in lite_tables.items():
+            if "rowid" in pg_tables[table] and "rowid" not in info["columns"]:
+                info["columns"] = info["columns"] + ["rowid"]
             if set(info["columns"]) != set(pg_tables[table]):
                 _fail(f"{schema}.{table}: las columnas no coinciden. Solo en SQLite: {sorted(set(info['columns']) - set(pg_tables[table]))}; "
                       f"solo en Postgres: {sorted(set(pg_tables[table]) - set(info['columns']))}")

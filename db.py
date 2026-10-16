@@ -187,12 +187,43 @@ class Row:
         return f"Row({dict(zip(self._names, self._values))!r})"
 
 
-def _row_factory(cursor):
+def _row_factory(cursor, hide_rowid=False):
     names = tuple(column.name for column in cursor.description or ())
+    keep = [i for i, name in enumerate(names) if not (hide_rowid and name == "rowid")]
+    if len(keep) != len(names):
+        names = tuple(names[i] for i in keep)
+    else:
+        keep = None
     index = {}
     for position, name in enumerate(names):
         index.setdefault(name.lower(), position)
-    return lambda values: Row(values, names, index)
+    if keep is None:
+        return lambda values: Row(values, names, index)
+    return lambda values: Row([values[i] for i in keep], names, index)
+
+
+def _hiding_rowid(cursor):
+    return _row_factory(cursor, hide_rowid=True)
+
+
+# La lista de columnas de un SELECT (lo que va antes del primer FROM).
+_SELECT_LIST = re.compile(r"(?is)^\s*select\b(.*?)\bfrom\b")
+
+
+def _names_rowid(sql):
+    """En SQLite `SELECT *` no trae el rowid (solo sale si se lo nombra); en
+    Postgres las tablas sin id propio tienen una columna rowid real (la copia
+    del de SQLite, para ordenar igual) y `*` la traería. Se oculta salvo que
+    la consulta la nombre entre las columnas."""
+    match = _SELECT_LIST.match(sql)
+    if match is None:
+        return True
+    # "rowid" o "rowid AS rowid" piden esa salida; "rowid AS _rowid" no (la
+    # trae con otro nombre, y el * de Postgres no tiene que sumarla).
+    return any(m.group(1) is None or m.group(1).lower() == "rowid" for m in _ROWID_OUTPUT.finditer(match.group(1)))
+
+
+_ROWID_OUTPUT = re.compile(r"(?i)\browid\b(?:\s+AS\s+(\w+))?")
 
 
 try:
@@ -271,7 +302,8 @@ class _PgConnection:
         return self._conn
 
     def execute(self, sql, params=None):
-        cursor = self._live().cursor()
+        conn = self._live()
+        cursor = conn.cursor() if _names_rowid(sql) else conn.cursor(row_factory=_hiding_rowid)
         cursor.execute(*_prepare(sql, params))
         return _PgCursor(cursor)
 
@@ -332,7 +364,10 @@ def _configure(conn):
     conn.adapters.register_dumper(int, _UntypedNumberDumper)
     conn.adapters.register_dumper(float, _UntypedNumberDumper)
     conn.autocommit = True
-    conn.execute("SET search_path TO " + ", ".join(SCHEMAS) + ", public")
+    # pg_catalog al final: así las funciones como las de SQLite que crean las
+    # migraciones en public (sum de decimales, round, group_concat) se usan
+    # antes que las de Postgres con el mismo nombre.
+    conn.execute("SET search_path TO " + ", ".join(SCHEMAS) + ", public, pg_catalog")
     conn.autocommit = False
 
 
