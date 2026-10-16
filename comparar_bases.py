@@ -85,6 +85,12 @@ PAGES = {
            + [url for path in ("/carga-datos/eft", "/carga-datos/eft/historial", "/carga-datos/eft/cupones/historial", "/carga-datos/eft/jh",
                                "/carga-datos/eft/varias", "/carga-datos/reportes/eft/pdf", "/controles/tarjetas", "/controles/cierre",
                                "/controles/rapidos/tarjetas") for url in _months(path)],
+    "chase": ["/carga-datos/chase", "/carga-datos/chase/cheques", "/proveedores", "/carga-datos/proveedores/guardado",
+              "/carga-datos/proveedores/guardado/ht_hackney", "/carga-datos/proveedores/guardado/fpl", "/carga-datos/eft/proximos",
+              "/controles/rapidos/eft"]
+             + [url for path in ("/carga-datos/chase/historial", "/carga-datos/chase/exportar", "/carga-datos/reportes/chase/pdf",
+                                 "/controles/depositos", "/carga-datos/caja", "/controles/lottery", "/controles/tarjetas",
+                                 "/controles/cierre", "/controles/rapidos/caja") for url in _months(path)],
 }
 
 
@@ -425,6 +431,34 @@ def _escenario_eft():
     return results
 
 
+CHASE_REAL = "G:/.shortcut-targets-by-id/1NdiYjB3tA6w90-ekRpM2ksmVuK3i57_1/Bradenton/Book keeping/2026/10 Octubre - 26/CHASE 10-2026.xlsx"
+
+
+def _escenario_chase(client):
+    """El extracto real de octubre vuelto a subir por la página, correcciones a mano, depósitos y recategorizar."""
+    import chase_db
+    import webapp
+    from chase_rules import categorize_chase_description
+
+    with open(CHASE_REAL, "rb") as handle:  # el Drive solo se lee
+        response = client.post("/carga-datos/chase", data={"chase_file": (io.BytesIO(handle.read()), "CHASE 10-2026.xlsx")},
+                               content_type="multipart/form-data")
+    with client.session_transaction() as session:
+        flashes = session.get("_flashes", [])
+    month = chase_db.get_month_transactions(2026, 10)
+    first = month[0]
+    chase_db.set_manual_detalle(first["posting_date"], first["description"], first["amount"], "PRUEBA 100%")
+    chase_db.set_manual_supplier(first["posting_date"], first["description"], first["amount"], "fpl")
+    deposits = chase_db.deposits_on("2026-10-08")
+    results = [response.status_code, response.headers.get("Location"), flashes, len(month), deposits,
+               chase_db.recategorize_all(categorize_chase_description, webapp._resolve_supplier_key_for_chase),
+               chase_db.get_uncategorized_count(2026, 10), chase_db.get_month_transactions(2026, 10)[:5],
+               chase_db.get_supplier_transactions("fpl")[-3:], chase_db.get_check_transactions()[-3:],
+               chase_db.has_detalle_on_date("2026-10-08", "DEPOSITO"), chase_db.list_known_details()[:10],
+               chase_db.get_first_posting_date(), chase_db.get_last_posting_date(), chase_db.get_available_years()]
+    return results
+
+
 def _without(value, *keys):
     return {k: v for k, v in value.items() if k not in keys} if isinstance(value, dict) else value
 
@@ -437,7 +471,7 @@ SCENARIOS = {"jh_facturas": _escenario_jh_facturas, "ice_machine": _escenario_ic
              "caja": _escenario_caja, "gettel_toyota": _escenario_gettel_toyota,
              "lottery": _escenario_lottery,
              "reportes_diarios": _escenario_reportes_diarios, "cuenta_kia_toyota": _escenario_cuenta_kia_toyota,
-             "eft": _escenario_eft}
+             "eft": _escenario_eft, "chase": _escenario_chase}
 
 
 # --- Una corrida (proceso aparte por motor) --------------------------------
@@ -512,7 +546,9 @@ def _capture(modules, out_path):
     result = pages("antes")
     for module in modules:
         if module in SCENARIOS:
-            result[f"escritura {module}"] = {"status": 0, "body": json.dumps(_drop_times(SCENARIOS[module]()), ensure_ascii=False, indent=1, default=_jsonable)}
+            scenario = SCENARIOS[module]
+            output = scenario(client) if scenario.__code__.co_argcount else scenario()
+            result[f"escritura {module}"] = {"status": 0, "body": json.dumps(_drop_times(output), ensure_ascii=False, indent=1, default=_jsonable)}
     result.update(pages("después"))
     with open(out_path, "w", encoding="utf-8") as handle:
         json.dump(result, handle, ensure_ascii=False)

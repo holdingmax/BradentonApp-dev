@@ -15,22 +15,25 @@ Detalle ya guardado.
 
 import app_paths
 import os
-import sqlite3
 from datetime import date, datetime, timedelta
+
+import db
 
 _BASE_DIR = app_paths.DATA_DIR
 _DB_PATH = os.path.join(_BASE_DIR, "chase.db")
 
 
-def _connect():
-    os.makedirs(_BASE_DIR, exist_ok=True)
+def _init_sqlite(conn):
     # timeout=30 + WAL -- ver reportes_db.py: necesario desde que las cargas
     # en segundo plano (jobs.py) pueden escribir de verdad en paralelo.
-    conn = sqlite3.connect(_DB_PATH, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.row_factory = sqlite3.Row
     _ensure_schema(conn)
-    return conn
+
+
+def _connect():
+    # Sin DATABASE_URL, la base SQLite de siempre; con ella, el esquema chase de
+    # PostgreSQL (db.py; tablas de migraciones/versions/0019_chase.py).
+    return db.connect("chase", _DB_PATH, _init_sqlite)
 
 
 def _ensure_schema(conn):
@@ -276,7 +279,7 @@ def _stale_candidates(conn, posting_date, amount, first_day, last_day, batch_key
     high = min(last_day, (day + timedelta(days=_STALE_DAYS)).isoformat())
     candidates = conn.execute(
         "SELECT rowid AS rowid, posting_date, description, amount, occurrence FROM chase_transactions "
-        "WHERE amount = ? AND posting_date BETWEEN ? AND ?",
+        "WHERE amount = ? AND posting_date BETWEEN ? AND ? ORDER BY rowid",
         (amount, low, high),
     ).fetchall()
     return [(abs((date.fromisoformat(c["posting_date"]) - day).days), c["rowid"]) for c in candidates
@@ -352,7 +355,8 @@ def get_supplier_transactions(supplier_key):
     conn = _connect()
     try:
         rows = conn.execute(
-            "SELECT * FROM chase_transactions WHERE supplier_key = ? ORDER BY posting_date DESC",
+            "SELECT * FROM chase_transactions WHERE supplier_key = ? "
+            "ORDER BY posting_date DESC, description DESC, amount DESC, occurrence DESC",
             (supplier_key,),
         ).fetchall()
         return [_row_to_dict(row) for row in rows]
@@ -400,7 +404,7 @@ def recategorize_all(categorize_fn, resolve_supplier_fn):
     """
     conn = _connect()
     try:
-        rows = conn.execute("SELECT rowid AS _rowid, * FROM chase_transactions").fetchall()
+        rows = conn.execute("SELECT rowid AS _rowid, * FROM chase_transactions ORDER BY rowid").fetchall()
         detalle_changed = 0
         supplier_changed = 0
         now = datetime.utcnow().isoformat()
@@ -517,7 +521,7 @@ def get_month_transactions(year, month):
             """
             SELECT * FROM chase_transactions
             WHERE posting_date >= ? AND posting_date < ?
-            ORDER BY posting_date ASC, description ASC
+            ORDER BY posting_date ASC, description ASC, amount ASC, occurrence ASC
             """,
             (start, end),
         )
@@ -582,7 +586,7 @@ def get_detalle_transactions(detalle, first, last):
     try:
         rows = conn.execute(
             "SELECT posting_date, amount FROM chase_transactions WHERE detalle = ? AND posting_date BETWEEN ? AND ? "
-            "ORDER BY posting_date",
+            "ORDER BY posting_date, description, amount, occurrence",
             (detalle, first.isoformat(), last.isoformat()),
         ).fetchall()
     finally:
@@ -624,7 +628,7 @@ def get_check_transactions():
             """
             SELECT posting_date, description, amount, supplier_key FROM chase_transactions
             WHERE UPPER(description) LIKE 'CHECK%' OR UPPER(description) LIKE 'CHEQUE%'
-            ORDER BY posting_date
+            ORDER BY posting_date, description, amount, occurrence
             """
         ).fetchall()
         return [dict(r) for r in rows]
