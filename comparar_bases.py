@@ -81,6 +81,10 @@ PAGES = {
                                             "/controles/rapidos/caja") for url in _months(path)],
     "cuenta_kia_toyota": ["/carga-datos/gettel"]
                          + [url for path in ("/controles/kia-toyota", "/controles/rapidos/kia", "/carga-datos/gettel") for url in _months(path)],
+    "eft": ["/carga-datos/eft/proximos", "/controles/rapidos/eft", "/carga-datos/reportes"]
+           + [url for path in ("/carga-datos/eft", "/carga-datos/eft/historial", "/carga-datos/eft/cupones/historial", "/carga-datos/eft/jh",
+                               "/carga-datos/eft/varias", "/carga-datos/reportes/eft/pdf", "/controles/tarjetas", "/controles/cierre",
+                               "/controles/rapidos/tarjetas") for url in _months(path)],
 }
 
 
@@ -388,6 +392,39 @@ def _escenario_cuenta_kia_toyota():
     return results
 
 
+def _escenario_eft():
+    """Un EFT de prueba copiado de uno real, DDC corregido a mano, cupones nuevos y repetidos, detalle de cupones
+    repetido y nuevo, y los cálculos que se arman con eso."""
+    import eft_db
+
+    real = eft_db.get_month_deposits(2026, 9)[0]
+    coupons = [{k: c[k] for k in ("date", "invoice", "coupon", "gross_amount", "fees_amount", "paid_amount")} for c in real["coupons"]]
+    invoices = [{k: i[k] for k in ("invoice", "paid_amount")} for i in real["paid_invoices"]]
+    eft_date = real["deposit"]["eft_date"]
+    deposit = eft_db.save_eft({"draft_no": "RCV-99901", "eft_date": eft_date}, invoices, coupons, "EFT prueba.pdf")
+    net = sum(c["paid_amount"] or 0 for c in coupons)
+    results = [deposit, bool(eft_db.find_existing_deposit("RCV-99901", eft_date, net))]
+    first_line = next(d for d in eft_db.get_month_deposits(2026, 9) if d["deposit"]["id"] == deposit)["coupons"][0]["id"]
+    eft_db.update_coupon_row(first_line, coupon="DDC-99901")
+    record = {"coupon": "DDC-99901", "date": coupons[0]["date"], "gross": coupons[0]["gross_amount"], "fees": coupons[0]["fees_amount"],
+              "net": coupons[0]["paid_amount"], "reported_group_text": None, "reported_group_total": None}
+    results += [eft_db.upsert_cupones([record], "Cupones prueba.xlsx"), eft_db.upsert_cupones([{**record, "net": (record["net"] or 0) + 1}]),
+                eft_db.insert_new_cupones([{**record, "coupon": "DDC-99902"}, record], "Daily Summary prueba.pdf"),
+                eft_db.autolink_missing_ddc_by_amount(), eft_db.backfill_grouped_cupones_from_eft()]
+    groups = eft_db.get_detail_groups()
+    existing = groups[0]
+    new_batches = [{**b, "batch": "PRUEBA" + str(i)} for i, b in enumerate(existing["batches"])]
+    results.append(eft_db.save_coupon_detail(
+        [{"batches": existing["batches"], "totals": {k: existing[k] for k in ("gross", "fees", "net")}, "coupons": existing["coupons"]},
+         {"batches": new_batches, "totals": {k: existing[k] for k in ("gross", "fees", "net")}, "coupons": None}], "Detalle prueba.pdf"))
+    results += [eft_db.identify_detail_groups(), eft_db.get_cupones_with_status(limit=15), len(eft_db.get_cupones_flat()),
+                sorted(eft_db.get_coupon_gross_by_date().items())[-5:], eft_db.coupon_month_summary(2026, 9),
+                eft_db.cupones_month_view(2026, 9), eft_db.get_unmatched_eft_coupons(), eft_db.get_cupones_years(), eft_db.get_deposit_years()]
+    eft_db.delete_deposit(deposit)
+    results += [eft_db.delete_cupones_month(2026, 12), len(eft_db.list_all_deposits())]
+    return results
+
+
 def _without(value, *keys):
     return {k: v for k, v in value.items() if k not in keys} if isinstance(value, dict) else value
 
@@ -399,7 +436,8 @@ SCENARIOS = {"jh_facturas": _escenario_jh_facturas, "ice_machine": _escenario_ic
              "documents": _escenario_documents, "fisico": _escenario_fisico,
              "caja": _escenario_caja, "gettel_toyota": _escenario_gettel_toyota,
              "lottery": _escenario_lottery,
-             "reportes_diarios": _escenario_reportes_diarios, "cuenta_kia_toyota": _escenario_cuenta_kia_toyota}
+             "reportes_diarios": _escenario_reportes_diarios, "cuenta_kia_toyota": _escenario_cuenta_kia_toyota,
+             "eft": _escenario_eft}
 
 
 # --- Una corrida (proceso aparte por motor) --------------------------------

@@ -24,23 +24,26 @@ import hashlib
 import app_paths
 import jh_mensual_db
 import os
-import sqlite3
 from datetime import date, datetime, timedelta
+
+import db
 
 _BASE_DIR = app_paths.DATA_DIR
 _DB_PATH = os.path.join(_BASE_DIR, "eft.db")
 
 
-def _connect():
-    os.makedirs(_BASE_DIR, exist_ok=True)
+def _init_sqlite(conn):
     # timeout=30 + WAL -- ver reportes_db.py: necesario desde que las cargas
     # en segundo plano (jobs.py) pueden escribir de verdad en paralelo.
-    conn = sqlite3.connect(_DB_PATH, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     _ensure_schema(conn)
-    return conn
+
+
+def _connect():
+    # Sin DATABASE_URL, la base SQLite de siempre; con ella, el esquema eft de
+    # PostgreSQL (db.py; tablas de migraciones/versions/0018_eft.py).
+    return db.connect("eft", _DB_PATH, _init_sqlite)
 
 
 def _ensure_schema(conn):
@@ -150,7 +153,7 @@ def find_existing_deposit(rcv_number, eft_date, net_total):
     conn = _connect()
     try:
         rows = conn.execute(
-            "SELECT * FROM eft_deposits WHERE rcv_number = ? AND eft_date = ?",
+            "SELECT * FROM eft_deposits WHERE rcv_number = ? AND eft_date = ? ORDER BY id",
             (rcv_number, eft_date),
         ).fetchall()
         for row in rows:
@@ -178,14 +181,14 @@ def save_eft(header_data, paid_invoices, credit_coupons, source_filename=None):
 
     conn = _connect()
     try:
-        cur = conn.execute(
+        deposit_id = conn.execute(
             """
             INSERT INTO eft_deposits (rcv_number, eft_date, gross_total, fees_total, net_total, source_filename, updated_at)
             VALUES (?, ?, ?, ?, ?, ?, ?)
+            RETURNING id
             """,
             (rcv_number, eft_date, gross_total, fees_total, net_total, source_filename, now),
-        )
-        deposit_id = cur.lastrowid
+        ).fetchone()[0]
         for coupon in credit_coupons:
             conn.execute(
                 """
@@ -369,7 +372,7 @@ def list_cupones_for_forecast():
     conn = _connect()
     try:
         rows = [dict(r) for r in conn.execute(
-            "SELECT coupon_id, date, gross, fees, net, reported_group_text, reported_group_total FROM cupones"
+            "SELECT coupon_id, date, gross, fees, net, reported_group_text, reported_group_total FROM cupones ORDER BY rowid"
         ).fetchall()]
     finally:
         conn.close()
@@ -398,18 +401,18 @@ def list_deposits_with_lines():
     """
     conn = _connect()
     try:
-        deposits = conn.execute("SELECT * FROM eft_deposits").fetchall()
+        deposits = conn.execute("SELECT * FROM eft_deposits ORDER BY id").fetchall()
         result = []
         for dep in deposits:
             parsed = _parse_eft_date(dep["eft_date"])
             if parsed is None:
                 continue
             coupons = conn.execute(
-                "SELECT date, coupon, gross_amount, fees_amount, paid_amount FROM eft_coupons WHERE deposit_id = ?",
+                "SELECT date, coupon, gross_amount, fees_amount, paid_amount FROM eft_coupons WHERE deposit_id = ? ORDER BY id",
                 (dep["id"],),
             ).fetchall()
             invoices = conn.execute(
-                "SELECT invoice, paid_amount FROM eft_paid_invoices WHERE deposit_id = ?", (dep["id"],)
+                "SELECT invoice, paid_amount FROM eft_paid_invoices WHERE deposit_id = ? ORDER BY id", (dep["id"],)
             ).fetchall()
             result.append({
                 "rcv_number": dep["rcv_number"],
@@ -457,6 +460,7 @@ def backfill_grouped_cupones_from_eft():
             """
             SELECT coupon_id FROM cupones
             WHERE reported_group_text IS NOT NULL AND gross = 0 AND fees = 0 AND net = 0
+            ORDER BY rowid
             """
         ).fetchall()
         filled = 0
@@ -520,17 +524,22 @@ def get_cupones_with_status(limit=None):
         for row in cupones:
             match = conn.execute(
                 """
-                SELECT MAX(ec.id) AS id, ed.rcv_number, ed.eft_date,
+                SELECT MAX(ec.id) AS id,
+                       (SELECT ed2.rcv_number FROM eft_coupons ec2 JOIN eft_deposits ed2 ON ed2.id = ec2.deposit_id
+                        WHERE ec2.coupon = ? ORDER BY ec2.id DESC LIMIT 1) AS rcv_number,
+                       (SELECT ed2.eft_date FROM eft_coupons ec2 JOIN eft_deposits ed2 ON ed2.id = ec2.deposit_id
+                        WHERE ec2.coupon = ? ORDER BY ec2.id DESC LIMIT 1) AS eft_date,
                        SUM(ec.gross_amount) AS gross_amount, SUM(ec.fees_amount) AS fees_amount,
                        SUM(ec.paid_amount) AS paid_amount, COUNT(*) AS lines
                 FROM eft_coupons ec JOIN eft_deposits ed ON ed.id = ec.deposit_id
                 WHERE ec.coupon = ?
                 """,
-                (row["coupon_id"],),
+                (row["coupon_id"], row["coupon_id"], row["coupon_id"]),
             ).fetchone()
             entry = dict(row)
             # Suma de todas las líneas del DDC; RCV/fecha de la última línea
-            # (SQLite toma las columnas sueltas de la fila con MAX(id)).
+            # (la de mayor id: SQLite tomaba las columnas sueltas de la fila
+            # con MAX(id), Postgres no acepta columnas sueltas).
             entry["match"] = dict(match) if match and match["lines"] else None
             if entry["match"] is not None and entry["match"].get("paid_amount") is not None:
                 entry["diff"] = round((entry.get("net") or 0) - entry["match"]["paid_amount"], 2)
@@ -732,6 +741,7 @@ def autolink_missing_ddc_by_amount():
             SELECT ec.id, ec.date, ec.gross_amount, ec.fees_amount, ec.paid_amount, ed.eft_date
             FROM eft_coupons ec JOIN eft_deposits ed ON ed.id = ec.deposit_id
             WHERE ec.coupon IS NULL OR TRIM(ec.coupon) = ''
+            ORDER BY ec.id
             """
         ).fetchall()
         if not lines:
@@ -742,7 +752,7 @@ def autolink_missing_ddc_by_amount():
             )
         }
         cupones = conn.execute(
-            "SELECT coupon_id, date, gross, fees, net, reported_group_text, reported_group_total FROM cupones"
+            "SELECT coupon_id, date, gross, fees, net, reported_group_text, reported_group_total FROM cupones ORDER BY rowid"
         ).fetchall()
 
         def cents(value):
@@ -826,12 +836,12 @@ def get_coupon_gross_by_date():
     """
     conn = _connect()
     try:
-        rows = conn.execute("SELECT coupon_id, date, gross, reported_group_text FROM cupones").fetchall()
+        rows = conn.execute("SELECT coupon_id, date, gross, reported_group_text FROM cupones ORDER BY rowid").fetchall()
         detail_groups = conn.execute(
-            "SELECT id, gross, coupons FROM cupon_detail_groups WHERE coupons IS NOT NULL"
+            "SELECT id, gross, coupons FROM cupon_detail_groups WHERE coupons IS NOT NULL ORDER BY id"
         ).fetchall()
         detail_batches = conn.execute(
-            "SELECT group_id, batch_date, batch, gross FROM cupon_detail_batches ORDER BY batch_date, idx"
+            "SELECT group_id, batch_date, batch, gross FROM cupon_detail_batches ORDER BY batch_date, idx, rowid"
         ).fetchall()
     finally:
         conn.close()
@@ -914,7 +924,7 @@ def get_cupones_detail_by_date():
     """
     conn = _connect()
     try:
-        rows = conn.execute("SELECT coupon_id, date, gross, fees, net, reported_group_text FROM cupones").fetchall()
+        rows = conn.execute("SELECT coupon_id, date, gross, fees, net, reported_group_text FROM cupones ORDER BY rowid").fetchall()
     finally:
         conn.close()
     result = {}
@@ -949,8 +959,8 @@ def insert_new_cupones(records, source_filename=None):
                 if not coupon_id:
                     continue
                 cur = conn.execute(
-                    "INSERT OR IGNORE INTO cupones (coupon_id, date, gross, fees, net, reported_group_text, reported_group_total, source_filename, updated_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "INSERT INTO cupones (coupon_id, date, gross, fees, net, reported_group_text, reported_group_total, source_filename, updated_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (coupon_id) DO NOTHING",
                     (coupon_id, rec.get("date"), rec.get("gross"), rec.get("fees"), rec.get("net"),
                      rec.get("reported_group_text"), rec.get("reported_group_total"), source_filename, now),
                 )
@@ -1022,7 +1032,7 @@ def save_coupon_detail(groups, source_filename=None):
                     for b in batches:
                         row = conn.execute(
                             "SELECT group_id FROM cupon_detail_batches WHERE batch_date = ? AND batch = ? "
-                            "AND ROUND(gross, 2) = ROUND(?, 2) AND ROUND(fees, 2) = ROUND(?, 2) AND ROUND(net, 2) = ROUND(?, 2)",
+                            "AND ROUND(gross, 2) = ROUND(?, 2) AND ROUND(fees, 2) = ROUND(?, 2) AND ROUND(net, 2) = ROUND(?, 2) ORDER BY rowid",
                             (b["batch_date"], b["batch"], b["gross"], b["fees"], b["net"]),
                         ).fetchone()
                         holders.add(row["group_id"] if row else None)
@@ -1054,18 +1064,18 @@ def save_coupon_detail(groups, source_filename=None):
                     status, group_id = "repeated", existing["id"]
                 else:
                     totals = group["totals"]
-                    cur = conn.execute(
+                    new_group = conn.execute(
                         "INSERT INTO cupon_detail_groups (signature, gross, fees, net, first_date, last_date, coupons, coupons_source, source_filename, updated_at) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) RETURNING id",
                         (signature, totals["gross"], totals["fees"], totals["net"], dates[0], dates[-1],
                          coupons, "pdf" if coupons else None, source_filename, now),
-                    )
+                    ).fetchone()[0]
                     for idx, b in enumerate(batches):
                         conn.execute(
                             "INSERT INTO cupon_detail_batches (group_id, idx, batch_date, batch, gross, fees, net) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                            (cur.lastrowid, idx, b["batch_date"], b["batch"], b["gross"], b["fees"], b["net"]),
+                            (new_group, idx, b["batch_date"], b["batch"], b["gross"], b["fees"], b["net"]),
                         )
-                    status, group_id = "new", cur.lastrowid
+                    status, group_id = "new", new_group
                 results.append({"id": group_id, "status": status, "first_date": dates[0], "last_date": dates[-1],
                                 "gross": group["totals"]["gross"], "coupons": coupons})
     finally:
@@ -1088,12 +1098,12 @@ def identify_detail_groups(report_rows=()):
     conn = _connect()
     try:
         pending = conn.execute(
-            "SELECT id, gross, fees, net, last_date FROM cupon_detail_groups WHERE coupons IS NULL"
+            "SELECT id, gross, fees, net, last_date FROM cupon_detail_groups WHERE coupons IS NULL ORDER BY id"
         ).fetchall()
         if not pending:
             return 0
         candidates = {}
-        for r in conn.execute("SELECT coupon_id, date, gross, fees, net, reported_group_text, reported_group_total FROM cupones"):
+        for r in conn.execute("SELECT coupon_id, date, gross, fees, net, reported_group_text, reported_group_total FROM cupones ORDER BY rowid"):
             parsed = _parse_cupon_date(r["date"])
             if parsed is None:
                 continue
@@ -1160,7 +1170,7 @@ def get_detail_groups():
     try:
         groups = [dict(g) for g in conn.execute("SELECT * FROM cupon_detail_groups ORDER BY last_date, id")]
         batches = conn.execute(
-            "SELECT group_id, batch_date, batch, gross, fees, net FROM cupon_detail_batches ORDER BY batch_date, idx"
+            "SELECT group_id, batch_date, batch, gross, fees, net FROM cupon_detail_batches ORDER BY batch_date, idx, rowid"
         ).fetchall()
     finally:
         conn.close()
@@ -1181,7 +1191,7 @@ def get_detail_batches_between(start, end):
             """
             SELECT b.batch_date, b.batch, b.gross, b.fees, b.net, g.coupons
             FROM cupon_detail_batches b JOIN cupon_detail_groups g ON g.id = b.group_id
-            WHERE b.batch_date BETWEEN ? AND ? ORDER BY b.batch_date, b.idx
+            WHERE b.batch_date BETWEEN ? AND ? ORDER BY b.batch_date, b.idx, b.rowid
             """,
             (start, end),
         ).fetchall()
@@ -1235,7 +1245,7 @@ def delete_cupones_month(year, month):
     """
     conn = _connect()
     try:
-        rows = conn.execute("SELECT coupon_id, date FROM cupones").fetchall()
+        rows = conn.execute("SELECT coupon_id, date FROM cupones ORDER BY rowid").fetchall()
         to_delete = []
         for row in rows:
             parsed = _parse_cupon_date(row["date"])
@@ -1408,6 +1418,7 @@ def coupon_month_summary(year, month):
             """
             SELECT ec.coupon, ec.paid_amount, ed.id AS deposit_id, ed.eft_date
             FROM eft_coupons ec JOIN eft_deposits ed ON ed.id = ec.deposit_id
+            ORDER BY ec.id
             """
         ).fetchall()
     finally:
