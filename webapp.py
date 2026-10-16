@@ -39,6 +39,7 @@ from flask_login import (
 )
 
 import auth
+import config_store
 import db
 import chase_db
 import cheques_db
@@ -168,16 +169,9 @@ def _load_or_create_secret_key():
     regenerating it on every restart — otherwise every reload of the dev
     server (Flask's debug reloader restarts often) would log everyone out.
     """
-    path = app_paths.config_file(".flask_secret_key")
-    if os.path.isfile(path):
-        with open(path, "rb") as handle:
-            key = handle.read()
-        if key:
-            return key
-    key = os.urandom(32)
-    with open(path, "wb") as handle:
-        handle.write(key)
-    return key
+    # En la PC, el archivo .flask_secret_key; con DATABASE_URL, la tabla
+    # config.secretos (config_store.py), así un deploy no desloguea a todos.
+    return config_store.secret_key()
 
 
 # Archivos temporales (auditoría 2026-09, webapp.py:808/1142/826): cada

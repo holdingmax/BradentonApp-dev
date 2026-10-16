@@ -36,6 +36,7 @@ import os
 from datetime import date, timedelta
 
 import caja
+import config_store
 import control_tarjetas
 from proveedores_productos import _pct, normalize_upc
 
@@ -48,15 +49,14 @@ _PACK_SUSPECT_RATIO = 2.0
 
 
 # Límite de la alerta de Caja: se cambia desde el cuadro y se guarda en
-# reportes_data (gitignored, como las bases).
-_CONFIG_PATH = os.path.join(app_paths.DATA_DIR, "controles_rapidos.json")
+# reportes_data/controles_rapidos.json (gitignored, como las bases), o con
+# DATABASE_URL en la tabla config.ajustes (config_store.py).
 DEFAULT_CAJA_LIMIT = 10500.0  # lo más alto que se ve un fin de semana normal
 
 
 def caja_limit():
     try:
-        with open(_CONFIG_PATH, encoding="utf-8") as handle:
-            value = float(json.load(handle)["caja_limit"])
+        value = float((config_store.read(config_store.CONTROLES_RAPIDOS) or {})["caja_limit"])
     except (OSError, ValueError, KeyError, TypeError):
         return DEFAULT_CAJA_LIMIT
     return value if math.isfinite(value) and value > 0 else DEFAULT_CAJA_LIMIT
@@ -65,18 +65,12 @@ def caja_limit():
 def set_caja_limit(value):
     if value is None or not math.isfinite(value) or value <= 0:
         raise ValueError("El límite tiene que ser un monto mayor que cero.")
-    os.makedirs(os.path.dirname(_CONFIG_PATH), exist_ok=True)
     try:
-        with open(_CONFIG_PATH, encoding="utf-8") as handle:
-            config = json.load(handle)
-    except (OSError, ValueError):
+        config = config_store.read(config_store.CONTROLES_RAPIDOS) or {}
+    except config_store.Unreadable:
         config = {}
     config["caja_limit"] = round(float(value), 2)
-    # Se escribe aparte y se reemplaza: un corte a mitad no deja el archivo roto.
-    temp_path = _CONFIG_PATH + ".tmp"
-    with open(temp_path, "w", encoding="utf-8") as handle:
-        json.dump(config, handle, indent=2)
-    os.replace(temp_path, _CONFIG_PATH)
+    config_store.write(config_store.CONTROLES_RAPIDOS, config)
 
 
 def caja_alert(saldo, limit):

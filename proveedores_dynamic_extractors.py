@@ -18,8 +18,6 @@ parseado contra lo que tipeó el usuario -- mucho más robusto que comparar
 texto crudo.
 """
 
-import json
-import app_paths
 import os
 import re
 from datetime import datetime
@@ -34,6 +32,7 @@ try:
 except ImportError:  # pragma: no cover - environment guard
     pytesseract = None  # type: ignore[assignment]
 
+import config_store
 from ocr_utils import (
     ensure_pdfplumber,
     ensure_pytesseract,
@@ -62,18 +61,11 @@ except ImportError:
 
 # ---- Persistencia (mismo patrón atómico que chase_rules.py) ----
 
-def _dynamic_suppliers_file_path():
-    return app_paths.config_file(DYNAMIC_SUPPLIERS_FILENAME, seed_from_repo=True)
-
-
 def _load_dynamic_suppliers_file():
-    path = _dynamic_suppliers_file_path()
-    if not os.path.isfile(path):
-        return {}
+    # El archivo (o, con DATABASE_URL, la tabla config.proveedores_dinamicos): ver config_store.py.
     try:
-        with open(path, encoding="utf-8") as handle:
-            payload = json.load(handle)
-    except (OSError, json.JSONDecodeError):
+        payload = config_store.read(DYNAMIC_SUPPLIERS_FILENAME)
+    except config_store.Unreadable:
         return {}
     if not isinstance(payload, dict):
         return {}
@@ -82,16 +74,7 @@ def _load_dynamic_suppliers_file():
 
 
 def _save_dynamic_suppliers_file(suppliers):
-    path = _dynamic_suppliers_file_path()
-    directory = os.path.dirname(path)
-    os.makedirs(directory, exist_ok=True)
-    payload = {"suppliers": suppliers}
-    temp_path = f"{path}.tmp"
-    with open(temp_path, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2, ensure_ascii=False)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temp_path, path)
+    config_store.write(DYNAMIC_SUPPLIERS_FILENAME, {"suppliers": suppliers})
 
 
 def load_dynamic_suppliers():

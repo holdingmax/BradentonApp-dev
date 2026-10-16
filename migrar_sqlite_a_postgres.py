@@ -239,11 +239,67 @@ def migrate_module(pg, schema, sqlite_path, empty_first):
         lite.close()
 
 
+CONFIG_TABLES = ("usuarios", "reglas_chase", "reglas_pago_proveedores", "proveedores_dinamicos", "ajustes",
+                 "sale_tax_registrado", "guardados")
+
+
+def migrate_config(pg, source_dir, empty_first, with_users):
+    """
+    La configuración (usuarios, reglas, botonera, Sale Tax): de los archivos
+    JSON de la PC (o de `source_dir`) a las tablas del esquema config, por
+    config_store, y la vuelve a leer para comparar. La clave de sesión no se
+    copia: Postgres genera la suya (solo obliga a volver a entrar una vez).
+    """
+    import config_store
+    from psycopg import sql
+
+    if empty_first:
+        pg.execute(sql.SQL("TRUNCATE {}").format(sql.SQL(", ").join(sql.Identifier("config", t) for t in CONFIG_TABLES)))
+    saved = {r[0] for r in pg.execute("SELECT nombre FROM config.guardados").fetchall()}
+    users_there = pg.execute("SELECT COUNT(*) FROM config.usuarios").fetchone()[0]
+    names = [n for n in config_store.NAMES if with_users or n != config_store.USERS]
+    busy = [n for n in names if n in saved]
+    if with_users and users_there and config_store.USERS not in busy:
+        busy.append("users.json (ya hay usuarios)")
+    if busy:
+        _fail("La configuración de destino ya tiene datos: " + ", ".join(busy)
+              + ". La copia es solo sobre una base sin configuración (o sin usuarios: --sin-usuarios).")
+    ok = True
+    print()
+    print("config")
+    for name in names:
+        path = os.path.join(source_dir, name) if source_dir else config_store.file_path(name)
+        payload = config_store.load_json_file(path)
+        if payload is None:
+            print(f"  {name:38} no está en la PC (nunca se guardó): queda sin copiar")
+            continue
+        config_store._pg_write(name, payload)
+        back = config_store._pg_read(name)
+        same = _comparable_config(name, back) == _comparable_config(name, payload)
+        ok = ok and same
+        print(f"  {name:38} {'idéntica' if same else 'DISTINTA'}")
+    return ok
+
+
+def _comparable_config(name, payload):
+    """Lo que tiene que quedar igual (las reglas se guardan limpias, como las lee la app)."""
+    import config_store
+
+    if name == config_store.USERS:
+        return {u: {"password_hash": d["password_hash"], "is_admin": bool(d.get("is_admin")),
+                    "must_change_password": bool(d.get("must_change_password"))} for u, d in (payload or {}).items()}
+    if name == config_store.CONTROLES_RAPIDOS:
+        return payload or {}
+    return payload
+
+
 def main():
     parser = argparse.ArgumentParser(description="Copia bases SQLite a PostgreSQL y verifica que queden idénticas.")
     parser.add_argument("modulos", nargs="+", help="nombre de la base sin .db (jh_facturas, chase, ...)")
     parser.add_argument("--origen", default=app_paths.DATA_DIR, help="carpeta con las bases SQLite (por defecto, la de datos de la app)")
     parser.add_argument("--vaciar", action="store_true", help="vacía antes las tablas del módulo (solo contra un Postgres de esta PC)")
+    parser.add_argument("--config-origen", help="para el módulo config: carpeta con los JSON (por defecto, los de la app en esta PC)")
+    parser.add_argument("--sin-usuarios", action="store_true", help="para el módulo config: no copia los usuarios")
     args = parser.parse_args()
 
     if not db.uses_postgres():
@@ -261,13 +317,16 @@ def main():
     for schema in args.modulos:
         if schema not in db.SCHEMAS:
             _fail(f"Módulo desconocido: {schema}")
-        if not os.path.isfile(os.path.join(args.origen, f"{schema}.db")):
+        if schema != "config" and not os.path.isfile(os.path.join(args.origen, f"{schema}.db")):
             _fail(f"No está {schema}.db en {args.origen}")
 
     with psycopg.connect(db.database_url(), autocommit=True) as pg, tempfile.TemporaryDirectory(prefix="bradenton_copia_") as folder:
         _check_alembic_head(pg)
         all_ok = True
         for schema in args.modulos:
+            if schema == "config":
+                all_ok = migrate_config(pg, args.config_origen, args.vaciar, not args.sin_usuarios) and all_ok
+                continue
             snapshot = _snapshot(os.path.join(args.origen, f"{schema}.db"), folder)
             all_ok = migrate_module(pg, schema, snapshot, args.vaciar) and all_ok
     print("\nTodo idéntico." if all_ok else "\nHAY DIFERENCIAS: revisar antes de seguir.")

@@ -6,11 +6,10 @@ matching), but maps a bank description keyword to a ledger sheet name
 instead of a Detalle category.
 """
 
-import json
-import app_paths
-import os
 import re
 import unicodedata
+
+import config_store
 
 RULES_FILENAME = "proveedores_pago_rules.json"
 
@@ -50,10 +49,6 @@ DEFAULT_RULES = [
 ]
 
 
-def _rules_file_path():
-    return app_paths.config_file(RULES_FILENAME, seed_from_repo=True)
-
-
 def normalize_rule_text(value):
     """Lowercase, strip accents, collapse whitespace; CHECK/CHEQUE -> CHEK."""
     if value is None:
@@ -73,29 +68,17 @@ def _normalize_rule_entry(keyword, sheet_name):
     return {"keyword": keyword_text, "sheet_name": sheet_name_text}
 
 
-def _seed_default_rules_file(path):
-    directory = os.path.dirname(path)
-    os.makedirs(directory, exist_ok=True)
-    payload = {"rules": DEFAULT_RULES}
-    temp_path = f"{path}.tmp"
-    with open(temp_path, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2, ensure_ascii=False)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temp_path, path)
-
-
 def load_dynamic_rules():
     """Return all persisted rule dicts: {"keyword": str, "sheet_name": str}."""
-    path = _rules_file_path()
-    if not os.path.isfile(path):
-        _seed_default_rules_file(path)
-
+    # El archivo (o, con DATABASE_URL, la tabla config.reglas_pago_proveedores):
+    # ver config_store.py. Si nunca se guardó nada, arranca con DEFAULT_RULES.
     try:
-        with open(path, encoding="utf-8") as handle:
-            payload = json.load(handle)
-    except (OSError, json.JSONDecodeError):
+        payload = config_store.read(RULES_FILENAME)
+    except config_store.Unreadable:
         return []
+    if payload is None:
+        payload = {"rules": DEFAULT_RULES}
+        config_store.write(RULES_FILENAME, payload)
 
     if isinstance(payload, dict):
         rules = payload.get("rules", [])
@@ -120,17 +103,7 @@ def save_dynamic_rules(rules):
     if not isinstance(rules, list):
         raise TypeError("Rules must be a list.")
 
-    path = _rules_file_path()
-    directory = os.path.dirname(path)
-    os.makedirs(directory, exist_ok=True)
-
-    payload = {"rules": rules}
-    temp_path = f"{path}.tmp"
-    with open(temp_path, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2, ensure_ascii=False)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temp_path, path)
+    config_store.write(RULES_FILENAME, {"rules": rules})
 
 
 def add_dynamic_rule(keyword, sheet_name):

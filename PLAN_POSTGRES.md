@@ -35,7 +35,8 @@
 | Revisión de órdenes | Hecha el 16/10: todo ORDER BY que podía empatar desempata como lo hacía SQLite (por el índice que usaba o por el orden de carga). Corrida final de los 19 módulos juntos: 523 de 523 comparaciones idénticas entre SQLite y Postgres y, con los últimos arreglos, iguales al código de antes del pase |
 | Respaldo (punto 8) | Hecho el 16/10: `respaldo_postgres.py` (pg_dump a `backups/`, verificado con pg_restore; restaurado de prueba en otra base) |
 | Dockerfile (punto 9, parte) | Hecho el 16/10: zona horaria de Florida (J6), salida sin buffer, `.dockerignore` sin `Claude outputs/` ni respaldos |
-| Pendientes | Usuarios, clave de sesión y reglas a tablas (punto 5); prueba en Linux limpio con la base vacía (punto 9); A1/A2 adaptados; copia a testing |
+| Punto 5: usuarios, clave de sesión y reglas | Hecho el 16/10: `config_store.py` y las tablas del esquema `config` (migración `0023_config`); la copia de datos también pasa la configuración (`migrar_sqlite_a_postgres.py config`); 37 comparaciones idénticas en los dos motores y contra el original |
+| Pendientes | Prueba en Linux limpio con la base vacía (punto 9); A1/A2 adaptados; copia a testing |
 
 **Cómo se prueba cada módulo** (PC, Postgres local en Docker: contenedor `bradenton-pg`, puerto 55432):
 

@@ -1,44 +1,34 @@
 """
-User accounts: JSON-backed store with hashed passwords (werkzeug.security).
+User accounts with hashed passwords (werkzeug.security): users.json en la
+PC, la tabla config.usuarios con DATABASE_URL (config_store.py).
 
 Pure data layer — permission checks (who's allowed to create/reset/delete
 users) live in webapp.py's routes, not here.
 """
 
-import json
-import app_paths
-import os
-
 from werkzeug.security import check_password_hash, generate_password_hash
 
-USERS_FILENAME = "users.json"
-
-
-def _users_file_path():
-    return app_paths.config_file(USERS_FILENAME)
+import config_store
 
 
 def load_users():
-    """Return {username: {"password_hash": str, "is_admin": bool}}."""
-    path = _users_file_path()
-    if not os.path.isfile(path):
+    """Return {username: {"password_hash": str, "is_admin": bool}}.
+
+    Sin usuarios guardados, {}. Si están pero no se pueden leer (archivo
+    roto, base caída) da error y no deja entrar a nadie: nunca se toma como
+    "no hay usuarios", que reabriría /primer-admin (A1 de AUDITORIA_2026-10.md).
+    """
+    users = config_store.read(config_store.USERS)
+    if users is None:
         return {}
-    try:
-        with open(path, encoding="utf-8") as handle:
-            return json.load(handle)
-    except (OSError, json.JSONDecodeError):
-        return {}
+    if not isinstance(users, dict):
+        raise config_store.Unreadable("Los usuarios guardados no tienen el formato esperado.")
+    return users
 
 
 def save_users(users):
-    """Persist the full user dict atomically (temp file + os.replace)."""
-    path = _users_file_path()
-    temp_path = f"{path}.tmp"
-    with open(temp_path, "w", encoding="utf-8") as handle:
-        json.dump(users, handle, indent=2, ensure_ascii=False)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temp_path, path)
+    """Persist the full user dict (temp file + os.replace en la PC; una transacción en Postgres)."""
+    config_store.write(config_store.USERS, users)
 
 
 def has_users():

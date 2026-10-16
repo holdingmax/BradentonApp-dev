@@ -101,6 +101,9 @@ PAGES = {
                    + [f"/carga-datos/proveedores/guardado/{key}" for key in ("ht_hackney", "airgas", "fpl", "manatee_county", "gce", "cec",
                                                                              "coca", "bimbo", "red_bull", "kooler_ice")]
                    + [url for path in ("/carga-datos/proveedores/historial", "/carga-datos/reportes/proveedores/pdf") for url in _months(path)],
+    # Usuarios, reglas, botonera y Sale Tax (config_store.py; en Postgres, el esquema config).
+    "config": ["/admin/users", "/perfil/password", "/carga-datos/chase", "/carga-datos/proveedores/reglas", "/proveedores", "/proveedores/nuevo"]
+              + [url for path in ("/controles/rapidos/caja", "/controles/cierre", "/carga-datos/chase/historial") for url in _months(path)],
 }
 
 
@@ -535,6 +538,53 @@ def _escenario_proveedores():
     return results
 
 
+def _escenario_config():
+    """Usuarios (alta, contraseña, baja), reglas de Chase y de pagos (alta, edición, baja, categorizar), límite de
+    Caja, Sale Tax del mes y un proveedor sin código; y que la clave de sesión no cambie entre lecturas."""
+    import auth
+    import chase_rules
+    import control_cierre
+    import controles_rapidos
+    import proveedores_dynamic_extractors as dyn
+    import proveedores_pago_rules
+
+    results = []
+    auth.create_user("prueba", "clave-de-prueba", is_admin=False)
+    results += [auth.list_users(), auth.must_change_password("prueba"), bool(auth.verify_user("prueba", "clave-de-prueba")),
+                bool(auth.verify_user("prueba", "otra"))]
+    auth.set_password("prueba", "clave-nueva")
+    results += [auth.must_change_password("prueba"), bool(auth.verify_user("prueba", "clave-nueva"))]
+    try:
+        auth.create_user("prueba", "x")
+    except ValueError as exc:
+        results.append(str(exc))
+    auth.delete_user("prueba")
+    results.append(auth.list_users())
+    chase_rules.add_dynamic_rule("PRUEBA 100% COMERCIO", "MOVILIDAD Y VIATICOS")
+    rules = chase_rules.load_dynamic_rules()
+    chase_rules.edit_dynamic_rule_by_index(len(rules) - 1, "PRUEBA 100% COMERCIO", "GASTOS VARIOS")
+    results += [chase_rules.load_dynamic_rules()[-2:], chase_rules.categorize_chase_description("PAGO PRUEBA 100% COMERCIO 1234"),
+                len(chase_rules.load_master_rules()), chase_rules.list_display_rules()[:3]]
+    chase_rules.delete_dynamic_rule_by_index(len(rules) - 1)
+    results.append(len(chase_rules.load_dynamic_rules()))
+    proveedores_pago_rules.add_dynamic_rule("PRUEBA PAGO", "PRUEBA")
+    results.append(proveedores_pago_rules.match_supplier_sheet("PAGO A PRUEBA PAGO 99"))
+    pago = proveedores_pago_rules.load_dynamic_rules()
+    proveedores_pago_rules.delete_dynamic_rule_by_index(len(pago) - 1)
+    results.append(len(proveedores_pago_rules.load_dynamic_rules()))
+    controles_rapidos.set_caja_limit(9876.5)
+    control_cierre.set_sale_tax_record(2026, 9, True, "A-123")
+    results += [controles_rapidos.caja_limit(), {k: v for k, v in (control_cierre.sale_tax_record(2026, 9) or {}).items() if k != "marked_at"}]
+    control_cierre.set_sale_tax_record(2026, 9, False)
+    results.append(control_cierre.sale_tax_record(2026, 9))
+    dyn._save_dynamic_suppliers_file({"prueba": {"label": "Prueba 100%", "sheet_name": "PRUEBA", "fields": {"total": "TOTAL"}}})
+    results.append(dyn.load_dynamic_suppliers())
+    dyn._save_dynamic_suppliers_file({})
+    import webapp
+    results.append(webapp._load_or_create_secret_key() == webapp._load_or_create_secret_key())
+    return results
+
+
 def _without(value, *keys):
     return {k: v for k, v in value.items() if k not in keys} if isinstance(value, dict) else value
 
@@ -548,7 +598,7 @@ SCENARIOS = {"jh_facturas": _escenario_jh_facturas, "ice_machine": _escenario_ic
              "lottery": _escenario_lottery,
              "reportes_diarios": _escenario_reportes_diarios, "cuenta_kia_toyota": _escenario_cuenta_kia_toyota,
              "eft": _escenario_eft, "chase": _escenario_chase,
-             "cmv": _escenario_cmv, "proveedores": _escenario_proveedores}
+             "cmv": _escenario_cmv, "proveedores": _escenario_proveedores, "config": _escenario_config}
 
 
 # --- Una corrida (proceso aparte por motor) --------------------------------
@@ -707,7 +757,8 @@ def main():
         missing = [m for m in args.modulos if m not in migrated]
         if missing:
             sys.exit(f"Sin tablas en Postgres para: {', '.join(missing)} (¿falta alembic upgrade head?)")
-        copy = subprocess.run([sys.executable, os.path.join(APP_DIR, "migrar_sqlite_a_postgres.py"), *sorted(migrated), "--origen", pg_dir, "--vaciar"],
+        copy = subprocess.run([sys.executable, os.path.join(APP_DIR, "migrar_sqlite_a_postgres.py"), *sorted(migrated), "--origen", pg_dir, "--vaciar",
+                               "--config-origen", pg_dir],
                               cwd=APP_DIR, env={**os.environ, "DATABASE_URL": url, "PYTHONIOENCODING": "utf-8"})
         if copy.returncode:
             sys.exit("La copia a Postgres no quedó idéntica: no se compara.")
@@ -729,7 +780,7 @@ def main():
         a, b = lite[key], pg.get(key)
         same = b is not None and a == b
         differences += not same
-        if a["status"] not in (0, 200) or (b and b["status"] not in (0, 200)) or 'name="password"' in a["body"]:
+        if a["status"] not in (0, 200) or (b and b["status"] not in (0, 200)) or "<title>Iniciar sesión" in a["body"]:
             bad_status.append(f"{key} ({a['status']}/{b['status'] if b else '-'})")
         if not same:
             print(f"DISTINTO  {key}  ({a['status']}/{b['status'] if b else '-'})")

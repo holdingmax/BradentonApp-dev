@@ -34,6 +34,7 @@ import os
 from datetime import datetime
 
 import app_paths
+import config_store
 
 ENTRY_TITLE = "Asiento NºZXXX"
 ACCOUNT_CAJA = "Caja"
@@ -173,16 +174,14 @@ def build_month_entries(rows, year, month):
 
 # Qué meses ya tienen registrado el devengamiento de Sale Tax:
 # {"2026-07": {"asiento": "11457", "marked_at": "2026-10-09 10:15"}}.
-_SALE_TAX_PATH = os.path.join(app_paths.DATA_DIR, "control_cierre_sale_tax.json")
-
-
 def _load_sale_tax_records():
+    # reportes_data/control_cierre_sale_tax.json, o con DATABASE_URL la tabla
+    # config.sale_tax_registrado (config_store.py).
     try:
-        with open(_SALE_TAX_PATH, encoding="utf-8") as handle:
-            data = json.load(handle)
-        return data if isinstance(data, dict) else {}
-    except (OSError, ValueError):
+        data = config_store.read(config_store.SALE_TAX)
+    except config_store.Unreadable:
         return {}
+    return data if isinstance(data, dict) else {}
 
 
 def sale_tax_record(year, month):
@@ -199,11 +198,7 @@ def set_sale_tax_record(year, month, registered, asiento=""):
                         "marked_at": datetime.now().strftime("%Y-%m-%d %H:%M")}
     else:
         records.pop(key, None)
-    os.makedirs(os.path.dirname(_SALE_TAX_PATH), exist_ok=True)
-    temp_path = f"{_SALE_TAX_PATH}.tmp"
-    with open(temp_path, "w", encoding="utf-8") as handle:
-        json.dump(records, handle, indent=2, ensure_ascii=False)
-    os.replace(temp_path, _SALE_TAX_PATH)
+    config_store.write(config_store.SALE_TAX, records)
 
 
 def missing_notice(entries):

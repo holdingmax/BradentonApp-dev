@@ -3,8 +3,6 @@ Chase bank activity engine: keyword-to-Detalle categorization rules
 (persisted + hardcoded) and the full read/categorize/write pipeline.
 """
 
-import json
-import app_paths
 import os
 import warnings
 import re
@@ -13,12 +11,10 @@ from datetime import datetime
 
 import pandas as pd
 
+import config_store
+
 RULES_FILENAME = "chase_rules.json"  # Personalizadas -- added by an admin via the UI.
 MASTER_RULES_FILENAME = "chase_master_rules.json"  # Maestra -- seeded once from Alfonso's original hardcoded rules, then admin-editable.
-
-
-def _rules_file_path(filename):
-    return app_paths.config_file(filename, seed_from_repo=True)
 
 
 def normalize_rule_text(value):
@@ -47,17 +43,17 @@ def _load_rules_file(filename, seed=None):
     is given, it's created with that seed data first -- used once, the
     first time chase_master_rules.json is read.
     """
-    path = _rules_file_path(filename)
-    if not os.path.isfile(path):
+    # El archivo (o, con DATABASE_URL, la tabla config.reglas_chase): ver
+    # config_store.py. La versión del repo es la semilla de la primera lectura.
+    try:
+        payload = config_store.read(filename)
+    except config_store.Unreadable:
+        return []
+    if payload is None:
         if seed is None:
             return []
         _save_rules_file(filename, list(seed))
-
-    try:
-        with open(path, encoding="utf-8") as handle:
-            payload = json.load(handle)
-    except (OSError, json.JSONDecodeError):
-        return []
+        payload = {"rules": list(seed)}
 
     if isinstance(payload, dict):
         rules = payload.get("rules", [])
@@ -81,18 +77,7 @@ def _save_rules_file(filename, rules):
     """Persist a full rules list atomically without dropping unrelated entries."""
     if not isinstance(rules, list):
         raise TypeError("Rules must be a list.")
-
-    path = _rules_file_path(filename)
-    directory = os.path.dirname(path)
-    os.makedirs(directory, exist_ok=True)
-
-    payload = {"rules": rules}
-    temp_path = f"{path}.tmp"
-    with open(temp_path, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2, ensure_ascii=False)
-        handle.flush()
-        os.fsync(handle.fileno())
-    os.replace(temp_path, path)
+    config_store.write(filename, {"rules": rules})
 
 
 def _add_rule(filename, keyword, detail, seed=None):
