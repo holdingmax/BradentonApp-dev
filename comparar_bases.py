@@ -65,6 +65,11 @@ PAGES = {
     "gettel_toyota": [url for path in ("/carga-datos/gettel", "/carga-datos/gettel/historial", "/carga-datos/reportes/gettel/excel",
                                        "/carga-datos/reportes/gettel/pdf", "/controles/kia-toyota", "/controles/rapidos/kia")
                       for url in _months(path)],
+    "lottery": ["/carga-datos/lottery", "/carga-datos/lottery/dia/2026-09-15", "/carga-datos/lottery/dia/2026-10-04",
+                "/carga-datos/lottery/dia/2026-07-31"]
+               + [url for path in ("/carga-datos/lottery/historial", "/carga-datos/lottery/exportar", "/carga-datos/lottery/exportar/pdf",
+                                   "/carga-datos/lottery/mensual", "/carga-datos/lottery/resumen-mensual", "/carga-datos/reportes/lottery/pdf",
+                                   "/controles/lottery", "/controles/caja", "/carga-datos/caja") for url in _months(path)],
 }
 
 
@@ -299,6 +304,30 @@ def _escenario_gettel_toyota():
     return results
 
 
+def _escenario_lottery():
+    """Un día de prueba por sus tres caminos, fechas de pago de los bloques (con el reajuste) y el reporte mensual."""
+    import lottery_db
+
+    real = lottery_db.get_day("2026-09-15")
+    sales = {k: real.get(k) for k in lottery_db._SALES_REPORT_FIELDS}
+    lottery_db.upsert_department_fields("2026-12-07", 3, 45.5, 2, 20.0, "ocr", "Close Store prueba.pdf")
+    lottery_db.upsert_sales_report_fields("2026-12-07", sales, "portal", "Daily Sales prueba.pdf")
+    lottery_db.upsert_manual_day("2026-12-08", {**sales, "online_count": 1, "online_net_sales": 10})
+    lottery_db.blank_day("2026-12-09")
+    results = [_without(lottery_db.get_day("2026-12-07"), "updated_at"), sorted(lottery_db.get_days_between("2026-12-01", "2026-12-31")),
+               lottery_db.set_block_chase_date(2026, 49, "2026-12-11"), lottery_db.set_block_chase_date(2026, 48, "2026-12-03"),
+               lottery_db.build_month_blocks(2026, 12), lottery_db.monthly_debit_total(2026, 12), lottery_db.get_available_years(),
+               lottery_db.compute_month_closing(2026, 12)]
+    report = lottery_db.get_monthly_report(2026, 9)
+    if report:
+        lottery_db.save_monthly_report({**report, "month": 12}, "Monthly prueba.pdf")
+        lottery_db.save_monthly_report({**report, "month": 12, "warnings": ["reemplazo"]}, "Monthly prueba 2.pdf")
+        results.append(_without(lottery_db.get_monthly_report(2026, 12), "updated_at"))
+        lottery_db.delete_monthly_report(2026, 12)
+    results += [lottery_db.get_monthly_report(2026, 12), lottery_db.set_block_chase_date(2026, 48, None)]
+    return results
+
+
 def _without(value, *keys):
     return {k: v for k, v in value.items() if k not in keys} if isinstance(value, dict) else value
 
@@ -308,7 +337,8 @@ SCENARIOS = {"jh_facturas": _escenario_jh_facturas, "ice_machine": _escenario_ic
              "control_cmv": _escenario_control_cmv, "depositos": _escenario_depositos,
              "horas_trabajo": _escenario_horas_trabajo, "jh_mensual": _escenario_jh_mensual,
              "documents": _escenario_documents, "fisico": _escenario_fisico,
-             "caja": _escenario_caja, "gettel_toyota": _escenario_gettel_toyota}
+             "caja": _escenario_caja, "gettel_toyota": _escenario_gettel_toyota,
+             "lottery": _escenario_lottery}
 
 
 # --- Una corrida (proceso aparte por motor) --------------------------------
@@ -335,6 +365,20 @@ def _body(response):
     return f"<{len(data)} bytes {kind}>"
 
 
+_TIME_KEYS = {"updated_at", "created_at", "uploaded_at", "changed_at", "edited_at", "sheet_added_at", "hidden_at", "registrado_en"}
+
+
+def _drop_times(value):
+    """Saca las horas de guardado (cambian entre corridas) de lo que devuelve un escenario."""
+    if hasattr(value, "keys") and not isinstance(value, dict):
+        value = {k: value[k] for k in value.keys()}
+    if isinstance(value, dict):
+        return {k: _drop_times(v) for k, v in value.items() if k not in _TIME_KEYS}
+    if isinstance(value, (list, tuple)):
+        return [_drop_times(v) for v in value]
+    return value
+
+
 def _jsonable(value):
     """Filas (sqlite3.Row o db.Row) como dict; lo demás como texto."""
     if hasattr(value, "keys"):
@@ -344,7 +388,8 @@ def _jsonable(value):
 
 def _capture(modules, out_path):
     os.startfile = lambda *a, **k: None  # que ninguna ruta abra Excel en la PC
-    sys.path.insert(0, APP_DIR)
+    code_dir = os.environ.get("BRADENTON_CODE_DIR") or APP_DIR
+    sys.path.insert(0, code_dir)
     import flask_login.utils
     import webapp
 
@@ -368,7 +413,7 @@ def _capture(modules, out_path):
     result = pages("antes")
     for module in modules:
         if module in SCENARIOS:
-            result[f"escritura {module}"] = {"status": 0, "body": json.dumps(SCENARIOS[module](), ensure_ascii=False, indent=1, default=_jsonable)}
+            result[f"escritura {module}"] = {"status": 0, "body": json.dumps(_drop_times(SCENARIOS[module]()), ensure_ascii=False, indent=1, default=_jsonable)}
     result.update(pages("después"))
     with open(out_path, "w", encoding="utf-8") as handle:
         json.dump(result, handle, ensure_ascii=False)
@@ -394,9 +439,11 @@ def _copy_data(source, target):
             shutil.copy2(os.path.join(APP_DIR, name), target)
 
 
-def _run_capture(modules, data_dir, out_path, database_url):
-    env = {k: v for k, v in os.environ.items() if k != "DATABASE_URL"}
+def _run_capture(modules, data_dir, out_path, database_url, code_dir=None):
+    env = {k: v for k, v in os.environ.items() if k not in ("DATABASE_URL", "BRADENTON_CODE_DIR")}
     env.update({"BRADENTON_DATA_DIR": data_dir, "PYTHONIOENCODING": "utf-8"})
+    if code_dir:
+        env["BRADENTON_CODE_DIR"] = code_dir
     if database_url:
         env["DATABASE_URL"] = database_url
     done = subprocess.run([sys.executable, os.path.abspath(__file__), "--capturar", out_path, *modules], env=env, cwd=APP_DIR)
@@ -410,6 +457,8 @@ def main():
     parser = argparse.ArgumentParser(description="Compara la app sobre SQLite y sobre PostgreSQL con los mismos datos.")
     parser.add_argument("modulos", nargs="+")
     parser.add_argument("--datos", help="carpeta de datos de origen (por defecto, la de la app)")
+    parser.add_argument("--original", metavar="COMMIT",
+                        help="además, corre el código de ese commit (antes del pase) sobre SQLite: lo nuevo no tiene que cambiar nada")
     parser.add_argument("--capturar", help=argparse.SUPPRESS)
     args = parser.parse_args()
     if args.capturar:
@@ -450,6 +499,15 @@ def main():
             sys.exit("La copia a Postgres no quedó idéntica: no se compara.")
         lite = _run_capture(args.modulos, lite_dir, os.path.join(folder, "sqlite.json"), None)
         pg = _run_capture(args.modulos, pg_dir, os.path.join(folder, "postgres.json"), url)
+        original = None
+        if args.original:
+            code_dir, orig_dir = os.path.join(folder, "codigo_original"), os.path.join(folder, "sqlite_original")
+            subprocess.run(["git", "worktree", "add", "--detach", "--quiet", code_dir, args.original], cwd=APP_DIR, check=True)
+            try:
+                _copy_data(source, orig_dir)
+                original = _run_capture(args.modulos, orig_dir, os.path.join(folder, "original.json"), None, code_dir)
+            finally:
+                subprocess.run(["git", "worktree", "remove", "--force", code_dir], cwd=APP_DIR)
 
     differences, bad_status = 0, []
     print()
@@ -465,7 +523,19 @@ def main():
                 diff = difflib.unified_diff(a["body"].splitlines(), b["body"].splitlines(), "SQLite", "Postgres", lineterm="", n=1)
                 for line in list(diff)[:40]:
                     print("    " + line[:200])
-    print(f"{len(lite) - differences} de {len(lite)} comparaciones idénticas.")
+    print(f"{len(lite) - differences} de {len(lite)} comparaciones idénticas (SQLite contra Postgres).")
+    if original is not None:
+        changed = 0
+        for key in lite:
+            if original.get(key) != lite[key]:
+                changed += 1
+                print(f"CAMBIÓ CONTRA EL ORIGINAL  {key}")
+                if key in original:
+                    diff = difflib.unified_diff(original[key]["body"].splitlines(), lite[key]["body"].splitlines(), "original", "nuevo", lineterm="", n=1)
+                    for line in list(diff)[:30]:
+                        print("    " + line[:200])
+        print(f"{len(lite) - changed} de {len(lite)} iguales al código original sobre SQLite.")
+        differences += changed
     if bad_status:
         print("Páginas que no respondieron bien (o pidieron login):\n  " + "\n  ".join(bad_status))
     print("Todo idéntico." if not differences and not bad_status else "HAY QUE REVISAR antes del commit.")

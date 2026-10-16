@@ -32,9 +32,9 @@ import app_paths
 import os
 import re
 import shutil
-import sqlite3
 from datetime import date, datetime, timedelta
 
+import db
 import documents_db
 
 _BASE_DIR = app_paths.DATA_DIR
@@ -53,24 +53,23 @@ _schema_ready_for = None
 
 
 def _connect():
-    global _schema_ready_for
     # El esquema y el modo WAL (que queda guardado en el archivo) se aseguran
     # una sola vez por proceso, no en cada conexión (2026-10-02): Caja abre
     # una conexión por día del mes (get_day) y esto era ~3/4 de lo que
     # tardaba en armarse la página después de cada guardado.
-    if _schema_ready_for == _DB_PATH and os.path.exists(_DB_PATH):
-        conn = sqlite3.connect(_DB_PATH, timeout=30)
-        conn.row_factory = sqlite3.Row
-        return conn
-    os.makedirs(_BASE_DIR, exist_ok=True)
+    # Sin DATABASE_URL, la base SQLite de siempre; con ella, el esquema
+    # lottery de PostgreSQL (db.py; tablas de migraciones/versions/0013_lottery.py).
+    ready = _schema_ready_for == _DB_PATH and os.path.exists(_DB_PATH)
+    return db.connect("lottery", _DB_PATH, None if ready else _init_sqlite)
+
+
+def _init_sqlite(conn):
+    global _schema_ready_for
     # timeout=30 + WAL -- ver reportes_db.py: necesario desde que las cargas
     # en segundo plano (jobs.py) pueden escribir de verdad en paralelo.
-    conn = sqlite3.connect(_DB_PATH, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.row_factory = sqlite3.Row
     _ensure_schema(conn)
     _schema_ready_for = _DB_PATH
-    return conn
 
 
 def _ensure_schema(conn):
@@ -286,7 +285,7 @@ def get_days_between(start_date, end_date):
     conn = _connect()
     try:
         rows = conn.execute(
-            "SELECT * FROM lottery_days WHERE date BETWEEN ? AND ?",
+            "SELECT * FROM lottery_days WHERE date BETWEEN ? AND ? ORDER BY date",
             (_date_key(start_date), _date_key(end_date)),
         ).fetchall()
     finally:
@@ -355,7 +354,7 @@ def search_pdfs(query, limit=20):
     try:
         rows = conn.execute(
             "SELECT date, department_pdf_filename, sales_report_pdf_filename FROM lottery_days "
-            "WHERE department_pdf_filename LIKE ? OR sales_report_pdf_filename LIKE ? "
+            "WHERE LOWER(department_pdf_filename) LIKE LOWER(?) OR LOWER(sales_report_pdf_filename) LIKE LOWER(?) "
             "ORDER BY date DESC LIMIT ?",
             (like, like, limit),
         ).fetchall()
@@ -422,7 +421,8 @@ def _realign_chase_dates(conn, anchor_iso_year, anchor_iso_week, anchor_date, no
     """
     anchor_monday, _ = _iso_week_bounds(anchor_iso_year, anchor_iso_week)
     rows = conn.execute(
-        "SELECT iso_year, iso_week, chase_bank_date FROM lottery_blocks WHERE chase_bank_date IS NOT NULL"
+        "SELECT iso_year, iso_week, chase_bank_date FROM lottery_blocks WHERE chase_bank_date IS NOT NULL "
+        "ORDER BY iso_year, iso_week"
     ).fetchall()
     corrected = []
     for row in rows:
@@ -456,7 +456,8 @@ def _nearest_confirmed_chase_date(conn, iso_year, iso_week):
     no hay ningún bloque confirmado en toda la base.
     """
     rows = conn.execute(
-        "SELECT iso_year, iso_week, chase_bank_date FROM lottery_blocks WHERE chase_bank_date IS NOT NULL"
+        "SELECT iso_year, iso_week, chase_bank_date FROM lottery_blocks WHERE chase_bank_date IS NOT NULL "
+        "ORDER BY iso_year, iso_week"
     ).fetchall()
     if not rows:
         return None
@@ -1584,6 +1585,10 @@ def compute_month_closing(year, month):
 # ---------------------------------------------------------------------------
 
 def _ensure_monthly_table(conn):
+    # En Postgres la tabla ya la creó la migración: un CREATE TABLE acá podría
+    # crearla otra vez en otro esquema.
+    if db.uses_postgres():
+        return
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS lottery_monthly_reports (
@@ -1605,9 +1610,12 @@ def save_monthly_report(report, filename=None):
         _ensure_monthly_table(conn)
         with conn:
             conn.execute(
-                "INSERT OR REPLACE INTO lottery_monthly_reports "
+                "INSERT INTO lottery_monthly_reports "
                 "(year, month, from_date, to_date, values_json, lines_json, warnings_json, filename, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (year, month) DO UPDATE SET "
+                "from_date = excluded.from_date, to_date = excluded.to_date, values_json = excluded.values_json, "
+                "lines_json = excluded.lines_json, warnings_json = excluded.warnings_json, filename = excluded.filename, "
+                "updated_at = excluded.updated_at",
                 (report["year"], report["month"], report["from_date"], report["to_date"],
                  json.dumps(report["values"]), json.dumps(report["lines"]), json.dumps(report.get("warnings") or []),
                  filename, _now()),
