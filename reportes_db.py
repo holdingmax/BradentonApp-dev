@@ -20,6 +20,8 @@ from datetime import date, datetime
 
 import documents_db
 
+import db
+
 _BASE_DIR = app_paths.DATA_DIR
 _DB_PATH = os.path.join(_BASE_DIR, "reportes_diarios.db")
 _PDF_DIR = os.path.join(_BASE_DIR, "pdfs")
@@ -31,8 +33,7 @@ _STORE_INFO_NUMERIC_FIELDS = (
 )
 
 
-def _connect():
-    os.makedirs(_BASE_DIR, exist_ok=True)
+def _init_sqlite(conn):
     # timeout=30 + WAL -- antes de las cargas en segundo plano (ver jobs.py,
     # CLAUDE.md "sexta tanda") el servidor de desarrollo atendía una sola
     # request a la vez, así que dos escrituras a la misma base nunca podían
@@ -43,11 +44,14 @@ def _connect():
     # de sqlite3. WAL deja lectores y un escritor conviviendo sin bloquearse
     # entre sí; timeout=30 le da margen de sobra a la que sí tiene que
     # esperar (una carga real nunca escribe más de una vez por segundo).
-    conn = sqlite3.connect(_DB_PATH, timeout=30)
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.row_factory = sqlite3.Row
     _ensure_schema(conn)
-    return conn
+
+
+def _connect():
+    # Sin DATABASE_URL, la base SQLite de siempre; con ella, el esquema reportes_diarios de
+    # PostgreSQL (db.py; tablas de migraciones/versions/0016_reportes_diarios.py).
+    return db.connect("reportes_diarios", _DB_PATH, _init_sqlite)
 
 
 def _ensure_schema(conn):
@@ -317,7 +321,9 @@ def upsert_store_info(report_date, fields, source, pdf_filename=None, keep_exist
     placeholders = ", ".join("?" for _ in columns)
     keepable = set(_STORE_INFO_NUMERIC_FIELDS) | {"credit_terms_json"} if keep_existing_for_none else set()
     update_clause = ", ".join(
-        f"{col} = COALESCE(excluded.{col}, {col})" if col in keepable else f"{col} = excluded.{col}"
+        # La columna de la fila que ya estaba va con el nombre de la tabla: en
+        # Postgres, sola, es ambigua con la de excluded.
+        f"{col} = COALESCE(excluded.{col}, daily_reports.{col})" if col in keepable else f"{col} = excluded.{col}"
         for col in columns if col != "date"
     )
     conn = _connect()
@@ -357,7 +363,8 @@ def get_month_overview(year, month):
         dept_by_date = {row["date"]: row for row in dept_rows}
 
         detail_rows = conn.execute(
-            "SELECT date, department, count, amount FROM daily_report_departments WHERE date LIKE ? ORDER BY amount DESC",
+            "SELECT date, department, count, amount FROM daily_report_departments WHERE date LIKE ? "
+            "ORDER BY amount DESC NULLS LAST, rowid",
             (f"{prefix}%",),
         ).fetchall()
         detail_by_date = {}
@@ -409,7 +416,7 @@ def get_month_department_totals(year, month):
             FROM daily_report_departments
             WHERE date LIKE ?
             GROUP BY department
-            ORDER BY amount DESC
+            ORDER BY amount DESC NULLS LAST, department DESC
             """,
             (f"{prefix}%",),
         ).fetchall()
@@ -727,7 +734,7 @@ def search_pdfs(query, limit=20):
     conn = _connect()
     try:
         rows = conn.execute(
-            "SELECT date, pdf_filename FROM daily_reports WHERE pdf_filename LIKE ? "
+            "SELECT date, pdf_filename FROM daily_reports WHERE LOWER(pdf_filename) LIKE LOWER(?) "
             "ORDER BY date DESC LIMIT ?",
             (like, limit),
         ).fetchall()

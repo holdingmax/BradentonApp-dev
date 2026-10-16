@@ -26,7 +26,8 @@
 | Módulo 11: caja | Hecho el 16/10: copia idéntica y 41 comparaciones idénticas (Caja ene-oct, sus exportaciones y su PDF, Control Caja viejo, botonera; antes y después de gastos con N° de ticket como número, repetidos, pendientes y saldos del mes). Los 2 `lastrowid` → `RETURNING id`; el gasto repetido se busca con `ORDER BY id` |
 | Módulo 12: gettel_toyota | Hecho el 16/10: copia idéntica y 49 comparaciones idénticas (Gettel, historial, su Excel y PDF, Kia y Toyota, botonera; antes y después de cargar días, pagos y el ajuste del mes; julio redirige igual en los dos porque no tiene datos). `last_insert_rowid()` → `RETURNING id`, `COLLATE NOCASE` → `LOWER()`, `printf` → `MIN(year * 100 + month)` |
 | Módulo 13: lottery | Hecho el 16/10: copia idéntica y 81 comparaciones idénticas en los dos motores **y contra el código original** (Lottery, días, historial, exportaciones, mensual, resumen, PDF, Control Lottery, Caja; antes y después de cargar un día por sus tres caminos, fechas de pago con reajuste y reporte mensual) |
-| Módulos 14 a 19 | Pendientes |
+| Módulo 14: reportes_diarios | Hecho el 16/10: copia idéntica (1.924 filas) y 135 comparaciones idénticas en los dos motores y contra el código original (días, Reporte C-Store, historiales, Store Info y sus exportaciones, PDF, Tarjetas, Cierre y sus exportaciones, Control CMV, Kia y Toyota, Caja, botonera; antes y después de cargar un día completo, corregir, márgenes y bajas). La suma de decimales de Postgres ahora es la de SQLite (migración `0015`) |
+| Módulos 15 a 19 | Pendientes |
 
 **Cómo se prueba cada módulo** (PC, Postgres local en Docker: contenedor `bradenton-pg`, puerto 55432):
 

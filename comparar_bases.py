@@ -70,6 +70,15 @@ PAGES = {
                + [url for path in ("/carga-datos/lottery/historial", "/carga-datos/lottery/exportar", "/carga-datos/lottery/exportar/pdf",
                                    "/carga-datos/lottery/mensual", "/carga-datos/lottery/resumen-mensual", "/carga-datos/reportes/lottery/pdf",
                                    "/controles/lottery", "/controles/caja", "/carga-datos/caja") for url in _months(path)],
+    # /reporte/dia/<d>/pdf redirige: abre la copia del PDF, que ya no se guarda.
+    "reportes_diarios": [f"/reporte/dia/{d}" for d in ("2026-07-27", "2026-08-19", "2026-09-15", "2026-10-04")]
+                        + ["/carga-datos/eft/proximos", "/carga-datos/proyecciones", "/buscar/documentos?q=close"]
+                        + [url for path in ("/carga-datos/reporte-diario", "/reporte/historial", "/reporte/store-info/historial",
+                                            "/reporte/store-info/exportar", "/reporte/store-info/exportar/pdf",
+                                            "/carga-datos/reportes/reporte-diario/pdf", "/controles/tarjetas", "/controles/cierre",
+                                            "/controles/cierre/exportar", "/controles/cierre/exportar/pdf", "/controles/cmv",
+                                            "/controles/kia-toyota", "/carga-datos/caja", "/controles/rapidos/tarjetas",
+                                            "/controles/rapidos/caja") for url in _months(path)],
 }
 
 
@@ -328,6 +337,32 @@ def _escenario_lottery():
     return results
 
 
+def _escenario_reportes_diarios():
+    """Un día de prueba con departamentos (OCR y a mano), Store Info, totales impresos, márgenes y bajas."""
+    import reportes_db
+
+    real = reportes_db.get_day("2026-09-15")
+    info = {k: v for k, v in (real["store_info"] or {}).items() if k not in ("date", "credit_terms_json", "store_info_source", "pdf_filename")}
+    info["credit_terms"] = real["store_info"]["credit_terms"] if real["store_info"] else []
+    records = [{"department": d["department"], "count": d["count"], "amount": d["amount"]} for d in real["departments"]]
+    results = [reportes_db.replace_department_sales("2026-12-07", records, "Close Store 06-12.pdf")]
+    reportes_db.upsert_department_row("2026-12-07", "PRUEBA 100%", 2, 0.0)
+    reportes_db.upsert_department_row("2026-12-07", records[0]["department"], 999, 12.5)
+    reportes_db.delete_department_row("2026-12-07", records[1]["department"])
+    reportes_db.upsert_store_info("2026-12-07", info, "ocr", "Close Store 06-12.pdf")
+    reportes_db.upsert_store_info("2026-12-07", {**info, "cash": None}, "ocr", keep_existing_for_none=True)
+    reportes_db.upsert_printed_totals("2026-12-07", 1234.5, 321)
+    margins = reportes_db.get_department_margins({"Tabacco": 0.1, "Soda": 0.3})
+    reportes_db.save_department_margins({**margins, "Soda": 0.35})
+    results += [reportes_db.get_day("2026-12-07"), reportes_db.get_month_overview(2026, 12), reportes_db.get_month_department_totals(2026, 12),
+                reportes_db.get_month_departments_by_date(2026, 12), reportes_db.get_month_store_info(2026, 12),
+                reportes_db.get_month_department_amounts(2026, 12, records[0]["department"]), reportes_db.get_month_local_accounts(2026, 12),
+                reportes_db.get_store_info_years(), len(reportes_db.get_card_sales_by_date()), len(reportes_db.get_local_account_sales_by_date()),
+                reportes_db.list_known_departments(), reportes_db.get_department_margins({"Tabacco": 0.1, "Soda": 0.3}),
+                reportes_db.delete_departments_for_date("2026-12-07"), reportes_db.get_day("2026-12-07")["departments"]]
+    return results
+
+
 def _without(value, *keys):
     return {k: v for k, v in value.items() if k not in keys} if isinstance(value, dict) else value
 
@@ -338,7 +373,8 @@ SCENARIOS = {"jh_facturas": _escenario_jh_facturas, "ice_machine": _escenario_ic
              "horas_trabajo": _escenario_horas_trabajo, "jh_mensual": _escenario_jh_mensual,
              "documents": _escenario_documents, "fisico": _escenario_fisico,
              "caja": _escenario_caja, "gettel_toyota": _escenario_gettel_toyota,
-             "lottery": _escenario_lottery}
+             "lottery": _escenario_lottery,
+             "reportes_diarios": _escenario_reportes_diarios}
 
 
 # --- Una corrida (proceso aparte por motor) --------------------------------
