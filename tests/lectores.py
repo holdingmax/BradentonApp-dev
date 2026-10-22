@@ -20,6 +20,8 @@ import json
 import os
 import re
 
+from PIL import Image
+
 DATA_ENV = "BRADENTON_TEST_DATA"
 
 
@@ -154,6 +156,9 @@ def _plain(value, base):
         return value.replace(base, "<datos>").replace(base.replace("\\", "/"), "<datos>")
     if value is None or isinstance(value, (bool, int)):
         return value
+    if isinstance(value, Image.Image):
+        # La foto del cheque: su repr trae la dirección de memoria, que cambia en cada corrida.
+        return f"<imagen {value.mode} {value.width}x{value.height}>"
     return repr(value)
 
 
