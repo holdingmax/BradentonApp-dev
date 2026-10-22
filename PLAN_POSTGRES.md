@@ -38,7 +38,10 @@
 | Punto 5: usuarios, clave de sesión y reglas | Hecho el 16/10: `config_store.py` y las tablas del esquema `config` (migración `0023_config`); la copia de datos también pasa la configuración (`migrar_sqlite_a_postgres.py config`); 37 comparaciones idénticas en los dos motores y contra el original |
 | A1/A2 | Hecho el 16/10: usuarios ilegibles dan error (no "no hay usuarios"); en Render sin `DATABASE_URL` la app no arranca |
 | Punto 9: Linux limpio | Hecho el 16/10: imagen desde cero contra un Postgres vacío, 38 de 38 (primer admin con la clave, Chase, Close Store y depósito por OCR, reinicio y deploy nuevo sin perder datos ni sesión); lo leído por OCR en Linux es idéntico a la PC. Arreglados en el camino: migraciones antes de la clave de sesión y `OMP_THREAD_LIMIT=1` para el OCR |
-| Pendientes | Que Leti cree `bradenton-dev` + `bradenton-dev-db` y cargue `DATABASE_URL` y `BRADENTON_SETUP_KEY`; copiar los datos reales a testing (`migrar_sqlite_a_postgres.py` con todos los módulos y `config`) y que Cande valide |
+| Render testing | Hecho el 19/10 (Leti): `bradenton-dev-db` (Postgres 17) y `bradenton-dev`, deployado con `03399d2` y conectado a la base |
+| Respaldo antes del service | Hecho el 19/10: la notebook se fue a reparar; `reportes_data` (con `respaldos`) y la configuración copiados a un pendrive (`E:\BradentonApp_respaldo_2026-10-19\`), verificados por SHA256 y con `integrity_check` |
+| Copia a testing | Hecha el 22/10: `migrar_sqlite_a_postgres.py todos` contra `bradenton-dev-db`, 52 tablas y 35.983 filas idénticas; la URL se sacó del `.env` al terminar. Ojo: `app.run()` de Flask lee el `.env`, así que con la URL ahí la app de la PC se conecta a Render |
+| Pendientes | Cuenta propia para Leti en testing; que Cande valide; que Leti arme producción y se repita la copia con los mismos pasos |
 
 **Cómo se prueba cada módulo** (PC, Postgres local en Docker: contenedor `bradenton-pg`, puerto 55432):
 
