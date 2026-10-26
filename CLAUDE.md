@@ -18,7 +18,7 @@ Solo lo vigente. El Estado actual largo de los chats 19 a 34 (con todos los pend
   - **Flask lee el `.env` solo** (`app.run`): con una URL de Render en el `.env`, la app de la PC se conecta a Render. No levantarla mientras el `.env` tenga la URL (arreglo propuesto: `load_dotenv=False`).
   - Los datos se copian una sola vez y **nunca se reprocesan desde el Drive**: se perderían correcciones a mano, asignaciones de Kia/Toyota, marcas de Sale Tax, reglas editadas y pagos históricos.
 - **Entorno**: la PC se reseteó el 20/10 (usuario `Usuario`); rearmado el 21/10 con las mismas rutas (HISTORIAL, "2026-10-21"). Docker Desktop está instalado pero falta WSL2 (`wsl --install --no-distribution` como admin y reiniciar) para recrear `bradenton-pg`.
-- **Git**: pusheado a dev hasta `cd9a65a` (26/10). **Sin pushear**: `f9891ad` (Ventas y Costos) y su documentación; el push lo pide Alfonso.
+- **Git**: todo pusheado a dev hasta `c383854` (26/10), con los 4 pedidos del 26/10.
   - Sin commitear: `.claude/settings.json`.
   - `Claude outputs/` queda sin versionar: tiene PDFs con datos del negocio y borradores.
   - El usuario pushea él mismo (`git push origin main`), salvo que pida que lo haga Claude.
@@ -27,7 +27,7 @@ Solo lo vigente. El Estado actual largo de los chats 19 a 34 (con todos los pend
      - **PPP en producción**: en Físico, septiembre tiene un inicial de prueba (20.000 gal / $42.000, medición 14.000 del 01/10) y agosto arranca en 0. Con el inicial del Excel (9.682,52 gal / $34.985,66) la app da 3,8881, igual que el Excel. Lo corrige Alfonso en Físico de producción.
   2. **Colores por sección** en los índices de Carga de Datos, Reportes y Controles. `a74a3e4`.
   3. **Control de combustible** (`/controles/combustible`): stock diario contra la medición de su fecha, facturas de J.H. contra los EFT, margen por galón con PPP y con la última compra. `5fcbeda`. Físico todavía compara la medición contra el fin de mes (ajuste chico ofrecido).
-  4. **Ventas y Costos** (`/controles/ventas-costos`) por cambio de margen (3 puntos por defecto) y borrador de mail a Rick en inglés en la página. `f9891ad`, sin pushear.
+  4. **Ventas y Costos** (`/controles/ventas-costos`) por cambio de margen (3 puntos por defecto) y borrador de mail a Rick en inglés en la página. `f9891ad`.
 - **Septiembre (revisado el 26/10 con los datos al 22/10)**: completo salvo el recibo del depósito de $2,550 (25/09), 8 movimientos de Chase sin categoría, Flori-Gas 1734258 (24/09, ni en Caja ni en Proveedores), Colonial 2104446 y 2109869, King's 212214, Brandon Liu 335 y Sale Tax sin marcar.
 - **Pendientes principales.** Antes de hacer cualquiera, confirmar que sigue abierto (la lista completa por chat está en el archivo de HISTORIAL).
   - **Cargar cuando el usuario confirme:**
