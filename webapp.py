@@ -647,6 +647,7 @@ _ICON_SCALE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke
 _ICON_FILE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg>'
 _ICON_FUEL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="22" x2="15" y2="22"/><line x1="4" y1="9" x2="14" y2="9"/><path d="M14 22V4a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v18"/><path d="M14 13h2a2 2 0 0 1 2 2v2a2 2 0 0 0 2 2v0a2 2 0 0 0 2-2V9.83a2 2 0 0 0-.59-1.42L18 5"/></svg>'
 _ICON_CLOCK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>'
+_ICON_TRENDING = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>'
 
 TOOLS = [
     {
@@ -1111,6 +1112,16 @@ REPORTES_TOOLS = [
         "ready": True,
         "pdf_endpoint": "reportes_gettel_pdf",
     },
+    {
+        # Se ve en pantalla, no es una descarga: `url` en vez de pdf_endpoint.
+        "key": "reportes_proyecciones",
+        "icon": _ICON_TRENDING,
+        "label": "Proyecciones",
+        "description": "Cómo viene el mes y cómo cerraría: combustible y C-Store por rubro.",
+        "accent": "#7C3AED",
+        "ready": True,
+        "url": "reportes_proyecciones",
+    },
 ]
 
 THEME_BY_KEY = {
@@ -1511,6 +1522,7 @@ def carga_datos_reportes():
             "reportes_caja": get_caja_available_years() or [today.year],
             "reportes_proveedores": proveedores_db.get_available_years() or [today.year],
             "reportes_gettel": gettel_reportes.get_available_years() or [today.year],
+            "reportes_proyecciones": reportes_db.get_store_info_years() or [today.year],
         },
         current_year=today.year,
         current_month=today.month,
@@ -1754,65 +1766,96 @@ def reportes_gettel_pdf():
     return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
 
 
-# Módulo "Proyecciones" -- pedido explícito del usuario (2026-09-18): un
-# TERCER apartado, hermano de Herramientas y Reportes (ver el switch de 3
-# vías en base.html), con Ventas por Departamento y Store Info
-# proyectados a fin de mes -- ver proyecciones.py para la fórmula real
-# decodificada de la planilla de cierre (filas 37/38/39, columnas hasta
-# la O) y todo lo que queda deliberadamente afuera de esta v1.
-@app.route("/carga-datos/proyecciones")
-def carga_datos_proyecciones():
+# Proyecciones (Reportes): el panel que miran los dueños día por día (pedido
+# del usuario, 2026-10-26; reemplaza a la página escondida de Carga de Datos
+# del 2026-09-18). La cuenta vive en proyecciones.py. Los % de cada rubro y
+# el Balance del mes cerrado los carga solo un admin.
+@app.route("/carga-datos/reportes/proyecciones")
+def reportes_proyecciones():
     today = date.today()
     year = request.args.get("year", type=int) or today.year
     month = request.args.get("month", type=int) or today.month
     if not (1 <= month <= 12):
         month = today.month
-
-    projection = proyecciones.build_projection(year, month)
-    prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
-    next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
-
     return render_template(
-        "carga_datos_proyecciones.html",
-        projection=projection,
-        year=year,
-        month=month,
-        month_name=_MONTH_NAMES_ES[month - 1],
-        prev_year=prev_year,
-        prev_month=prev_month,
-        next_year=next_year,
-        next_month=next_month,
-        accent="#B45309",
-        accent_soft="#FFFBEB",
+        "reportes_proyecciones.html",
+        projection=proyecciones.build_projection(year, month),
+        accent="#7C3AED",
+        accent_soft="#F5F3FF",
+        **_month_nav(year, month),
     )
 
 
-@app.route("/carga-datos/proyecciones/margenes", methods=["POST"])
-def carga_datos_proyecciones_margenes():
+@app.route("/carga-datos/proyecciones")
+def carga_datos_proyecciones():
+    """La dirección de la página vieja lleva a la nueva."""
+    return redirect(url_for("reportes_proyecciones", **request.args.to_dict()))
+
+
+def _proyecciones_back():
+    year = request.form.get("year", type=int) or date.today().year
+    month = request.form.get("month", type=int) or date.today().month
+    return redirect(url_for("reportes_proyecciones", year=year, month=month))
+
+
+@app.route("/carga-datos/reportes/proyecciones/margenes", methods=["POST"])
+def reportes_proyecciones_margenes():
     """
-    Guarda los márgenes editados a mano desde la propia página de
-    Proyecciones (uno por categoría de Ventas por Departamento, ver
-    proyecciones.DEFAULT_MARGINS) -- pedido explícito del usuario
-    (2026-09-18). Se tipean como porcentaje (ej. "15" para 15%) y se
-    guardan como fracción (0.15), mismo criterio que ya usaba la
-    planilla real. Un campo vacío o inválido deja ese margen sin tocar
-    (nunca lo borra ni lo pone en 0 por accidente).
+    Los % teóricos de cada rubro. Se tipean como porcentaje ("15") y se
+    guardan como fracción (0.15), igual que el Excel Cierre. Un campo vacío o
+    inválido no se toca (nunca se borra ni queda en 0 por accidente).
     """
+    if not _require_admin("Solo un administrador puede cambiar los % de cada rubro."):
+        return _proyecciones_back()
     margins = {}
     for label, _members in DEPARTMENT_GROUPS:
-        raw = (request.form.get(f"margin_{label}") or "").strip()
+        raw = (request.form.get(f"margin_{label}") or "").strip().replace(",", ".")
         if not raw:
             continue
         try:
-            margins[label] = float(raw) / 100.0
+            value = float(raw)
         except ValueError:
             continue
+        if 0 <= value <= 100:
+            margins[label] = value / 100.0
     if margins:
         reportes_db.save_department_margins(margins)
+    return _proyecciones_back()
 
-    year = request.form.get("year", type=int) or date.today().year
-    month = request.form.get("month", type=int) or date.today().month
-    return redirect(url_for("carga_datos_proyecciones", year=year, month=month))
+
+@app.route("/carga-datos/reportes/proyecciones/balance", methods=["POST"])
+def reportes_proyecciones_balance():
+    """El Bce (hoja BALANCE HISTORICO) para controlar lo proyectado contra lo real."""
+    if not _require_admin("Solo un administrador puede subir el Balance."):
+        return _proyecciones_back()
+    upload = request.files.get("balance_file")
+    if upload is None or not upload.filename:
+        flash("Seleccioná el Excel del Balance.", "error")
+        return _proyecciones_back()
+    try:
+        path, filename = _save_upload_to_workspace(upload)
+        months = proyecciones.read_balance_workbook(path)
+    except ValueError as exc:
+        flash(str(exc), "error")
+        return _proyecciones_back()
+    except Exception:
+        flash("No se pudo leer el archivo: tiene que ser el Excel del Bce (.xlsx).", "error")
+        return _proyecciones_back()
+    saved, skipped = proyecciones.save_balance(months, filename)
+
+    def month_label(key):
+        year, month = key.split("-")
+        return f"{_MONTH_NAMES_ES[int(month) - 1].lower()} {year}"
+
+    if saved:
+        message = (f"Se cargó el Balance de {', '.join(month_label(k) for k in saved)}." if len(saved) <= 3
+                   else f"Se cargó el Balance de {len(saved)} meses, de {month_label(saved[0])} a {month_label(saved[-1])}.")
+    else:
+        message = "El Balance no traía nada nuevo."
+    if skipped:
+        message += f" Ya estaba más completo y no se tocó: {', '.join(month_label(k) for k in skipped)}."
+    flash(message, "warning" if skipped else "success")
+    return _proyecciones_back()
 
 
 # Módulo "Combustible" + apartado "Fisico" -- pedido explícito del usuario

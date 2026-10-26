@@ -1,0 +1,289 @@
+{% extends "base.html" %}
+{% block main_class %}main-full{% endblock %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ url_for('carga_datos_reportes') }}">Reportes</a><span class="current">Proyecciones</span></nav>
+{% endblock %}
+{% block content %}
+{% from "_month_jump.html" import month_jump %}
+{% macro money(v, d=2) %}{% if v is none %}—{% elif v < 0 %}−${{ ("{:,.%df}" % d).format(-v) }}{% else %}${{ ("{:,.%df}" % d).format(v) }}{% endif %}{% endmacro %}
+{% macro num(v, d=2) %}{% if v is none %}—{% else %}{{ ("{:,.%df}" % d).format(v) }}{% endif %}{% endmacro %}
+{% macro pct(v) %}{% if v is none %}—{% else %}{{ "{:.1f}".format(v * 100) }} %{% endif %}{% endmacro %}
+{% set p = projection %}
+{% set is_admin = current_user.is_authenticated and current_user.is_admin %}
+{% set fuel_sources = {"manual": "cargado a mano en Físico", "prev_month_computed": "el final teórico del mes anterior", "default": "sin inventario inicial"} %}
+
+<div class="page-header">
+  <span class="eyebrow">Reportes</span>
+  <h1>Proyecciones</h1>
+  <p class="page-subtitle">
+    Lo vendido en los días cargados y cómo cerraría el mes al mismo ritmo ({{ p.days_in_month }} días).
+    Igual que la hoja "Store Info" del Excel Cierre, con los días reales del mes en vez de 30.
+  </p>
+</div>
+
+<div class="card">
+  <div class="historial-nav">
+    <a href="{{ url_for('reportes_proyecciones', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
+    <div class="historial-nav-title">
+      {{ month_jump('reportes_proyecciones', year, month) }}
+      {% if year == today.year and month == today.month %}
+      <span class="muted">Mes actual</span>
+      {% else %}
+      <a href="{{ url_for('reportes_proyecciones') }}" class="muted">Ir al mes actual</a>
+      {% endif %}
+    </div>
+    <a href="{{ url_for('reportes_proyecciones', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
+  </div>
+  <div class="proy-days-strip">
+    <div class="proy-days-text">
+      <strong>{{ p.days_loaded }}</strong> de {{ p.days_in_month }} días cargados
+      {% if p.last_day %}<span class="muted">(el último, {{ p.last_day.strftime('%d/%m') }})</span>{% endif %}
+    </div>
+    <div class="proy-days-bar"><div class="proy-days-bar-fill" style="width: {{ (p.days_loaded / p.days_in_month * 100) if p.days_in_month else 0 }}%;"></div></div>
+  </div>
+</div>
+
+{% if not p.days_loaded %}
+<div class="card"><p class="muted" style="margin: 0;">Todavía no hay ningún Close Store cargado de {{ month_name|lower }} {{ year }}.</p></div>
+{% else %}
+
+{# ---------------- Combustible ---------------- #}
+<div class="card">
+  <h2>Combustible</h2>
+  <div class="proy-stat-grid">
+    {% for label, key, kind in [("Galones", "gallons", "gal"), ("Venta", "sales", "$"), ("Utilidad", "utilidad", "$")] %}
+    <div class="proy-stat">
+      <div class="proy-stat-label">{{ label }}</div>
+      <div class="proy-stat-actual">{% if kind == "gal" %}{{ num(p.fuel[key]) }}{% else %}{{ money(p.fuel[key]) }}{% endif %}</div>
+      <div class="proy-stat-proj-row">
+        <span class="proy-legend-chip proy-legend-proj">Proyectado</span>
+        <span class="proy-stat-proj-value">{% if kind == "gal" %}{{ num(p.fuel_proj[key]) }}{% else %}{{ money(p.fuel_proj[key]) }}{% endif %}</span>
+      </div>
+    </div>
+    {% endfor %}
+    <div class="proy-stat">
+      <div class="proy-stat-label">Por galón</div>
+      <div class="proy-per-gal">
+        <span>Precio de venta</span><strong>{{ money(p.fuel.price, 4) }}</strong>
+        <span>Costo (PPP)</span><strong>{{ money(p.ppp, 4) }}</strong>
+        <span>Margen</span><strong class="{{ 'proy-neg' if p.fuel.margin_gal is not none and p.fuel.margin_gal < 0 }}">{{ money(p.fuel.margin_gal, 4) }}</strong>
+      </div>
+    </div>
+  </div>
+  <p class="muted proy-note">
+    PPP como la hoja Físico: (inventario inicial + facturas de J.H. del mes) / (galones iniciales + comprados).
+    Inventario inicial: {{ num(p.fuel_initial.gallons) }} gal por {{ money(p.fuel_initial.amount) }} ({{ fuel_sources.get(p.fuel_initial.source, p.fuel_initial.source) }}),
+    más {{ p.fuel_invoices }} factura{{ '' if p.fuel_invoices == 1 else 's' }} de combustible.
+    {% if p.ppp is none %}<strong>Sin PPP:</strong> falta el inventario inicial o las facturas del mes en Físico.{% endif %}
+  </p>
+
+  <div class="historial-table-wrap">
+    <table class="historial-table proy-num-table">
+      <thead>
+        <tr><th>Día</th><th>Galones</th><th>Venta</th><th>Precio / gal</th><th>Margen / gal</th><th>Utilidad</th></tr>
+      </thead>
+      <tbody>
+        {% for d in p.days %}
+        <tr>
+          <td>{{ d.date.strftime('%d/%m') }}</td>
+          <td>{{ num(d.gallons) }}</td>
+          <td>{{ money(d.fuel_sales) }}</td>
+          <td>{{ money(d.price, 4) }}</td>
+          <td class="{{ 'proy-neg' if d.margin_gal is not none and d.margin_gal < 0 }}">{{ money(d.margin_gal, 4) }}</td>
+          <td>{{ money(d.fuel_utilidad) }}</td>
+        </tr>
+        {% endfor %}
+        {% set t = p.days_totals %}
+        <tr class="reporte-totals-row">
+          <td>Total</td>
+          <td>{{ num(t.gallons) }}</td>
+          <td>{{ money(t.fuel_sales) }}</td>
+          <td>{{ money(t.price, 4) }}</td>
+          <td>{{ money(t.margin_gal, 4) }}</td>
+          <td>{{ money(t.fuel_utilidad) }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+{# ---------------- C-Store ---------------- #}
+<div class="card">
+  <h2>C-Store por rubro</h2>
+  <p class="muted proy-note" style="margin-top: 0;">
+    Utilidad = venta × el % teórico de cada rubro (los del Excel Cierre).{% if is_admin %} Se pueden cambiar y guardar abajo.{% endif %}
+    El Balance cuenta como C-Store solo Tabacco, Soda, Beer / Wine y Resto: Lotto y Kia / Toyota van por otras cuentas.
+  </p>
+  <form method="post" action="{{ url_for('reportes_proyecciones_margenes') }}">
+    <input type="hidden" name="year" value="{{ year }}">
+    <input type="hidden" name="month" value="{{ month }}">
+    <div class="historial-table-wrap">
+      <table class="historial-table proy-num-table">
+        <thead>
+          <tr><th>Rubro</th><th>Vendido</th><th>% teórico</th><th>Utilidad</th><th>Proyectado</th><th>Utilidad proyectada</th></tr>
+        </thead>
+        <tbody>
+          {% for r in p.cstore.rubros %}
+          <tr class="{{ '' if r.in_balance else 'proy-row-aside' }}">
+            <td>{{ r.display }}</td>
+            <td>{{ money(r.amount) }}</td>
+            <td>
+              {% if is_admin %}
+              <input type="number" step="0.01" min="0" max="100" class="proy-margin-input" name="margin_{{ r.label }}" value="{{ '%.2f'|format(r.margin * 100) }}"> %
+              {% else %}{{ pct(r.margin) }}{% endif %}
+            </td>
+            <td>{{ money(r.utilidad) }}</td>
+            <td class="proy-cell-proj">{{ money(r.proj) }}</td>
+            <td class="proy-cell-proj">{{ money(r.utilidad_proj) }}</td>
+          </tr>
+          {% endfor %}
+          {% for title, block in [("C-Store del Balance", p.cstore.balance), ("Total con Lotto y Kia / Toyota", p.cstore.total)] %}
+          <tr class="reporte-totals-row">
+            <td>{{ title }}</td>
+            <td>{{ money(block.amount) }}</td>
+            <td>{{ pct(block.margin) }}</td>
+            <td>{{ money(block.utilidad) }}</td>
+            <td class="proy-cell-proj">{{ money(block.proj) }}</td>
+            <td class="proy-cell-proj">{{ money(block.utilidad_proj) }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% if is_admin %}<div class="proy-actions"><button type="submit">Guardar %</button></div>{% endif %}
+  </form>
+
+  <h3 class="proy-subtitle">Día por día</h3>
+  <div class="historial-table-wrap">
+    <table class="historial-table proy-num-table">
+      <thead>
+        <tr>
+          <th>Día</th><th>Tabacco</th><th>Soda</th><th>Beer / Wine</th><th>Resto</th><th>C-Store</th><th>Utilidad</th>
+          <th class="proy-col-aside">Lotto</th><th class="proy-col-aside">Kia / Toyota</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in p.days %}
+        <tr>
+          <td>{{ d.date.strftime('%d/%m') }}</td>
+          {% for label in ["TABACCO", "SODA", "BEER/WINE", "RESTO"] %}<td>{{ money(d.groups.get(label, 0)) }}</td>{% endfor %}
+          <td><strong>{{ money(d.cstore) }}</strong></td>
+          <td>{{ money(d.cstore_utilidad) }}</td>
+          <td class="proy-col-aside">{{ money(d.lotto) }}</td>
+          <td class="proy-col-aside">{{ money(d.kia) }}</td>
+        </tr>
+        {% endfor %}
+        <tr class="reporte-totals-row">
+          <td>Total</td>
+          {% for label in ["TABACCO", "SODA", "BEER/WINE", "RESTO"] %}<td>{{ money(t.groups[label]) }}</td>{% endfor %}
+          <td>{{ money(t.cstore) }}</td>
+          <td>{{ money(t.cstore_utilidad) }}</td>
+          <td>{{ money(t.lotto) }}</td>
+          <td>{{ money(t.kia) }}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{# ---------------- Control contra el Balance ---------------- #}
+<div class="card">
+  <h2>Control contra el Balance</h2>
+  {% set b = p.balance %}
+  {% if b %}
+  <p class="muted proy-note" style="margin-top: 0;">
+    Lo que proyectaba la app con los días cargados hasta el 7, el 15 y el 22, y a fin de mes, contra lo real del Balance
+    ({{ b.source }}). Debajo de cada número, cuánto se desvió de lo real.
+  </p>
+  <div class="historial-table-wrap">
+    <table class="historial-table proy-num-table">
+      <thead>
+        <tr>
+          <th></th><th>Real (Balance)</th>
+          {% for c in b.checkpoints %}<th>{{ c.label }}<span class="proy-th-sub">{{ c.days_loaded }} día{{ '' if c.days_loaded == 1 else 's' }}</span></th>{% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for key, label, kind in b.rows %}
+        <tr>
+          <td>{{ label }}</td>
+          <td><strong>{% if kind == "gal" %}{{ num(b.real[key]) }}{% else %}{{ money(b.real[key]) }}{% endif %}</strong></td>
+          {% for c in b.checkpoints %}
+          {% set dev = c.deviation[key] %}
+          <td>
+            {% if kind == "gal" %}{{ num(c.proj[key]) }}{% else %}{{ money(c.proj[key]) }}{% endif %}
+            {% if dev is not none %}
+            <span class="proy-dev {{ 'proy-dev-ok' if dev|abs <= 0.02 else ('proy-dev-warn' if dev|abs <= 0.05 else 'proy-dev-bad') }}">{{ '+' if dev > 0 }}{{ "{:.1f}".format(dev * 100) }} %</span>
+            {% endif %}
+          </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% if b.cstore_margin_real is not none or b.fuel_margin_gal_real is not none %}
+  <p class="muted proy-note">
+    Margen real del C-Store: {{ pct(b.cstore_margin_real) }} · Utilidad real por galón: {{ money(b.fuel_margin_gal_real, 4) }}.
+  </p>
+  {% endif %}
+  {% else %}
+  <p class="muted" style="margin-top: 0;">Todavía no hay Balance de {{ month_name|lower }} {{ year }}: se sube cuando el mes está cerrado en el Bce.</p>
+  {% endif %}
+  {% if is_admin %}
+  <form class="proy-upload" method="post" enctype="multipart/form-data" action="{{ url_for('reportes_proyecciones_balance') }}">
+    <input type="hidden" name="year" value="{{ year }}">
+    <input type="hidden" name="month" value="{{ month }}">
+    <input type="file" name="balance_file" accept=".xlsx,.xlsm" required>
+    <button type="submit">Subir Balance</button>
+    <span class="muted">El Excel del Bce, con la hoja "BALANCE HISTORICO". Carga todos los meses que trae.</span>
+  </form>
+  {% endif %}
+</div>
+
+<style>
+  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .historial-nav-btn { text-decoration: none; display: inline-block; }
+  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
+  .historial-table-wrap { overflow-x: auto; margin-top: 16px; border: 1px solid var(--border); border-radius: 10px; }
+  .historial-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .historial-table th, .historial-table td { padding: 8px 14px; text-align: left; white-space: nowrap; }
+  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); vertical-align: bottom; }
+  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
+  .reporte-totals-row td { font-weight: 700; background: var(--surface-alt); border-top: 2px solid var(--border); }
+  .proy-num-table th:not(:first-child), .proy-num-table td:not(:first-child) { text-align: right; }
+
+  .proy-days-strip { margin-top: 18px; }
+  .proy-days-text { font-size: 13.5px; margin-bottom: 8px; }
+  .proy-days-bar { height: 8px; border-radius: 999px; background: var(--surface-alt); border: 1px solid var(--border); overflow: hidden; }
+  .proy-days-bar-fill { height: 100%; background: var(--accent); border-radius: 999px; }
+
+  .proy-stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
+  .proy-stat { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-alt); padding: 14px 16px; }
+  .proy-stat-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-soft); margin-bottom: 8px; }
+  .proy-stat-actual { font-size: 22px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
+  .proy-stat-proj-row { display: flex; align-items: center; gap: 8px; }
+  .proy-stat-proj-value { font-size: 15px; font-weight: 700; color: var(--accent); }
+  .proy-per-gal { display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; font-size: 13.5px; }
+  .proy-per-gal strong { text-align: right; }
+  .proy-legend-chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; white-space: nowrap; }
+  .proy-legend-proj { background: var(--accent-soft); color: var(--accent); }
+
+  .proy-note { font-size: 12.5px; margin: 12px 0 0; line-height: 1.5; }
+  .proy-subtitle { margin: 22px 0 0; font-size: 15px; }
+  .proy-cell-proj { color: var(--accent); font-weight: 600; }
+  .proy-row-aside td, .proy-col-aside { color: var(--text-soft); }
+  .proy-neg { color: var(--error); }
+  .proy-th-sub { display: block; font-size: 11px; font-weight: 500; color: var(--text-soft); }
+  .proy-dev { display: block; font-size: 11.5px; font-weight: 600; }
+  .proy-dev-ok { color: var(--success); }
+  .proy-dev-warn { color: var(--warning); }
+  .proy-dev-bad { color: var(--error); }
+  .proy-margin-input { width: 70px; padding: 4px 6px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; text-align: right; }
+  .proy-actions { margin-top: 12px; }
+  .proy-upload { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
+  .proy-upload .muted { font-size: 12.5px; }
+</style>
+{% endblock %}

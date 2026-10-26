@@ -1,67 +1,35 @@
 """
-Módulo "Proyecciones" -- pedido explícito del usuario (2026-09-18): un
-tercer apartado (junto a Herramientas y Reportes) con Ventas por
-Departamento y Store Info proyectados a fin de mes. Reproduce la lógica
-de las filas 37/38/39 (hasta la columna O) de la hoja "Store Info" del
-Excel de cierre real que se usaba antes de esta app -- decodificado
-leyendo las fórmulas de una planilla real (Cierre_09-26.xlsx) con
-openpyxl, no adivinado. El usuario mismo avisó que no entiende del todo
-cómo se armaban esas fórmulas ("no las entiendo bien como recolecctaban
-la info pero es lo que se usaba") -- por eso este módulo documenta cada
-paso con la celda/fórmula real de origen.
+Proyecciones (Reportes): el panel que miran los dueños día por día (pedido
+del usuario, 2026-10-26; reemplaza a la página escondida del 2026-09-18).
 
-Fórmula real (idéntica para Volume/Total Fuel/cada categoría de
-departamento/Total Non Fuel -- una proyección "run-rate" a 30 días):
-    dias_cargados = cantidad de días del mes con Store Info ya cargado
-    proyectado = actual / dias_cargados * (30 - dias_cargados) + actual
+Reproduce la hoja "Store Info" del Excel Cierre (filas Ventas / Margen /
+Utilidad / Proyecciones) y el "PROYECTADO BRADENTON" del Drive:
+  - Proyectado = vendido en los días cargados / días cargados * días del mes.
+    El Excel usa siempre 30; acá van los días reales del mes.
+  - Combustible: venta neta = Sales Fuel + Desc. Comb. El costo es el PPP de
+    la hoja Físico: (inventario inicial + facturas de J.H.) / (galones
+    iniciales + comprados), y la utilidad, venta - galones * PPP.
+  - C-Store: venta de cada rubro * su % teórico (editables, los del Excel).
 
-Que es álgebraicamente lo mismo que:
-    proyectado = actual * 30 / dias_cargados
-
-(la planilla real usa la primera forma; se implementa la segunda, más
-simple, con el mismo resultado -- confirmado numéricamente contra
-Cierre_09-26.xlsx).
-
-Casos particulares reales (no un patrón parejo -- por eso están
-comentados uno por uno):
-  - "Total Fuel $" proyectado (F37 en la planilla) se calcula a partir
-    del TOTAL FUEL actual (H32: Sales Fuel + Desc. Comb), no de Sales
-    Fuel solo (F32) -- confirmado leyendo la fórmula real (`=+H32/...`).
-  - El "precio por galón" (G37) es un derivado (Total Fuel $ proyectado /
-    Volume proyectado), no algo que se sume o proyecte por separado.
-  - La "Utilidad" de cada categoría de departamento proyectada (I39:N39)
-    es venta proyectada * margen (I38:N38) -- los mismos 6 márgenes
-    estáticos que ya usaba la planilla para la Utilidad ACTUAL (fila 34),
-    editables acá (ver reportes_db.get/save_department_margins).
-  - El "Total Non Fuel" (O) es un valor cargado directo de Store Info,
-    SIEMPRE independiente de la suma de las 6 categorías de Ventas por
-    Departamento (discrepancia real y ya conocida de los datos del
-    negocio, no un bug de esta app) -- se muestra por separado, nunca se
-    fuerza a que coincida.
-  - El margen de "Total Non Fuel" proyectado (O38 = O39/O37) es un
-    DERIVADO (Utilidad total proyectada / Ventas proyectadas), no un
-    input propio -- nunca se edita.
-
-Deliberadamente FUERA de alcance en esta v1 (mismo criterio ya usado en
-Reportes/Store Info con otras columnas que dependen de módulos que no
-existen todavía): el ajuste de merma de combustible ("Fisico!F9" en la
-planilla real, filas 38/39 columnas F/G) depende de una hoja "Fisico"
-(inventario físico de combustible) que no existe como módulo en esta
-app -- en la planilla real hoy vale 0 (F9 sin cargar) incluso para el
-usuario, así que la proyección de Total Fuel $ y el precio por galón que
-se muestran acá son la proyección "cruda", sin ese ajuste.
+Control contra el Balance (hoja "BALANCE HISTORICO" del Bce): para un mes
+cerrado se compara lo que proyectaba la app los días 7, 15 y 22 y a fin de mes
+con lo real. Medido contra agosto 2026: "4.01 Ventas de combustible" es
+Sales Fuel + Desc. Comb y "4.09 Ventas C-Store" son Tabacco + Soda + Beer/Wine
++ Resto (Lotto y Kia/Toyota van por otras cuentas), al centavo.
 """
 
 import calendar
+import datetime as dt
+import os
 
+import config_store
+import fisico
+import fisico_db
 import reportes_db
 from reporte_diario import DEPARTMENT_GROUPS, group_department_sales
 
-# Márgenes estáticos reales del Excel (filas 33/38, columnas I-N -- mismo
-# orden que DEPARTMENT_GROUPS de reporte_diario.py). Quedan acá como
-# default de arranque; el valor que de verdad se usa siempre sale de
-# reportes_db.get_department_margins (que cae en este default hasta que
-# el usuario edite algo).
+# Los % teóricos del Excel Cierre (fila Margen, abajo de cada rubro). Son el
+# default; el que se usa sale de reportes_db.get_department_margins.
 DEFAULT_MARGINS = {
     "TABACCO": 0.15,
     "SODA": 0.40,
@@ -71,137 +39,300 @@ DEFAULT_MARGINS = {
     "RESTO": 0.40,
 }
 
-# Nombres cortos para mostrar en la página -- las etiquetas reales de
-# DEPARTMENT_GROUPS son las que usa la base/lógica interna, estas son
-# solo cosméticas.
 CATEGORY_DISPLAY_LABELS = {
     "TABACCO": "Tabacco",
     "SODA": "Soda",
     "BEER/WINE": "Beer / Wine",
-    "LOTERY/LOTTO": "Lottery",
-    "Gettel": "Gettel",
+    "LOTERY/LOTTO": "Lotto",
+    "Gettel": "Kia / Toyota",
     "RESTO": "Resto",
 }
 
+# Los rubros que el Balance cuenta como "Ventas C-Store".
+BALANCE_CSTORE = ("TABACCO", "SODA", "BEER/WINE", "RESTO")
+CHECKPOINT_DAYS = (7, 15, 22)
 
-def _run_rate(actual, dias_cargados):
-    """actual*30/dias_cargados -- None si no hay ningún día cargado todavía (mes recién empezado)."""
-    if not dias_cargados:
+
+def _project(actual, days_loaded, days_in_month):
+    if not days_loaded or actual is None:
         return None
-    return actual * 30.0 / dias_cargados
+    return actual * days_in_month / days_loaded
 
 
-def _days_loaded(store_info_rows):
+def _ratio(num, den):
+    return num / den if (num is not None and den) else None
+
+
+def _ppp(year, month, upto=None):
     """
-    Días del mes con Store Info ya cargado -- mismo criterio que
-    COUNT(columna de fechas) en la planilla real: un día sin ningún dato
-    (volume en None) no cuenta, tenga o no fila (ver
-    reportes_db.get_month_store_info, que devuelve un renglón por CADA
-    día del mes exista o no el dato).
+    Precio promedio ponderado del combustible: el inventario inicial de la hoja
+    Físico más las facturas de J.H. del mes (hasta `upto`, para proyectar como
+    se veía ese día). None si todavía no hay galones.
     """
-    return sum(1 for row in store_info_rows if row.get("volume") is not None)
+    gallons, amount, _source = fisico._resolve_initial(year, month)
+    invoices = fisico_db.get_month_invoices(year, month)
+    if upto is not None:
+        invoices = [inv for inv in invoices if (inv.get("invoice_date") or "") <= upto.isoformat()]
+    gallons += sum(inv.get("gallons") or 0.0 for inv in invoices)
+    amount += sum(inv.get("amount") or 0.0 for inv in invoices)
+    return (amount / gallons if gallons else None), len(invoices)
+
+
+def _month_days(year, month):
+    """Un renglón por día cargado: combustible y C-Store por rubro."""
+    store = {r["date"]: r for r in reportes_db.get_month_store_info(year, month) if r.get("volume") is not None}
+    departments = reportes_db.get_month_departments_by_date(year, month)
+    days = []
+    for date_key in sorted(store):
+        row = store[date_key]
+        groups, _ = group_department_sales(departments.get(date_key, []))
+        by_group = {g["label"]: g.get("amount") or 0.0 for g in groups}
+        fuel_sales = (row.get("sales_fuel") or 0.0) + (row.get("desc_comb") or 0.0)
+        cstore = sum(by_group.get(label, 0.0) for label in BALANCE_CSTORE)
+        days.append({
+            "date": dt.date.fromisoformat(date_key),
+            "gallons": row.get("volume") or 0.0,
+            "fuel_sales": fuel_sales,
+            "price": _ratio(fuel_sales, row.get("volume")),
+            "groups": by_group,
+            "cstore": cstore,
+            "lotto": by_group.get("LOTERY/LOTTO", 0.0),
+            "kia": by_group.get("Gettel", 0.0),
+            "total": fuel_sales + cstore,
+        })
+    return days
+
+
+def _summary(year, month, days, margins, upto=None):
+    """Vendido y proyectado con los días hasta `upto` (todos si es None)."""
+    days_in_month = calendar.monthrange(year, month)[1]
+    if upto is not None:
+        days = [d for d in days if d["date"] <= upto]
+    loaded = len(days)
+    gallons = sum(d["gallons"] for d in days)
+    fuel_sales = sum(d["fuel_sales"] for d in days)
+    ppp, invoices = _ppp(year, month, upto)
+
+    def fuel_block(gal, sales):
+        if gal is None or sales is None:
+            return {"gallons": None, "sales": None, "price": None, "cost": None, "margin_gal": None, "utilidad": None}
+        cost = gal * ppp if ppp is not None else None
+        price = _ratio(sales, gal)
+        return {
+            "gallons": gal,
+            "sales": sales,
+            "price": price,
+            "cost": cost,
+            "margin_gal": (price - ppp) if (price is not None and ppp is not None) else None,
+            "utilidad": (sales - cost) if cost is not None else None,
+        }
+
+    rubros = []
+    for label, _members in DEPARTMENT_GROUPS:
+        amount = sum(d["groups"].get(label, 0.0) for d in days)
+        margin = margins.get(label, DEFAULT_MARGINS.get(label, 0.0))
+        proj = _project(amount, loaded, days_in_month)
+        rubros.append({
+            "label": label,
+            "display": CATEGORY_DISPLAY_LABELS.get(label, label),
+            "in_balance": label in BALANCE_CSTORE,
+            "margin": margin,
+            "amount": amount,
+            "utilidad": amount * margin,
+            "proj": proj,
+            "utilidad_proj": proj * margin if proj is not None else None,
+        })
+
+    def totals(items, key):
+        values = [r[key] for r in items]
+        return None if any(v is None for v in values) else sum(values)
+
+    balance_rubros = [r for r in rubros if r["in_balance"]]
+    cstore = {
+        "rubros": rubros,
+        "total": {k: totals(rubros, k) for k in ("amount", "utilidad", "proj", "utilidad_proj")},
+        "balance": {k: totals(balance_rubros, k) for k in ("amount", "utilidad", "proj", "utilidad_proj")},
+    }
+    for block in (cstore["total"], cstore["balance"]):
+        block["margin"] = _ratio(block["utilidad"], block["amount"])
+        block["margin_proj"] = _ratio(block["utilidad_proj"], block["proj"])
+
+    return {
+        "days_in_month": days_in_month,
+        "days_loaded": loaded,
+        "last_day": days[-1]["date"] if days else None,
+        "ppp": ppp,
+        "fuel_invoices": invoices,
+        "fuel": fuel_block(gallons, fuel_sales) if loaded else fuel_block(None, None),
+        "fuel_proj": fuel_block(_project(gallons, loaded, days_in_month), _project(fuel_sales, loaded, days_in_month)),
+        "cstore": cstore,
+    }
 
 
 def build_projection(year, month):
-    """
-    Devuelve todo lo que necesita la página de Proyecciones para un mes:
-    días cargados/restantes, Store Info (actual + proyectado) y Ventas
-    por Departamento (actual + margen + utilidad, actual y proyectado).
-    """
-    days_in_month = calendar.monthrange(year, month)[1]
-
-    # `_build_store_info_rows` (con los campos calculados de Total Fuel/
-    # Total Sales) vive en webapp.py, no en reportes_db.py -- se importa
-    # acá adentro de la función (import diferido) para evitar un import
-    # circular real (webapp.py ya importa este módulo).
-    from webapp import _build_store_info_rows
-
-    store_info_rows = _build_store_info_rows(year, month)
-    days_loaded = _days_loaded(store_info_rows)
-    days_remaining = max(days_in_month - days_loaded, 0)
-
-    volume_actual = sum(row.get("volume") or 0.0 for row in store_info_rows if row.get("volume") is not None)
-    total_fuel_actual = sum(
-        row.get("total_fuel") or 0.0 for row in store_info_rows if row.get("total_fuel") is not None
-    )
-    non_fuel_actual = sum(
-        row.get("non_fuel_total") or 0.0 for row in store_info_rows if row.get("non_fuel_total") is not None
-    )
-
-    volume_proj = _run_rate(volume_actual, days_loaded)
-    total_fuel_proj = _run_rate(total_fuel_actual, days_loaded)
-    non_fuel_proj = _run_rate(non_fuel_actual, days_loaded)
-
-    price_per_gallon_actual = (total_fuel_actual / volume_actual) if volume_actual else None
-    price_per_gallon_proj = (total_fuel_proj / volume_proj) if (volume_proj and total_fuel_proj is not None) else None
-
-    dept_totals = reportes_db.get_month_department_totals(year, month)
-    groups, _unmatched = group_department_sales(dept_totals)
-    groups_by_label = {g["label"]: g for g in groups}
-
+    """Todo lo que muestra la página de Proyecciones para un mes."""
     margins = reportes_db.get_department_margins(DEFAULT_MARGINS)
+    days = _month_days(year, month)
+    result = _summary(year, month, days, margins)
+    result.update({"year": year, "month": month, "days": days, "balance": None})
+    # Cada día con el PPP del mes, como la hoja Físico: la suma de los días da
+    # la utilidad del mes.
+    ppp = result["ppp"]
+    for d in days:
+        d["margin_gal"] = (d["price"] - ppp) if (d["price"] is not None and ppp is not None) else None
+        d["fuel_utilidad"] = (d["fuel_sales"] - d["gallons"] * ppp) if ppp is not None else None
+        d["cstore_utilidad"] = sum(d["groups"].get(label, 0.0) * margins.get(label, DEFAULT_MARGINS[label])
+                                   for label in BALANCE_CSTORE)
+    totals = {key: sum(d[key] for d in days)
+              for key in ("gallons", "fuel_sales", "cstore", "cstore_utilidad", "lotto", "kia", "total")}
+    totals["groups"] = {label: sum(d["groups"].get(label, 0.0) for d in days) for label, _members in DEPARTMENT_GROUPS}
+    totals["price"] = _ratio(totals["fuel_sales"], totals["gallons"])
+    totals["margin_gal"] = (totals["price"] - ppp) if (totals["price"] is not None and ppp is not None) else None
+    totals["fuel_utilidad"] = (totals["fuel_sales"] - totals["gallons"] * ppp) if ppp is not None else None
+    result["days_totals"] = totals
+    gallons, amount, source = fisico._resolve_initial(year, month)
+    result["fuel_initial"] = {"gallons": gallons, "amount": amount, "source": source}
 
-    departments = []
-    dept_utilidad_actual_total = 0.0
-    dept_utilidad_proj_total = 0.0
-    dept_sales_proj_total = 0.0
-    for label, _members in DEPARTMENT_GROUPS:
-        group = groups_by_label.get(label, {"count": 0, "amount": 0.0})
-        actual_amount = group.get("amount") or 0.0
-        margin = margins.get(label, DEFAULT_MARGINS.get(label, 0.0))
-        proj_amount = _run_rate(actual_amount, days_loaded)
-        utilidad_actual = actual_amount * margin
-        utilidad_proj = (proj_amount * margin) if proj_amount is not None else None
-        dept_utilidad_actual_total += utilidad_actual
-        if utilidad_proj is not None:
-            dept_utilidad_proj_total += utilidad_proj
-        if proj_amount is not None:
-            dept_sales_proj_total += proj_amount
-        departments.append(
-            {
-                "label": label,
-                "display_label": CATEGORY_DISPLAY_LABELS.get(label, label),
-                "count": group.get("count") or 0,
-                "amount_actual": round(actual_amount, 2),
-                "amount_proj": round(proj_amount, 2) if proj_amount is not None else None,
-                "margin": margin,
-                "utilidad_actual": round(utilidad_actual, 2),
-                "utilidad_proj": round(utilidad_proj, 2) if utilidad_proj is not None else None,
-            }
-        )
+    real =balance_for_month(year, month)
+    if real:
+        result["balance"] = _balance_control(year, month, days, margins, real)
+    return result
 
-    # Margen proyectado de "Total Non Fuel" -- derivado (O38 = O39/O37),
-    # nunca un input propio. Si todavía no hay proyección de departamentos
-    # (mes sin ningún día cargado) queda en None -- la plantilla muestra
-    # "—".
-    non_fuel_margin_proj = (
-        (dept_utilidad_proj_total / dept_sales_proj_total) if dept_sales_proj_total else None
-    )
 
+# --- Control contra el Balance ----------------------------------------------
+
+BALANCE_FIELDS = ("galones", "ventas_combustible", "costo_combustible", "ventas_cstore", "costo_cstore")
+_BALANCE_ROWS = {
+    "galones vendidos": "galones",
+    "4.01.00.00 - ventas de combustible": "ventas_combustible",
+    "4.09.00.00 - ventas c-store": "ventas_cstore",
+    "5.02.00.00 - costo de ventas de combustible": "costo_combustible",
+    "5.15.00.00 - costo de venta c-store": "costo_cstore",
+}
+
+
+def read_balance_workbook(path):
+    """
+    {"AAAA-MM": {galones, ventas_combustible, costo_combustible, ventas_cstore,
+    costo_cstore}} de la hoja "BALANCE HISTORICO" de un Bce: una columna por
+    mes, con las fechas en el renglón "Nota 1 : Ventas". Solo los meses con al
+    menos la venta de combustible; un dato vacío queda en None.
+    """
+    import openpyxl
+
+    workbook = openpyxl.load_workbook(path, data_only=True, read_only=True)
+    try:
+        if "BALANCE HISTORICO" not in workbook.sheetnames:
+            raise ValueError("El archivo no tiene la hoja \"BALANCE HISTORICO\": ¿es el Bce del mes?")
+        rows = list(workbook["BALANCE HISTORICO"].iter_rows(values_only=True))
+    finally:
+        workbook.close()
+
+    header = next((i for i, row in enumerate(rows)
+                   if row and isinstance(row[0], str) and row[0].strip().lower().startswith("nota 1")), None)
+    if header is None:
+        raise ValueError("No encontré el renglón \"Nota 1 : Ventas\" con los meses en BALANCE HISTORICO.")
+    months = {col: f"{value.year:04d}-{value.month:02d}"
+              for col, value in enumerate(rows[header]) if isinstance(value, (dt.date, dt.datetime))}
+    found = {}
+    # La primera aparición de cada renglón después de los meses (más abajo se repiten).
+    for row in rows[header + 1:]:
+        label = (row[0] or "").strip().lower() if row and isinstance(row[0], str) else ""
+        field = _BALANCE_ROWS.get(label)
+        if field and field not in found:
+            found[field] = row
+    if "ventas_combustible" not in found:
+        raise ValueError("No encontré \"4.01.00.00 - VENTAS DE COMBUSTIBLE\" en BALANCE HISTORICO.")
+
+    result = {}
+    for col, key in months.items():
+        values = {}
+        for field in BALANCE_FIELDS:
+            row = found.get(field)
+            value = row[col] if row is not None and col < len(row) else None
+            values[field] = round(float(value), 2) if isinstance(value, (int, float)) else None
+        if values["ventas_combustible"]:
+            result[key] = values
+    if not result:
+        raise ValueError("El Balance no tiene ningún mes con ventas de combustible.")
+    return result
+
+
+def save_balance(months, filename):
+    """
+    Guarda los meses leídos. Un mes ya guardado solo se reemplaza si el archivo
+    nuevo lo trae igual o más completo (el Bce de septiembre trae agosto
+    completo y septiembre a medio cargar). Devuelve (guardados, salteados).
+    """
+    stored = config_store.read(config_store.PROYECCIONES_BALANCE) or {}
+    saved, skipped = [], []
+    for key, values in sorted(months.items()):
+        filled = sum(1 for f in BALANCE_FIELDS if values.get(f) is not None)
+        previous = stored.get(key) or {}
+        if sum(1 for f in BALANCE_FIELDS if previous.get(f) is not None) > filled:
+            skipped.append(key)
+            continue
+        stored[key] = dict(values, archivo=os.path.basename(filename),
+                           cargado=dt.datetime.now().isoformat(timespec="seconds"))
+        saved.append(key)
+    config_store.write(config_store.PROYECCIONES_BALANCE, stored)
+    return saved, skipped
+
+
+def balance_for_month(year, month):
+    stored = config_store.read(config_store.PROYECCIONES_BALANCE) or {}
+    return stored.get(f"{year:04d}-{month:02d}")
+
+
+def _balance_control(year, month, days, margins, real):
+    """Lo real del Balance contra la proyección de los días 7, 15, 22 y fin de mes."""
+    def utilidad(sales, cost):
+        return (sales - cost) if (sales is not None and cost is not None) else None
+
+    real_rows = {
+        "galones": real.get("galones"),
+        "ventas_combustible": real.get("ventas_combustible"),
+        "utilidad_combustible": utilidad(real.get("ventas_combustible"), real.get("costo_combustible")),
+        "ventas_cstore": real.get("ventas_cstore"),
+        "utilidad_cstore": utilidad(real.get("ventas_cstore"), real.get("costo_cstore")),
+    }
+    days_in_month = calendar.monthrange(year, month)[1]
+    cuts = [(f"Día {d}", dt.date(year, month, d)) for d in CHECKPOINT_DAYS if d < days_in_month]
+    cuts.append(("Fin de mes", dt.date(year, month, days_in_month)))
+    checkpoints = []
+    for label, cut in cuts:
+        summary = _summary(year, month, days, margins, upto=cut)
+        if not summary["days_loaded"]:
+            continue
+        proj = {
+            "galones": summary["fuel_proj"]["gallons"],
+            "ventas_combustible": summary["fuel_proj"]["sales"],
+            "utilidad_combustible": summary["fuel_proj"]["utilidad"],
+            "ventas_cstore": summary["cstore"]["balance"]["proj"],
+            "utilidad_cstore": summary["cstore"]["balance"]["utilidad_proj"],
+        }
+        checkpoints.append({
+            "label": label,
+            "days_loaded": summary["days_loaded"],
+            "proj": proj,
+            # Redondeado y + 0.0: que una coincidencia exacta no salga "-0.0 %".
+            "deviation": {k: round(_ratio(proj[k] - real_rows[k], real_rows[k]), 4) + 0.0
+                          if (proj[k] is not None and real_rows[k]) else None
+                          for k in proj},
+        })
+    rows = [
+        ("galones", "Galones vendidos", "gal"),
+        ("ventas_combustible", "Venta de combustible", "$"),
+        ("utilidad_combustible", "Utilidad de combustible", "$"),
+        ("ventas_cstore", "Venta C-Store (sin Lotto ni Kia/Toyota)", "$"),
+        ("utilidad_cstore", "Utilidad C-Store", "$"),
+    ]
     return {
-        "year": year,
-        "month": month,
-        "days_in_month": days_in_month,
-        "days_loaded": days_loaded,
-        "days_remaining": days_remaining,
-        "store_info": {
-            "volume_actual": round(volume_actual, 2),
-            "volume_proj": round(volume_proj, 2) if volume_proj is not None else None,
-            "total_fuel_actual": round(total_fuel_actual, 2),
-            "total_fuel_proj": round(total_fuel_proj, 2) if total_fuel_proj is not None else None,
-            "price_per_gallon_actual": round(price_per_gallon_actual, 4) if price_per_gallon_actual is not None else None,
-            "price_per_gallon_proj": round(price_per_gallon_proj, 4) if price_per_gallon_proj is not None else None,
-            "non_fuel_actual": round(non_fuel_actual, 2),
-            "non_fuel_proj": round(non_fuel_proj, 2) if non_fuel_proj is not None else None,
-            "non_fuel_margin_proj": round(non_fuel_margin_proj, 4) if non_fuel_margin_proj is not None else None,
-        },
-        "departments": departments,
-        "departments_total_actual": round(sum(d["amount_actual"] for d in departments), 2),
-        "departments_total_proj": (
-            round(dept_sales_proj_total, 2) if any(d["amount_proj"] is not None for d in departments) else None
-        ),
-        "utilidad_actual_total": round(dept_utilidad_actual_total, 2),
-        "utilidad_proj_total": (
-            round(dept_utilidad_proj_total, 2) if any(d["utilidad_proj"] is not None for d in departments) else None
-        ),
+        "real": real_rows,
+        "source": real.get("archivo"),
+        "loaded_at": real.get("cargado"),
+        "rows": rows,
+        "checkpoints": checkpoints,
+        "cstore_margin_real": _ratio(real_rows["utilidad_cstore"], real_rows["ventas_cstore"]),
+        "fuel_margin_gal_real": _ratio(real_rows["utilidad_combustible"], real_rows["galones"]),
     }

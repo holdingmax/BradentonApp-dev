@@ -32,12 +32,17 @@ PAGO_RULES = "proveedores_pago_rules.json"
 DYNAMIC_SUPPLIERS = "proveedores_dynamic_suppliers.json"
 CONTROLES_RAPIDOS = "controles_rapidos.json"
 SALE_TAX = "control_cierre_sale_tax.json"
+# Lo real del Balance de cada mes cerrado, para el control de Proyecciones.
+PROYECCIONES_BALANCE = "proyecciones_balance.json"
 
 # Las que tienen semilla en el repo (las reglas) y las que vivían en la
 # carpeta de datos en vez de la del código.
 _SEEDED = {CHASE_RULES, CHASE_MASTER_RULES, PAGO_RULES, DYNAMIC_SUPPLIERS}
-_IN_DATA_DIR = {CONTROLES_RAPIDOS, SALE_TAX}
-NAMES = (USERS, CHASE_RULES, CHASE_MASTER_RULES, PAGO_RULES, DYNAMIC_SUPPLIERS, CONTROLES_RAPIDOS, SALE_TAX)
+_IN_DATA_DIR = {CONTROLES_RAPIDOS, SALE_TAX, PROYECCIONES_BALANCE}
+NAMES = (USERS, CHASE_RULES, CHASE_MASTER_RULES, PAGO_RULES, DYNAMIC_SUPPLIERS, CONTROLES_RAPIDOS, SALE_TAX,
+         PROYECCIONES_BALANCE)
+# Las que en Postgres son un JSON entero en la tabla ajustes (sin tabla propia).
+_AJUSTES_KEY = {CONTROLES_RAPIDOS: "controles_rapidos", PROYECCIONES_BALANCE: "proyecciones_balance"}
 
 _CHASE_KIND = {CHASE_MASTER_RULES: "maestra", CHASE_RULES: "personalizada"}
 
@@ -160,8 +165,8 @@ def _pg_load(conn, name):
     if name == DYNAMIC_SUPPLIERS:
         rows = conn.execute("SELECT key, definicion FROM proveedores_dinamicos ORDER BY orden").fetchall()
         return {"suppliers": {r["key"]: r["definicion"] for r in rows}}
-    if name == CONTROLES_RAPIDOS:
-        row = conn.execute("SELECT valor FROM ajustes WHERE nombre = ?", ("controles_rapidos",)).fetchone()
+    if name in _AJUSTES_KEY:
+        row = conn.execute("SELECT valor FROM ajustes WHERE nombre = ?", (_AJUSTES_KEY[name],)).fetchone()
         return row["valor"] if row else {}
     if name == SALE_TAX:
         rows = conn.execute("SELECT year, month, asiento, registrado_en FROM sale_tax_registrado ORDER BY year, month").fetchall()
@@ -219,9 +224,9 @@ def _pg_store(conn, name, payload):
         for order, (key, definition) in enumerate(suppliers.items()):
             conn.execute("INSERT INTO proveedores_dinamicos (key, orden, definicion) VALUES (?, ?, ?)",
                          (key, order, json.dumps(definition, ensure_ascii=False)))
-    elif name == CONTROLES_RAPIDOS:
+    elif name in _AJUSTES_KEY:
         conn.execute("INSERT INTO ajustes (nombre, valor) VALUES (?, ?) ON CONFLICT (nombre) DO UPDATE SET valor = excluded.valor, actualizado = now()",
-                     ("controles_rapidos", json.dumps(payload or {}, ensure_ascii=False)))
+                     (_AJUSTES_KEY[name], json.dumps(payload or {}, ensure_ascii=False)))
     elif name == SALE_TAX:
         conn.execute("DELETE FROM sale_tax_registrado")
         for key, record in (payload or {}).items():
