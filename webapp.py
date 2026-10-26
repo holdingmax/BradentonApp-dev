@@ -1129,7 +1129,7 @@ REPORTES_TOOLS = [
         "icon": _ICON_TRENDING,
         "label": "Proyecciones",
         "description": "Cómo viene el mes y cómo cerraría: combustible y C-Store por rubro.",
-        "accent": "#7C3AED",
+        "accent": "#7A6BB0",
         "ready": True,
         "url": "reportes_proyecciones",
     },
@@ -1537,8 +1537,8 @@ def carga_datos_reportes():
         },
         current_year=today.year,
         current_month=today.month,
-        accent="#7C3AED",
-        accent_soft="#F1E8FE",
+        accent="#7A6BB0",
+        accent_soft="#F1EFF8",
     )
 
 
@@ -1793,8 +1793,8 @@ def reportes_proyecciones():
     return render_template(
         "reportes_proyecciones.html",
         projection=proyecciones.build_projection(year, month),
-        accent="#7C3AED",
-        accent_soft="#F5F3FF",
+        accent="#7A6BB0",
+        accent_soft="#F1EFF8",
         **_month_nav(year, month),
     )
 

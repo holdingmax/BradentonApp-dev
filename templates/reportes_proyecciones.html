@@ -47,6 +47,43 @@
 <div class="card"><p class="muted" style="margin: 0;">Todavía no hay ningún Close Store cargado de {{ month_name|lower }} {{ year }}.</p></div>
 {% else %}
 
+{# ---------------- Resumen: las dos unidades de negocio lado a lado (pedido del usuario, 2026-10-26) ---------------- #}
+{% set cs = p.cstore.balance %}
+{% set util_now = (p.fuel.utilidad + cs.utilidad) if p.fuel.utilidad is not none and cs.utilidad is not none else none %}
+{% set util_proj = (p.fuel_proj.utilidad + cs.utilidad_proj) if p.fuel_proj.utilidad is not none and cs.utilidad_proj is not none else none %}
+<div class="card">
+  <h2>Resumen del mes</h2>
+  <div class="proy-sum-grid">
+    <div class="proy-sum-unit">
+      <div class="proy-sum-title">Combustible</div>
+      <div class="proy-sum-table">
+        <span></span><span class="proy-sum-head">Hasta hoy</span><span class="proy-sum-head proy-sum-head-proj">Proyectado</span>
+        <span>Galones</span><strong>{{ num(p.fuel.gallons, 0) }}</strong><strong class="proy-sum-proj">{{ num(p.fuel_proj.gallons, 0) }}</strong>
+        <span>Venta</span><strong>{{ money(p.fuel.sales, 0) }}</strong><strong class="proy-sum-proj">{{ money(p.fuel_proj.sales, 0) }}</strong>
+        <span>Utilidad</span><strong>{{ money(p.fuel.utilidad, 0) }}</strong><strong class="proy-sum-proj">{{ money(p.fuel_proj.utilidad, 0) }}</strong>
+        <span>Margen / gal</span><strong class="{{ 'proy-neg' if p.fuel.margin_gal is not none and p.fuel.margin_gal < 0 }}">{{ money(p.fuel.margin_gal, 4) }}</strong><span></span>
+      </div>
+    </div>
+    <div class="proy-sum-unit">
+      <div class="proy-sum-title">C-Store <span class="muted">(del Balance)</span></div>
+      <div class="proy-sum-table">
+        <span></span><span class="proy-sum-head">Hasta hoy</span><span class="proy-sum-head proy-sum-head-proj">Proyectado</span>
+        <span>Venta</span><strong>{{ money(cs.amount, 0) }}</strong><strong class="proy-sum-proj">{{ money(cs.proj, 0) }}</strong>
+        <span>Utilidad</span><strong>{{ money(cs.utilidad, 0) }}</strong><strong class="proy-sum-proj">{{ money(cs.utilidad_proj, 0) }}</strong>
+        <span>Margen</span><strong>{{ pct(cs.margin) }}</strong><span></span>
+        <span class="proy-sum-aside">Con Lotto y Kia / Toyota</span><span class="proy-sum-aside proy-sum-aside-num">{{ money(p.cstore.total.amount, 0) }}</span><span class="proy-sum-aside proy-sum-aside-num">{{ money(p.cstore.total.proj, 0) }}</span>
+      </div>
+    </div>
+  </div>
+  <div class="proy-sum-band">
+    <span>Utilidad de las dos unidades</span>
+    <span>
+      Hasta hoy <strong>{{ money(util_now, 0) }}</strong> · Proyectada <strong class="proy-sum-proj">{{ money(util_proj, 0) }}</strong>
+      {% if util_proj %} · Combustible {{ "{:.0f}".format(p.fuel_proj.utilidad / util_proj * 100) }} % / C-Store {{ "{:.0f}".format(cs.utilidad_proj / util_proj * 100) }} %{% endif %}
+    </span>
+  </div>
+</div>
+
 {# ---------------- Combustible ---------------- #}
 <div class="card">
   <h2>Combustible</h2>
@@ -270,6 +307,18 @@
   .proy-per-gal strong { text-align: right; }
   .proy-legend-chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; white-space: nowrap; }
   .proy-legend-proj { background: var(--accent-soft); color: var(--accent); }
+
+  .proy-sum-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
+  .proy-sum-unit { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-alt); padding: 14px 16px; }
+  .proy-sum-title { font-size: 14px; font-weight: 700; margin-bottom: 10px; }
+  .proy-sum-title .muted { font-size: 12px; font-weight: 500; }
+  .proy-sum-table { display: grid; grid-template-columns: 1fr auto auto; gap: 6px 18px; font-size: 13.5px; align-items: baseline; }
+  .proy-sum-table strong { text-align: right; }
+  .proy-sum-head { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-soft); text-align: right; }
+  .proy-sum-head-proj, .proy-sum-proj { color: var(--accent); }
+  .proy-sum-aside { font-size: 12.5px; color: var(--text-soft); }
+  .proy-sum-aside-num { text-align: right; }
+  .proy-sum-band { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px; margin-top: 14px; padding: 10px 16px; border-radius: var(--radius); background: var(--accent-soft); font-size: 13.5px; }
 
   .proy-note { font-size: 12.5px; margin: 12px 0 0; line-height: 1.5; }
   .proy-subtitle { margin: 22px 0 0; font-size: 15px; }
