@@ -1526,6 +1526,8 @@ def carga_datos_reportes():
         },
         current_year=today.year,
         current_month=today.month,
+        accent="#7C3AED",
+        accent_soft="#F1E8FE",
     )
 
 
@@ -3190,7 +3192,7 @@ def controles():
     # Sin alertas en las tarjetas del menú (pedido del usuario, 2026-10-15):
     # agrandaban su renglón y las tarjetas dejaban de ser simétricas. Cada
     # alerta se ve adentro de su control, como en la botonera (chat 27).
-    return render_template("controles_index.html", controls=CONTROLES_SECTIONS)
+    return render_template("controles_index.html", controls=CONTROLES_SECTIONS, accent="#B45309", accent_soft="#FDF0DC")
 
 
 _WEEKDAYS_ES = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]

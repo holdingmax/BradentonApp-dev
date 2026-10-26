@@ -16,15 +16,15 @@
 {% endblock %}
 {% block content %}
 <div class="page-header">
-  <span class="eyebrow">Carga de Datos</span>
+  <span class="eyebrow">Resúmenes del mes</span>
   <h1>Reportes</h1>
   <p class="page-subtitle">Resúmenes del mes en PDF o Excel para descargar, y las proyecciones en pantalla.</p>
 </div>
 
-<div class="reportes-grid">
+<div class="reportes-grid" style="--tool-accent: #7C3AED;">{# el color de la sección, como en el Menú #}
   {% for tool in tools %}
     {% if tool.ready %}
-    <div class="card reportes-card" style="--tool-accent: {{ tool.accent }};">
+    <div class="card reportes-card">
       <div class="reportes-card-head">
         <span class="tool-card-badge">{{ tool.icon|safe }}</span>
         <span class="tool-card-body">
@@ -47,7 +47,7 @@
       </form>
     </div>
     {% else %}
-    <span class="tool-card" style="--tool-accent: {{ tool.accent }};">
+    <span class="tool-card">
       <span class="tool-card-badge">{{ tool.icon|safe }}</span>
       <span class="tool-card-body">
         <span class="tool-card-label">{{ tool.label }}</span>
