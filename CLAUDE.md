@@ -18,10 +18,17 @@ Solo lo vigente. El Estado actual largo de los chats 19 a 34 (con todos los pend
   - **Flask lee el `.env` solo** (`app.run`): con una URL de Render en el `.env`, la app de la PC se conecta a Render. No levantarla mientras el `.env` tenga la URL (arreglo propuesto: `load_dotenv=False`).
   - Los datos se copian una sola vez y **nunca se reprocesan desde el Drive**: se perderían correcciones a mano, asignaciones de Kia/Toyota, marcas de Sale Tax, reglas editadas y pagos históricos.
 - **Entorno**: la PC se reseteó el 20/10 (usuario `Usuario`); rearmado el 21/10 con las mismas rutas (HISTORIAL, "2026-10-21"). Docker Desktop está instalado pero falta WSL2 (`wsl --install --no-distribution` como admin y reiniciar) para recrear `bradenton-pg`.
-- **Git**: pusheado hasta `03399d2`. Encima hay 2 commits locales (pruebas de lectores y documentación del 22/10) que suben a dev con el próximo push.
+- **Git**: todo pusheado a dev hasta `3402645` (26/10).
   - Sin commitear: `.claude/settings.json`.
   - `Claude outputs/` queda sin versionar: tiene PDFs con datos del negocio y borradores.
   - El usuario pushea él mismo (`git push origin main`), salvo que pida que lo haga Claude.
+- **Pedidos del 26/10, en este orden** (todo por dev):
+  1. **Proyecciones** en Reportes (`/carga-datos/reportes/proyecciones`, `reportes_proyecciones.html`) para Federico y Mariano: combustible día por día con PPP, margen por galón y utilidad; C-Store por rubro con % teóricos (admin); control contra el Balance subido (admin). La barra lateral ya no tiene los "Cargar…". **Hecho y probado el 26/10 sin commitear**: falta que Alfonso lo mire y dé el OK para commitear y subir a dev (detalle en HISTORIAL, "2026-10-26").
+     - **PPP en producción**: en Físico, septiembre tiene un inicial de prueba del 18/09 (20.000 gal / $42.000, medición 14.000) y agosto arranca en 0. Con el inicial del Excel (9.682,52 gal / $34.985,66) la app da 3,8881, igual que el Excel. Lo corrige Alfonso en Físico de producción.
+  2. Colores: los íconos de una sección (Carga, Reportes, Controles) con el color de la sección.
+  3. Control de combustible: galones (stock + compras − vendido contra la medición), facturas de J.H. contra los EFT, y precio/margen por galón.
+  4. Ventas y costos: productos con costo que bajó y precio igual (cambio de margen) y un **borrador** de mail a Rick que Alfonso revisa y manda.
+- **Septiembre (revisado el 26/10 con los datos al 22/10)**: completo salvo el recibo del depósito de $2,550 (25/09), 8 movimientos de Chase sin categoría, Flori-Gas 1734258 (24/09, ni en Caja ni en Proveedores), Colonial 2104446 y 2109869, King's 212214, Brandon Liu 335 y Sale Tax sin marcar.
 - **Pendientes principales.** Antes de hacer cualquiera, confirmar que sigue abierto (la lista completa por chat está en el archivo de HISTORIAL).
   - **Cargar cuando el usuario confirme:**
     - Facturas abrochadas al Close Store que no están en Proveedores: CEC 1902400 (13/10, $1,546.80), Gold Coast 784010 (15/10, $2,878.03) y CEC 1878510 (julio).
