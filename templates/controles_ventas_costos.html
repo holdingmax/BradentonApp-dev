@@ -57,16 +57,30 @@
   .vc-badge-info { background: var(--accent-soft); color: var(--text); }
   .vc-neg { color: var(--error); font-weight: 600; }
   .vc-empty-search { margin-top: 12px; }
+  .vc-mchg { display: block; font-size: 11.5px; font-weight: 700; }
+  .vc-mchg-up { color: var(--success); }
+  .vc-mchg-down { color: var(--error); }
+  .vc-mail-col { text-align: center; }
+  .vc-mail-col input { margin: 0; }
+  .vc-mail { display: grid; gap: 10px; }
+  .vc-mail [hidden] { display: none !important; }
+  .vc-mail-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .vc-mail input[type="text"], .vc-mail textarea { width: 100%; box-sizing: border-box; margin: 0; padding: 8px 10px; border: 1px solid var(--border);
+    border-radius: 8px; font: inherit; font-size: 13px; background: var(--surface); color: var(--text); }
+  .vc-mail textarea { min-height: 260px; font-family: ui-monospace, Consolas, monospace; font-size: 12.5px; line-height: 1.5; }
+  .vc-points { display: flex; flex-direction: column; gap: 4px; font-size: 12px; font-weight: 600; color: var(--text-soft); }
+  .vc-points input { width: 80px; margin: 0; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; font: inherit; font-size: 13.5px; }
 </style>
 {% endblock %}
 {% macro ym_label(ym) %}{{ month_names[ym[1] - 1][:3] }} {{ ym[0] }}{% endmacro %}
-{% set state_class = {'Subió el costo, no el precio': 'vc-badge-warn', 'Subió el costo y el precio': 'vc-badge-up', 'Bajó el costo': 'vc-badge-ok', 'Cambió el precio': 'vc-badge-info'} %}
-{% set state_color = {'Subió el costo, no el precio': 'var(--warning)', 'Subió el costo y el precio': 'var(--error)', 'Bajó el costo': 'var(--success)', 'Cambió el precio': 'var(--accent)'} %}
+{% set state_class = {'Subió el costo, no el precio': 'vc-badge-warn', 'Subió el costo y el precio': 'vc-badge-up', 'Bajó el costo, no el precio': 'vc-badge-ok', 'Bajó el costo y el precio': 'vc-badge-ok', 'Cambió el precio': 'vc-badge-info'} %}
+{% set state_color = {'Subió el costo, no el precio': 'var(--warning)', 'Subió el costo y el precio': 'var(--error)', 'Bajó el costo, no el precio': 'var(--success)', 'Bajó el costo y el precio': 'var(--success)', 'Cambió el precio': 'var(--accent)'} %}
+{% macro pts(v) %}{{ '+' if v > 0 }}{{ "{:.1f}".format(v) }} pts{% endmacro %}
 {% block content %}
 <div class="page-header">
   <span class="eyebrow">Controles</span>
-  <h1>Ventas y costos</h1>
-  <p class="page-subtitle">Lo vendido de cada producto por mes, su precio promedio y el costo de su última compra.</p>
+  <h1>Ventas y Costos</h1>
+  <p class="page-subtitle">Los productos cuyo margen cambió de forma notoria entre el primer y el último mes con costo: el precio promedio de venta (Elistar) contra el costo de su última compra a proveedor. Sirve para decidir si hay que hablar con el manager.</p>
 </div>
 
 {% if not available %}
@@ -87,9 +101,12 @@
           {% for ym in available %}<option value="{{ ym[0] }}-{{ '%02d'|format(ym[1]) }}" {% if ym == end %}selected{% endif %}>{{ month_names[ym[1] - 1] }} {{ ym[0] }}</option>{% endfor %}
         </select>
       </label>
+      <label class="vc-points">Margen que cambió desde
+        <span><input type="number" name="puntos" min="0.5" max="100" step="0.5" value="{{ '%g'|format(points) }}"> pts</span>
+      </label>
       <button type="submit" class="btn-secondary">Ver</button>
     </form>
-    <p class="vc-count"><strong>{{ products|length }}</strong> productos vendidos · <strong>{{ with_cost }}</strong> con costo para comparar</p>
+    <p class="vc-count"><strong>{{ products|length }}</strong> de <strong>{{ with_cost }}</strong> productos con costo cambiaron el margen {{ '%g'|format(points) }} puntos o más</p>
   </div>
   <div class="vc-pills" id="vc-pills">
     <button type="button" class="vc-pill active" data-state="">Todos <b>{{ products|length }}</b></button>
@@ -97,11 +114,30 @@
     <button type="button" class="vc-pill" data-state="{{ state }}" style="--pill: {{ state_color.get(state, 'var(--text-soft)') }};">{{ state }} <b>{{ n }}</b></button>
     {% endfor %}
   </div>
+  {% if year_months|length < 2 %}<p class="muted" style="margin: 12px 0 0; font-size: 12.5px;">Elegí por lo menos dos meses: el margen se compara entre el primer y el último mes con costo.</p>{% endif %}
+  {% if impossible %}<p class="muted" style="margin: 12px 0 0; font-size: 12.5px;">{{ impossible }} producto{{ '' if impossible == 1 else 's' }} con un margen de menos de −50 % no se muestra{{ '' if impossible == 1 else 'n' }}: el costo seguramente está por caja y la venta por unidad (revisar las unidades en Productos de proveedores).</p>{% endif %}
 </div>
+
+{% if products %}
+<div class="card">
+  <h2>Mail a Rick</h2>
+  <p class="muted" style="margin: 0 0 12px;">Van los productos tildados en la columna "Mail" (de entrada, los que cambiaron de costo y siguen con el mismo precio). Armalo, revisalo y mandalo vos.</p>
+  <div class="vc-mail">
+    <div class="vc-mail-actions">
+      <button type="button" id="vc-mail-build">Armar mail</button>
+      <button type="button" class="btn-secondary" id="vc-mail-copy" disabled>Copiar</button>
+      <a class="btn-secondary" id="vc-mail-open" href="#" hidden>Abrir en el mail</a>
+      <span class="muted" id="vc-mail-status"></span>
+    </div>
+    <input type="text" id="vc-mail-subject" placeholder="Asunto" hidden>
+    <textarea id="vc-mail-body" hidden></textarea>
+  </div>
+</div>
+{% endif %}
 
 <div class="card">
   <div class="vc-toolbar">
-    <p class="muted" style="margin:0;">Por departamento y, adentro, lo más vendido primero.</p>
+    <p class="muted" style="margin:0;">Primero los que más cambiaron de margen.</p>
     <div class="vc-toolbar-actions">
       <input type="search" id="vc-search" placeholder="Buscar por nombre o UPC" autocomplete="off">
       {{ filter_config_button("ventas-costos-table") }}
@@ -114,7 +150,8 @@
           <th rowspan="2">Producto</th>
           <th rowspan="2" data-filter-col="departamento">Depto.</th>
           <th rowspan="2" data-filter-col="estado">Estado</th>
-          <th rowspan="2" class="num" title="Del último mes con costo">Margen</th>
+          <th rowspan="2" class="num" title="Del primer al último mes con costo">Margen</th>
+          <th rowspan="2" class="vc-mail-col">Mail</th>
           {% for ym in year_months %}<th colspan="2" class="vc-month">{{ ym_label(ym) }}</th>{% endfor %}
         </tr>
         <tr>
@@ -123,15 +160,22 @@
       </thead>
       <tbody>
         {% for p in products %}
-        {% set margins = p.cells|reject('none')|selectattr('margin_pct', 'ne', none)|list %}
-        <tr data-search="{{ p.name|lower }} {{ p.upc }}" data-state="{{ p.state }}">
+        <tr data-search="{{ p.name|lower }} {{ p.upc }}" data-state="{{ p.state }}"
+            data-name="{{ p.name }}" data-dept="{{ p.dept_name }}"
+            data-cost-from="{{ p.first.cost }}" data-cost-to="{{ p.last.cost }}"
+            data-price-from="{{ p.first.avg_price }}" data-price-to="{{ p.last.avg_price }}"
+            data-margin-from="{{ p.first.margin_pct }}" data-margin-to="{{ p.last.margin_pct }}">
           <td>
             {% if p.product_key %}<a class="vc-name" href="{{ url_for('controles_productos_producto', product_key=p.product_key) }}">{{ p.name }}</a>{% else %}<span class="vc-name">{{ p.name }}</span>{% endif %}
             <span class="vc-code">UPC {{ p.upc }}{% if p.last_purchase %} · últ. compra {{ p.last_purchase[8:10] }}/{{ p.last_purchase[5:7] }}/{{ p.last_purchase[2:4] }}{% endif %}</span>
           </td>
           <td class="vc-dept">{{ p.dept_name }}</td>
           <td data-filter-value="{{ p.state }}"><span class="vc-badge {{ state_class.get(p.state, '') }}">{{ p.state }}</span></td>
-          <td class="num">{% if margins %}<span class="{{ 'vc-neg' if margins[-1].margin_pct < 0 else '' }}">{{ margins[-1].margin_pct }}%</span>{% else %}<span class="muted">—</span>{% endif %}</td>
+          <td class="num">
+            {{ p.first.margin_pct }}% → <span class="{{ 'vc-neg' if p.last.margin_pct < 0 else '' }}">{{ p.last.margin_pct }}%</span>
+            <span class="vc-mchg {{ 'vc-mchg-up' if p.margin_change > 0 else 'vc-mchg-down' }}">{{ pts(p.margin_change) }}</span>
+          </td>
+          <td class="vc-mail-col"><input type="checkbox" class="vc-mail-pick" {% if p.state in mail_states and not p.price_change %}checked{% endif %} aria-label="Incluir en el mail"></td>
           {% for c in p.cells %}
             {% if c is none %}
             <td class="num m-start muted">—</td><td></td>
@@ -176,6 +220,71 @@
         pills.forEach(function (p) { p.classList.toggle('active', p === pill); });
         apply();
       });
+    });
+  })();
+</script>
+<script>
+  // Borrador del mail a Rick (pedido del usuario, 2026-10-26): en inglés, como
+  // el reporte de precios para el manager, con los productos tildados en la
+  // columna "Mail", agrupados por estado. No se manda nada: Alfonso lo copia o
+  // lo abre en su programa de correo, lo revisa y lo manda él.
+  (function () {
+    var build = document.getElementById('vc-mail-build');
+    if (!build) return;
+    var subject = document.getElementById('vc-mail-subject');
+    var body = document.getElementById('vc-mail-body');
+    var copy = document.getElementById('vc-mail-copy');
+    var open = document.getElementById('vc-mail-open');
+    var status = document.getElementById('vc-mail-status');
+    var MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    var range = MONTHS[{{ start[1] - 1 }}] + ' {{ start[0] }}' +
+      ({{ (start != end)|tojson }} ? ' to ' + MONTHS[{{ end[1] - 1 }}] + ' {{ end[0] }}' : '');
+    var GROUPS = [
+      ['Subió el costo, no el precio', 'Cost went up but the price did not (please review the price):'],
+      ['Bajó el costo, no el precio', 'Cost went down but the price did not:'],
+      ['Subió el costo y el precio', 'Cost and price both went up, but the margin still moved:'],
+      ['Bajó el costo y el precio', 'Cost and price both went down:'],
+      ['Cambió el precio', 'Same cost, the price changed:']
+    ];
+    function money(v) { return '$' + Number(v).toFixed(2); }
+    function pct(v) { return Number(v).toFixed(1) + '%'; }
+    function line(row) {
+      var d = row.dataset;
+      var price = d.priceFrom === d.priceTo ? money(d.priceTo) : money(d.priceFrom) + ' -> ' + money(d.priceTo);
+      return '- ' + d.name + ' (' + d.dept + '): cost ' + money(d.costFrom) + ' -> ' + money(d.costTo) +
+        ', price ' + price + ', margin ' + pct(d.marginFrom) + ' -> ' + pct(d.marginTo);
+    }
+    build.addEventListener('click', function () {
+      var picked = Array.prototype.slice.call(document.querySelectorAll('#ventas-costos-table tbody tr'))
+        .filter(function (row) { return row.querySelector('.vc-mail-pick').checked; });
+      if (!picked.length) {
+        status.textContent = 'No hay ningún producto tildado.';
+        return;
+      }
+      var parts = ['Hi Rick,', '',
+        'I compared the average selling price of each product (Elistar sales) against the cost on its latest supplier invoice, ' +
+        range + '. These products had a noticeable change in margin:'];
+      GROUPS.forEach(function (group) {
+        var rows = picked.filter(function (row) { return row.dataset.state === group[0]; });
+        if (!rows.length) return;
+        parts.push('', group[1]);
+        rows.forEach(function (row) { parts.push(line(row)); });
+      });
+      parts.push('', 'Let me know if any of these prices should change.', '', 'Thanks,', 'Alfonso');
+      subject.value = 'Margin changes to review (' + range + ')';
+      body.value = parts.join('\n');
+      subject.hidden = body.hidden = open.hidden = false;
+      copy.disabled = false;
+      status.textContent = picked.length + ' producto' + (picked.length === 1 ? '' : 's') + ' en el mail.';
+    });
+    copy.addEventListener('click', function () {
+      var text = 'Subject: ' + subject.value + '\n\n' + body.value;
+      navigator.clipboard.writeText(text).then(function () { status.textContent = 'Copiado.'; },
+        function () { body.select(); status.textContent = 'No se pudo copiar solo: el texto quedó seleccionado.'; });
+    });
+    open.addEventListener('click', function (event) {
+      event.preventDefault();
+      window.location.href = 'mailto:?subject=' + encodeURIComponent(subject.value) + '&body=' + encodeURIComponent(body.value);
     });
   })();
 </script>

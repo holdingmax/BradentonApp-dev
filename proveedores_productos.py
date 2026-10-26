@@ -5225,14 +5225,24 @@ def build_product_detail(key, lines, supplier_labels, pos_costs, monthly_sales):
 _PRICE_MIN_CHANGE = 0.05
 _PRICE_MIN_PCT = 2.0
 
+# Desde el 2026-10-26 el control se guía por el margen (pedido del usuario:
+# "a lo que querían estar atentos era a los cambios notorios de margenes"):
+# solo quedan los productos con costo cuyo margen se movió por lo menos
+# MARGIN_MIN_POINTS puntos entre el primer y el último mes con costo. Un margen
+# por debajo de MARGIN_IMPOSSIBLE es un costo por caja contra una venta por
+# unidad (el "¿pack?" de Productos): se cuenta aparte y no se muestra.
+MARGIN_MIN_POINTS = 3.0
+MARGIN_IMPOSSIBLE = -50.0
+
 SALES_COST_STATES = (
     "Subió el costo, no el precio",
     "Subió el costo y el precio",
-    "Bajó el costo",
+    "Bajó el costo, no el precio",
+    "Bajó el costo y el precio",
     "Cambió el precio",
-    "Sin cambios",
-    "Sin compra cargada",
 )
+# Los que van al mail para el manager: cambió el costo y el precio quedó igual.
+SALES_COST_MAIL_STATES = ("Subió el costo, no el precio", "Bajó el costo, no el precio")
 
 
 def _price_changed(first, last):
@@ -5244,7 +5254,8 @@ def build_sales_cost_view(sales_rows, lines, year_months):
     Un renglón por producto vendido (departamento + UPC) en los meses
     `year_months` (de más viejo a más nuevo): por mes, cantidad, importe,
     precio promedio, costo de la última compra hasta fin de mes y margen;
-    y el estado comparando el primer mes con venta contra el último.
+    y la comparación del primer mes con costo contra el último (costo,
+    precio, margen y su estado). Sin costo, `state` queda en None.
     """
     purchases = {}
     for line in lines:
@@ -5277,32 +5288,38 @@ def build_sales_cost_view(sales_rows, lines, year_months):
             cost = known[-1]["unit_cost"] if known else None
             avg_price = cell["amount"] / cell["count"]
             cells.append({
+                "year": year, "month": month,
                 "count": cell["count"], "amount": round(cell["amount"], 2), "avg_price": round(avg_price, 2),
                 "cost": cost, "margin_pct": _pct(avg_price - cost, avg_price) if cost is not None and avg_price else None,
             })
         sold = [c for c in cells if c is not None]
-        with_cost = [c for c in sold if c["cost"] is not None]
-        price_change = round(sold[-1]["avg_price"] - sold[0]["avg_price"], 2)
-        cost_change = round(with_cost[-1]["cost"] - with_cost[0]["cost"], 9) if with_cost else None
-        price_moved = _price_changed(sold[0]["avg_price"], sold[-1]["avg_price"])
-        if cost_change is None:
-            state = "Sin compra cargada"
-        elif cost_change > 0.005:
-            state = "Subió el costo y el precio" if price_moved and price_change > 0 else "Subió el costo, no el precio"
-        elif cost_change < -0.005:
-            state = "Bajó el costo"
-        elif price_moved:
-            state = "Cambió el precio"
-        else:
-            state = "Sin cambios"
+        with_cost = [c for c in sold if c["margin_pct"] is not None]
+        state = first = last = None
+        cost_change = margin_change = None
+        price_change = 0.0
+        if with_cost:
+            first, last = with_cost[0], with_cost[-1]
+            cost_change = round(last["cost"] - first["cost"], 9)
+            margin_change = round(last["margin_pct"] - first["margin_pct"], 1)
+            price_moved = _price_changed(first["avg_price"], last["avg_price"])
+            price_change = round(last["avg_price"] - first["avg_price"], 2) if price_moved else 0.0
+            if cost_change > 0.005:
+                state = "Subió el costo y el precio" if price_change > 0 else "Subió el costo, no el precio"
+            elif cost_change < -0.005:
+                state = "Bajó el costo y el precio" if price_change < 0 else "Bajó el costo, no el precio"
+            else:
+                state = "Cambió el precio"
         last_line = bought[-1] if bought else None
         result.append({
             **{k: product[k] for k in ("dept_name", "upc", "name")},
             "cells": cells,
             "count": sum(c["count"] for c in sold),
             "amount": round(sum(c["amount"] for c in sold), 2),
-            "price_change": price_change if price_moved else 0.0,
+            "price_change": price_change,
             "cost_change": cost_change,
+            "first": first,
+            "last": last,
+            "margin_change": margin_change,
             "state": state,
             "last_purchase": last_line["invoice_date"] if last_line else None,
             "product_key": product_key(last_line["supplier_key"], last_line["upc"], last_line["item_no"],
@@ -5310,6 +5327,20 @@ def build_sales_cost_view(sales_rows, lines, year_months):
         })
     result.sort(key=lambda p: (p["dept_name"].lower(), -p["amount"]))
     return result
+
+
+def margin_changes(products, min_points=MARGIN_MIN_POINTS):
+    """
+    (los productos con un cambio de margen de `min_points` o más, cuántos
+    tienen costo, cuántos quedan afuera por un margen imposible). Primero los
+    que más se movieron.
+    """
+    with_cost = [p for p in products if p["state"] is not None]
+    impossible = [p for p in with_cost
+                  if min(p["first"]["margin_pct"], p["last"]["margin_pct"]) < MARGIN_IMPOSSIBLE]
+    changed = [p for p in with_cost if p not in impossible and abs(p["margin_change"]) >= min_points]
+    changed.sort(key=lambda p: (-abs(p["margin_change"]), p["name"]))
+    return changed, len(with_cost), len(impossible)
 
 
 # ---------------------------------------------------------------------------

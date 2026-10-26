@@ -876,9 +876,9 @@ CONTROLES_SECTIONS = [
         "key": "control_ventas_costos",
         "code": "VC",
         "icon": _ICON_TAG,
-        "label": "Ventas y costos",
+        "label": "Ventas y Costos",
         "url": "/controles/ventas-costos",
-        "description": "Lo vendido de cada producto mes por mes, su precio y el costo de su última compra.",
+        "description": "Los productos cuyo margen cambió: precio de venta contra el costo de su última compra.",
         "accent": "#B45309",
         "accent_soft": "#FBE8CF",
     },
@@ -8751,7 +8751,7 @@ def controles_productos_cambios(supplier_key, invoice_date, invoice_no, fmt):
 @app.route("/controles/ventas-costos")
 def controles_ventas_costos():
     """
-    Ventas y costos (pedido del usuario, 2026-10-08): las ventas por producto
+    Ventas y Costos (pedido del usuario, 2026-10-08): las ventas por producto
     de Elistar cargadas en CMV Ventas, mes por mes (por defecto los últimos 4
     meses cargados; ?desde=YYYY-MM&hasta=YYYY-MM), con el costo de la última
     compra a proveedor hasta cada fin de mes (proveedores_productos.
@@ -8771,8 +8771,15 @@ def controles_ventas_costos():
         if start > end:
             start, end = end, start
     year_months = [ym for ym in available if start <= ym <= end] if available else []
-    products = proveedores_productos.build_sales_cost_view(
-        cmv_db.get_monthly_sales_rows(year_months), proveedores_db.get_all_invoice_lines(), year_months)
+    # Desde el 2026-10-26 solo los productos con un cambio notorio de margen
+    # (?puntos=, por defecto proveedores_productos.MARGIN_MIN_POINTS).
+    points = request.args.get("puntos", type=float)
+    if points is None or not (0 < points <= 100):
+        points = proveedores_productos.MARGIN_MIN_POINTS
+    products, with_cost, impossible = proveedores_productos.margin_changes(
+        proveedores_productos.build_sales_cost_view(
+            cmv_db.get_monthly_sales_rows(year_months), proveedores_db.get_all_invoice_lines(), year_months),
+        points)
     states = {state: sum(1 for p in products if p["state"] == state)
               for state in proveedores_productos.SALES_COST_STATES}
     return render_template(
@@ -8783,7 +8790,10 @@ def controles_ventas_costos():
         start=start,
         end=end,
         states=states,
-        with_cost=sum(1 for p in products if p["cost_change"] is not None),
+        points=points,
+        with_cost=with_cost,
+        impossible=impossible,
+        mail_states=proveedores_productos.SALES_COST_MAIL_STATES,
         month_names=_MONTH_NAMES_ES,
         accent=section["accent"],
         accent_soft=section["accent_soft"],
