@@ -1,0 +1,192 @@
+{% extends "base.html" %}
+{% block main_class %}main-full{% endblock %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ url_for('controles') }}">Controles</a><span class="current">Combustible</span></nav>
+{% endblock %}
+{% block content %}
+{% from "_month_jump.html" import month_jump %}
+{% macro money(v, d=2) %}{% if v is none %}—{% elif v < 0 %}−${{ ("{:,.%df}" % d).format(-v) }}{% else %}${{ ("{:,.%df}" % d).format(v) }}{% endif %}{% endmacro %}
+{% macro gal(v) %}{% if v is none %}—{% elif v < 0 %}−{{ "{:,.2f}".format(-v) }}{% else %}{{ "{:,.2f}".format(v) }}{% endif %}{% endmacro %}
+{% macro pct(v) %}{% if v is none %}—{% else %}{{ '+' if v > 0 }}{{ "{:.1f}".format(v * 100) }} %{% endif %}{% endmacro %}
+{% macro dmy(d) %}{{ d.strftime('%d/%m') if d else '—' }}{% endmacro %}
+{% set c = control %}
+{% set r = c.reading %}
+{% set sources = {"manual": "cargado a mano en Físico", "prev_month_computed": "el final teórico del mes anterior", "default": "no hay inventario inicial"} %}
+{% set status_labels = {"ok": "Pagada", "diferencia": "Pagada con otro importe", "vencida": "Sin EFT", "pendiente": "Por pagar"} %}
+
+<div class="page-header">
+  <span class="eyebrow">Controles</span>
+  <h1>Combustible</h1>
+  <p class="page-subtitle">El stock de galones contra la medición, las facturas de J.H. contra los EFT y el margen por galón, con lo ya cargado.</p>
+</div>
+
+<div class="card">
+  <div class="historial-nav">
+    <a href="{{ url_for('controles_combustible', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
+    <div class="historial-nav-title">
+      {{ month_jump('controles_combustible', year, month) }}
+      {% if year == today.year and month == today.month %}<span class="muted">Mes actual</span>
+      {% else %}<a href="{{ url_for('controles_combustible') }}" class="muted">Ir al mes actual</a>{% endif %}
+    </div>
+    <a href="{{ url_for('controles_combustible', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
+  </div>
+</div>
+
+{% if not c.days %}
+<div class="card"><p class="muted" style="margin: 0;">No hay Close Store ni facturas de combustible cargados de {{ month_name|lower }} {{ year }}.</p></div>
+{% else %}
+
+<div class="cb-grid">
+  <div class="cb-tile">
+    <div class="cb-tile-label">Galones</div>
+    <div class="cb-lines">
+      <span>Inventario inicial</span><strong class="{{ 'cb-bad' if c.initial_source == 'default' }}">{{ gal(c.initial_gallons) }}</strong>
+      <span>+ Recibido de J.H.</span><strong>{{ gal(c.received_gallons) }}</strong>
+      <span>− Vendido</span><strong>{{ gal(c.sold_gallons) }}</strong>
+      <span class="cb-total">= Stock teórico{% if c.last_loaded %} al {{ dmy(c.last_loaded) }}{% endif %}</span><strong class="cb-total {{ 'cb-bad' if c.final_stock < 0 }}">{{ gal(c.final_stock) }}</strong>
+    </div>
+    <p class="cb-foot">Inicial: {{ sources.get(c.initial_source, c.initial_source) }}.</p>
+  </div>
+
+  <div class="cb-tile">
+    <div class="cb-tile-label">Medición</div>
+    {% if r %}
+    <div class="cb-lines">
+      <span>Medido{% if r.date %} el {{ dmy(r.date) }}{% endif %}</span><strong>{{ gal(r.gallons) }}</strong>
+      <span>Teórico al {{ dmy(r.cut) }}</span><strong>{{ gal(r.theoretical) }}</strong>
+      <span class="cb-total">Diferencia</span><strong class="cb-total {{ 'cb-bad' if r.diff_pct is not none and r.diff_pct|abs > 0.01 }}">{{ gal(r.diff) }} gal</strong>
+      <span></span><span class="cb-sub">{{ pct(r.diff_pct) }} · {{ money(r.diff_amount) }} al PPP</span>
+    </div>
+    {% if r.incomplete %}<p class="cb-foot cb-warn">Faltan Close Store hasta el {{ dmy(r.cut) }}: el teórico todavía no está completo.</p>{% endif %}
+    {% else %}
+    <p class="muted cb-empty">No hay medición cargada este mes. Se carga en Físico.</p>
+    {% endif %}
+  </div>
+
+  <div class="cb-tile">
+    <div class="cb-tile-label">Facturas contra EFT</div>
+    <div class="cb-lines">
+      <span>Facturas del mes</span><strong>{{ c.eft.rows|length }}</strong>
+      <span>Pagadas por su importe</span><strong>{{ c.eft.rows|selectattr('status', 'equalto', 'ok')|list|length }}</strong>
+      <span>Por pagar</span><strong>{{ c.eft.rows|selectattr('status', 'equalto', 'pendiente')|list|length }}</strong>
+      <span class="cb-total">Para revisar</span><strong class="cb-total {{ 'cb-bad' if c.eft.problems }}">{{ c.eft.problems }}</strong>
+    </div>
+    <p class="cb-foot">Último EFT cargado: {{ c.eft.last_eft.strftime('%d/%m/%Y') if c.eft.last_eft else '—' }}.</p>
+  </div>
+
+  <div class="cb-tile">
+    <div class="cb-tile-label">Por galón (mes)</div>
+    <div class="cb-lines">
+      <span>Precio de venta</span><strong>{{ money(c.price, 4) }}</strong>
+      <span>PPP</span><strong>{{ money(c.ppp, 4) }}</strong>
+      <span class="cb-total">Margen con PPP</span><strong class="cb-total {{ 'cb-bad' if c.margin_ppp is not none and c.margin_ppp < 0 }}">{{ money(c.margin_ppp, 4) }}</strong>
+      <span class="cb-total">Margen con última compra</span><strong class="cb-total {{ 'cb-bad' if c.margin_last is not none and c.margin_last < 0 }}">{{ money(c.margin_last, 4) }}</strong>
+    </div>
+    <p class="cb-foot">El de última compra usa, cada día, el costo de la última factura recibida hasta ese día.</p>
+  </div>
+</div>
+
+<div class="card">
+  <h2>Facturas de combustible contra los EFT</h2>
+  {% if c.eft.rows %}
+  <div class="historial-table-wrap">
+    <table class="historial-table cb-num">
+      <thead>
+        <tr><th>Recibida</th><th>Factura</th><th>Galones</th><th>Importe</th><th>Costo / gal</th><th>Vence</th><th>EFT</th><th>Pagado</th><th>Estado</th></tr>
+      </thead>
+      <tbody>
+        {% for f in c.eft.rows %}
+        <tr>
+          <td>{{ dmy(f.date) }}</td>
+          <td>{{ f.number }}</td>
+          <td>{{ gal(f.gallons) }}</td>
+          <td>{{ money(f.amount) }}</td>
+          <td>{{ money(f.cost_gal, 4) }}</td>
+          <td>{{ dmy(f.due) }}</td>
+          <td>{% for p in f.payments %}{{ p.rcv }} ({{ dmy(p.date) }}){% if not loop.last %}<br>{% endif %}{% else %}{% if f.eft_day %}<span class="muted">cobra el {{ dmy(f.eft_day) }}</span>{% else %}—{% endif %}{% endfor %}</td>
+          <td>{{ money(f.paid_total) }}{% if f.diff %}<span class="cb-sub cb-bad">{{ money(f.diff) }}</span>{% endif %}</td>
+          <td><span class="cb-chip cb-chip-{{ f.status }}">{{ status_labels[f.status] }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="muted" style="margin-top: 0;">No hay facturas de combustible cargadas este mes.</p>
+  {% endif %}
+  {% if c.eft.missing %}
+  <h3 class="cb-subtitle">Pagadas por un EFT del mes y no cargadas</h3>
+  <p class="muted cb-foot" style="margin-top: 0;">Facturas de $1,000 o más que no están en Físico ni en Facturas varias.</p>
+  <div class="historial-table-wrap">
+    <table class="historial-table cb-num">
+      <thead><tr><th>EFT</th><th>Fecha</th><th>Factura</th><th>Pagado</th></tr></thead>
+      <tbody>
+        {% for p in c.eft.missing %}
+        <tr><td>{{ p.rcv }}</td><td>{{ dmy(p.date) }}</td><td>{{ p.invoice }}</td><td>{{ money(p.amount) }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+
+<div class="card">
+  <h2>Día por día</h2>
+  <div class="historial-table-wrap">
+    <table class="historial-table cb-num">
+      <thead>
+        <tr>
+          <th>Día</th><th>Recibido</th><th>Vendido</th><th>Stock teórico</th>
+          <th>Precio / gal</th><th>Margen con PPP</th><th>Última compra / gal</th><th>Margen con última compra</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in c.days %}
+        <tr class="{{ 'cb-row-reading' if r and d.date == r.cut }}">
+          <td>{{ dmy(d.date) }}{% if r and d.date == r.cut %} <span class="cb-chip cb-chip-pendiente">medición</span>{% endif %}</td>
+          <td>{% if d.received %}{{ gal(d.received) }}<span class="cb-sub">{{ d.invoices|join(', ') }}</span>{% endif %}</td>
+          <td>{{ gal(d.sold) }}</td>
+          <td class="{{ 'cb-bad' if d.stock < 0 }}"><strong>{{ gal(d.stock) }}</strong></td>
+          <td>{{ money(d.price, 4) }}</td>
+          <td class="{{ 'cb-bad' if d.margin_ppp is not none and d.margin_ppp < 0 }}">{{ money(d.margin_ppp, 4) }}</td>
+          <td>{{ money(d.last_cost, 4) }}</td>
+          <td class="{{ 'cb-bad' if d.margin_last is not none and d.margin_last < 0 }}">{{ money(d.margin_last, 4) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<style>
+  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .historial-nav-btn { text-decoration: none; display: inline-block; }
+  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
+  .historial-table-wrap { overflow-x: auto; margin-top: 14px; border: 1px solid var(--border); border-radius: 10px; }
+  .historial-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .historial-table th, .historial-table td { padding: 8px 14px; text-align: left; white-space: nowrap; vertical-align: top; }
+  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); vertical-align: bottom; }
+  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
+  .cb-num th:not(:first-child):not(:nth-child(2)), .cb-num td:not(:first-child):not(:nth-child(2)) { text-align: right; }
+
+  .cb-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; margin-bottom: 18px; }
+  .cb-tile { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 14px 16px; box-shadow: var(--shadow-sm); }
+  .cb-tile-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--accent); margin-bottom: 10px; }
+  .cb-lines { display: grid; grid-template-columns: 1fr auto; gap: 5px 12px; font-size: 13.5px; }
+  .cb-lines strong { text-align: right; }
+  .cb-total { padding-top: 5px; border-top: 1px solid var(--border); font-weight: 700; }
+  .cb-sub { display: block; font-size: 11.5px; color: var(--text-soft); text-align: right; }
+  .cb-foot { font-size: 12px; color: var(--text-soft); margin: 10px 0 0; line-height: 1.45; }
+  .cb-empty { font-size: 13px; margin: 0; }
+  .cb-subtitle { margin: 22px 0 4px; font-size: 15px; }
+  .cb-bad { color: var(--error); }
+  .cb-warn { color: var(--warning); }
+  .cb-row-reading td { background: var(--accent-soft); }
+  .cb-chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 700; }
+  .cb-chip-ok { background: var(--success-soft); color: var(--success); }
+  .cb-chip-pendiente { background: var(--surface-alt); color: var(--text-soft); border: 1px solid var(--border); }
+  .cb-chip-diferencia, .cb-chip-vencida { background: var(--error-soft); color: var(--error); }
+</style>
+{% endblock %}

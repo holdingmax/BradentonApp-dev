@@ -56,7 +56,7 @@ PAGES = {
                                     "/controles/rapidos/tarjetas") for url in _months(path)]
                   + ["/carga-datos/eft/proximos", "/controles/rapidos/eft"],
     "documents": ["/buscar/documentos?q=close"],  # /documentos/... redirige mientras el guardado esté apagado
-    "fisico": [url for path in ("/fisico", "/fisico/exportar", "/fisico/exportar/pdf") for url in _months(path)]
+    "fisico": [url for path in ("/fisico", "/fisico/exportar", "/fisico/exportar/pdf", "/controles/combustible") for url in _months(path)]
               + ["/carga-datos/eft/proximos", "/controles/rapidos/eft"],
     "caja": [f"/carga-datos/caja?year=2026&month={m}" for m in range(1, 7)]
             + [url for path in ("/carga-datos/caja", "/carga-datos/caja/exportar", "/carga-datos/caja/exportar/pdf",

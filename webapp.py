@@ -46,6 +46,7 @@ import cheques_db
 import depositos
 import depositos_db
 import control_cmv
+import control_combustible
 import cuenta_kia_toyota
 import cuenta_kia_toyota_db
 import control_cmv_db
@@ -840,6 +841,16 @@ CONTROLES_SECTIONS = [
         "description": "Las ventas de cada departamento: reportes diarios, reporte mensual, Elistar y CMV.",
         "accent": "#7C3AED",
         "accent_soft": "#E9E0FC",
+    },
+    {
+        "key": "control_combustible",
+        "code": "CB",
+        "icon": _ICON_FUEL,
+        "label": "Combustible",
+        "url": "/controles/combustible",
+        "description": "Stock de galones contra la medición, facturas de J.H. contra los EFT y margen por galón.",
+        "accent": "#92400E",
+        "accent_soft": "#FDE8CE",
     },
     {
         "key": "control_kia_toyota",
@@ -7327,6 +7338,23 @@ def controles_tarjetas():
         next_year=next_year,
         next_month=next_month,
         **THEME_BY_KEY["carga_eft"],
+    )
+
+
+@app.route("/controles/combustible")
+def controles_combustible():
+    """
+    Control de combustible (pedido del usuario, 2026-10-26): stock de galones
+    contra la medición, facturas de J.H. contra los EFT y margen por galón.
+    Cálculo en control_combustible.py.
+    """
+    year, month = _cierre_month()
+    return render_template(
+        "controles_combustible.html",
+        control=control_combustible.build_control(year, month),
+        **_month_nav(year, month),
+        accent="#92400E",
+        accent_soft="#FDE8CE",
     )
 
 
