@@ -1,13 +1,17 @@
 {% extends "base.html" %}
 {% block main_class %}main-full{% endblock %}
 {% block crumbs %}
-<nav class="crumbs"><a href="{{ url_for('carga_datos_reportes') }}">Reportes</a><span class="current">Proyecciones</span></nav>
+{# Sin "Reportes" acá: ya lo dice el botón de sección de al lado (pedido del usuario, 2026-10-27). #}
+<nav class="crumbs"><span class="current">Proyecciones</span></nav>
 {% endblock %}
 {% block content %}
 {% from "_month_jump.html" import month_jump %}
 {% macro money(v, d=2) %}{% if v is none %}—{% elif v < 0 %}−${{ ("{:,.%df}" % d).format(-v) }}{% else %}${{ ("{:,.%df}" % d).format(v) }}{% endif %}{% endmacro %}
 {% macro num(v, d=2) %}{% if v is none %}—{% else %}{{ ("{:,.%df}" % d).format(v) }}{% endif %}{% endmacro %}
 {% macro pct(v) %}{% if v is none %}—{% else %}{{ "{:.1f}".format(v * 100) }} %{% endif %}{% endmacro %}
+{# Íconos de cada unidad, a la izquierda de su título (pedido del usuario, 2026-10-27). #}
+{% macro icon_fuel() %}<svg class="proy-unit-icon proy-unit-icon-fuel" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="3" y1="22" x2="15" y2="22"/><line x1="4" y1="9" x2="14" y2="9"/><path d="M14 22V4a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v18"/><path d="M14 13h2a2 2 0 0 1 2 2v2a2 2 0 0 0 2 2a2 2 0 0 0 2-2V9.83a2 2 0 0 0-.59-1.42L18 5"/></svg>{% endmacro %}
+{% macro icon_cstore() %}<svg class="proy-unit-icon proy-unit-icon-cstore" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 9l1.5-5h15L21 9"/><path d="M3 9a3 3 0 0 0 6 0a3 3 0 0 0 6 0a3 3 0 0 0 6 0"/><path d="M5 11.5V21h14v-9.5"/><path d="M10 21v-5h4v5"/></svg>{% endmacro %}
 {% set p = projection %}
 {% set is_admin = current_user.is_authenticated and current_user.is_admin %}
 {% set fuel_sources = {"manual": "cargado a mano en Físico", "prev_month_computed": "el final teórico del mes anterior", "default": "sin inventario inicial"} %}
@@ -60,12 +64,12 @@
     <div class="proy-kpi-sub">hasta hoy {{ money(util_now, 0) }}</div>
   </div>
   <div class="proy-kpi proy-kpi-fuel">
-    <div class="proy-kpi-label">Combustible</div>
+    <div class="proy-kpi-label">{{ icon_fuel() }}Combustible</div>
     <div class="proy-kpi-value" data-count="{{ p.fuel_proj.sales or 0 }}">{{ money(p.fuel_proj.sales, 0) }}</div>
     <div class="proy-kpi-sub">venta proyectada · {{ num(p.fuel_proj.gallons, 0) }} gal</div>
   </div>
   <div class="proy-kpi proy-kpi-cstore">
-    <div class="proy-kpi-label">C-Store</div>
+    <div class="proy-kpi-label">{{ icon_cstore() }}C-Store</div>
     <div class="proy-kpi-value" data-count="{{ cs.proj or 0 }}">{{ money(cs.proj, 0) }}</div>
     <div class="proy-kpi-sub">venta proyectada · margen {{ pct(cs.margin) }}</div>
   </div>
@@ -130,7 +134,7 @@
   <h2>Resumen del mes</h2>
   <div class="proy-sum-grid">
     <div class="proy-sum-unit">
-      <div class="proy-sum-title">Combustible</div>
+      <div class="proy-sum-title">{{ icon_fuel() }}Combustible</div>
       <div class="proy-sum-table">
         <span></span><span class="proy-sum-head">Hasta hoy</span><span class="proy-sum-head proy-sum-head-proj">Proyectado</span>
         <span>Galones</span><strong>{{ num(p.fuel.gallons, 0) }}</strong><strong class="proy-sum-proj">{{ num(p.fuel_proj.gallons, 0) }}</strong>
@@ -140,7 +144,7 @@
       </div>
     </div>
     <div class="proy-sum-unit">
-      <div class="proy-sum-title">C-Store <span class="muted">(del Balance)</span></div>
+      <div class="proy-sum-title">{{ icon_cstore() }}C-Store</div>
       <div class="proy-sum-table">
         <span></span><span class="proy-sum-head">Hasta hoy</span><span class="proy-sum-head proy-sum-head-proj">Proyectado</span>
         <span>Venta</span><strong>{{ money(cs.amount, 0) }}</strong><strong class="proy-sum-proj">{{ money(cs.proj, 0) }}</strong>
@@ -161,7 +165,7 @@
 
 {# ---------------- Combustible ---------------- #}
 <div class="card">
-  <h2>Combustible</h2>
+  <h2 class="proy-unit-title">{{ icon_fuel() }}Combustible</h2>
   <div class="proy-stat-grid">
     {% for label, key, kind in [("Galones", "gallons", "gal"), ("Venta", "sales", "$"), ("Utilidad", "utilidad", "$")] %}
     <div class="proy-stat">
@@ -188,40 +192,11 @@
     más {{ p.fuel_invoices }} factura{{ '' if p.fuel_invoices == 1 else 's' }} de combustible.
     {% if p.ppp is none %}<strong>Sin PPP:</strong> falta el inventario inicial o las facturas del mes en Físico.{% endif %}
   </p>
-
-  <div class="historial-table-wrap">
-    <table class="historial-table proy-num-table">
-      <thead>
-        <tr><th>Día</th><th>Galones</th><th>Venta</th><th>Precio / gal</th><th>Margen / gal</th><th>Utilidad</th></tr>
-      </thead>
-      <tbody>
-        {% for d in p.days %}
-        <tr>
-          <td>{{ d.date.strftime('%d/%m') }}</td>
-          <td>{{ num(d.gallons) }}</td>
-          <td>{{ money(d.fuel_sales) }}</td>
-          <td>{{ money(d.price, 4) }}</td>
-          <td class="{{ 'proy-neg' if d.margin_gal is not none and d.margin_gal < 0 }}">{{ money(d.margin_gal, 4) }}</td>
-          <td>{{ money(d.fuel_utilidad) }}</td>
-        </tr>
-        {% endfor %}
-        {% set t = p.days_totals %}
-        <tr class="reporte-totals-row">
-          <td>Total</td>
-          <td>{{ num(t.gallons) }}</td>
-          <td>{{ money(t.fuel_sales) }}</td>
-          <td>{{ money(t.price, 4) }}</td>
-          <td>{{ money(t.margin_gal, 4) }}</td>
-          <td>{{ money(t.fuel_utilidad) }}</td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
 </div>
 
 {# ---------------- C-Store ---------------- #}
 <div class="card">
-  <h2>C-Store por rubro</h2>
+  <h2 class="proy-unit-title">{{ icon_cstore() }}C-Store por rubro</h2>
   <p class="muted proy-note" style="margin-top: 0;">
     Utilidad = venta × el % teórico de cada rubro (los del Excel Cierre).{% if is_admin %} Se pueden cambiar y guardar abajo.{% endif %}
     El Balance cuenta como C-Store solo Tabacco, Soda, Beer / Wine y Resto: Lotto y Kia / Toyota van por otras cuentas.
@@ -249,7 +224,7 @@
             <td class="proy-cell-proj">{{ money(r.utilidad_proj) }}</td>
           </tr>
           {% endfor %}
-          {% for title, block in [("C-Store del Balance", p.cstore.balance), ("Total con Lotto y Kia / Toyota", p.cstore.total)] %}
+          {% for title, block in [("C-Store", p.cstore.balance), ("Total con Lotto y Kia / Toyota", p.cstore.total)] %}
           <tr class="reporte-totals-row">
             <td>{{ title }}</td>
             <td>{{ money(block.amount) }}</td>
@@ -264,38 +239,6 @@
     </div>
     {% if is_admin %}<div class="proy-actions"><button type="submit">Guardar %</button></div>{% endif %}
   </form>
-
-  <h3 class="proy-subtitle">Día por día</h3>
-  <div class="historial-table-wrap">
-    <table class="historial-table proy-num-table">
-      <thead>
-        <tr>
-          <th>Día</th><th>Tabacco</th><th>Soda</th><th>Beer / Wine</th><th>Resto</th><th>C-Store</th><th>Utilidad</th>
-          <th class="proy-col-aside">Lotto</th><th class="proy-col-aside">Kia / Toyota</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for d in p.days %}
-        <tr>
-          <td>{{ d.date.strftime('%d/%m') }}</td>
-          {% for label in ["TABACCO", "SODA", "BEER/WINE", "RESTO"] %}<td>{{ money(d.groups.get(label, 0)) }}</td>{% endfor %}
-          <td><strong>{{ money(d.cstore) }}</strong></td>
-          <td>{{ money(d.cstore_utilidad) }}</td>
-          <td class="proy-col-aside">{{ money(d.lotto) }}</td>
-          <td class="proy-col-aside">{{ money(d.kia) }}</td>
-        </tr>
-        {% endfor %}
-        <tr class="reporte-totals-row">
-          <td>Total</td>
-          {% for label in ["TABACCO", "SODA", "BEER/WINE", "RESTO"] %}<td>{{ money(t.groups[label]) }}</td>{% endfor %}
-          <td>{{ money(t.cstore) }}</td>
-          <td>{{ money(t.cstore_utilidad) }}</td>
-          <td>{{ money(t.lotto) }}</td>
-          <td>{{ money(t.kia) }}</td>
-        </tr>
-      </tbody>
-    </table>
-  </div>
 </div>
 {% endif %}
 
@@ -419,7 +362,12 @@
   .proy-sum-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
   .proy-sum-unit { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-alt); padding: 14px 16px; }
   .proy-sum-title { font-size: 14px; font-weight: 700; margin-bottom: 10px; }
-  .proy-sum-title .muted { font-size: 12px; font-weight: 500; }
+  .proy-unit-icon { width: 18px; height: 18px; flex-shrink: 0; }
+  .proy-unit-icon-fuel { color: #2A78D6; }
+  .proy-unit-icon-cstore { color: #EB6834; }
+  .proy-sum-title, .proy-unit-title, .proy-kpi-label { display: flex; align-items: center; gap: 8px; }
+  .proy-kpi-label .proy-unit-icon { width: 16px; height: 16px; }
+  .proy-unit-title .proy-unit-icon { width: 20px; height: 20px; }
   .proy-sum-table { display: grid; grid-template-columns: 1fr auto auto; gap: 6px 18px; font-size: 13.5px; align-items: baseline; }
   .proy-sum-table strong { text-align: right; }
   .proy-sum-head { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-soft); text-align: right; }
