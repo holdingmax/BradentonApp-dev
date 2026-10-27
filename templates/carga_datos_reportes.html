@@ -2,23 +2,12 @@
 {% block head_extra %}
 <style>
   /* Rediseño (pedido del usuario, 2026-10-27): un solo período arriba para
-     todos los reportes, Proyecciones destacada y los PDF en tarjetas iguales,
-     en vez de un mes, un año y un botón grande repetidos en cada tarjeta. */
+     todos los reportes y los PDF en tarjetas iguales, en vez de un mes, un
+     año y un botón grande repetidos en cada tarjeta. */
   .rep-period { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px 18px; }
   .rep-period-field { display: flex; flex-direction: column; gap: 5px; }
   .rep-period-label { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-soft); }
   .rep-period select { padding: 8px 12px; min-width: 150px; }
-
-  .rep-feature {
-    display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
-    background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
-    border-radius: var(--radius); padding: 20px 22px; margin-top: 18px;
-  }
-  .rep-feature .tool-card-badge { width: 52px; height: 52px; border-radius: 12px; }
-  .rep-feature .tool-card-badge svg { width: 27px; height: 27px; }
-  .rep-feature-body { flex: 1; min-width: 220px; }
-  .rep-feature-title { font-size: 18px; font-weight: 700; color: var(--text); }
-  .rep-feature-tag { display: inline-block; margin-left: 8px; padding: 1px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; vertical-align: 2px; background: var(--accent); color: #fff; }
 
   .rep-section-title { margin: 28px 0 0; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-soft); }
   .rep-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; margin-top: 12px; }
@@ -40,18 +29,18 @@
 </style>
 {% endblock %}
 {% block content %}
-{% set featured = tools|selectattr("url")|list %}
-{% set pdfs = tools|rejectattr("url")|list %}
+{% set pdfs = tools %}
 {% set all_years = years_by_key.values()|sum(start=[])|unique|sort|list or [current_year] %}
 <div class="page-header">
   <span class="eyebrow">Resúmenes del mes</span>
   <h1>Reportes</h1>
-  <p class="page-subtitle">Elegí el mes una vez y descargá el que necesites, o mirá las proyecciones en pantalla.</p>
+  <p class="page-subtitle">Elegí el mes una vez y descargá el que necesites.</p>
 </div>
 
 {# Un solo form GET: cada botón lleva su formaction, así todos usan el mismo
    período. Los PDF se piden por detrás (ver "Descargas sin recargar" en
-   base.html); Proyecciones abre su página con ese mes. #}
+   base.html). Proyecciones ya no está acá: tiene su botón en la barra de
+   arriba (pedido del usuario, 2026-10-27). #}
 <form method="get" action="{{ url_for('carga_datos_reportes') }}" style="--tool-accent: var(--accent);">
   <div class="card rep-period">
     <label class="rep-period-field">
@@ -71,16 +60,6 @@
       </select>
     </label>
   </div>
-
-  {% for tool in featured %}
-  <div class="rep-feature">
-    <span class="tool-card-badge">{{ tool.icon|safe }}</span>
-    <div class="rep-feature-body">
-      <div class="rep-feature-title">{{ tool.label }}<span class="rep-feature-tag">En pantalla</span></div>
-    </div>
-    <button type="submit" class="btn-accent" formaction="{{ url_for(tool.url) }}">Ver {{ tool.label|lower }} &rarr;</button>
-  </div>
-  {% endfor %}
 
   <h2 class="rep-section-title">PDF del mes</h2>
   <div class="rep-grid">

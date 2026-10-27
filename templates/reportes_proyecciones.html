@@ -1,9 +1,5 @@
 {% extends "base.html" %}
 {% block main_class %}main-full{% endblock %}
-{% block crumbs %}
-{# Sin "Reportes" acá: ya lo dice el botón de sección de al lado (pedido del usuario, 2026-10-27). #}
-<nav class="crumbs"><span class="current">Proyecciones</span></nav>
-{% endblock %}
 {% block content %}
 {% from "_month_jump.html" import month_jump %}
 {% macro money(v, d=2) %}{% if v is none %}—{% elif v < 0 %}−${{ ("{:,.%df}" % d).format(-v) }}{% else %}${{ ("{:,.%df}" % d).format(v) }}{% endif %}{% endmacro %}
@@ -17,7 +13,7 @@
 {% set fuel_sources = {"manual": "cargado a mano en Físico", "prev_month_computed": "el final teórico del mes anterior", "default": "sin inventario inicial"} %}
 
 <div class="page-header">
-  <span class="eyebrow">Reportes</span>
+  <span class="eyebrow">Panel de proyecciones</span>
   <h1>Proyecciones</h1>
   <p class="page-subtitle">
     Lo vendido en los días cargados y cómo cerraría el mes al mismo ritmo ({{ p.days_in_month }} días).

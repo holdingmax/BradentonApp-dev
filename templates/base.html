@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}{% if request.path.startswith('/carga-datos/reportes') %}Reportes{% elif request.path.startswith('/documentos') %}Documentos{% elif request.path.startswith('/controles') %}Controles{% else %}Carga de Datos{% endif %}{% endblock %}</title>
+  <title>{% block title %}{% if request.path.startswith('/carga-datos/reportes') %}Reportes{% elif request.path.startswith('/proyecciones') %}Proyecciones{% elif request.path.startswith('/documentos') %}Documentos{% elif request.path.startswith('/controles') %}Controles{% else %}Carga de Datos{% endif %}{% endblock %}</title>
   <link rel="icon" type="image/png" href="{{ url_for('static', filename='logo.png') }}">
   <style>
     :root {
@@ -329,6 +329,19 @@
        derecha en vez de aprovecharlo. */
     .topbar-right { grid-column: 3; justify-self: end; display: flex; align-items: center; }
 
+    /* "Panel de proyecciones": se entra desde acá, al lado del usuario, y ya
+       no desde Reportes (pedido del usuario, 2026-10-27). */
+    .topbar-proy-btn {
+      display: inline-flex; align-items: center; gap: 7px; margin-right: 14px;
+      padding: 6px 12px; border-radius: 8px; text-decoration: none; white-space: nowrap;
+      font-size: 12.5px; font-weight: 700; color: #5B4F94;
+      background: #F1EFF8; border: 1px solid #DCD7EE;
+      transition: background 0.15s ease, border-color 0.15s ease;
+    }
+    .topbar-proy-btn svg { width: 15px; height: 15px; flex-shrink: 0; }
+    .topbar-proy-btn:hover { background: #E7E3F4; border-color: #7A6BB0; }
+    .topbar-proy-btn.active { background: #7A6BB0; border-color: #7A6BB0; color: #fff; }
+    @media (max-width: 720px) { .topbar-proy-btn span { display: none; } .topbar-proy-btn { padding: 6px 8px; } }
     .account-menu { position: relative; display: flex; align-self: stretch; margin-right: -24px; }
     .account-button {
       display: flex;
@@ -1370,7 +1383,8 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>
             Menú
           </a>
-          {% if request.path != '/' %}
+          {# En Proyecciones no va sección: la marca el botón "Panel de proyecciones" de la derecha. #}
+          {% if request.path != '/' and not request.path.startswith('/proyecciones') %}
           <span class="section-switch-sep">/</span>
           {% if request.path.startswith('/carga-datos/reportes') %}
           <a class="section-switch-current section-switch-current-reportes" href="{{ url_for('carga_datos_reportes') }}">
@@ -1405,6 +1419,12 @@
         <div class="search-results" id="search-results"></div>
       </div>
       <div class="topbar-right">
+        {% if current_user.is_authenticated %}
+        <a class="topbar-proy-btn{{ ' active' if request.path.startswith('/proyecciones') else '' }}" href="{{ url_for('reportes_proyecciones') }}" title="Panel de proyecciones">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/></svg>
+          <span>Panel de proyecciones</span>
+        </a>
+        {% endif %}
         <div class="account-menu" id="account-menu">
           <button type="button" class="account-button" onclick="document.getElementById('account-menu').classList.toggle('open')">
             <span class="account-avatar">

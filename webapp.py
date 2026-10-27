@@ -1123,16 +1123,8 @@ REPORTES_TOOLS = [
         "ready": True,
         "pdf_endpoint": "reportes_gettel_pdf",
     },
-    {
-        # Se ve en pantalla, no es una descarga: `url` en vez de pdf_endpoint.
-        "key": "reportes_proyecciones",
-        "icon": _ICON_TRENDING,
-        "label": "Proyecciones",
-        "description": "Cómo viene el mes y cómo cerraría: combustible y C-Store por rubro.",
-        "accent": "#7A6BB0",
-        "ready": True,
-        "url": "reportes_proyecciones",
-    },
+    # Proyecciones ya no está acá: se entra desde el botón "Panel de
+    # proyecciones" de la barra de arriba (pedido del usuario, 2026-10-27).
 ]
 
 THEME_BY_KEY = {
@@ -1533,7 +1525,6 @@ def carga_datos_reportes():
             "reportes_caja": get_caja_available_years() or [today.year],
             "reportes_proveedores": proveedores_db.get_available_years() or [today.year],
             "reportes_gettel": gettel_reportes.get_available_years() or [today.year],
-            "reportes_proyecciones": reportes_db.get_store_info_years() or [today.year],
         },
         current_year=today.year,
         current_month=today.month,
@@ -1779,11 +1770,13 @@ def reportes_gettel_pdf():
     return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
 
 
-# Proyecciones (Reportes): el panel que miran los dueños día por día (pedido
-# del usuario, 2026-10-26; reemplaza a la página escondida de Carga de Datos
-# del 2026-09-18). La cuenta vive en proyecciones.py. Los % de cada rubro y
-# el Balance del mes cerrado los carga solo un admin.
-@app.route("/carga-datos/reportes/proyecciones")
+# Proyecciones: el panel que miran los dueños día por día (pedido del
+# usuario, 2026-10-26; reemplaza a la página escondida de Carga de Datos del
+# 2026-09-18). Desde el 2026-10-27 no está en Reportes: tiene su dirección y
+# se entra por el botón "Panel de proyecciones" de la barra de arriba (el
+# endpoint conserva el nombre). La cuenta vive en proyecciones.py. Los % de
+# cada rubro y el Balance del mes cerrado los carga solo un admin.
+@app.route("/proyecciones")
 def reportes_proyecciones():
     today = date.today()
     year = request.args.get("year", type=int) or today.year
@@ -1800,8 +1793,9 @@ def reportes_proyecciones():
 
 
 @app.route("/carga-datos/proyecciones")
+@app.route("/carga-datos/reportes/proyecciones")
 def carga_datos_proyecciones():
-    """La dirección de la página vieja lleva a la nueva."""
+    """Las direcciones viejas (Carga de Datos y Reportes) llevan a la nueva."""
     return redirect(url_for("reportes_proyecciones", **request.args.to_dict()))
 
 
@@ -1811,7 +1805,7 @@ def _proyecciones_back():
     return redirect(url_for("reportes_proyecciones", year=year, month=month))
 
 
-@app.route("/carga-datos/reportes/proyecciones/margenes", methods=["POST"])
+@app.route("/proyecciones/margenes", methods=["POST"])
 def reportes_proyecciones_margenes():
     """
     Los % teóricos de cada rubro. Se tipean como porcentaje ("15") y se
@@ -1836,7 +1830,7 @@ def reportes_proyecciones_margenes():
     return _proyecciones_back()
 
 
-@app.route("/carga-datos/reportes/proyecciones/balance", methods=["POST"])
+@app.route("/proyecciones/balance", methods=["POST"])
 def reportes_proyecciones_balance():
     """El Bce (hoja BALANCE HISTORICO) para controlar lo proyectado contra lo real."""
     if not _require_admin("Solo un administrador puede subir el Balance."):

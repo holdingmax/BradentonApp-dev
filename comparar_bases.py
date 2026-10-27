@@ -72,7 +72,7 @@ PAGES = {
                                    "/controles/lottery", "/controles/caja", "/carga-datos/caja") for url in _months(path)],
     # /reporte/dia/<d>/pdf redirige: abre la copia del PDF, que ya no se guarda.
     "reportes_diarios": [f"/reporte/dia/{d}" for d in ("2026-07-27", "2026-08-19", "2026-09-15", "2026-10-04")]
-                        + ["/carga-datos/eft/proximos", "/buscar/documentos?q=close"] + _months("/carga-datos/reportes/proyecciones")
+                        + ["/carga-datos/eft/proximos", "/buscar/documentos?q=close"] + _months("/proyecciones")
                         + [url for path in ("/carga-datos/reporte-diario", "/reporte/historial", "/reporte/store-info/historial",
                                             "/reporte/store-info/exportar", "/reporte/store-info/exportar/pdf",
                                             "/carga-datos/reportes/reporte-diario/pdf", "/controles/tarjetas", "/controles/cierre",
