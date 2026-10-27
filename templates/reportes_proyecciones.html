@@ -197,10 +197,6 @@
 {# ---------------- C-Store ---------------- #}
 <div class="card">
   <h2 class="proy-unit-title">{{ icon_cstore() }}C-Store por rubro</h2>
-  <p class="muted proy-note" style="margin-top: 0;">
-    Utilidad = venta × el % teórico de cada rubro (los del Excel Cierre).{% if is_admin %} Se pueden cambiar y guardar abajo.{% endif %}
-    El Balance cuenta como C-Store solo Tabacco, Soda, Beer / Wine y Resto: Lotto y Kia / Toyota van por otras cuentas.
-  </p>
   <form method="post" action="{{ url_for('reportes_proyecciones_margenes') }}">
     <input type="hidden" name="year" value="{{ year }}">
     <input type="hidden" name="month" value="{{ month }}">
@@ -362,6 +358,9 @@
   .proy-sum-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
   .proy-sum-unit { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-alt); padding: 14px 16px; }
   .proy-sum-title { font-size: 14px; font-weight: 700; margin-bottom: 10px; }
+  /* Aire entre el título de cada cuadro y lo de abajo (pedido del usuario, 2026-10-27). */
+  .card > h2 { margin-bottom: 16px; }
+  .card > .proy-history-head { margin-bottom: 6px; }
   .proy-unit-icon { width: 18px; height: 18px; flex-shrink: 0; }
   .proy-unit-icon-fuel { color: #2A78D6; }
   .proy-unit-icon-cstore { color: #EB6834; }
