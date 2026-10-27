@@ -399,7 +399,6 @@
   if (!window.Chart) return;
   const data = {{ p.charts|tojson }};
   const FUEL = "#2A78D6", CSTORE = "#EB6834", MARGIN = "#1BAF7A", PROJ = "#CBD5E1", GRID = "#EEF0F3";
-  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const money = v => (v < 0 ? "−$" : "$") + Math.abs(Math.round(v)).toLocaleString("en-US");
   const thousands = v => "$" + Math.round(v / 1000) + "k";
   const MONTHS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
@@ -407,7 +406,11 @@
   Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
   Chart.defaults.font.size = 11.5;
   Chart.defaults.color = "#6B7280";
-  if (reduce) Chart.defaults.animation = false;
+  // Animaciones rápidas (pedido del usuario, 2026-10-27): medio segundo, con
+  // las barras entrando una tras otra. Van aunque Windows tenga apagados los
+  // efectos de animación (prefers-reduced-motion): en la PC de la oficina
+  // está apagado y así no se veía ninguna.
+  Object.assign(Chart.defaults.animation, { duration: 550, easing: "easeOutQuart" });
   const tip = fmt => ({ callbacks: { label: c => c.dataset.label + ": " + fmt(c.raw) } });
   const axes = yFmt => ({
     x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true } },
@@ -417,10 +420,10 @@
   // Los números de arriba suben de 0 a su valor.
   document.querySelectorAll("[data-count]").forEach(el => {
     const target = parseFloat(el.dataset.count);
-    if (reduce || !target) return;
+    if (!target) return;
     const start = performance.now();
     const step = now => {
-      const t = Math.min((now - start) / 1100, 1);
+      const t = Math.min((now - start) / 700, 1);
       el.textContent = money(target * (1 - Math.pow(1 - t, 3)));
       if (t < 1) requestAnimationFrame(step);
     };
@@ -449,7 +452,7 @@
     },
     options: {
       responsive: true, maintainAspectRatio: false,
-      animation: { delay: c => (c.type === "data" && c.mode === "default" ? c.dataIndex * 25 : 0) },
+      animation: { delay: c => (c.type === "data" && c.mode === "default" ? c.dataIndex * 10 : 0) },
       interaction: { mode: "index", intersect: false },
       plugins: { legend: { display: false }, tooltip: tip(money) },
       scales: axes(thousands),
@@ -506,7 +509,7 @@
       },
       options: {
         responsive: true, maintainAspectRatio: false,
-        animation: { delay: c => (c.type === "data" && c.mode === "default" ? c.dataIndex * 20 : 0) },
+        animation: { delay: c => (c.type === "data" && c.mode === "default" ? c.dataIndex * 8 : 0) },
         interaction: { mode: "index", intersect: false },
         plugins: { legend: { display: false }, tooltip: { filter: i => i.raw != null, callbacks: { label: c => c.dataset.label + ": " + money(c.raw) } } },
         scales: axes(thousands),
