@@ -8,7 +8,6 @@
   .rep-period-field { display: flex; flex-direction: column; gap: 5px; }
   .rep-period-label { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-soft); }
   .rep-period select { padding: 8px 12px; min-width: 150px; }
-  .rep-period-hint { font-size: 12.5px; color: var(--text-soft); margin-left: auto; align-self: center; }
 
   .rep-feature {
     display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
@@ -19,7 +18,6 @@
   .rep-feature .tool-card-badge svg { width: 27px; height: 27px; }
   .rep-feature-body { flex: 1; min-width: 220px; }
   .rep-feature-title { font-size: 18px; font-weight: 700; color: var(--text); }
-  .rep-feature-desc { font-size: 13px; color: var(--text-soft); margin-top: 3px; line-height: 1.45; }
   .rep-feature-tag { display: inline-block; margin-left: 8px; padding: 1px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; vertical-align: 2px; background: var(--accent); color: #fff; }
 
   .rep-section-title { margin: 28px 0 0; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-soft); }
@@ -72,7 +70,6 @@
         {% endfor %}
       </select>
     </label>
-    <span class="rep-period-hint">Si un reporte no tiene datos de ese mes, te avisa sin descargar nada.</span>
   </div>
 
   {% for tool in featured %}
@@ -80,7 +77,6 @@
     <span class="tool-card-badge">{{ tool.icon|safe }}</span>
     <div class="rep-feature-body">
       <div class="rep-feature-title">{{ tool.label }}<span class="rep-feature-tag">En pantalla</span></div>
-      <div class="rep-feature-desc">{{ tool.description }} Con gráficos del mes y la historia del Balance.</div>
     </div>
     <button type="submit" class="btn-accent" formaction="{{ url_for(tool.url) }}">Ver {{ tool.label|lower }} &rarr;</button>
   </div>
