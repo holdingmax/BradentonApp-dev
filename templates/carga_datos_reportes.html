@@ -1,61 +1,107 @@
 {% extends "base.html" %}
 {% block head_extra %}
 <style>
-  .reportes-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 16px; margin-top: 22px; }
-  .reportes-card { display: flex; flex-direction: column; gap: 14px; }
-  .reportes-card-head { display: flex; align-items: flex-start; gap: 14px; }
-  .reportes-card-desc { font-size: 12.5px; color: var(--text-soft); line-height: 1.45; margin: 0; }
-  .reportes-soon-badge {
-    display: inline-block; margin-top: 2px; padding: 2px 9px; border-radius: 999px;
-    font-size: 11px; font-weight: 600; background: var(--surface-alt); color: var(--text-soft);
+  /* Rediseño (pedido del usuario, 2026-10-27): un solo período arriba para
+     todos los reportes, Proyecciones destacada y los PDF en tarjetas iguales,
+     en vez de un mes, un año y un botón grande repetidos en cada tarjeta. */
+  .rep-period { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 14px 18px; }
+  .rep-period-field { display: flex; flex-direction: column; gap: 5px; }
+  .rep-period-label { font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-soft); }
+  .rep-period select { padding: 8px 12px; min-width: 150px; }
+  .rep-period-hint { font-size: 12.5px; color: var(--text-soft); margin-left: auto; align-self: center; }
+
+  .rep-feature {
+    display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+    background: var(--accent-soft); border: 1px solid color-mix(in srgb, var(--accent) 25%, transparent);
+    border-radius: var(--radius); padding: 20px 22px; margin-top: 18px;
   }
-  .reportes-form { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-  .reportes-form select { padding: 7px 10px; }
-  .reportes-form button { white-space: nowrap; }
+  .rep-feature .tool-card-badge { width: 52px; height: 52px; border-radius: 12px; }
+  .rep-feature .tool-card-badge svg { width: 27px; height: 27px; }
+  .rep-feature-body { flex: 1; min-width: 220px; }
+  .rep-feature-title { font-size: 18px; font-weight: 700; color: var(--text); }
+  .rep-feature-desc { font-size: 13px; color: var(--text-soft); margin-top: 3px; line-height: 1.45; }
+  .rep-feature-tag { display: inline-block; margin-left: 8px; padding: 1px 9px; border-radius: 999px; font-size: 11px; font-weight: 700; vertical-align: 2px; background: var(--accent); color: #fff; }
+
+  .rep-section-title { margin: 28px 0 0; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-soft); }
+  .rep-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 14px; margin-top: 12px; }
+  .rep-tile {
+    display: flex; align-items: center; gap: 14px; height: 88px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+    padding: 16px 18px; box-shadow: var(--shadow-sm); transition: border-color 0.12s ease, box-shadow 0.12s ease;
+  }
+  .rep-tile:hover { border-color: var(--accent); box-shadow: var(--shadow-md); }
+  .rep-tile .tool-card-body { flex: 1; }
+  .rep-tile .tool-card-label { font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .rep-tile .tool-card-desc { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .rep-tile-btn {
+    flex-shrink: 0; background: transparent; color: var(--accent); border: 1px solid color-mix(in srgb, var(--accent) 45%, transparent);
+    padding: 7px 12px; font-size: 12.5px; font-weight: 700; border-radius: 999px; white-space: nowrap;
+  }
+  .rep-tile-btn:hover { background: var(--accent-soft); filter: none; }
+  .rep-soon { font-size: 11px; font-weight: 600; padding: 2px 9px; border-radius: 999px; background: var(--surface-alt); color: var(--text-soft); flex-shrink: 0; }
 </style>
 {% endblock %}
 {% block content %}
+{% set featured = tools|selectattr("url")|list %}
+{% set pdfs = tools|rejectattr("url")|list %}
+{% set all_years = years_by_key.values()|sum(start=[])|unique|sort|list or [current_year] %}
 <div class="page-header">
   <span class="eyebrow">Resúmenes del mes</span>
   <h1>Reportes</h1>
-  <p class="page-subtitle">Resúmenes del mes en PDF o Excel para descargar, y las proyecciones en pantalla.</p>
+  <p class="page-subtitle">Elegí el mes una vez y descargá el que necesites, o mirá las proyecciones en pantalla.</p>
 </div>
 
-<div class="reportes-grid" style="--tool-accent: #7A6BB0;">{# el color de la sección, como en el Menú #}
-  {% for tool in tools %}
-    {% if tool.ready %}
-    <div class="card reportes-card">
-      <div class="reportes-card-head">
-        <span class="tool-card-badge">{{ tool.icon|safe }}</span>
-        <span class="tool-card-body">
-          <span class="tool-card-label">{{ tool.label }}</span>
-          <p class="reportes-card-desc">{{ tool.description }}</p>
-        </span>
-      </div>
-      <form class="reportes-form" method="get" action="{{ url_for(tool.url or tool.pdf_endpoint or tool.excel_endpoint) }}">
-        <select name="month">
-          {% for name in month_names %}
-          <option value="{{ loop.index }}"{% if loop.index == current_month %} selected{% endif %}>{{ name }}</option>
-          {% endfor %}
-        </select>
-        <select name="year">
-          {% for y in years_by_key.get(tool.key, [current_year]) %}
-          <option value="{{ y }}"{% if y == current_year %} selected{% endif %}>{{ y }}</option>
-          {% endfor %}
-        </select>
-        <button type="submit">{% if tool.url %}Ver{% elif tool.excel_endpoint %}Descargar Excel{% else %}Descargar PDF{% endif %}</button>
-      </form>
+{# Un solo form GET: cada botón lleva su formaction, así todos usan el mismo
+   período. Los PDF se piden por detrás (ver "Descargas sin recargar" en
+   base.html); Proyecciones abre su página con ese mes. #}
+<form method="get" action="{{ url_for('carga_datos_reportes') }}" style="--tool-accent: var(--accent);">
+  <div class="card rep-period">
+    <label class="rep-period-field">
+      <span class="rep-period-label">Mes</span>
+      <select name="month">
+        {% for name in month_names %}
+        <option value="{{ loop.index }}"{% if loop.index == current_month %} selected{% endif %}>{{ name }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label class="rep-period-field">
+      <span class="rep-period-label">Año</span>
+      <select name="year">
+        {% for y in all_years %}
+        <option value="{{ y }}"{% if y == current_year %} selected{% endif %}>{{ y }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <span class="rep-period-hint">Si un reporte no tiene datos de ese mes, te avisa sin descargar nada.</span>
+  </div>
+
+  {% for tool in featured %}
+  <div class="rep-feature">
+    <span class="tool-card-badge">{{ tool.icon|safe }}</span>
+    <div class="rep-feature-body">
+      <div class="rep-feature-title">{{ tool.label }}<span class="rep-feature-tag">En pantalla</span></div>
+      <div class="rep-feature-desc">{{ tool.description }} Con gráficos del mes y la historia del Balance.</div>
     </div>
-    {% else %}
-    <span class="tool-card">
+    <button type="submit" class="btn-accent" formaction="{{ url_for(tool.url) }}">Ver {{ tool.label|lower }} &rarr;</button>
+  </div>
+  {% endfor %}
+
+  <h2 class="rep-section-title">PDF del mes</h2>
+  <div class="rep-grid">
+    {% for tool in pdfs %}
+    <div class="rep-tile">
       <span class="tool-card-badge">{{ tool.icon|safe }}</span>
       <span class="tool-card-body">
         <span class="tool-card-label">{{ tool.label }}</span>
         <span class="tool-card-desc">{{ tool.description }}</span>
-        <span class="reportes-soon-badge">Próximamente</span>
       </span>
-    </span>
-    {% endif %}
-  {% endfor %}
-</div>
+      {% if tool.ready %}
+      <button type="submit" class="rep-tile-btn" formaction="{{ url_for(tool.pdf_endpoint or tool.excel_endpoint) }}">{{ 'Excel' if tool.excel_endpoint else 'Descargar' }}</button>
+      {% else %}
+      <span class="rep-soon">Próximamente</span>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</form>
 {% endblock %}
