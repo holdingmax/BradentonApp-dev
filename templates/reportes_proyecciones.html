@@ -51,6 +51,81 @@
 {% set cs = p.cstore.balance %}
 {% set util_now = (p.fuel.utilidad + cs.utilidad) if p.fuel.utilidad is not none and cs.utilidad is not none else none %}
 {% set util_proj = (p.fuel_proj.utilidad + cs.utilidad_proj) if p.fuel_proj.utilidad is not none and cs.utilidad_proj is not none else none %}
+
+{# ---------------- Gráficos (pedido del usuario, 2026-10-27) ---------------- #}
+<div class="proy-kpi-grid">
+  <div class="proy-kpi proy-kpi-hero">
+    <div class="proy-kpi-label">Utilidad proyectada</div>
+    <div class="proy-kpi-value" data-count="{{ util_proj or 0 }}">{{ money(util_proj, 0) }}</div>
+    <div class="proy-kpi-sub">hasta hoy {{ money(util_now, 0) }}</div>
+  </div>
+  <div class="proy-kpi proy-kpi-fuel">
+    <div class="proy-kpi-label">Combustible</div>
+    <div class="proy-kpi-value" data-count="{{ p.fuel_proj.sales or 0 }}">{{ money(p.fuel_proj.sales, 0) }}</div>
+    <div class="proy-kpi-sub">venta proyectada · {{ num(p.fuel_proj.gallons, 0) }} gal</div>
+  </div>
+  <div class="proy-kpi proy-kpi-cstore">
+    <div class="proy-kpi-label">C-Store</div>
+    <div class="proy-kpi-value" data-count="{{ cs.proj or 0 }}">{{ money(cs.proj, 0) }}</div>
+    <div class="proy-kpi-sub">venta proyectada · margen {{ pct(cs.margin) }}</div>
+  </div>
+</div>
+
+<div class="proy-chart-row">
+  <div class="card proy-chart-card">
+    <h2>Utilidad proyectada</h2>
+    <div class="proy-chart proy-chart-donut"><canvas id="proy-donut" role="img" aria-label="Qué parte de la utilidad proyectada pone cada unidad"></canvas></div>
+    <div class="proy-legend proy-legend-center">
+      {% if util_proj %}
+      <span><i class="proy-sq proy-sq-fuel"></i>Combustible {{ money(p.fuel_proj.utilidad, 0) }} · {{ "{:.0f}".format(p.fuel_proj.utilidad / util_proj * 100) }} %</span>
+      <span><i class="proy-sq proy-sq-cstore"></i>C-Store {{ money(cs.utilidad_proj, 0) }} · {{ "{:.0f}".format(cs.utilidad_proj / util_proj * 100) }} %</span>
+      {% else %}<span>Sin PPP no se puede calcular la utilidad del combustible.</span>{% endif %}
+    </div>
+  </div>
+  <div class="card proy-chart-card proy-chart-card-wide">
+    <h2>{{ month_name }} día por día</h2>
+    <div class="proy-legend">
+      <span><i class="proy-sq proy-sq-fuel"></i>Combustible</span>
+      <span><i class="proy-sq proy-sq-cstore"></i>C-Store</span>
+      {% if p.days_loaded < p.days_in_month %}<span><i class="proy-sq proy-sq-proj"></i>Lo que falta, al ritmo de hoy</span>{% endif %}
+    </div>
+    <div class="proy-chart"><canvas id="proy-daily" role="img" aria-label="Venta de cada día del mes, combustible y C-Store apilados"></canvas></div>
+  </div>
+</div>
+
+<div class="card" id="proy-history-card">
+  <div class="proy-history-head">
+    <h2>Mes a mes <span class="muted proy-history-src">(del Balance)</span></h2>
+    {% if p.charts.history %}
+    <div class="proy-range" role="group" aria-label="Cuántos meses mostrar">
+      {% for n, label in [(6, "6 meses"), (12, "12 meses"), (24, "24 meses"), (0, "Todo")] %}
+      <button type="button" class="proy-range-btn{{ ' is-active' if n == 12 }}" data-months="{{ n }}">{{ label }}</button>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+  {% if p.charts.history %}
+  <h3 class="proy-subtitle proy-subtitle-first">Combustible por galón</h3>
+  <div class="proy-legend">
+    <span><i class="proy-sq proy-sq-fuel"></i>Precio de venta</span>
+    <span><i class="proy-sq proy-sq-cstore"></i>Costo</span>
+    <span><i class="proy-sq proy-sq-margin"></i>Margen</span>
+  </div>
+  <div class="proy-chart proy-chart-tall"><canvas id="proy-pergal" role="img" aria-label="Precio de venta, costo y margen por galón de cada mes"></canvas></div>
+  <h3 class="proy-subtitle">Galones vendidos</h3>
+  <div class="proy-chart proy-chart-small"><canvas id="proy-gallons" role="img" aria-label="Galones vendidos por mes"></canvas></div>
+  <h3 class="proy-subtitle">Ventas por mes</h3>
+  <div class="proy-legend">
+    <span><i class="proy-sq proy-sq-fuel"></i>Combustible</span>
+    <span><i class="proy-sq proy-sq-cstore"></i>C-Store</span>
+    <span><i class="proy-sq proy-sq-proj"></i>{{ month_name }} proyectado</span>
+  </div>
+  <div class="proy-chart"><canvas id="proy-monthly" role="img" aria-label="Ventas de combustible y C-Store de cada mes, con el mes elegido proyectado"></canvas></div>
+  {% else %}
+  <p class="muted" style="margin: 0;">Todavía no hay meses del Balance anteriores a {{ month_name|lower }} {{ year }}. Se suben abajo, en "Control contra el Balance": el Bce trae toda la historia.</p>
+  {% endif %}
+</div>
+
 <div class="card">
   <h2>Resumen del mes</h2>
   <div class="proy-sum-grid">
@@ -308,6 +383,39 @@
   .proy-legend-chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 700; white-space: nowrap; }
   .proy-legend-proj { background: var(--accent-soft); color: var(--accent); }
 
+  .proy-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-bottom: 18px; }
+  .proy-kpi { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); padding: 16px 18px; border-left: 4px solid var(--border); }
+  .proy-kpi-fuel { border-left-color: #2A78D6; }
+  .proy-kpi-cstore { border-left-color: #EB6834; }
+  .proy-kpi-hero { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .proy-kpi-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-soft); }
+  .proy-kpi-value { font-size: 28px; font-weight: 700; margin: 4px 0 2px; font-variant-numeric: tabular-nums; }
+  .proy-kpi-sub { font-size: 12.5px; color: var(--text-soft); }
+  .proy-kpi-hero .proy-kpi-label, .proy-kpi-hero .proy-kpi-sub { color: rgba(255, 255, 255, 0.85); }
+
+  .proy-chart-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 2fr); gap: 18px; }
+  @media (max-width: 900px) { .proy-chart-row { grid-template-columns: minmax(0, 1fr); } }
+  .proy-chart { position: relative; height: 240px; }
+  .proy-chart-donut { height: 200px; }
+  .proy-chart-tall { height: 280px; }
+  .proy-chart-small { height: 150px; }
+  .proy-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12.5px; color: var(--text-soft); margin: 4px 0 10px; }
+  .proy-legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .proy-legend-center { justify-content: center; margin-top: 12px; }
+  .proy-sq { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+  .proy-sq-fuel { background: #2A78D6; }
+  .proy-sq-cstore { background: #EB6834; }
+  .proy-sq-margin { background: #1BAF7A; }
+  .proy-sq-proj { background: #CBD5E1; }
+  .proy-history-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+  .proy-history-head h2 { margin: 0; }
+  .proy-history-src { font-size: 13px; font-weight: 500; }
+  .proy-subtitle-first { margin-top: 14px; }
+  .proy-range { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; padding: 3px; background: var(--surface-alt); }
+  .proy-range-btn { background: transparent; color: var(--text-soft); border: 0; border-radius: 999px; padding: 5px 12px; font-size: 12.5px; font-weight: 600; box-shadow: none; }
+  .proy-range-btn:hover { background: transparent; color: var(--text); }
+  .proy-range-btn.is-active { background: var(--accent); color: #fff; }
+
   .proy-sum-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 14px; }
   .proy-sum-unit { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface-alt); padding: 14px 16px; }
   .proy-sum-title { font-size: 14px; font-weight: 700; margin-bottom: 10px; }
@@ -335,4 +443,135 @@
   .proy-upload { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
   .proy-upload .muted { font-size: 12.5px; }
 </style>
+
+{% if p.days_loaded %}
+<script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}"></script>
+<script>
+(function () {
+  if (!window.Chart) return;
+  const data = {{ p.charts|tojson }};
+  const FUEL = "#2A78D6", CSTORE = "#EB6834", MARGIN = "#1BAF7A", PROJ = "#CBD5E1", GRID = "#EEF0F3";
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const money = v => (v < 0 ? "−$" : "$") + Math.abs(Math.round(v)).toLocaleString("en-US");
+  const thousands = v => "$" + Math.round(v / 1000) + "k";
+  const MONTHS = ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"];
+  const monthLabel = key => MONTHS[+key.slice(5) - 1] + "-" + key.slice(2, 4);
+  Chart.defaults.font.family = getComputedStyle(document.body).fontFamily;
+  Chart.defaults.font.size = 11.5;
+  Chart.defaults.color = "#6B7280";
+  if (reduce) Chart.defaults.animation = false;
+  const tip = fmt => ({ callbacks: { label: c => c.dataset.label + ": " + fmt(c.raw) } });
+  const axes = yFmt => ({
+    x: { grid: { display: false }, ticks: { maxRotation: 0, autoSkip: true } },
+    y: { beginAtZero: true, grid: { color: GRID }, border: { display: false }, ticks: { callback: yFmt } },
+  });
+
+  // Los números de arriba suben de 0 a su valor.
+  document.querySelectorAll("[data-count]").forEach(el => {
+    const target = parseFloat(el.dataset.count);
+    if (reduce || !target) return;
+    const start = performance.now();
+    const step = now => {
+      const t = Math.min((now - start) / 1100, 1);
+      el.textContent = money(target * (1 - Math.pow(1 - t, 3)));
+      if (t < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  });
+
+  const split = data.utilidad_split;
+  if (split.fuel != null && split.cstore != null) {
+    new Chart(document.getElementById("proy-donut"), {
+      type: "doughnut",
+      data: { labels: ["Combustible", "C-Store"], datasets: [{ label: "Utilidad", data: [split.fuel, split.cstore], backgroundColor: [FUEL, CSTORE], borderColor: "#fff", borderWidth: 3 }] },
+      options: { responsive: true, maintainAspectRatio: false, cutout: "66%", plugins: { legend: { display: false }, tooltip: { callbacks: { label: c => c.label + ": " + money(c.raw) } } } },
+    });
+  }
+
+  const daily = data.daily;
+  new Chart(document.getElementById("proy-daily"), {
+    type: "bar",
+    data: {
+      labels: daily.map(d => d.day),
+      datasets: [
+        { label: "Combustible", data: daily.map(d => d.fuel), backgroundColor: FUEL, stack: "s", maxBarThickness: 22 },
+        { label: "C-Store", data: daily.map(d => d.cstore), backgroundColor: CSTORE, stack: "s", maxBarThickness: 22, borderRadius: { topLeft: 3, topRight: 3 } },
+        { label: "Al ritmo de hoy", data: daily.map(d => d.proj), backgroundColor: PROJ, stack: "s", maxBarThickness: 22, borderRadius: { topLeft: 3, topRight: 3 } },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      animation: { delay: c => (c.type === "data" && c.mode === "default" ? c.dataIndex * 25 : 0) },
+      interaction: { mode: "index", intersect: false },
+      plugins: { legend: { display: false }, tooltip: tip(money) },
+      scales: axes(thousands),
+    },
+  });
+
+  // Mes a mes: la historia del Balance más el mes elegido proyectado. El
+  // filtro de meses rehace los tres gráficos.
+  const history = data.history;
+  if (!history.length) return;
+  const cur = data.current;
+  const charts = {};
+  function render(months) {
+    const rows = months ? history.slice(-months) : history;
+    const labels = rows.map(r => monthLabel(r.month));
+    Object.values(charts).forEach(c => c.destroy());
+    charts.pergal = new Chart(document.getElementById("proy-pergal"), {
+      data: {
+        labels,
+        datasets: [
+          { type: "line", label: "Precio de venta", data: rows.map(r => r.price), borderColor: FUEL, backgroundColor: FUEL, borderWidth: 2, pointRadius: 2.5, tension: 0.3, order: 1 },
+          { type: "line", label: "Costo", data: rows.map(r => r.cost), borderColor: CSTORE, backgroundColor: CSTORE, borderWidth: 2, borderDash: [5, 3], pointRadius: 2.5, tension: 0.3, order: 2 },
+          { type: "bar", label: "Margen", data: rows.map(r => r.margin), backgroundColor: MARGIN, borderRadius: 3, maxBarThickness: 16, order: 3 },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        plugins: { legend: { display: false }, tooltip: tip(v => v == null ? "—" : "$" + v.toFixed(4)) },
+        scales: axes(v => "$" + v.toFixed(2)),
+      },
+    });
+    charts.gallons = new Chart(document.getElementById("proy-gallons"), {
+      type: "line",
+      data: { labels, datasets: [{ label: "Galones", data: rows.map(r => r.gallons), borderColor: FUEL, backgroundColor: "rgba(42, 120, 214, 0.10)", fill: true, borderWidth: 2, pointRadius: 2, tension: 0.3 }] },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: "index", intersect: false },
+        plugins: { legend: { display: false }, tooltip: tip(v => Math.round(v).toLocaleString("en-US") + " gal") },
+        scales: Object.assign(axes(v => Math.round(v / 1000) + "k"), { y: { beginAtZero: false, grid: { color: GRID }, border: { display: false }, ticks: { callback: v => Math.round(v / 1000) + "k" } } }),
+      },
+    });
+    const pad = rows.map(() => null);
+    charts.monthly = new Chart(document.getElementById("proy-monthly"), {
+      type: "bar",
+      data: {
+        labels: labels.concat([monthLabel(cur.month)]),
+        datasets: [
+          { label: "Combustible", data: rows.map(r => r.fuel_sales).concat([null]), backgroundColor: FUEL, stack: "s", maxBarThickness: 26 },
+          { label: "C-Store", data: rows.map(r => r.cstore_sales).concat([null]), backgroundColor: CSTORE, stack: "s", maxBarThickness: 26, borderRadius: { topLeft: 3, topRight: 3 } },
+          { label: "Combustible proyectado", data: pad.concat([cur.fuel_sales]), backgroundColor: "rgba(42, 120, 214, 0.40)", stack: "s", maxBarThickness: 26 },
+          { label: "C-Store proyectado", data: pad.concat([cur.cstore_sales]), backgroundColor: "rgba(235, 104, 52, 0.40)", stack: "s", maxBarThickness: 26, borderRadius: { topLeft: 3, topRight: 3 } },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        animation: { delay: c => (c.type === "data" && c.mode === "default" ? c.dataIndex * 20 : 0) },
+        interaction: { mode: "index", intersect: false },
+        plugins: { legend: { display: false }, tooltip: { filter: i => i.raw != null, callbacks: { label: c => c.dataset.label + ": " + money(c.raw) } } },
+        scales: axes(thousands),
+      },
+    });
+  }
+  const buttons = document.querySelectorAll(".proy-range-btn");
+  buttons.forEach(btn => btn.addEventListener("click", () => {
+    buttons.forEach(b => b.classList.toggle("is-active", b === btn));
+    render(parseInt(btn.dataset.months, 10));
+  }));
+  render(12);
+})();
+</script>
+{% endif %}
 {% endblock %}

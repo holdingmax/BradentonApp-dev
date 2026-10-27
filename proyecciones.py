@@ -196,7 +196,67 @@ def build_projection(year, month):
     real =balance_for_month(year, month)
     if real:
         result["balance"] = _balance_control(year, month, days, margins, real)
+    result["charts"] = _chart_data(year, month, result)
     return result
+
+
+def _chart_data(year, month, result):
+    """
+    Las series de los gráficos de la página (pedido del usuario, 2026-10-27):
+    el mes día por día, con los días que faltan al ritmo de los cargados, y la
+    historia mes a mes del Balance guardado, hasta el mes anterior al elegido.
+    """
+    days = result["days"]
+    by_day = {d["date"].day: d for d in days}
+    loaded = result["days_loaded"]
+    fuel_avg = result["fuel"]["sales"] / loaded if loaded else None
+    cstore_avg = result["cstore"]["balance"]["amount"] / loaded if loaded else None
+    last = result["last_day"].day if result["last_day"] else 0
+    daily = []
+    for day in range(1, result["days_in_month"] + 1):
+        d = by_day.get(day)
+        daily.append({
+            "day": day,
+            "fuel": round(d["fuel_sales"], 2) if d else None,
+            "cstore": round(d["cstore"], 2) if d else None,
+            # Solo los días posteriores al último cargado: un hueco en el medio
+            # es un Close Store que falta, no una proyección.
+            "proj": round(fuel_avg + cstore_avg, 2) if (d is None and day > last and loaded) else None,
+        })
+
+    stored = config_store.read(config_store.PROYECCIONES_BALANCE) or {}
+    current = f"{year:04d}-{month:02d}"
+    history = []
+    for key in sorted(k for k in stored if k < current):
+        v = stored[key]
+        gallons = v.get("galones")
+        sales = v.get("ventas_combustible")
+        cost = v.get("costo_combustible")
+        price = _ratio(sales, gallons)
+        cost_gal = _ratio(cost, gallons)
+        history.append({
+            "month": key,
+            "gallons": gallons,
+            "fuel_sales": sales,
+            "cstore_sales": v.get("ventas_cstore"),
+            "price": round(price, 4) if price is not None else None,
+            "cost": round(cost_gal, 4) if cost_gal is not None else None,
+            "margin": round(price - cost_gal, 4) if (price is not None and cost_gal is not None) else None,
+        })
+
+    fuel_util = result["fuel_proj"]["utilidad"]
+    cstore_util = result["cstore"]["balance"]["utilidad_proj"]
+    return {
+        "daily": daily,
+        "history": history,
+        "current": {
+            "month": current,
+            "fuel_sales": result["fuel_proj"]["sales"],
+            "cstore_sales": result["cstore"]["balance"]["proj"],
+            "gallons": result["fuel_proj"]["gallons"],
+        },
+        "utilidad_split": {"fuel": fuel_util, "cstore": cstore_util},
+    }
 
 
 # --- Control contra el Balance ----------------------------------------------
