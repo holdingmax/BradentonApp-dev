@@ -49,7 +49,8 @@
   .ci-bad { color: var(--error); font-weight: 700; }
   .ci-sale-tax { margin-top: 30px; padding-top: 18px; border-top: 1px solid var(--border); max-width: 820px; }
   .ci-sale-tax h2 { margin: 0; }
-  .ci-st-table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin-top: 14px; }
+  .ci-st-title { margin-top: 16px; }
+  .ci-st-table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin-top: 6px; }
   .ci-st-table th { background: var(--accent-soft); font-size: 12px; font-weight: 700; text-align: left; padding: 7px 12px; border: 1px solid var(--border); }
   .ci-st-table td { padding: 7px 12px; border: 1px solid var(--border); font-variant-numeric: tabular-nums; }
   .ci-st-table .num { text-align: right; white-space: nowrap; }
@@ -115,7 +116,7 @@
 
   <div class="ci-entries">
     <div>
-      <div class="ci-entry-title">{{ entry_title }}</div>
+      <div class="ci-entry-title">{{ entries.titles.sales }}</div>
       <table class="ci-table">
         <thead><tr><th colspan="2"></th><th>Debe</th><th>Haber</th></tr></thead>
         <tbody>
@@ -152,6 +153,7 @@
     </div>
 
     <div>
+      <div class="ci-entry-title">{{ entries.titles.collected }}</div>
       <table class="ci-table">
         <thead><tr><th colspan="2"></th><th>Debe</th><th>Haber</th></tr></thead>
         <tbody>
@@ -185,6 +187,7 @@
       {% endif %}
       <p>El Tax Collect del mes (Store Info) se devenga al último día: {{ account_tax_bgs }} a {{ account_sale_tax }}.{% if not entries.complete_month %} El mes todavía no está completo: el importe puede cambiar.{% endif %}{% if st.empty_days %} Tax Collect vacío (cuenta como 0): {{ fmt_days(st.empty_days) }}.{% endif %}</p>
     </div>
+    <div class="ci-entry-title ci-st-title">{{ entries.titles.sale_tax }}</div>
     <table class="ci-st-table">
       <thead><tr><th>Fecha</th><th>Cuenta / Descripción</th><th class="num">Debe</th><th class="num">Haber</th></tr></thead>
       <tbody>
@@ -261,7 +264,7 @@
     {% if cross %}
     <div class="ci-status {{ 'ok' if cross.ok else 'bad-strong' }}">
       <div class="ci-status-title">
-        {% if cross.ok %}Bien: la suma de los reportes diarios del mes coincide al centavo con el reporte mensual del POS.
+        {% if cross.ok %}Bien: la suma de los reportes diarios del mes coincide al centavo con el reporte mensual.
         {% else %}No coincide con el reporte mensual: {{ (cross.differences + cross.unread)|join(", ") }}.{% endif %}
       </div>
       {% if monthly_report.warnings %}{% for warning in monthly_report.warnings %}<p>Reporte mensual: {{ warning }}</p>{% endfor %}{% endif %}

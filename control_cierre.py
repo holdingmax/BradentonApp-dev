@@ -36,7 +36,23 @@ from datetime import datetime
 import app_paths
 import config_store
 
-ENTRY_TITLE = "Asiento NºZXXX"
+# Cada asiento lleva el nombre con que está registrado en Ratio (pedido del
+# usuario, 2026-10-29; visto en el Libro Diario: 11437 "LIQUIDACION CIERRE
+# RECAUDACION 07-2026", 11745 "COBRO GETTEL-KIA SEPTIEMBRE" y 11746 "DEV SALE
+# TAX POR C-STORE 09-2026"). Antes el primero decía "Asiento NºZXXX" y los
+# otros dos no tenían título.
+MONTH_NAMES_UPPER = ("ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO", "JULIO",
+                     "AGOSTO", "SEPTIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE")
+
+
+def entry_titles(year, month):
+    return {
+        "sales": f"LIQUIDACION CIERRE RECAUDACION {month:02d}-{year}",
+        "collected": f"COBRO GETTEL-KIA {MONTH_NAMES_UPPER[month - 1]}",
+        "sale_tax": f"DEV SALE TAX POR C-STORE {month:02d}-{year}",
+    }
+
+
 ACCOUNT_CAJA = "Caja"
 ACCOUNT_JH = "J.H. WILIAMS-RECAUD A LIQ"
 ACCOUNT_GETTEL = "Cuenta Corriente a Cobrar-Gettel KIA"
@@ -148,6 +164,7 @@ def build_month_entries(rows, year, month):
     return {
         "year": year,
         "month": month,
+        "titles": entry_titles(year, month),
         "first_day": f"{year:04d}-{month:02d}-01",
         "last_day": last_day,
         "complete_month": last_day == month_last_day,
@@ -334,13 +351,103 @@ def _money(value):
     return f"-${-value:,.2f}" if value < 0 else f"${value:,.2f}"
 
 
-def build_entries_pdf(entries, title, period_label, dest_path, cross=None):
-    """PDF de los dos asientos, con el membrete de la empresa y, si está, el cruce con el reporte mensual."""
+def _fmt_days(days):
+    return ", ".join(f"{d[8:10]}/{d[5:7]}" for d in days)
+
+
+# Los textos de la página (controles_cierre.html) para el PDF, que trae todo
+# lo del control (pedido del usuario, 2026-10-29).
+def status_summary(entries, kia_not_in_cards):
+    """(ok, título, párrafos) del estado de arriba de la página."""
+    balanced = abs(entries["difference"]) < 0.005
+    notice = missing_notice(entries)
+    if not balanced:
+        title = f"El asiento no cierra: Debe y Haber difieren en {_money(entries['difference'])}."
+    elif notice:
+        title = "El asiento cierra, pero faltan datos."
+    elif kia_not_in_cards:
+        title = "El asiento cierra, pero hay un pago de Kia/Toyota para revisar."
+    else:
+        title = "Bien: el asiento cierra y no falta ningún dato."
+    paragraphs = []
+    if not balanced:
+        paragraphs.append("La diferencia no depende de LOTTO ni de VS: es Total Revenue contra Total Ventas de Store Info. "
+                          "Buscá el día que no cierra en Store Info (un importe de tarjeta mal cargado, por ejemplo).")
+    if notice:
+        paragraphs.append(f"{notice} Se completa subiendo esos Reporte Diario. Los importes que quedan cortos llevan un *.")
+    if kia_not_in_cards:
+        days = ", ".join(f"{k['date'][8:10]}/{k['date'][5:7]} (LOCAL ACCT {_money(k['kia'])}, tarjetas del día {_money(k['sale'])})"
+                         for k in kia_not_in_cards)
+        paragraphs.append(f"Pago de Kia/Toyota que no aparece en tarjetas: {days}. {ACCOUNT_JH} (Tarjetas − VS) queda corto ese día: "
+                          "revisá si se cobró de otra forma o si el LOCAL ACCT está mal cargado.")
+    return balanced and not notice and not kia_not_in_cards, title, paragraphs
+
+
+def jh_cards_summary(jh_cards, month_name, year):
+    """(ok, título, renglones [concepto, Store Info, J.H., diferencia]) de Tarjetas contra J.H."""
+    d, c, status = jh_cards["detail"], jh_cards["coupons"], jh_cards["status"]
+    if status == "ok":
+        title = "Bien: lo vendido con tarjeta coincide con lo que informa J.H."
+    elif status == "partial":
+        title = ("Coincide con lo que hay de J.H., pero falta "
+                 + ("el Credit Card Daily Summary del mes." if not c else "el detalle de cupones."))
+    elif status == "pending":
+        title = (f"Sin diferencias reales con J.H.: {_money(-(d['diff_pending'] + d['diff_edge']))} todavía sin depositar "
+                 f"({_fmt_days(d['pending'] + d['edge'])}); se controla al subir el detalle de J.H. del mes siguiente.")
+    elif status == "unchecked":
+        title = f"Coincide en lo que ya se puede controlar; quedan {_money(d['unchecked'])} de días que el detalle de J.H. todavía no cubre."
+    elif status == "bad":
+        if d and d["bad"]:
+            title = f"Diferencia real con J.H.: {_money(d['diff_bad'])} ({_fmt_days(d['bad'])})."
+        else:
+            title = "El Credit Card Daily Summary de J.H. no coincide con los cupones cargados."
+    else:
+        title = f"Todavía no hay datos de J.H. de {month_name} {year}."
+    rows = [["Detalle de cupones de J.H.: batches del POS por día de venta", None, None, None]]
+    if d:
+        period = f" del {d['from'][8:10]}/{d['from'][5:7]} al {d['until'][8:10]}/{d['until'][5:7]}" if d.get("from") else ""
+        rows.append([f"Vendido con tarjeta{period}", _money(d["sold"]), _money(d["jh"]), _money(d["diff"])])
+        if abs(d["unchecked"]) >= 0.005:
+            rows.append(["Sin controlar todavía (días que el detalle de J.H. no cubre)", _money(d["unchecked"]), "—", "—"])
+        if d["bad"]:
+            rows.append([f"Sin explicar: {_fmt_days(d['bad'])}", "", "", _money(d["diff_bad"])])
+        if d["pending"]:
+            rows.append([f"De días todavía sin depositar enteros (72 hs): {_fmt_days(d['pending'])}", "", "", _money(d["diff_pending"])])
+            if d.get("kia_pending"):
+                rows.append(["Sin depositar sin los pagos de Kia/Toyota", "", "", _money(d["diff_pending_without_kia"])])
+        if d["edge"]:
+            rows.append([f"De días que no se pueden comparar (falta el día de al lado): {_fmt_days(d['edge'])}", "", "", _money(d["diff_edge"])])
+        rest = d["diff"] - d["diff_bad"] - d["diff_pending"] - d["diff_edge"]
+        if abs(rest) >= 0.005:
+            rows.append(["De batches que cruzan la medianoche (se compensan con el día siguiente)", "", "", _money(rest)])
+    else:
+        rows.append(["Sin detalle de cupones de J.H. que toque el mes.", "", "", ""])
+    rows.append(["Credit Card Daily Summary de J.H. del mes", None, None, None])
+    if c:
+        rows.append([f"{c['ddc_count']} DDC: Gross − Fee = Neto", f"{_money(c['gross'])} − {_money(c['gross'] - c['net'])}",
+                     _money(c["net"]), "Coincide" if c["ok"] else "No coincide"])
+        if c["bad"]:
+            rows.append([f"Días que no coinciden con los cupones o con lo aplicado en los EFT: {_fmt_days(c['bad'])}", "", "", ""])
+        if c["open"]["days"]:
+            rows.append([f"Sin aplicar todavía en un EFT ({c['open']['days']} día(s), pasa al mes siguiente)",
+                         _money(c["open"]["gross"]), _money(c["open"]["net"]), "—"])
+    else:
+        rows.append(["Sin Credit Card Daily Summary del mes.", "", "", ""])
+    return status in ("ok", "partial"), title, rows
+
+
+def build_entries_pdf(entries, title, period_label, dest_path, cross=None, jh_cards=None, kia_not_in_cards=(),
+                      sale_tax_record=None, sale_tax_due=False, month_name=""):
+    """
+    PDF de Control Cierre con el membrete de la empresa: el estado, los dos
+    asientos, el devengamiento de Sale Tax, las tarjetas contra J.H. y, si
+    está, el cruce con el reporte mensual. Lo mismo que muestra la página.
+    """
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import letter
     from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
     from reportlab.lib.units import mm
-    from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
+    from reportlab.platypus import KeepTogether, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
     from pdf_export import _letterhead_table
 
@@ -383,15 +490,26 @@ def build_entries_pdf(entries, title, period_label, dest_path, cross=None):
 
     elements = list(_letterhead_table(doc.width))
     elements.append(Paragraph(title, styles["Heading2"]))
-    elements.append(Paragraph(period_label, styles["Normal"]))
-    elements.append(Spacer(1, 10))
-    notice = missing_notice(entries)
-    if notice:
-        elements.append(Paragraph("Incompleto. " + notice, warn_style))
-        elements.append(Spacer(1, 8))
+    complete = "" if entries["complete_month"] else " (el mes todavía no está completo)"
+    elements.append(Paragraph(period_label + complete, styles["Normal"]))
+    elements.append(Spacer(1, 8))
+    ok_color, bad_color = colors.HexColor("#166534"), colors.HexColor("#B91C1C")
+    status_title_style = ParagraphStyle("CierreStatus", parent=styles["Normal"], fontName="Helvetica-Bold", fontSize=10)
+    small_style = ParagraphStyle("CierreSmall", parent=styles["Normal"], fontSize=8.5, leading=11)
+
+    def status_block(ok, text, paragraphs=(), into=None):
+        target = elements if into is None else into
+        style = ParagraphStyle("CierreStatusX", parent=status_title_style, textColor=ok_color if ok else bad_color)
+        target.append(Paragraph(text, style))
+        for p in paragraphs:
+            target.append(Paragraph(p, small_style))
+        target.append(Spacer(1, 8))
+
+    ok, status_text, paragraphs = status_summary(entries, kia_not_in_cards)
+    status_block(ok, status_text, paragraphs)
 
     # Asiento de ventas: título, renglones, un renglón vacío y los totales.
-    data = [[ENTRY_TITLE, "", "Debe", "Haber"]]
+    data = [[entries["titles"]["sales"], "", "Debe", "Haber"]]
     red_cells = [(0, 0, 1, 0)]
     for line in entries["lines"]:
         if line["side"] == "debit":
@@ -417,11 +535,82 @@ def build_entries_pdf(entries, title, period_label, dest_path, cross=None):
 
     # Asiento de lo cobrado a Gettel KIA.
     data = [
+        [entries["titles"]["collected"], "", "Debe", "Haber"],
         [ACCOUNT_JH, "", _money(entries["collected"]), ""],
         ["a", ACCOUNT_GETTEL, "", _money(entries["collected"])],
         [entries["collected_label"], "", "", ""],
     ]
-    elements.append(entry_table(data, gray_rows=range(0, 3), red_cells=[(1, 1, 1, 1)]))
+    elements.append(entry_table(data, gray_rows=range(1, 4), red_cells=[(0, 0, 1, 0), (1, 2, 1, 2)]))
+    elements.append(Spacer(1, 18))
+
+    # Devengamiento de Sale Tax.
+    st = entries["sale_tax"]
+    elements.append(Paragraph("Devengamiento de Sale Tax", styles["Heading3"]))
+    if sale_tax_record:
+        asiento = f" (asiento Nº {sale_tax_record['asiento']})" if sale_tax_record.get("asiento") else ""
+        status_block(True, f"Registrado{asiento}.")
+    elif sale_tax_due:
+        status_block(False, f"Falta registrar el devengamiento de Sale Tax de {month_name} {entries['year']}.")
+    st_note = f"El Tax Collect del mes (Store Info) se devenga al último día: {ACCOUNT_TAX_BGS} a {ACCOUNT_SALE_TAX}."
+    if not entries["complete_month"]:
+        st_note += " El mes todavía no está completo: el importe puede cambiar."
+    if st["empty_days"]:
+        st_note += f" Tax Collect vacío (cuenta como 0): {_fmt_days(st['empty_days'])}."
+    elements.append(Paragraph(st_note, small_style))
+    elements.append(Spacer(1, 6))
+    st_date = f"{st['date'][8:10]}/{st['date'][5:7]}/{st['date'][:4]}"
+    data = [
+        [entries["titles"]["sale_tax"], "", "Debe", "Haber"],
+        [st_date, ACCOUNT_TAX_BGS, _money(st["amount"]), _money(0)],
+        [st_date, ACCOUNT_SALE_TAX, _money(0), _money(st["amount"])],
+    ]
+    table = Table(data, colWidths=[24 * mm, 86 * mm, 34 * mm, 34 * mm])
+    table.setStyle(TableStyle([
+        ("SPAN", (0, 0), (1, 0)),
+        ("FONTNAME", (0, 0), (1, 0), "Helvetica-BoldOblique"),
+        ("TEXTCOLOR", (0, 0), (1, 0), red),
+        ("FONTNAME", (2, 0), (3, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("ALIGN", (2, 0), (3, -1), "RIGHT"),
+        ("GRID", (0, 1), (-1, -1), 0.5, colors.black),
+        ("BACKGROUND", (0, 1), (-1, -1), gray),
+    ]))
+    elements.append(table)
+
+    # Tarjetas contra J.H. Williams.
+    if jh_cards:
+        elements.append(Spacer(1, 18))
+        # Todo junto: que el título no quede solo al pie de una hoja.
+        jh_block = [Paragraph("Tarjetas contra J.H. Williams", styles["Heading3"])]
+        ok, jh_title, jh_rows = jh_cards_summary(jh_cards, month_name, entries["year"])
+        status_block(ok, jh_title, into=jh_block, paragraphs=[
+            f"El renglón {ACCOUNT_JH} sale de las tarjetas de Store Info (TC {_money(jh_cards['tc'])}). Se controla contra "
+            "la página de J.H.: el detalle de cupones (los batches del POS, por día de venta) y el Credit Card Daily Summary del mes."
+        ])
+        cell = ParagraphStyle("CierreCell", parent=styles["Normal"], fontSize=8.5, leading=10.5)
+        data = [["Concepto", "Store Info", "J.H.", "Diferencia"]]
+        section_rows = []
+        for row in jh_rows:
+            if row[1] is None:
+                data.append([row[0], "", "", ""])
+                section_rows.append(len(data) - 1)
+            else:
+                data.append([Paragraph(row[0], cell), row[1], row[2], row[3]])
+        table = Table(data, colWidths=[72 * mm, 44 * mm, 32 * mm, 30 * mm], repeatRows=1)
+        style = [
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.black),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+            ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("BACKGROUND", (0, 0), (-1, 0), gray),
+        ]
+        for r in section_rows:
+            style += [("SPAN", (0, r), (-1, r)), ("FONTNAME", (0, r), (-1, r), "Helvetica-Bold"),
+                      ("BACKGROUND", (0, r), (-1, r), gray), ("ALIGN", (0, r), (-1, r), "LEFT")]
+        table.setStyle(TableStyle(style))
+        jh_block.append(table)
+        elements.append(KeepTogether(jh_block))
 
     # Cruce con el reporte mensual del POS, si está cargado.
     if cross:
@@ -522,7 +711,7 @@ def add_entries_to_store_info_workbook(path, entries):
             put(row, col, None)
 
     a = t + 3
-    put(a, "O", ENTRY_TITLE, red=True, fill=False, sides=False).font = Font(bold=True, italic=True, underline="single", color="FF" + RED)
+    put(a, "O", entries["titles"]["sales"], red=True, fill=False, sides=False).font = Font(bold=True, italic=True, underline="single", color="FF" + RED)
     for r in range(a + 1, a + 10):
         box_row(r)
     put(a + 1, "O", ACCOUNT_CAJA)
@@ -549,6 +738,7 @@ def add_entries_to_store_info_workbook(path, entries):
     diff.border = Border(left=thin, right=thin, bottom=thin)
 
     b = a + 15
+    put(b - 1, "O", entries["titles"]["collected"], red=True, fill=False, sides=False).font = Font(bold=True, italic=True, underline="single", color="FF" + RED)
     for r in range(b, b + 3):
         box_row(r)
     put(b, "O", ACCOUNT_JH)

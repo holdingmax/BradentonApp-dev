@@ -7400,6 +7400,26 @@ def _monthly_cross(year, month, entries):
     return report, control_cierre.cross_check(entries, reporte_mensual.report_totals(report))
 
 
+def _cierre_checks(year, month, entries):
+    """
+    Lo que Control Cierre controla además de los asientos, para la página y
+    el PDF: las tarjetas contra J.H. (pedido del usuario, 2026-10-06) y los
+    pagos de Kia/Toyota que no aparecen en tarjetas.
+    """
+    if not entries:
+        return None, []
+    detail_groups = eft_db.get_detail_groups()
+    jh_cards = control_cierre.jh_cards_check(
+        entries, _card_detail_by_day(year, month, detail_groups),
+        _jh_month_checks(year, month, detail_groups)["coupons"],
+    )
+    kia_not_in_cards = control_tarjetas.kia_not_in_cards(
+        reportes_db.get_card_sales_by_date(), reportes_db.get_local_account_sales_by_date(),
+        [f"{year:04d}-{month:02d}-{d:02d}" for d in range(1, calendar.monthrange(year, month)[1] + 1)],
+    )
+    return jh_cards, kia_not_in_cards
+
+
 @app.route("/controles/cierre")
 def controles_cierre():
     """
@@ -7410,14 +7430,7 @@ def controles_cierre():
     year, month = _cierre_month()
     entries = control_cierre.build_month_entries(_build_store_info_rows(year, month), year, month)
     monthly_report, cross = _monthly_cross(year, month, entries)
-    jh_cards = None
-    if entries:
-        # Las tarjetas del asiento contra J.H. (pedido del usuario, 2026-10-06).
-        detail_groups = eft_db.get_detail_groups()
-        jh_cards = control_cierre.jh_cards_check(
-            entries, _card_detail_by_day(year, month, detail_groups),
-            _jh_month_checks(year, month, detail_groups)["coupons"],
-        )
+    jh_cards, kia_not_in_cards = _cierre_checks(year, month, entries)
     section = next(s for s in CONTROLES_SECTIONS if s["key"] == "control_cierre")
     prev_month, prev_year = (12, year - 1) if month == 1 else (month - 1, year)
     next_month, next_year = (1, year + 1) if month == 12 else (month + 1, year)
@@ -7431,17 +7444,13 @@ def controles_cierre():
         fmt_days=lambda days: ", ".join(f"{iso[8:10]}/{iso[5:7]}" for iso in days),
         notice=control_cierre.missing_notice(entries) if entries else None,
         period_label=_cierre_period_label(entries) if entries else None,
-        entry_title=control_cierre.ENTRY_TITLE,
         account_jh=control_cierre.ACCOUNT_JH,
         account_gettel=control_cierre.ACCOUNT_GETTEL,
         lottery_note=control_cierre.LOTTERY_NOTE,
         account_tax_bgs=control_cierre.ACCOUNT_TAX_BGS,
         account_sale_tax=control_cierre.ACCOUNT_SALE_TAX,
         sale_tax_record=control_cierre.sale_tax_record(year, month),
-        kia_not_in_cards=control_tarjetas.kia_not_in_cards(
-            reportes_db.get_card_sales_by_date(), reportes_db.get_local_account_sales_by_date(),
-            [f"{year:04d}-{month:02d}-{d:02d}" for d in range(1, calendar.monthrange(year, month)[1] + 1)],
-        ) if entries else [],
+        kia_not_in_cards=kia_not_in_cards,
         year=year,
         month=month,
         month_name=_MONTH_NAMES_ES[month - 1],
@@ -7465,16 +7474,25 @@ def controles_cierre_sale_tax():
 
 @app.route("/controles/cierre/exportar/pdf")
 def controles_cierre_pdf():
-    """PDF de los dos asientos del mes (control_cierre.build_entries_pdf)."""
+    """
+    PDF de Control Cierre (control_cierre.build_entries_pdf). Desde el
+    2026-10-29 trae todo lo de la página (pedido del usuario): el estado, los
+    asientos, Sale Tax, las tarjetas contra J.H. y el cruce con el mensual.
+    """
     year, month = _cierre_month()
     entries = control_cierre.build_month_entries(_build_store_info_rows(year, month), year, month)
     if not entries:
         flash("No hay ningún Store Info guardado ese mes: no hay asientos para exportar.", "error")
         return redirect(url_for("controles_cierre", year=year, month=month))
-    dest_path = os.path.join(tempfile.mkdtemp(prefix="cierre_pdf_"), f"Asientos de cierre {month:02d}-{year}.pdf")
+    jh_cards, kia_not_in_cards = _cierre_checks(year, month, entries)
+    dest_path = os.path.join(tempfile.mkdtemp(prefix="cierre_pdf_"), f"Control Cierre {month:02d}-{year}.pdf")
     control_cierre.build_entries_pdf(
-        entries, f"Asientos de cierre — {_MONTH_NAMES_ES[month - 1]} {year}", _cierre_period_label(entries), dest_path,
+        entries, f"Control Cierre — {_MONTH_NAMES_ES[month - 1]} {year}", _cierre_period_label(entries), dest_path,
         cross=_monthly_cross(year, month, entries)[1],
+        jh_cards=jh_cards, kia_not_in_cards=kia_not_in_cards,
+        sale_tax_record=control_cierre.sale_tax_record(year, month),
+        sale_tax_due=month_end_warnings_due(year, month),
+        month_name=_MONTH_NAMES_ES[month - 1],
     )
     return send_file(dest_path, as_attachment=True, download_name=os.path.basename(dest_path))
 
