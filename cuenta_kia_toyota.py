@@ -115,7 +115,7 @@ def read_control_workbook(path):
                 continue
             if not any(key in title for key in ("GETTEL", "PENDIENTE", "PAGO", "PEND ")):
                 continue
-            rows = list(sheet.iter_rows(max_col=16, values_only=True))
+            rows = list(sheet.iter_rows(max_col=20, values_only=True))
             header = None
             for i, row in enumerate(rows[:6]):
                 if "LOCAL ACCOUNT" in [_norm(v) for v in row]:
@@ -133,7 +133,14 @@ def read_control_workbook(path):
             if kind == "days":
                 result["days"].extend(_read_days(rows[i + 1:], labels, "PEND" not in title, file_month))
             else:
-                result["payments"].extend(_read_payments(rows[i + 1:], labels, file_month))
+                # Desde septiembre 2026 la hoja PAGO trae un cuadro por empresa,
+                # Toyota en A-H y Kia en I-P (pedido del usuario, 2026-10-29),
+                # con el nombre arriba: se lee cada cuadro por su columna "Transc".
+                above = [_norm(v) for v in rows[i - 1]] if i else []
+                for transc in (j for j, x in enumerate(labels) if "TRANSC" in x):
+                    heading = above[transc - 2] if 0 <= transc - 2 < len(above) else ""
+                    block = KIA if "KIA" in heading else TOYOTA if "TOYOTA" in heading else None
+                    result["payments"].extend(_read_payments(rows[i + 1:], labels, file_month, transc, block))
     finally:
         workbook.close()
     return result
@@ -162,13 +169,18 @@ def _read_days(rows, labels, main, file_month):
     return days
 
 
-def _read_payments(rows, labels, file_month):
-    transc = next(j for j, x in enumerate(labels) if "TRANSC" in x)
-    amount = next((j for j, x in enumerate(labels) if x.startswith("TOTAL CUPON")), transc + 1)
+def _read_payments(rows, labels, file_month, transc, block=None):
+    """
+    Los pagos de un cuadro de la hoja PAGO: la fecha dos columnas antes de
+    "Transc", el importe en "Total Cupon" y la empresa del cuadro (block) o,
+    si no, de la aclaración "(Kia)"/"(Toyota)" de la columna de al lado.
+    """
+    date_col = max(transc - 2, 0)
+    amount = next((j for j, x in enumerate(labels) if j > transc and x.startswith("TOTAL CUPON")), transc + 1)
     payments, last, company = [], None, None
     for row in rows:
-        if isinstance(row[0], datetime):
-            day = _fix_date(row[0].date(), file_month).isoformat()
+        if date_col < len(row) and isinstance(row[date_col], datetime):
+            day = _fix_date(row[date_col].date(), file_month).isoformat()
             if day != last:
                 company = None
             last = day
@@ -176,12 +188,13 @@ def _read_payments(rows, labels, file_month):
         value = _num(row[amount]) if amount < len(row) else None
         if value is None or last is None or not re.fullmatch(r"\d+(\.0)?", str(number or "").strip()):
             continue
-        note = " ".join(str(v) for v in row[amount + 1:] if isinstance(v, str)).upper()
+        # Solo la columna de al lado: con dos cuadros, más a la derecha está el de la otra empresa.
+        note = _norm(row[amount + 1]) if amount + 1 < len(row) and isinstance(row[amount + 1], str) else ""
         if "KIA" in note:
             company = KIA
         elif "TOYOTA" in note:
             company = TOYOTA
-        who = company or (KIA if last < TOYOTA_START else None)
+        who = block or company or (KIA if last < TOYOTA_START else None)
         payments.append({"date": last, "transc": str(number).replace(".0", ""), "amount": round(value, 2),
                          "company": who})
     return payments
@@ -378,6 +391,7 @@ def build_ledger(charges, payments, pos, today=None):
     return {
         "monthly": monthly,
         "days": days,
+        "payments": sorted(payments, key=lambda p: (p["date"], str(p.get("transc") or ""))),
         "status": status,
         "total_balance": round(sum(balances.values()) - sum(p["amount"] for p in unassigned), 2),
         "unassigned_groups": payment_groups(unassigned),
@@ -398,3 +412,80 @@ def month_days(ledger, year, month):
         balance = row.get("balance") or balance
         rows.append(dict(row, balance=balance))
     return rows
+
+
+# ---------------------------------------------------------------------------
+# Cierre del mes como el Excel Cierre y Ratio (pedido del usuario, 2026-10-29)
+# ---------------------------------------------------------------------------
+
+# Las cuentas de Ratio (Libro Diario, asientos 11745 y 11747 de septiembre 2026).
+ACCOUNT_GETTEL = "1.02.01.00 - GETTEL KIA"
+ACCOUNT_OTHER_INCOME = "4.07.00.00 - OTROS INGRESOS COMBUSTIBLE"
+ACCOUNT_JH = "1.03.02.00 - J.H. WILLIAMS - RECAUDACION A LIQUIDAR"
+
+
+def _to_collect(vouchers, gallons):
+    """
+    Lo que se cobra por los vales de un mes, como la hoja Gettel-Toyota del
+    Cierre: rebate = −$0.02 × galones (E35) y recargo = 3% de (vales +
+    rebate) (E37). Total a cobrar = vales + rebate + recargo (E39).
+    """
+    rebate = round(-REBATE_PER_GALLON * gallons, 2)
+    charge = round((vouchers + rebate) * CARD_CHARGE, 2)
+    return {"vouchers": round(vouchers, 2), "gallons": round(gallons, 2), "rebate": rebate, "charge": charge,
+            "total": round(vouchers + rebate + charge, 2)}
+
+
+def month_closing(ledger, year, month):
+    """
+    El mes de Kia y Toyota como el Cierre y Ratio: por empresa, los vales,
+    el rebate y el recargo, lo que pagó (cada pago) y el saldo; y los dos
+    asientos de Ratio del mes, REBATE GETTEL (Gettel KIA a Otros ingresos
+    combustible: recargo + rebate de las dos) y COBRO GETTEL-KIA (J.H. a
+    Gettel KIA: el LOCAL ACCT que cobró el POS). Medido contra septiembre
+    2026: rebate $636.32 y cobro $28,494.94, como Ratio.
+    """
+    from control_cierre import MONTH_NAMES_UPPER
+
+    prefix = f"{year:04d}-{month:02d}"
+    days = [d for d in ledger["days"] if d["date"].startswith(prefix)]
+    summary = next((m for m in ledger["monthly"] if m["month"] == prefix), None)
+    companies = {}
+    for company in COMPANIES:
+        vouchers = sum((d.get(company) or {}).get("vouchers", 0.0) for d in days)
+        gallons = sum((d.get(company) or {}).get("gallons", 0.0) for d in days)
+        block = _to_collect(vouchers, gallons)
+        payments = [p for p in ledger.get("payments", []) if p["company"] == company and p["date"].startswith(prefix)]
+        opening = summary["companies"][company]["opening"] if summary else 0.0
+        paid = round(sum(p["amount"] for p in payments), 2)
+        block.update({"opening": opening, "payments": payments, "paid": paid,
+                      "closing": round(opening + block["total"] - paid, 2)})
+        companies[company] = block
+    total = _to_collect(sum(c["vouchers"] for c in companies.values()), sum(c["gallons"] for c in companies.values()))
+    total.update({key: round(sum(c[key] for c in companies.values()), 2) for key in ("opening", "paid", "closing")})
+    unassigned = [p for p in ledger.get("payments", []) if not p["company"] and p["date"].startswith(prefix)]
+    la = round(sum(d.get("la") or 0.0 for d in days), 2)
+    vs = round(sum(d.get("vs") or 0.0 for d in days), 2)
+    # Sin redondear en el medio, como el Excel (E35 + E37): agosto 2026 da
+    # $604.48, igual que Ratio (redondeando cada parte daba $604.49).
+    all_gallons = sum(c["gallons"] for c in companies.values())
+    raw_rebate = -REBATE_PER_GALLON * all_gallons
+    rebate_entry = round(raw_rebate + (sum(c["vouchers"] for c in companies.values()) + raw_rebate) * CARD_CHARGE, 2)
+    month_name = MONTH_NAMES_UPPER[month - 1]
+    return {
+        "has_data": bool(total["vouchers"] or total["paid"] or vs),
+        "companies": companies,
+        "total": total,
+        "unassigned": unassigned,
+        "unassigned_total": round(sum(p["amount"] for p in unassigned), 2),
+        "la": la,
+        "la_diff": round(la - total["vouchers"], 2),
+        "vs": vs,
+        "vs_diff": round(vs - total["paid"] - sum(p["amount"] for p in unassigned), 2),
+        "entries": [
+            {"title": f"REBATE GETTEL {month_name} {year}", "lines": [
+                (ACCOUNT_GETTEL, rebate_entry, None), (ACCOUNT_OTHER_INCOME, None, rebate_entry)]},
+            {"title": f"COBRO GETTEL-KIA {month_name}", "lines": [
+                (ACCOUNT_JH, vs, None), (ACCOUNT_GETTEL, None, vs)]},
+        ],
+    }

@@ -65,6 +65,16 @@
   .kt-year .kt-table { border-top: 1px solid var(--border); }
   .kt-table tr.kt-current td { background: var(--accent-soft); }
   .kt-foot { margin-top: 22px; font-size: 12.5px; color: var(--text-soft); }
+  .kt-check { margin: 8px 0 0; font-size: 12.5px; color: var(--text-soft); }
+  .kt-bad { color: var(--error); font-weight: 600; }
+  .kt-pay-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; margin-top: 16px; }
+  .kt-pay { border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+  .kt-pay h3 { margin: 0 0 10px; font-size: 15px; }
+  .kt-pay .kt-alias { font-weight: 400; color: var(--text-soft); font-size: 13px; }
+  .kt-pay-table { border: 1px solid var(--border); border-radius: 8px; }
+  .kt-entries { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; margin-top: 18px; }
+  .kt-entry-title { font-weight: 700; font-style: italic; text-decoration: underline; color: var(--error); margin-bottom: 6px; }
+  .kt-entry-table { border: 1px solid var(--border); }
 </style>
 {% endblock %}
 {% block content %}
@@ -129,6 +139,73 @@
 
   {% if ledger.issues %}
   <div class="kt-notice"><ul>{% for issue in ledger.issues %}<li>{{ issue }}</li>{% endfor %}</ul></div>
+  {% endif %}
+
+  {# Cierre del mes como el Excel Cierre (hojas Gettel-Toyota y PAGO) y Ratio (pedido del usuario, 2026-10-29). #}
+  {% set cl = closing %}
+  {% if cl.has_data %}
+  <div class="kt-section" id="kt-cierre">
+    <h2>Cierre de {{ month_name }}, como el Cierre y Ratio</h2>
+    <p>Lo que se les cobra del mes (hoja Gettel-Toyota del Excel Cierre), lo que pagó cada una por separado y los asientos del mes con el nombre que tienen en Ratio.</p>
+    <div class="kt-table-wrap">
+      <table class="kt-table">
+        <thead><tr><th>Cupones del mes</th>{% for company in companies %}<th class="kt-sep">{{ company }}</th>{% endfor %}<th class="kt-sep">Total</th></tr></thead>
+        <tbody>
+          <tr><td>Vales (Local Account)</td>{% for company in companies %}<td class="kt-sep">{{ money(cl.companies[company].vouchers) }}</td>{% endfor %}<td class="kt-sep">{{ money(cl.total.vouchers) }}</td></tr>
+          <tr><td>Galones</td>{% for company in companies %}<td class="kt-sep">{{ "{:,.2f}".format(cl.companies[company].gallons) }}</td>{% endfor %}<td class="kt-sep">{{ "{:,.2f}".format(cl.total.gallons) }}</td></tr>
+          <tr><td>Rebate (−${{ "%.2f"|format(rebate) }} por galón)</td>{% for company in companies %}<td class="kt-sep">{{ money(cl.companies[company].rebate) }}</td>{% endfor %}<td class="kt-sep">{{ money(cl.total.rebate) }}</td></tr>
+          <tr><td>Recargo de la tarjeta ({{ "%.0f"|format(card_charge * 100) }}%)</td>{% for company in companies %}<td class="kt-sep">{{ money(cl.companies[company].charge) }}</td>{% endfor %}<td class="kt-sep">{{ money(cl.total.charge) }}</td></tr>
+        </tbody>
+        <tfoot><tr><td>Total a cobrar</td>{% for company in companies %}<td class="kt-sep">{{ money(cl.companies[company].total) }}</td>{% endfor %}<td class="kt-sep">{{ money(cl.total.total) }}</td></tr></tfoot>
+      </table>
+    </div>
+    <p class="kt-check">Local Account del mes en Store Info: {{ money(cl.la) }}{% if cl.la_diff|abs >= 0.005 %} ({{ money(cl.la_diff) }} distinto de los vales){% else %}, igual que los vales{% endif %}.</p>
+
+    <div class="kt-pay-grid">
+      {% for company in (companies|reverse|list) %}{% set c = cl.companies[company] %}
+      <div class="kt-pay">
+        <h3>Pagos de {{ company }}{% if company == 'Kia' %} <span class="kt-alias">(Gettel)</span>{% endif %}</h3>
+        {% if c.payments %}
+        <table class="kt-table kt-pay-table">
+          <thead><tr><th>Fecha</th><th>Transacciones</th><th>Importe</th></tr></thead>
+          <tbody>
+            {% for date, group in c.payments|groupby('date') %}
+            <tr><td>{{ dmy(date) }}</td>
+              <td class="kt-soft">{% set nums = group|map(attribute='transc')|map('string')|list %}{% if nums == ['POS'] %}Cobrado en el POS, sin recibo{% else %}{{ nums|length }} ({{ nums|first }}{% if nums|length > 1 %} a {{ nums|last }}{% endif %}){% endif %}</td>
+              <td>{{ money(group|sum(attribute='amount')) }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+        {% else %}<p class="kt-soft">Sin pagos en {{ month_name|lower }}.</p>{% endif %}
+        <div class="kt-account">
+          <div class="kt-line"><span>Saldo del mes anterior</span><span>{{ balance(c.opening) }}</span></div>
+          <div class="kt-line"><span>+ A cobrar del mes</span><span>{{ money(c.total) }}</span></div>
+          <div class="kt-line"><span>− Pagó</span><span>{{ money(c.paid) }}</span></div>
+          <div class="kt-line total"><span>Pendiente</span><span>{{ balance(c.closing) }}</span></div>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% if cl.unassigned %}<p class="kt-check kt-bad">Pagos sin empresa en el mes: {{ money(cl.unassigned_total) }}. Asignalos en Carga de Datos → Gettel / Toyota.</p>{% endif %}
+    <p class="kt-check">Cobrado en el POS (LOCAL ACCT) en el mes: {{ money(cl.vs) }}{% if cl.vs_diff|abs >= 0.005 %} ({{ money(cl.vs_diff) }} distinto de los pagos){% else %}, igual que los pagos de las dos{% endif %}.</p>
+
+    <div class="kt-entries">
+      {% for entry in cl.entries %}
+      <div>
+        <div class="kt-entry-title">{{ entry.title }}</div>
+        <table class="kt-table kt-entry-table">
+          <thead><tr><th>Cuenta / Descripción</th><th>Debe</th><th>Haber</th></tr></thead>
+          <tbody>
+            {% for account, debit, credit in entry.lines %}
+            <tr><td>{{ account }}</td><td>{{ money(debit) if debit is not none else '' }}</td><td>{{ money(credit) if credit is not none else '' }}</td></tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+      {% endfor %}
+    </div>
+    <p class="kt-check">El Local Account del mes ({{ money(cl.la) }}) va a Gettel KIA dentro de LIQUIDACION CIERRE RECAUDACION (Controles → Cierre).</p>
+  </div>
   {% endif %}
 
   <div class="kt-section">

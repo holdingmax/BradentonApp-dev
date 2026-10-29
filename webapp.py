@@ -7843,6 +7843,7 @@ def controles_kia_toyota():
         companies=cuenta_kia_toyota.COMPANIES,
         voided=cuenta_kia_toyota.VOIDED,
         month_summary=month_summary,
+        closing=cuenta_kia_toyota.month_closing(ledger, year, month),
         days=cuenta_kia_toyota.month_days(ledger, year, month),
         rebate=cuenta_kia_toyota.REBATE_PER_GALLON,
         card_charge=cuenta_kia_toyota.CARD_CHARGE,
