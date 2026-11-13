@@ -1,4 +1,77 @@
 {% extends "base.html" %}
+{% block head_extra %}
+<style>
+  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .historial-nav-btn { text-decoration: none; display: inline-block; }
+  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
+  .historial-table-wrap { overflow-x: auto; margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; }
+  .historial-table { width: 100%; min-width: 480px; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .historial-table th, .historial-table td { padding: 9px 14px; text-align: left; }
+  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr { border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
+  .historial-col-day { font-weight: 700; white-space: nowrap; }
+  .historial-badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+  .historial-badge-ocr { background: var(--success-soft); color: var(--success); }
+  .historial-badge-manual { background: var(--accent-soft); color: var(--accent); }
+  .historial-badge-error { background: var(--error-soft); color: var(--error); }
+
+  .eft-deposit { padding: 16px 0; border-top: 1px solid var(--border); }
+  .eft-deposit:first-of-type { border-top: none; padding-top: 0; }
+  .eft-deposit-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+  .eft-deposit-title { font-weight: 700; font-size: 14.5px; }
+  .eft-deposit-totals { margin-left: auto; font-size: 12.5px; color: var(--text-soft); }
+  .eft-deposit-head form { margin: 0; }
+  .eft-deposit-head form button { margin-top: 0; padding: 5px 10px; font-size: 12px; }
+
+  /* Facturas que paga este EFT, resaltadas arriba del detalle -- pedido
+     explícito del usuario 2026-09-12. */
+  .eft-invoices-highlight {
+    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+    margin: 10px 0; padding: 10px 12px;
+    background: var(--accent-soft); border-radius: 8px;
+  }
+  .eft-invoices-label { font-size: 12px; font-weight: 700; color: var(--accent); margin-right: 2px; }
+  .eft-invoice-pill {
+    display: inline-block; padding: 4px 10px; border-radius: 999px;
+    background: var(--surface); font-size: 12px; font-weight: 600;
+    border: 1px solid var(--border);
+  }
+  /* Factura con un documento matcheado en Documentos -- clickeable, lleva
+     directo al PDF real de esa factura (pedido explícito del usuario
+     2026-09-14). */
+  a.eft-invoice-pill-linked {
+    color: var(--accent);
+    border-color: var(--accent);
+    text-decoration: none;
+  }
+  a.eft-invoice-pill-linked:hover { background: var(--accent-soft); }
+
+  /* Autosuma por columna, en negrita, al pie de cada tabla de EFT. */
+  .eft-totals-row td { font-weight: 700; background: var(--surface-alt); border-top: 2px solid var(--border); }
+
+  /* Columna dedicada para "corregir"/"agregar DDC" -- pedido explícito del
+     usuario (2026-09-14): antes vivía pegado a la celda DDC, ahora tiene su
+     propia columna a la derecha, alineada en todas las filas. */
+  .eft-col-action { width: 1%; white-space: nowrap; text-align: right; }
+  .eft-col-action button { margin-top: 0; padding: 5px 10px; font-size: 12px; }
+
+  /* "Corregir" un cupón -- pedido explícito del usuario (2026-09-16): el
+     cuadro flotante de antes "se veía feo y se desplegaba mal" -- ahora la
+     fila de edición REEMPLAZA la fila de datos en su propio lugar (misma
+     posición en la tabla, mismo ancho), en vez de un cuadrito flotante
+     colgado del borde. Un clic afuera (ver script) cancela sin guardar. */
+  .eft-coupon-edit-row td { background: var(--accent-soft); padding: 12px 14px; }
+  .eft-coupon-edit-form {
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end;
+  }
+  .eft-coupon-edit-form label { display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; flex: 1 1 110px; }
+  .eft-coupon-edit-form input { padding: 6px 8px; font-size: 12.5px; width: 100%; box-sizing: border-box; }
+  .eft-coupon-edit-actions { display: flex; gap: 8px; flex: 0 0 auto; }
+  .eft-coupon-edit-actions button { margin-top: 0; padding: 7px 14px; font-size: 12.5px; }
+</style>
+{% endblock %}
 {% block main_class %}main-full{% endblock %}
 {% block crumbs %}
 <nav class="crumbs"><a href="{{ url_for('carga_datos_eft') }}">EFT y Cupones</a><span class="current">Aplicacion TC y EFT</span></nav>
@@ -116,77 +189,6 @@
   {% endif %}
 </div>
 
-<style>
-  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
-  .historial-nav-btn { text-decoration: none; display: inline-block; }
-  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
-  .historial-table-wrap { overflow-x: auto; margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; }
-  .historial-table { width: 100%; min-width: 480px; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
-  .historial-table th, .historial-table td { padding: 9px 14px; text-align: left; }
-  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
-  .historial-table tbody tr { border-bottom: 1px solid var(--border); }
-  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
-  .historial-col-day { font-weight: 700; white-space: nowrap; }
-  .historial-badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
-  .historial-badge-ocr { background: var(--success-soft); color: var(--success); }
-  .historial-badge-manual { background: var(--accent-soft); color: var(--accent); }
-  .historial-badge-error { background: var(--error-soft); color: var(--error); }
-
-  .eft-deposit { padding: 16px 0; border-top: 1px solid var(--border); }
-  .eft-deposit:first-of-type { border-top: none; padding-top: 0; }
-  .eft-deposit-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
-  .eft-deposit-title { font-weight: 700; font-size: 14.5px; }
-  .eft-deposit-totals { margin-left: auto; font-size: 12.5px; color: var(--text-soft); }
-  .eft-deposit-head form { margin: 0; }
-  .eft-deposit-head form button { margin-top: 0; padding: 5px 10px; font-size: 12px; }
-
-  /* Facturas que paga este EFT, resaltadas arriba del detalle -- pedido
-     explícito del usuario 2026-09-12. */
-  .eft-invoices-highlight {
-    display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
-    margin: 10px 0; padding: 10px 12px;
-    background: var(--accent-soft); border-radius: 8px;
-  }
-  .eft-invoices-label { font-size: 12px; font-weight: 700; color: var(--accent); margin-right: 2px; }
-  .eft-invoice-pill {
-    display: inline-block; padding: 4px 10px; border-radius: 999px;
-    background: var(--surface); font-size: 12px; font-weight: 600;
-    border: 1px solid var(--border);
-  }
-  /* Factura con un documento matcheado en Documentos -- clickeable, lleva
-     directo al PDF real de esa factura (pedido explícito del usuario
-     2026-09-14). */
-  a.eft-invoice-pill-linked {
-    color: var(--accent);
-    border-color: var(--accent);
-    text-decoration: none;
-  }
-  a.eft-invoice-pill-linked:hover { background: var(--accent-soft); }
-
-  /* Autosuma por columna, en negrita, al pie de cada tabla de EFT. */
-  .eft-totals-row td { font-weight: 700; background: var(--surface-alt); border-top: 2px solid var(--border); }
-
-  /* Columna dedicada para "corregir"/"agregar DDC" -- pedido explícito del
-     usuario (2026-09-14): antes vivía pegado a la celda DDC, ahora tiene su
-     propia columna a la derecha, alineada en todas las filas. */
-  .eft-col-action { width: 1%; white-space: nowrap; text-align: right; }
-  .eft-col-action button { margin-top: 0; padding: 5px 10px; font-size: 12px; }
-
-  /* "Corregir" un cupón -- pedido explícito del usuario (2026-09-16): el
-     cuadro flotante de antes "se veía feo y se desplegaba mal" -- ahora la
-     fila de edición REEMPLAZA la fila de datos en su propio lugar (misma
-     posición en la tabla, mismo ancho), en vez de un cuadrito flotante
-     colgado del borde. Un clic afuera (ver script) cancela sin guardar. */
-  .eft-coupon-edit-row td { background: var(--accent-soft); padding: 12px 14px; }
-  .eft-coupon-edit-form {
-    display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end;
-  }
-  .eft-coupon-edit-form label { display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; flex: 1 1 110px; }
-  .eft-coupon-edit-form input { padding: 6px 8px; font-size: 12.5px; width: 100%; box-sizing: border-box; }
-  .eft-coupon-edit-actions { display: flex; gap: 8px; flex: 0 0 auto; }
-  .eft-coupon-edit-actions button { margin-top: 0; padding: 7px 14px; font-size: 12.5px; }
-</style>
 
 <script>
   // Edición de un cupón EFT -- reemplaza la fila de vista por una fila de

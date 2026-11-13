@@ -1,141 +1,5 @@
 {% extends "base.html" %}
-{% block main_class %}main-full{% endblock %}
-{% block crumbs %}
-<nav class="crumbs"><a href="{{ url_for('carga_datos_index') }}">Lottery</a><span class="current">Reportes guardados</span></nav>
-{% endblock %}
-{% block content %}
-{% from "_month_jump.html" import month_jump %}
-{% macro fmt(x) -%}
-{%- if x is none -%}—{%- else -%}{{ "{:,.2f}".format(x) }}{%- endif -%}
-{%- endmacro %}
-{% macro fmti(x) -%}
-{%- if x is none -%}—{%- else -%}{{ "{:,.0f}".format(x) }}{%- endif -%}
-{%- endmacro %}
-
-{# Cuadros flotantes de verificación -- pedido explícito del usuario
-   (2026-09-16, segunda tanda): "los totales al final del bloque y el
-   numero que esta en cuenta final, al hacerles click te muestren la
-   sumatoria de valores que hacen para llegar a ese numero, asi puedes
-   verificar que esten bien". Mismo patrón .popover-trigger/.popover-panel
-   ya usado en Store Info -- acá con 3 sabores: la fila Subtotal (suma
-   simple de los 7 días del bloque), la fila Debito (fórmula sobre el
-   propio Subtotal, ver lottery_db._build_block) y el "Cuenta Final" de
-   cada día (X =-Pagos-Pays $). #}
-{% macro breakdown_pop(uid, label, value, rows, is_int=False) %}
-<button type="button" class="popover-trigger" data-popover-target="{{ uid }}">{{ fmti(value) if is_int else fmt(value) }}</button>
-<div class="popover-panel totals-breakdown-popover" id="{{ uid }}">
-  <div class="totals-breakdown-title">{{ label }}</div>
-  {% for row_label, row_value in rows %}
-  <div class="totals-breakdown-row"><span>{{ row_label }}</span><span>{{ (fmti(row_value) if is_int else fmt(row_value)) if row_value is not none else '—' }}</span></div>
-  {% endfor %}
-</div>
-{% endmacro %}
-
-{% macro subtotal_pop(block, field, label, is_int=False) %}
-{{ breakdown_pop('sub-' ~ block.iso_year ~ '-' ~ block.iso_week ~ '-' ~ field, label ~ ' -- suma de los 7 días del bloque', block.subtotal[field], block.day_breakdown_rows[field], is_int) }}
-{% endmacro %}
-
-{% macro day_cuenta_pop(day) %}
-{{ breakdown_pop('dcf-' ~ day.date, 'Cuenta Final (X = −Pagos − Pays $)', day.cuenta_final, day.cuenta_final_breakdown) }}
-{% endmacro %}
-<div class="page-header">
-  <span class="eyebrow">Lottery</span>
-  <h1>Reportes guardados</h1>
-  <p class="page-subtitle">Bloques de 7 días (lunes a domingo) con Subtotal y Debito calculados solos — la misma estructura que usa el Excel de Lottery, sin tener que abrirlo.</p>
-</div>
-
-<div class="card">
-  <div class="historial-nav">
-    <a href="{{ url_for('carga_datos_lottery_historial', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
-    <div class="historial-nav-title">
-      {{ month_jump('carga_datos_lottery_historial', year, month) }}
-      {% if year == today.year and month == today.month %}
-      <span class="muted">Mes actual</span>
-      {% else %}
-      <a href="{{ url_for('carga_datos_lottery_historial') }}" class="muted">Ir al mes actual</a>
-      {% endif %}
-    </div>
-    <a href="{{ url_for('carga_datos_lottery_historial', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
-  </div>
-  {% if debit_total is not none %}
-  <p class="muted" style="margin-top: 10px;">Total de Debito del mes (bloques con fecha de Chase Bank ya cargada dentro de {{ month_name }}): <strong>${{ fmt(debit_total) }}</strong></p>
-  {% else %}
-  <p class="muted" style="margin-top: 10px;">Todavía no hay ningún bloque con fecha de Chase Bank cargada este mes.</p>
-  {% endif %}
-
-  <div class="historial-table-wrap">
-    <table class="historial-table lottery-table">
-      <thead>
-        <tr>
-          <th rowspan="2" class="historial-col-day">Día</th>
-          <th colspan="8" class="lottery-group-online">ONLINE</th>
-          <th colspan="7" class="lottery-group-skoff">SKOFF (raspaditas)</th>
-          <th rowspan="2" class="lottery-col-chase">Chase Bank</th>
-          <th rowspan="2">Total Pagos</th>
-        </tr>
-        <tr>
-          <th class="lottery-group-online">Recuento</th><th class="lottery-group-online">Reporte Ventas</th>
-          <th class="lottery-group-terminal">Ventas</th><th class="lottery-group-terminal">Pagos</th><th class="lottery-group-terminal">Cash Bal.</th><th class="lottery-group-terminal">Comis</th><th class="lottery-group-terminal">Premios FP</th><th class="lottery-group-terminal">Total Comm</th>
-          <th class="lottery-group-skoff lottery-divider">Recuento</th><th class="lottery-group-skoff">Reporte Ventas</th><th class="lottery-group-skoff">Pagos U</th><th class="lottery-group-skoff">Pagos $</th><th class="lottery-group-skoff">Monto Ventas</th><th class="lottery-group-skoff">Comm Ventas</th><th class="lottery-group-skoff">Total Neto</th>
-        </tr>
-      </thead>
-      <tbody>
-        {% for block in blocks %}
-        {% for day in block.days %}
-        <tr class="{{ 'historial-row-today' if day.date == today_iso else '' }} {{ 'lottery-block-alt' if block.iso_week is even else '' }}">
-          <td class="historial-col-day"><a href="{{ url_for('carga_datos_lottery_dia', report_date=day.date) }}">{{ day.date[8:10] }}/{{ day.date[5:7] }}</a></td>
-          <td class="lottery-group-online">{{ fmti(day.online_count) }}</td><td class="lottery-group-online">{{ fmt(day.online_net_sales) }}</td>
-          <td class="lottery-group-terminal">{{ fmt(day.sales) }}</td><td class="lottery-group-terminal">{{ fmt(day.pagos) }}</td><td class="lottery-group-terminal">{{ fmt(day.cash_balance) }}</td><td class="lottery-group-terminal">{{ fmt(day.comis) }}</td><td class="lottery-group-terminal">{{ fmt(day.prize_free_plays) }}</td><td class="lottery-group-terminal">{{ fmt(day.total_comm) }}</td>
-          <td class="lottery-group-skoff lottery-divider">{{ fmti(day.skoff_count) }}</td><td class="lottery-group-skoff">{{ fmt(day.skoff_net_sales) }}</td><td class="lottery-group-skoff">{{ fmti(day.pays_units) }}</td><td class="lottery-group-skoff">{{ fmt(day.pays_amount) }}</td><td class="lottery-group-skoff">{{ fmt(day.skoff_sales_amount) }}</td><td class="lottery-group-skoff">{{ fmt(day.sales_comm) }}</td><td class="lottery-group-skoff">{{ fmt(day.net_total) }}</td>
-          <td class="muted lottery-col-chase">—</td>
-          <td>{{ day_cuenta_pop(day) }}</td>
-        </tr>
-        {% endfor %}
-        <tr class="lottery-row-subtotal {{ 'lottery-block-alt' if block.iso_week is even else '' }}">
-          <td class="historial-col-day">Subtotal</td>
-          <td class="lottery-group-online">{{ subtotal_pop(block, 'online_count', 'Recuento (ONLINE)', True) }}</td><td class="lottery-group-online">{{ subtotal_pop(block, 'online_net_sales', 'Ventas $ (ONLINE)') }}</td>
-          <td class="lottery-group-terminal">{{ subtotal_pop(block, 'sales', 'Ventas (Terminal)') }}</td><td class="lottery-group-terminal">{{ subtotal_pop(block, 'pagos', 'Pagos (Terminal)') }}</td><td class="lottery-group-terminal muted">—</td><td class="lottery-group-terminal">{{ subtotal_pop(block, 'comis', 'Comis (Terminal)') }}</td><td class="lottery-group-terminal">{{ subtotal_pop(block, 'prize_free_plays', 'Premios FP (Terminal)') }}</td><td class="lottery-group-terminal">{{ subtotal_pop(block, 'total_comm', 'Total Comm (Terminal)') }}</td>
-          <td class="lottery-group-skoff lottery-divider muted">—</td><td class="lottery-group-skoff muted">—</td><td class="lottery-group-skoff">{{ subtotal_pop(block, 'pays_units', 'Pagos U (SKOFF)', True) }}</td><td class="lottery-group-skoff">{{ subtotal_pop(block, 'pays_amount', 'Pagos $ (SKOFF)') }}</td><td class="lottery-group-skoff">{{ subtotal_pop(block, 'skoff_sales_amount', 'Monto Ventas (SKOFF)') }}</td><td class="lottery-group-skoff">{{ subtotal_pop(block, 'sales_comm', 'Comm Ventas (SKOFF)') }}</td><td class="lottery-group-skoff muted">—</td>
-          <td class="muted lottery-col-chase">—</td>
-          <td class="muted">—</td>
-        </tr>
-        <tr class="lottery-row-debito {{ 'lottery-block-alt' if block.iso_week is even else '' }}">
-          <td class="historial-col-day"></td>
-          <td class="lottery-group-online muted">—</td><td class="lottery-group-online">{{ breakdown_pop('deb-' ~ block.iso_year ~ '-' ~ block.iso_week ~ '-E', 'Online Ventas $ (E = Subtotal Ventas $ − Subtotal Ventas)', block.debito.online_net_sales, block.debito_breakdowns.online_net_sales) }}</td>
-          <td class="lottery-group-terminal">{{ breakdown_pop('deb-' ~ block.iso_year ~ '-' ~ block.iso_week ~ '-F', 'Ventas (F = Subtotal Ventas + Pagos + Comis + Premios FP + 10)', block.debito.sales, block.debito_breakdowns.sales) }}</td><td class="lottery-group-terminal muted">—</td><td class="lottery-group-terminal muted">—</td><td class="lottery-group-terminal muted">—</td><td class="lottery-group-terminal muted">—</td><td class="lottery-group-terminal muted">—</td>
-          <td class="lottery-group-skoff lottery-divider muted">—</td><td class="lottery-group-skoff muted">—</td><td class="lottery-group-skoff muted">—</td><td class="lottery-group-skoff">{{ breakdown_pop('deb-' ~ block.iso_year ~ '-' ~ block.iso_week ~ '-Q', 'Pagos $ (Q = Subtotal Pagos $ + Monto Ventas + Comm Ventas)', block.debito.pays_amount, block.debito_breakdowns.pays_amount) }}</td><td class="lottery-group-skoff muted">—</td><td class="lottery-group-skoff muted">—</td><td class="lottery-group-skoff muted">—</td>
-          <td class="lottery-col-chase">
-            <div class="lottery-chase-box">
-              <div class="lottery-debito-total"><strong>${{ breakdown_pop('deb-' ~ block.iso_year ~ '-' ~ block.iso_week ~ '-V', 'Cuenta Final del bloque (V = F + Q, Debito) — lo que se paga a Chase Bank', block.debito.net_debit, block.debito_breakdowns.net_debit) }}</strong></div>
-              <form method="post" action="{{ url_for('carga_datos_lottery_bloque_chase', iso_year=block.iso_year, iso_week=block.iso_week) }}" class="lottery-chase-form">
-                <input type="hidden" name="year" value="{{ year }}">
-                <input type="hidden" name="month" value="{{ month }}">
-                <input type="date" name="chase_bank_date" value="{{ block.chase_bank_date or block.suggested_chase_date }}">
-                <button type="submit" class="btn-secondary">Guardar</button>
-              </form>
-              {% if block.chase_payment_missing %}
-              <span class="lottery-chase-warning" title="No se encontró en Chase ningún movimiento con Detalle &quot;LOTTERY&quot; en esta fecha.">Falta el pago de Lottery este día en Chase</span>
-              {% endif %}
-            </div>
-          </td>
-          <td class="muted">—</td>
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
-
-  {% if blocks %}
-  <div style="margin-top: 14px; text-align: right; position: relative;">
-    <button type="button" class="btn-accent popover-trigger" data-popover-target="export-lottery">Exportar</button>
-    <div class="popover-panel export-menu" id="export-lottery">
-      <a href="{{ url_for('carga_datos_lottery_exportar', year=year, month=month) }}">Excel</a>
-      <a href="{{ url_for('carga_datos_lottery_exportar_pdf', year=year, month=month) }}">PDF</a>
-    </div>
-  </div>
-  {% endif %}
-</div>
-
+{% block head_extra %}
 <style>
   .historial-nav {
     display: flex;
@@ -280,4 +144,142 @@
   .totals-breakdown-row { display: flex; justify-content: space-between; gap: 16px; padding: 2px 0; white-space: nowrap; }
   .totals-breakdown-row span:first-child { color: var(--text-soft); }
 </style>
+{% endblock %}
+{% block main_class %}main-full{% endblock %}
+{% block crumbs %}
+<nav class="crumbs"><a href="{{ url_for('carga_datos_index') }}">Lottery</a><span class="current">Reportes guardados</span></nav>
+{% endblock %}
+{% block content %}
+{% from "_month_jump.html" import month_jump %}
+{% macro fmt(x) -%}
+{%- if x is none -%}—{%- else -%}{{ "{:,.2f}".format(x) }}{%- endif -%}
+{%- endmacro %}
+{% macro fmti(x) -%}
+{%- if x is none -%}—{%- else -%}{{ "{:,.0f}".format(x) }}{%- endif -%}
+{%- endmacro %}
+
+{# Cuadros flotantes de verificación -- pedido explícito del usuario
+   (2026-09-16, segunda tanda): "los totales al final del bloque y el
+   numero que esta en cuenta final, al hacerles click te muestren la
+   sumatoria de valores que hacen para llegar a ese numero, asi puedes
+   verificar que esten bien". Mismo patrón .popover-trigger/.popover-panel
+   ya usado en Store Info -- acá con 3 sabores: la fila Subtotal (suma
+   simple de los 7 días del bloque), la fila Debito (fórmula sobre el
+   propio Subtotal, ver lottery_db._build_block) y el "Cuenta Final" de
+   cada día (X =-Pagos-Pays $). #}
+{% macro breakdown_pop(uid, label, value, rows, is_int=False) %}
+<button type="button" class="popover-trigger" data-popover-target="{{ uid }}">{{ fmti(value) if is_int else fmt(value) }}</button>
+<div class="popover-panel totals-breakdown-popover" id="{{ uid }}">
+  <div class="totals-breakdown-title">{{ label }}</div>
+  {% for row_label, row_value in rows %}
+  <div class="totals-breakdown-row"><span>{{ row_label }}</span><span>{{ (fmti(row_value) if is_int else fmt(row_value)) if row_value is not none else '—' }}</span></div>
+  {% endfor %}
+</div>
+{% endmacro %}
+
+{% macro subtotal_pop(block, field, label, is_int=False) %}
+{{ breakdown_pop('sub-' ~ block.iso_year ~ '-' ~ block.iso_week ~ '-' ~ field, label ~ ' -- suma de los 7 días del bloque', block.subtotal[field], block.day_breakdown_rows[field], is_int) }}
+{% endmacro %}
+
+{% macro day_cuenta_pop(day) %}
+{{ breakdown_pop('dcf-' ~ day.date, 'Cuenta Final (X = −Pagos − Pays $)', day.cuenta_final, day.cuenta_final_breakdown) }}
+{% endmacro %}
+<div class="page-header">
+  <span class="eyebrow">Lottery</span>
+  <h1>Reportes guardados</h1>
+  <p class="page-subtitle">Bloques de 7 días (lunes a domingo) con Subtotal y Debito calculados solos — la misma estructura que usa el Excel de Lottery, sin tener que abrirlo.</p>
+</div>
+
+<div class="card">
+  <div class="historial-nav">
+    <a href="{{ url_for('carga_datos_lottery_historial', year=prev_year, month=prev_month) }}" class="btn-secondary historial-nav-btn">&larr; Mes anterior</a>
+    <div class="historial-nav-title">
+      {{ month_jump('carga_datos_lottery_historial', year, month) }}
+      {% if year == today.year and month == today.month %}
+      <span class="muted">Mes actual</span>
+      {% else %}
+      <a href="{{ url_for('carga_datos_lottery_historial') }}" class="muted">Ir al mes actual</a>
+      {% endif %}
+    </div>
+    <a href="{{ url_for('carga_datos_lottery_historial', year=next_year, month=next_month) }}" class="btn-secondary historial-nav-btn">Mes siguiente &rarr;</a>
+  </div>
+  {% if debit_total is not none %}
+  <p class="muted" style="margin-top: 10px;">Total de Debito del mes (bloques con fecha de Chase Bank ya cargada dentro de {{ month_name }}): <strong>${{ fmt(debit_total) }}</strong></p>
+  {% else %}
+  <p class="muted" style="margin-top: 10px;">Todavía no hay ningún bloque con fecha de Chase Bank cargada este mes.</p>
+  {% endif %}
+
+  <div class="historial-table-wrap">
+    <table class="historial-table lottery-table">
+      <thead>
+        <tr>
+          <th rowspan="2" class="historial-col-day">Día</th>
+          <th colspan="8" class="lottery-group-online">ONLINE</th>
+          <th colspan="7" class="lottery-group-skoff">SKOFF (raspaditas)</th>
+          <th rowspan="2" class="lottery-col-chase">Chase Bank</th>
+          <th rowspan="2">Total Pagos</th>
+        </tr>
+        <tr>
+          <th class="lottery-group-online">Recuento</th><th class="lottery-group-online">Reporte Ventas</th>
+          <th class="lottery-group-terminal">Ventas</th><th class="lottery-group-terminal">Pagos</th><th class="lottery-group-terminal">Cash Bal.</th><th class="lottery-group-terminal">Comis</th><th class="lottery-group-terminal">Premios FP</th><th class="lottery-group-terminal">Total Comm</th>
+          <th class="lottery-group-skoff lottery-divider">Recuento</th><th class="lottery-group-skoff">Reporte Ventas</th><th class="lottery-group-skoff">Pagos U</th><th class="lottery-group-skoff">Pagos $</th><th class="lottery-group-skoff">Monto Ventas</th><th class="lottery-group-skoff">Comm Ventas</th><th class="lottery-group-skoff">Total Neto</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for block in blocks %}
+        {% for day in block.days %}
+        <tr class="{{ 'historial-row-today' if day.date == today_iso else '' }} {{ 'lottery-block-alt' if block.iso_week is even else '' }}">
+          <td class="historial-col-day"><a href="{{ url_for('carga_datos_lottery_dia', report_date=day.date) }}">{{ day.date[8:10] }}/{{ day.date[5:7] }}</a></td>
+          <td class="lottery-group-online">{{ fmti(day.online_count) }}</td><td class="lottery-group-online">{{ fmt(day.online_net_sales) }}</td>
+          <td class="lottery-group-terminal">{{ fmt(day.sales) }}</td><td class="lottery-group-terminal">{{ fmt(day.pagos) }}</td><td class="lottery-group-terminal">{{ fmt(day.cash_balance) }}</td><td class="lottery-group-terminal">{{ fmt(day.comis) }}</td><td class="lottery-group-terminal">{{ fmt(day.prize_free_plays) }}</td><td class="lottery-group-terminal">{{ fmt(day.total_comm) }}</td>
+          <td class="lottery-group-skoff lottery-divider">{{ fmti(day.skoff_count) }}</td><td class="lottery-group-skoff">{{ fmt(day.skoff_net_sales) }}</td><td class="lottery-group-skoff">{{ fmti(day.pays_units) }}</td><td class="lottery-group-skoff">{{ fmt(day.pays_amount) }}</td><td class="lottery-group-skoff">{{ fmt(day.skoff_sales_amount) }}</td><td class="lottery-group-skoff">{{ fmt(day.sales_comm) }}</td><td class="lottery-group-skoff">{{ fmt(day.net_total) }}</td>
+          <td class="muted lottery-col-chase">—</td>
+          <td>{{ day_cuenta_pop(day) }}</td>
+        </tr>
+        {% endfor %}
+        <tr class="lottery-row-subtotal {{ 'lottery-block-alt' if block.iso_week is even else '' }}">
+          <td class="historial-col-day">Subtotal</td>
+          <td class="lottery-group-online">{{ subtotal_pop(block, 'online_count', 'Recuento (ONLINE)', True) }}</td><td class="lottery-group-online">{{ subtotal_pop(block, 'online_net_sales', 'Ventas $ (ONLINE)') }}</td>
+          <td class="lottery-group-terminal">{{ subtotal_pop(block, 'sales', 'Ventas (Terminal)') }}</td><td class="lottery-group-terminal">{{ subtotal_pop(block, 'pagos', 'Pagos (Terminal)') }}</td><td class="lottery-group-terminal muted">—</td><td class="lottery-group-terminal">{{ subtotal_pop(block, 'comis', 'Comis (Terminal)') }}</td><td class="lottery-group-terminal">{{ subtotal_pop(block, 'prize_free_plays', 'Premios FP (Terminal)') }}</td><td class="lottery-group-terminal">{{ subtotal_pop(block, 'total_comm', 'Total Comm (Terminal)') }}</td>
+          <td class="lottery-group-skoff lottery-divider muted">—</td><td class="lottery-group-skoff muted">—</td><td class="lottery-group-skoff">{{ subtotal_pop(block, 'pays_units', 'Pagos U (SKOFF)', True) }}</td><td class="lottery-group-skoff">{{ subtotal_pop(block, 'pays_amount', 'Pagos $ (SKOFF)') }}</td><td class="lottery-group-skoff">{{ subtotal_pop(block, 'skoff_sales_amount', 'Monto Ventas (SKOFF)') }}</td><td class="lottery-group-skoff">{{ subtotal_pop(block, 'sales_comm', 'Comm Ventas (SKOFF)') }}</td><td class="lottery-group-skoff muted">—</td>
+          <td class="muted lottery-col-chase">—</td>
+          <td class="muted">—</td>
+        </tr>
+        <tr class="lottery-row-debito {{ 'lottery-block-alt' if block.iso_week is even else '' }}">
+          <td class="historial-col-day"></td>
+          <td class="lottery-group-online muted">—</td><td class="lottery-group-online">{{ breakdown_pop('deb-' ~ block.iso_year ~ '-' ~ block.iso_week ~ '-E', 'Online Ventas $ (E = Subtotal Ventas $ − Subtotal Ventas)', block.debito.online_net_sales, block.debito_breakdowns.online_net_sales) }}</td>
+          <td class="lottery-group-terminal">{{ breakdown_pop('deb-' ~ block.iso_year ~ '-' ~ block.iso_week ~ '-F', 'Ventas (F = Subtotal Ventas + Pagos + Comis + Premios FP + 10)', block.debito.sales, block.debito_breakdowns.sales) }}</td><td class="lottery-group-terminal muted">—</td><td class="lottery-group-terminal muted">—</td><td class="lottery-group-terminal muted">—</td><td class="lottery-group-terminal muted">—</td><td class="lottery-group-terminal muted">—</td>
+          <td class="lottery-group-skoff lottery-divider muted">—</td><td class="lottery-group-skoff muted">—</td><td class="lottery-group-skoff muted">—</td><td class="lottery-group-skoff">{{ breakdown_pop('deb-' ~ block.iso_year ~ '-' ~ block.iso_week ~ '-Q', 'Pagos $ (Q = Subtotal Pagos $ + Monto Ventas + Comm Ventas)', block.debito.pays_amount, block.debito_breakdowns.pays_amount) }}</td><td class="lottery-group-skoff muted">—</td><td class="lottery-group-skoff muted">—</td><td class="lottery-group-skoff muted">—</td>
+          <td class="lottery-col-chase">
+            <div class="lottery-chase-box">
+              <div class="lottery-debito-total"><strong>${{ breakdown_pop('deb-' ~ block.iso_year ~ '-' ~ block.iso_week ~ '-V', 'Cuenta Final del bloque (V = F + Q, Debito) — lo que se paga a Chase Bank', block.debito.net_debit, block.debito_breakdowns.net_debit) }}</strong></div>
+              <form method="post" action="{{ url_for('carga_datos_lottery_bloque_chase', iso_year=block.iso_year, iso_week=block.iso_week) }}" class="lottery-chase-form">
+                <input type="hidden" name="year" value="{{ year }}">
+                <input type="hidden" name="month" value="{{ month }}">
+                <input type="date" name="chase_bank_date" value="{{ block.chase_bank_date or block.suggested_chase_date }}">
+                <button type="submit" class="btn-secondary">Guardar</button>
+              </form>
+              {% if block.chase_payment_missing %}
+              <span class="lottery-chase-warning" title="No se encontró en Chase ningún movimiento con Detalle &quot;LOTTERY&quot; en esta fecha.">Falta el pago de Lottery este día en Chase</span>
+              {% endif %}
+            </div>
+          </td>
+          <td class="muted">—</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if blocks %}
+  <div style="margin-top: 14px; text-align: right; position: relative;">
+    <button type="button" class="btn-accent popover-trigger" data-popover-target="export-lottery">Exportar</button>
+    <div class="popover-panel export-menu" id="export-lottery">
+      <a href="{{ url_for('carga_datos_lottery_exportar', year=year, month=month) }}">Excel</a>
+      <a href="{{ url_for('carga_datos_lottery_exportar_pdf', year=year, month=month) }}">PDF</a>
+    </div>
+  </div>
+  {% endif %}
+</div>
+
 {% endblock %}

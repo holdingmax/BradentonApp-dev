@@ -1,4 +1,85 @@
 {% extends "base.html" %}
+{% block head_extra %}
+<style>
+  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .historial-nav-btn { text-decoration: none; display: inline-block; }
+  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
+  .historial-table-wrap { overflow-x: auto; margin-top: 18px; border: 1px solid var(--border); border-radius: 10px; }
+  /* Ancho completo del contenedor -- pedido explícito del usuario
+     (2026-09-19): "aproveches el width completo para que el cuadro no
+     tenga ese espacio en blanco... manteniendose como esta ahora". Sin
+     min-width (eso seguía forzando columnas más anchas de lo necesario,
+     el bug real corregido antes), pero con width:100% en vez de auto --
+     el navegador reparte el espacio sobrante entre columnas sin volver a
+     "apretar" nada (el padding de celda no cambia). */
+  .historial-table.caja-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12.5px; white-space: nowrap; }
+  .caja-table th, .caja-table td { padding: 7px 12px; text-align: left; }
+  /* Food Truck/Ice -- columna normal de la misma tabla, separada del resto
+     solo por un espacio chico (esta columna vacía, sin borde ni fondo) --
+     pedido explícito del usuario (2026-09-19): "a la derecha de este solo
+     dejando un espacio... tiene que ser una columna normal no un cuadro". */
+  .caja-table th.caja-col-gap, .caja-table td.caja-col-gap { width: 26px; padding: 0; border: none; background: transparent; }
+  /* Encabezados centrados, en una sola fila sin agrupar -- pedido
+     explícito del usuario (2026-09-19): "saca los titulos de arriba del
+     cuadro de store info y chase" -- las cabeceras "Store Info"/"Chase"
+     (antes un colspan por encima de sus columnas) se sacaron del todo,
+     ahora es un solo renglón de títulos simétrico. */
+  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); text-align: center; vertical-align: middle; }
+  .caja-table td { text-align: right; }
+  .caja-table td.historial-col-day { text-align: center; }
+  .historial-table tbody tr { border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
+  .historial-row-today { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .historial-col-day { font-weight: 700; width: 40px; }
+  .historial-badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
+  .historial-badge-manual { background: var(--accent-soft); color: var(--accent); }
+  .caja-gettel-tag { margin-left: 4px; }
+  /* Fila "Total del mes" -- pedido explícito del usuario (2026-09-18): más
+     ancha/espaciosa ("que no sea algo apretado") y con el mismo color
+     temático que el resto de Caja (var(--accent-soft), el naranja del
+     módulo) de fondo. El texto NO lleva el color de acento -- pedido
+     explícito del usuario (2026-09-19): "el color del texto tambien se
+     pinto, no deberia ser asi, deberia estar en negrita" -- queda con el
+     color de texto normal de la tabla, solo en negrita. */
+  .caja-totals-row td { font-weight: 700; background: var(--accent-soft); border-top: 2px solid var(--accent); padding-top: 11px; padding-bottom: 11px; }
+  .chase-amount-neg { color: var(--error); }
+  .chase-amount-pos { color: var(--success); }
+
+  /* Cuadros flotantes "qué valores usaron para llegar a ese resultado" --
+     pedido explícito del usuario (2026-09-19), mismo componente visual ya
+     usado en Store Info (reporte_store_info_historial.html), copiado acá
+     porque no vive en base.html (mismo criterio ya aplicado en Lottery). */
+  .totals-breakdown-popover { min-width: 220px; }
+  .totals-breakdown-title { font-weight: 700; font-size: 11.5px; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  .totals-breakdown-row { display: flex; justify-content: space-between; gap: 16px; padding: 2px 0; }
+  .totals-breakdown-row span:first-child { color: var(--text-soft); }
+
+  .caja-saldo-box { margin-top: 16px; padding: 14px 16px; background: var(--accent-soft); border-radius: 10px; }
+  .caja-saldo-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; }
+  .caja-saldo-form > div { display: flex; flex-direction: column; gap: 4px; }
+  .caja-saldo-form input[type=number] { padding: 6px 8px; width: 160px; }
+  .caja-saldo-hint { font-size: 11px; }
+
+  .caja-expense-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; }
+  .caja-expense-form > div { display: flex; flex-direction: column; gap: 4px; }
+  .caja-expense-form input { padding: 6px 8px; }
+  .caja-pending { margin-top: 16px; padding: 12px 14px; border: 1px solid var(--warning, #D97706); border-radius: 10px; background: color-mix(in srgb, var(--warning, #D97706) 6%, transparent); }
+  .caja-pending h3 { margin: 0 0 4px; font-size: 14px; }
+  .caja-pending-row { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; padding: 10px 0; border-top: 1px solid var(--border); }
+  .caja-pending-row:first-of-type { border-top: none; }
+  .caja-pending-row > form:first-child { flex: 1 1 auto; min-width: 0; }
+  .caja-pending-row button { margin-top: 0; }
+  .caja-pending-file { font-size: 11px; }
+  .caja-upload-form { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
+  .caja-detail-form { display: flex; align-items: center; gap: 8px; }
+  .caja-detail-form input[type=text] { padding: 4px 8px; min-width: 220px; }
+  .caja-detail-form button { margin-top: 0; padding: 4px 10px; font-size: 12px; }
+  .caja-detail-form input.caja-detail-missing { border-color: var(--warning, #D97706); }
+  .historial-col-action { text-align: right; white-space: nowrap; }
+  .historial-col-action form button { margin-top: 0; padding: 5px 10px; font-size: 12px; }
+</style>
+{% endblock %}
 {% block main_class %}main-full{% endblock %}
 {% block crumbs %}
 <nav class="crumbs"><span class="current">Caja</span></nav>
@@ -245,83 +326,4 @@
   {% endif %}
 </div>
 
-<style>
-  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
-  .historial-nav-btn { text-decoration: none; display: inline-block; }
-  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
-  .historial-table-wrap { overflow-x: auto; margin-top: 18px; border: 1px solid var(--border); border-radius: 10px; }
-  /* Ancho completo del contenedor -- pedido explícito del usuario
-     (2026-09-19): "aproveches el width completo para que el cuadro no
-     tenga ese espacio en blanco... manteniendose como esta ahora". Sin
-     min-width (eso seguía forzando columnas más anchas de lo necesario,
-     el bug real corregido antes), pero con width:100% en vez de auto --
-     el navegador reparte el espacio sobrante entre columnas sin volver a
-     "apretar" nada (el padding de celda no cambia). */
-  .historial-table.caja-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12.5px; white-space: nowrap; }
-  .caja-table th, .caja-table td { padding: 7px 12px; text-align: left; }
-  /* Food Truck/Ice -- columna normal de la misma tabla, separada del resto
-     solo por un espacio chico (esta columna vacía, sin borde ni fondo) --
-     pedido explícito del usuario (2026-09-19): "a la derecha de este solo
-     dejando un espacio... tiene que ser una columna normal no un cuadro". */
-  .caja-table th.caja-col-gap, .caja-table td.caja-col-gap { width: 26px; padding: 0; border: none; background: transparent; }
-  /* Encabezados centrados, en una sola fila sin agrupar -- pedido
-     explícito del usuario (2026-09-19): "saca los titulos de arriba del
-     cuadro de store info y chase" -- las cabeceras "Store Info"/"Chase"
-     (antes un colspan por encima de sus columnas) se sacaron del todo,
-     ahora es un solo renglón de títulos simétrico. */
-  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); text-align: center; vertical-align: middle; }
-  .caja-table td { text-align: right; }
-  .caja-table td.historial-col-day { text-align: center; }
-  .historial-table tbody tr { border-bottom: 1px solid var(--border); }
-  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
-  .historial-row-today { outline: 2px solid var(--accent); outline-offset: -2px; }
-  .historial-col-day { font-weight: 700; width: 40px; }
-  .historial-badge { display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 11.5px; font-weight: 600; white-space: nowrap; }
-  .historial-badge-manual { background: var(--accent-soft); color: var(--accent); }
-  .caja-gettel-tag { margin-left: 4px; }
-  /* Fila "Total del mes" -- pedido explícito del usuario (2026-09-18): más
-     ancha/espaciosa ("que no sea algo apretado") y con el mismo color
-     temático que el resto de Caja (var(--accent-soft), el naranja del
-     módulo) de fondo. El texto NO lleva el color de acento -- pedido
-     explícito del usuario (2026-09-19): "el color del texto tambien se
-     pinto, no deberia ser asi, deberia estar en negrita" -- queda con el
-     color de texto normal de la tabla, solo en negrita. */
-  .caja-totals-row td { font-weight: 700; background: var(--accent-soft); border-top: 2px solid var(--accent); padding-top: 11px; padding-bottom: 11px; }
-  .chase-amount-neg { color: var(--error); }
-  .chase-amount-pos { color: var(--success); }
-
-  /* Cuadros flotantes "qué valores usaron para llegar a ese resultado" --
-     pedido explícito del usuario (2026-09-19), mismo componente visual ya
-     usado en Store Info (reporte_store_info_historial.html), copiado acá
-     porque no vive en base.html (mismo criterio ya aplicado en Lottery). */
-  .totals-breakdown-popover { min-width: 220px; }
-  .totals-breakdown-title { font-weight: 700; font-size: 11.5px; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
-  .totals-breakdown-row { display: flex; justify-content: space-between; gap: 16px; padding: 2px 0; }
-  .totals-breakdown-row span:first-child { color: var(--text-soft); }
-
-  .caja-saldo-box { margin-top: 16px; padding: 14px 16px; background: var(--accent-soft); border-radius: 10px; }
-  .caja-saldo-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; }
-  .caja-saldo-form > div { display: flex; flex-direction: column; gap: 4px; }
-  .caja-saldo-form input[type=number] { padding: 6px 8px; width: 160px; }
-  .caja-saldo-hint { font-size: 11px; }
-
-  .caja-expense-form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 16px; }
-  .caja-expense-form > div { display: flex; flex-direction: column; gap: 4px; }
-  .caja-expense-form input { padding: 6px 8px; }
-  .caja-pending { margin-top: 16px; padding: 12px 14px; border: 1px solid var(--warning, #D97706); border-radius: 10px; background: color-mix(in srgb, var(--warning, #D97706) 6%, transparent); }
-  .caja-pending h3 { margin: 0 0 4px; font-size: 14px; }
-  .caja-pending-row { display: flex; align-items: flex-end; gap: 12px; flex-wrap: wrap; padding: 10px 0; border-top: 1px solid var(--border); }
-  .caja-pending-row:first-of-type { border-top: none; }
-  .caja-pending-row > form:first-child { flex: 1 1 auto; min-width: 0; }
-  .caja-pending-row button { margin-top: 0; }
-  .caja-pending-file { font-size: 11px; }
-  .caja-upload-form { margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); display: flex; flex-direction: column; gap: 8px; }
-  .caja-detail-form { display: flex; align-items: center; gap: 8px; }
-  .caja-detail-form input[type=text] { padding: 4px 8px; min-width: 220px; }
-  .caja-detail-form button { margin-top: 0; padding: 4px 10px; font-size: 12px; }
-  .caja-detail-form input.caja-detail-missing { border-color: var(--warning, #D97706); }
-  .historial-col-action { text-align: right; white-space: nowrap; }
-  .historial-col-action form button { margin-top: 0; padding: 5px 10px; font-size: 12px; }
-</style>
 {% endblock %}

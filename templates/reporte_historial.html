@@ -1,4 +1,103 @@
 {% extends "base.html" %}
+{% block head_extra %}
+<style>
+  .historial-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .historial-nav-btn { text-decoration: none; display: inline-block; }
+  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
+  .historial-table-wrap {
+    overflow-x: auto;
+    margin-top: 18px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  .historial-table { width: 100%; min-width: 480px; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .historial-table th, .historial-table td { padding: 9px 14px; text-align: left; }
+  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr { border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
+  .historial-row-today { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .historial-col-day { font-weight: 700; width: 40px; }
+  /* Centrada dentro de su propia columna -- pedido explícito del usuario
+     (2026-09-19), revirtiendo el fijado al borde derecho de la tanda
+     anterior ("no queria que se vea asi... no queria una linea
+     divisoria, que esten normal solo que mas centrados"): sin sticky, sin
+     el box-shadow divisorio, solo el link centrado en vez de pegado a la
+     izquierda (contra "Total ventas") o forzado al borde derecho. */
+  .historial-col-action { text-align: center; white-space: nowrap; }
+  /* "!" de los días a revisar (pedido del usuario, 2026-11-11). */
+  .rev-flag { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; margin-left: 8px; border-radius: 999px; background: var(--warning, #D97706); color: #fff; font-size: 12px; font-weight: 800; line-height: 1; text-decoration: none; vertical-align: middle; }
+  .rev-flag:hover { filter: brightness(0.92); color: #fff; }
+  .rev-flag-static { margin: 0 4px 0 0; }
+  .rev-scan-form { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 14px; font-size: 12.5px; }
+  .rev-scan-form .rev-flag { vertical-align: middle; }
+  .rev-legend { margin: 10px 0 0; font-size: 12.5px; }
+  .historial-col-check { width: 28px; text-align: center; }
+  .dept-delete-toolbar {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    margin-top: 14px; flex-wrap: wrap;
+  }
+  .dept-delete-selectall { display: flex; align-items: center; gap: 6px; font-size: 12.5px; }
+  .dept-delete-toolbar button { margin-top: 0; }
+  .historial-badge {
+    display: inline-block;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .historial-badge-ocr { background: var(--success-soft); color: var(--success); }
+  .historial-badge-manual { background: var(--warning-soft); color: var(--warning); }
+  .historial-badge-mixed { background: var(--accent-soft); color: var(--accent); }
+
+  /* Categorías como columnas fijas en la tabla del mes -- pedido explícito
+     del usuario (2026-09-16, segunda tanda): antes eran pastillas de color
+     adentro de la celda "Departamentos" ("datos inecesarios" también en
+     esa forma), ahora son 6 columnas de la propia tabla (Tabacco/SODA/
+     BEER-WINE/LOTTO/KIA-TOY/Resto) -- un día sin nada en una categoría
+     muestra "$0" en vez de desaparecer. El desglose de departamentos
+     crudos sigue como tooltip nativo (title) sobre el badge de conteo. */
+  /* Título Y valor centrados en su celda -- pedido explícito del usuario
+     (2026-09-19): antes el valor (td) quedaba a la derecha -- y por
+     especificidad CSS (".cat-col" con 2 clases le ganaba a "thead th" con
+     1 clase + 2 elementos, sin importar el orden en la hoja de estilos),
+     el título (th) TAMBIÉN terminaba heredando ese mismo right-align en
+     vez del center ya pensado para él más abajo. Una sola regla acá,
+     aplicada a título y valor por igual, sin esa pelea de especificidad. */
+  .dept-cat-table .cat-col { text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  /* Departamentos y Total ventas alineados al centro -- pedido explícito
+     del usuario (2026-09-19), completando el mismo criterio ya aplicado a
+     las columnas de categoría: "te falto aplicarlo a la columna de
+     Departamentos y total ventas que queden alineadas". */
+  .dept-cat-table thead th.dept-detail-col,
+  .dept-cat-table thead th.dept-total-col,
+  .historial-table td.dept-detail-col,
+  .historial-table td.dept-total-col { text-align: center; }
+  .historial-table td.dept-total-col { white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 700; }
+
+  /* Distribución de columnas más simétrica -- pedido explícito del usuario
+     (2026-09-18): encabezados centrados (mismo criterio ya aplicado en
+     Caja) y celdas angostas (check/Día) centradas para que la fila de
+     títulos quede prolija en vez de todo pegado a la izquierda mientras
+     las columnas de categoría, numéricas, quedan a la derecha. */
+  .dept-cat-table thead th { text-align: center; vertical-align: middle; }
+  .historial-table td.historial-col-day { text-align: center; }
+
+  .reporte-totals-row td { font-weight: 700; background: var(--surface-alt); border-top: 2px solid var(--border); }
+  /* Reporte mensual del POS (2026-10-06): columnas para comparar. */
+  .monthly-col { background: var(--accent-soft); }
+  .monthly-ok { color: var(--success); }
+  .monthly-bad { color: var(--error); font-weight: 700; }
+  .monthly-count-off { color: #B45309; }
+</style>
+{% endblock %}
 {% block main_class %}main-full{% endblock %}
 {% block crumbs %}
 <nav class="crumbs"><a href="{{ url_for('carga_datos_index') }}">Reporte Diario</a><span class="current">Reportes guardados</span></nav>
@@ -199,101 +298,4 @@
   {% endif %}
 </div>
 
-<style>
-  .historial-nav {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 12px;
-  }
-  .historial-nav-btn { text-decoration: none; display: inline-block; }
-  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
-  .historial-table-wrap {
-    overflow-x: auto;
-    margin-top: 18px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-  }
-  .historial-table { width: 100%; min-width: 480px; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
-  .historial-table th, .historial-table td { padding: 9px 14px; text-align: left; }
-  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
-  .historial-table tbody tr { border-bottom: 1px solid var(--border); }
-  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
-  .historial-row-today { outline: 2px solid var(--accent); outline-offset: -2px; }
-  .historial-col-day { font-weight: 700; width: 40px; }
-  /* Centrada dentro de su propia columna -- pedido explícito del usuario
-     (2026-09-19), revirtiendo el fijado al borde derecho de la tanda
-     anterior ("no queria que se vea asi... no queria una linea
-     divisoria, que esten normal solo que mas centrados"): sin sticky, sin
-     el box-shadow divisorio, solo el link centrado en vez de pegado a la
-     izquierda (contra "Total ventas") o forzado al borde derecho. */
-  .historial-col-action { text-align: center; white-space: nowrap; }
-  /* "!" de los días a revisar (pedido del usuario, 2026-11-11). */
-  .rev-flag { display: inline-flex; align-items: center; justify-content: center; width: 18px; height: 18px; margin-left: 8px; border-radius: 999px; background: var(--warning, #D97706); color: #fff; font-size: 12px; font-weight: 800; line-height: 1; text-decoration: none; vertical-align: middle; }
-  .rev-flag:hover { filter: brightness(0.92); color: #fff; }
-  .rev-flag-static { margin: 0 4px 0 0; }
-  .rev-scan-form { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0 0 14px; font-size: 12.5px; }
-  .rev-scan-form .rev-flag { vertical-align: middle; }
-  .rev-legend { margin: 10px 0 0; font-size: 12.5px; }
-  .historial-col-check { width: 28px; text-align: center; }
-  .dept-delete-toolbar {
-    display: flex; align-items: center; justify-content: space-between; gap: 12px;
-    margin-top: 14px; flex-wrap: wrap;
-  }
-  .dept-delete-selectall { display: flex; align-items: center; gap: 6px; font-size: 12.5px; }
-  .dept-delete-toolbar button { margin-top: 0; }
-  .historial-badge {
-    display: inline-block;
-    padding: 3px 9px;
-    border-radius: 999px;
-    font-size: 11.5px;
-    font-weight: 600;
-    white-space: nowrap;
-  }
-  .historial-badge-ocr { background: var(--success-soft); color: var(--success); }
-  .historial-badge-manual { background: var(--warning-soft); color: var(--warning); }
-  .historial-badge-mixed { background: var(--accent-soft); color: var(--accent); }
-
-  /* Categorías como columnas fijas en la tabla del mes -- pedido explícito
-     del usuario (2026-09-16, segunda tanda): antes eran pastillas de color
-     adentro de la celda "Departamentos" ("datos inecesarios" también en
-     esa forma), ahora son 6 columnas de la propia tabla (Tabacco/SODA/
-     BEER-WINE/LOTTO/KIA-TOY/Resto) -- un día sin nada en una categoría
-     muestra "$0" en vez de desaparecer. El desglose de departamentos
-     crudos sigue como tooltip nativo (title) sobre el badge de conteo. */
-  /* Título Y valor centrados en su celda -- pedido explícito del usuario
-     (2026-09-19): antes el valor (td) quedaba a la derecha -- y por
-     especificidad CSS (".cat-col" con 2 clases le ganaba a "thead th" con
-     1 clase + 2 elementos, sin importar el orden en la hoja de estilos),
-     el título (th) TAMBIÉN terminaba heredando ese mismo right-align en
-     vez del center ya pensado para él más abajo. Una sola regla acá,
-     aplicada a título y valor por igual, sin esa pelea de especificidad. */
-  .dept-cat-table .cat-col { text-align: center; white-space: nowrap; font-variant-numeric: tabular-nums; }
-  /* Departamentos y Total ventas alineados al centro -- pedido explícito
-     del usuario (2026-09-19), completando el mismo criterio ya aplicado a
-     las columnas de categoría: "te falto aplicarlo a la columna de
-     Departamentos y total ventas que queden alineadas". */
-  .dept-cat-table thead th.dept-detail-col,
-  .dept-cat-table thead th.dept-total-col,
-  .historial-table td.dept-detail-col,
-  .historial-table td.dept-total-col { text-align: center; }
-  .historial-table td.dept-total-col { white-space: nowrap; font-variant-numeric: tabular-nums; font-weight: 700; }
-
-  /* Distribución de columnas más simétrica -- pedido explícito del usuario
-     (2026-09-18): encabezados centrados (mismo criterio ya aplicado en
-     Caja) y celdas angostas (check/Día) centradas para que la fila de
-     títulos quede prolija en vez de todo pegado a la izquierda mientras
-     las columnas de categoría, numéricas, quedan a la derecha. */
-  .dept-cat-table thead th { text-align: center; vertical-align: middle; }
-  .historial-table td.historial-col-day { text-align: center; }
-
-  .reporte-totals-row td { font-weight: 700; background: var(--surface-alt); border-top: 2px solid var(--border); }
-  /* Reporte mensual del POS (2026-10-06): columnas para comparar. */
-  .monthly-col { background: var(--accent-soft); }
-  .monthly-ok { color: var(--success); }
-  .monthly-bad { color: var(--error); font-weight: 700; }
-  .monthly-count-off { color: #B45309; }
-</style>
 {% endblock %}

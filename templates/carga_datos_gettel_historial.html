@@ -1,4 +1,23 @@
 {% extends "base.html" %}
+{% block head_extra %}
+<style>
+  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .historial-nav-btn { text-decoration: none; display: inline-block; }
+  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
+  .historial-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
+  .historial-table { width: 100%; min-width: 420px; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .historial-table th, .historial-table td { padding: 9px 14px; text-align: left; }
+  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr { border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
+  .historial-col-day { font-weight: 700; }
+  .reporte-totals-row td { font-weight: 700; background: var(--surface-alt); border-top: 2px solid var(--border); }
+  .dif-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+  .dif-ok { background: var(--success-soft); color: var(--success); }
+  .dif-mismatch { background: var(--warning-soft); color: var(--warning); }
+</style>
+{% endblock %}
 {% block main_class %}main-full{% endblock %}
 {% block crumbs %}
 <nav class="crumbs"><a href="{{ url_for('carga_datos_gettel') }}">Gettel / Toyota</a><span class="current">Guardado</span></nav>
@@ -78,21 +97,4 @@
   {% endif %}
 </div>
 
-<style>
-  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
-  .historial-nav-btn { text-decoration: none; display: inline-block; }
-  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
-  .historial-table-wrap { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
-  .historial-table { width: 100%; min-width: 420px; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
-  .historial-table th, .historial-table td { padding: 9px 14px; text-align: left; }
-  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
-  .historial-table tbody tr { border-bottom: 1px solid var(--border); }
-  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
-  .historial-col-day { font-weight: 700; }
-  .reporte-totals-row td { font-weight: 700; background: var(--surface-alt); border-top: 2px solid var(--border); }
-  .dif-badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; }
-  .dif-ok { background: var(--success-soft); color: var(--success); }
-  .dif-mismatch { background: var(--warning-soft); color: var(--warning); }
-</style>
 {% endblock %}

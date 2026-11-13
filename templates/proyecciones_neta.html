@@ -1,4 +1,37 @@
 {% extends "base.html" %}
+{% block head_extra %}
+<style>
+  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .historial-nav-btn { text-decoration: none; display: inline-block; }
+  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
+  .historial-table-wrap { overflow-x: auto; margin-top: 4px; border: 1px solid var(--border); border-radius: 10px; }
+  .historial-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .historial-table th, .historial-table td { padding: 7px 14px; text-align: left; white-space: nowrap; }
+  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
+  .card > h2 { margin-bottom: 16px; }
+
+  .neta-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-bottom: 18px; }
+  .neta-kpi { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); padding: 16px 18px; }
+  .neta-kpi-hero { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .neta-kpi-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-soft); }
+  .neta-kpi-value { font-size: 28px; font-weight: 700; margin: 4px 0 2px; font-variant-numeric: tabular-nums; }
+  .neta-kpi-sub { font-size: 12.5px; color: var(--text-soft); }
+  .neta-kpi-hero .neta-kpi-label, .neta-kpi-hero .neta-kpi-sub { color: rgba(255, 255, 255, 0.85); }
+
+  .neta-table th:nth-child(n+3), .neta-table td:nth-child(n+3) { text-align: right; font-variant-numeric: tabular-nums; }
+  .neta-col-src { white-space: normal !important; font-size: 12px; color: var(--text-soft); min-width: 260px; }
+  .neta-section td { background: var(--surface-alt); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-soft); border-top: 1px solid var(--border); }
+  .neta-group td { font-weight: 700; border-top: 1px solid var(--border); }
+  .neta-group a { text-decoration: underline; text-decoration-color: var(--border); text-underline-offset: 3px; }
+  .neta-line td:first-child { padding-left: 30px; }
+  .neta-proj { color: var(--accent); font-weight: 600; }
+  .neta-total td { font-weight: 700; background: var(--surface-alt); border-top: 2px solid var(--border); }
+  .neta-net td { font-weight: 700; font-size: 15px; background: var(--accent-soft); border-top: 2px solid var(--accent); }
+  .neta-note { font-size: 12.5px; margin: 12px 0 0; line-height: 1.5; }
+  .neta-warn { margin: 0 0 12px; color: var(--error); font-size: 13px; }
+</style>
+{% endblock %}
 {% block main_class %}main-full{% endblock %}
 {% block content %}
 {% from "_month_jump.html" import month_jump %}
@@ -125,35 +158,4 @@
   </p>
 </div>
 
-<style>
-  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
-  .historial-nav-btn { text-decoration: none; display: inline-block; }
-  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
-  .historial-table-wrap { overflow-x: auto; margin-top: 4px; border: 1px solid var(--border); border-radius: 10px; }
-  .historial-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
-  .historial-table th, .historial-table td { padding: 7px 14px; text-align: left; white-space: nowrap; }
-  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
-  .card > h2 { margin-bottom: 16px; }
-
-  .neta-kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px; margin-bottom: 18px; }
-  .neta-kpi { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-sm); padding: 16px 18px; }
-  .neta-kpi-hero { background: var(--accent); border-color: var(--accent); color: #fff; }
-  .neta-kpi-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--text-soft); }
-  .neta-kpi-value { font-size: 28px; font-weight: 700; margin: 4px 0 2px; font-variant-numeric: tabular-nums; }
-  .neta-kpi-sub { font-size: 12.5px; color: var(--text-soft); }
-  .neta-kpi-hero .neta-kpi-label, .neta-kpi-hero .neta-kpi-sub { color: rgba(255, 255, 255, 0.85); }
-
-  .neta-table th:nth-child(n+3), .neta-table td:nth-child(n+3) { text-align: right; font-variant-numeric: tabular-nums; }
-  .neta-col-src { white-space: normal !important; font-size: 12px; color: var(--text-soft); min-width: 260px; }
-  .neta-section td { background: var(--surface-alt); font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-soft); border-top: 1px solid var(--border); }
-  .neta-group td { font-weight: 700; border-top: 1px solid var(--border); }
-  .neta-group a { text-decoration: underline; text-decoration-color: var(--border); text-underline-offset: 3px; }
-  .neta-line td:first-child { padding-left: 30px; }
-  .neta-proj { color: var(--accent); font-weight: 600; }
-  .neta-total td { font-weight: 700; background: var(--surface-alt); border-top: 2px solid var(--border); }
-  .neta-net td { font-weight: 700; font-size: 15px; background: var(--accent-soft); border-top: 2px solid var(--accent); }
-  .neta-note { font-size: 12.5px; margin: 12px 0 0; line-height: 1.5; }
-  .neta-warn { margin: 0 0 12px; color: var(--error); font-size: 13px; }
-</style>
 {% endblock %}

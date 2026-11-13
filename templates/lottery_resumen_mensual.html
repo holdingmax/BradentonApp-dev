@@ -1,4 +1,35 @@
 {% extends "base.html" %}
+{% block head_extra %}
+<style>
+  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 22px; padding-bottom: 18px; border-bottom: 1px solid var(--border); }
+  .historial-nav-btn { text-decoration: none; display: inline-block; }
+  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
+
+  .resumen-empty { margin-top: 18px; }
+
+  /* Tablas de cierre -- mismo lenguaje visual (amarillo/verde) que el
+     Excel real, para que el usuario reconozca de un vistazo qué fila es
+     cuál sin tener que leer letra por letra. Cada monto es un botón
+     .popover-trigger (mismo mecanismo genérico de base.html que ya usan
+     Store Info/Lottery historial) -- tocarlo muestra de dónde sale. */
+  .closing-tables { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; margin-top: 18px; }
+  .closing-table-block h3 { margin: 0 0 10px; font-size: 14.5px; }
+  .closing-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  .closing-table th { text-align: left; padding: 6px 10px; color: var(--text-soft); font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.03em; border-bottom: 1px solid var(--border); }
+  .closing-table th:not(:first-child), .closing-table td:not(:first-child) { text-align: right; }
+  .closing-table td { padding: 7px 10px; border-bottom: 1px solid var(--border); }
+  .closing-row-debe { background: #FEF9C3; }
+  .closing-row-haber { background: #DCFCE7; }
+  .closing-row-total td { font-weight: 700; border-top: 2px solid var(--border); background: var(--surface-alt); }
+  .closing-value { font-weight: 700; }
+
+  .totals-breakdown-popover { min-width: 240px; }
+  .totals-breakdown-title { font-weight: 700; font-size: 11.5px; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  .totals-breakdown-row { display: flex; justify-content: space-between; gap: 16px; padding: 2px 0; }
+  .totals-breakdown-row span:first-child { color: var(--text-soft); }
+</style>
+{% endblock %}
 {% block crumbs %}
 <nav class="crumbs"><a href="{{ url_for('carga_datos_lottery_historial') }}">Lottery</a><span class="current">Resumen mensual</span></nav>
 {% endblock %}
@@ -132,33 +163,4 @@
   {% endif %}
 </div>
 
-<style>
-  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 22px; padding-bottom: 18px; border-bottom: 1px solid var(--border); }
-  .historial-nav-btn { text-decoration: none; display: inline-block; }
-  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
-
-  .resumen-empty { margin-top: 18px; }
-
-  /* Tablas de cierre -- mismo lenguaje visual (amarillo/verde) que el
-     Excel real, para que el usuario reconozca de un vistazo qué fila es
-     cuál sin tener que leer letra por letra. Cada monto es un botón
-     .popover-trigger (mismo mecanismo genérico de base.html que ya usan
-     Store Info/Lottery historial) -- tocarlo muestra de dónde sale. */
-  .closing-tables { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; margin-top: 18px; }
-  .closing-table-block h3 { margin: 0 0 10px; font-size: 14.5px; }
-  .closing-table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
-  .closing-table th { text-align: left; padding: 6px 10px; color: var(--text-soft); font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.03em; border-bottom: 1px solid var(--border); }
-  .closing-table th:not(:first-child), .closing-table td:not(:first-child) { text-align: right; }
-  .closing-table td { padding: 7px 10px; border-bottom: 1px solid var(--border); }
-  .closing-row-debe { background: #FEF9C3; }
-  .closing-row-haber { background: #DCFCE7; }
-  .closing-row-total td { font-weight: 700; border-top: 2px solid var(--border); background: var(--surface-alt); }
-  .closing-value { font-weight: 700; }
-
-  .totals-breakdown-popover { min-width: 240px; }
-  .totals-breakdown-title { font-weight: 700; font-size: 11.5px; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
-  .totals-breakdown-row { display: flex; justify-content: space-between; gap: 16px; padding: 2px 0; }
-  .totals-breakdown-row span:first-child { color: var(--text-soft); }
-</style>
 {% endblock %}

@@ -1,4 +1,24 @@
 {% extends "base.html" %}
+{% block head_extra %}
+<style>
+  .historial-table-wrap { overflow-x: auto; margin-top: 10px; border: 1px solid var(--border); border-radius: 10px; }
+  .historial-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .historial-table th, .historial-table td { padding: 8px 14px; text-align: left; }
+  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
+  .prod-table { min-width: 640px; }
+  .prod-table th.num, .prod-table td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .prod-table .nowrap { white-space: nowrap; }
+  .prod-up { color: var(--error); font-weight: 600; }
+  .prod-down { color: var(--success); font-weight: 600; }
+  .prod-warn { color: var(--warning); font-weight: 600; }
+  .prod-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 18px; }
+  .prod-stat { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; }
+  .prod-stat-label { font-size: 12px; color: var(--text-soft); font-weight: 600; }
+  .prod-stat-value { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .prod-stat-note { font-size: 12.5px; color: var(--text-soft); }
+</style>
+{% endblock %}
 {% block crumbs %}
 <nav class="crumbs"><a href="{{ url_for('controles_productos') }}">Productos de proveedores</a><span class="current">{{ product.description }}</span></nav>
 {% endblock %}
@@ -109,22 +129,4 @@
   {% endif %}
 </div>
 
-<style>
-  .historial-table-wrap { overflow-x: auto; margin-top: 10px; border: 1px solid var(--border); border-radius: 10px; }
-  .historial-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
-  .historial-table th, .historial-table td { padding: 8px 14px; text-align: left; }
-  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
-  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
-  .prod-table { min-width: 640px; }
-  .prod-table th.num, .prod-table td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .prod-table .nowrap { white-space: nowrap; }
-  .prod-up { color: var(--error); font-weight: 600; }
-  .prod-down { color: var(--success); font-weight: 600; }
-  .prod-warn { color: var(--warning); font-weight: 600; }
-  .prod-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 18px; }
-  .prod-stat { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; gap: 4px; }
-  .prod-stat-label { font-size: 12px; color: var(--text-soft); font-weight: 600; }
-  .prod-stat-value { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
-  .prod-stat-note { font-size: 12.5px; color: var(--text-soft); }
-</style>
 {% endblock %}

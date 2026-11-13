@@ -4,9 +4,7 @@
 <nav class="crumbs"><a href="{{ url_for('chase') }}">Chase Bank</a><span class="current">Movimientos guardados</span></nav>
 {% endblock %}
 {% from "_table_filters_macros.html" import filter_styles, filter_config_button %}
-{% block head_extra %}{{ filter_styles() }}{% endblock %}
-{% block content %}
-{% from "_month_jump.html" import month_jump %}
+{% block head_extra %}{{ filter_styles() }}
 <style>
   /* Este bloque va arriba de todo el contenido a propósito -- pedido
      explícito del usuario (2026-09-14): esta página, con el mes entero de
@@ -108,6 +106,9 @@
   .chase-supplier-link { display: inline-block; margin-top: 6px; color: var(--accent); text-decoration: none; font-weight: 600; font-size: 12px; }
   .chase-supplier-link:hover { text-decoration: underline; }
 </style>
+{% endblock %}
+{% block content %}
+{% from "_month_jump.html" import month_jump %}
 <div class="page-header">
   <span class="eyebrow">Chase Bank</span>
   <h1>Movimientos guardados</h1>

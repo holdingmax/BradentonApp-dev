@@ -1,4 +1,79 @@
 {% extends "base.html" %}
+{% block head_extra %}
+<style>
+  .dept-sales-table-wrap {
+    overflow-x: auto;
+    margin-top: 4px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  .dept-sales-table {
+    width: 100%;
+    min-width: 760px;
+    border-collapse: separate;
+    border-spacing: 0;
+    font-size: 13.5px;
+  }
+  .dept-sales-table th,
+  .dept-sales-table td {
+    padding: 10px 14px;
+    text-align: right;
+    white-space: nowrap;
+  }
+  .dept-sales-table thead th {
+    background: var(--accent-soft);
+    color: var(--text);
+    font-weight: 700;
+    border-bottom: 1px solid var(--border);
+  }
+  .dept-sales-table thead tr:first-child th {
+    border-bottom: 1px solid var(--border);
+  }
+  .dept-sales-table thead tr:first-child th.dept-col-group {
+    text-align: center;
+    border-left: 2px solid var(--surface);
+  }
+  .dept-col-name {
+    text-align: left !important;
+    font-weight: 600;
+  }
+  .dept-sales-table tbody tr {
+    border-bottom: 1px solid var(--border);
+  }
+  .dept-sales-table tbody tr:nth-child(even) {
+    background: var(--surface-alt);
+  }
+  .dept-sales-table tbody tr.row-diff {
+    background: var(--error-soft);
+  }
+  .dept-sales-table tbody td:nth-child(5) {
+    border-left: 2px solid var(--surface);
+  }
+  .dept-sales-table thead th:nth-child(5) {
+    border-left: 2px solid var(--surface);
+  }
+  .cell-ok {
+    color: var(--success);
+  }
+  .cell-bad {
+    color: var(--error);
+    font-weight: 700;
+  }
+  .dept-status-ok {
+    color: var(--success);
+    font-weight: 600;
+  }
+  .dept-status-bad {
+    color: var(--error);
+    font-weight: 600;
+  }
+  .dept-total-row {
+    background: var(--accent-soft);
+    font-weight: 700;
+    border-top: 2px solid var(--border);
+  }
+</style>
+{% endblock %}
 {% block crumbs %}
 <nav class="crumbs"><span class="current">Cierre Mensual</span></nav>
 {% endblock %}
@@ -168,78 +243,5 @@
   {% endif %}
 </div>
 
-<style>
-  .dept-sales-table-wrap {
-    overflow-x: auto;
-    margin-top: 4px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-  }
-  .dept-sales-table {
-    width: 100%;
-    min-width: 760px;
-    border-collapse: separate;
-    border-spacing: 0;
-    font-size: 13.5px;
-  }
-  .dept-sales-table th,
-  .dept-sales-table td {
-    padding: 10px 14px;
-    text-align: right;
-    white-space: nowrap;
-  }
-  .dept-sales-table thead th {
-    background: var(--accent-soft);
-    color: var(--text);
-    font-weight: 700;
-    border-bottom: 1px solid var(--border);
-  }
-  .dept-sales-table thead tr:first-child th {
-    border-bottom: 1px solid var(--border);
-  }
-  .dept-sales-table thead tr:first-child th.dept-col-group {
-    text-align: center;
-    border-left: 2px solid var(--surface);
-  }
-  .dept-col-name {
-    text-align: left !important;
-    font-weight: 600;
-  }
-  .dept-sales-table tbody tr {
-    border-bottom: 1px solid var(--border);
-  }
-  .dept-sales-table tbody tr:nth-child(even) {
-    background: var(--surface-alt);
-  }
-  .dept-sales-table tbody tr.row-diff {
-    background: var(--error-soft);
-  }
-  .dept-sales-table tbody td:nth-child(5) {
-    border-left: 2px solid var(--surface);
-  }
-  .dept-sales-table thead th:nth-child(5) {
-    border-left: 2px solid var(--surface);
-  }
-  .cell-ok {
-    color: var(--success);
-  }
-  .cell-bad {
-    color: var(--error);
-    font-weight: 700;
-  }
-  .dept-status-ok {
-    color: var(--success);
-    font-weight: 600;
-  }
-  .dept-status-bad {
-    color: var(--error);
-    font-weight: 600;
-  }
-  .dept-total-row {
-    background: var(--accent-soft);
-    font-weight: 700;
-    border-top: 2px solid var(--border);
-  }
-</style>
 {% endif %}
 {% endblock %}

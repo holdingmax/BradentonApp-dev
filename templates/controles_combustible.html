@@ -1,4 +1,111 @@
 {% extends "base.html" %}
+{% block head_extra %}
+<style>
+  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .historial-nav-btn { text-decoration: none; display: inline-block; }
+  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
+  .historial-table-wrap { overflow-x: auto; margin-top: 14px; border: 1px solid var(--border); border-radius: 10px; }
+  .historial-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .historial-table th, .historial-table td { padding: 8px 14px; text-align: left; white-space: nowrap; vertical-align: top; }
+  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); vertical-align: bottom; }
+  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
+
+  /* Cuadro Físico (como la hoja del Cierre) y cuadros flotantes de las explicaciones (2026-11-03). */
+  .cb-sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  .cb-sheet-head h2 { margin: 0; }
+  .cb-ppp-chip { padding: 4px 12px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 13px; font-variant-numeric: tabular-nums; }
+  .cb-sheet { font-size: 13.5px; }
+  .cb-sheet .cb-col-date { width: 70px; }
+  .cb-sheet .cb-col-num { width: 140px; }
+  .cb-sheet th:nth-child(n+4), .cb-sheet td:nth-child(n+4) { text-align: right; font-variant-numeric: tabular-nums; }
+  .cb-sheet tbody tr:nth-child(even) { background: none; }
+  .cb-sheet tbody td { border-bottom: 1px solid var(--border); padding-top: 12px; padding-bottom: 12px; }
+  .cb-sheet tbody tr:last-child td { border-bottom: 0; }
+  .cb-sheet tbody tr.cb-sheet-section th { padding: 12px 14px 10px; border-bottom: 1px solid var(--border); font-size: 12px; font-weight: 600; color: var(--text-soft); background: var(--surface-alt); white-space: nowrap; }
+  .cb-sheet tbody tr.cb-sheet-section th:first-child { font-size: 13px; font-weight: 700; color: var(--accent); }
+  .cb-sheet-next { margin-top: 22px; }
+  .cb-sheet { table-layout: fixed; min-width: 640px; }
+  .cb-sheet-total td { font-weight: 700; border-top: 2px solid var(--border); background: var(--accent-soft); }
+  .cb-sheet-sales td { color: var(--error); }
+  .cb-sheet-sales td:first-child { font-weight: 600; }
+  .cb-sheet-final td { font-weight: 700; background: var(--accent-soft); }
+  .cb-sheet-diff td:first-child { font-weight: 600; }
+  .cb-soft { color: var(--text-soft); }
+  .cb-pct { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+  .cb-pct-ok { background: var(--success-soft); color: var(--success); }
+  .cb-pct-bad { background: var(--error-soft); color: var(--error); }
+  .cb-note { font-size: 11.5px; font-weight: 400; color: var(--text-soft); margin-left: 4px; }
+
+  .cb-edit-links { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-top: 10px; }
+  button.cb-edit-link { display: inline-block; font-size: 12.5px; font-weight: 400; }
+  .cb-bottom { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 24px; align-items: start; }
+  .cb-bottom > .card { margin-bottom: 0; }
+  @media (max-width: 1100px) { .cb-bottom { grid-template-columns: minmax(0, 1fr); } }
+  .cb-photos h2 { margin: 0 0 12px; }
+  .cb-photo-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 12px; }
+  .cb-photo { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+  .cb-photo form { margin: 0; }
+  button.cb-photo-thumb { display: block; width: 100%; padding: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface-alt); }
+  .cb-photo-thumb img { display: block; width: 100%; height: 190px; object-fit: cover; object-position: top; }
+  /* Todas las fotos se abren en el mismo marco y al mismo ancho (pedido del
+     usuario, 2026-11-11): los dos reportes del ticket tienen distinto largo, y
+     a la misma altura uno se veía más ancho y con la letra más grande. */
+  .cb-pop-photo { padding: 6px; box-sizing: border-box; width: min(calc(100vw - 16px), calc(40vh + 12px)); height: calc(86vh + 12px); overflow: hidden; }
+  .cb-pop-photo img { display: block; width: 100%; height: auto; max-height: 100%; object-fit: contain; object-position: top; }
+  button.cb-photo-del { font-size: 12px; font-weight: 400; }
+  .cb-photo-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 16px; }
+  .cb-photo-form input[type=file] { max-width: 100%; font-size: 12.5px; }
+  .cb-photo-form button { margin: 0; }
+  .cb-pop { width: 340px; max-width: calc(100vw - 16px); padding: 12px 14px; font-size: 12.5px; line-height: 1.5; }
+  .cb-pop-wide { width: 460px; }
+  .cb-pop p { margin: 0 0 8px; }
+  .cb-pop-title { font-weight: 700; font-size: 13.5px; margin-bottom: 6px; color: var(--accent); }
+  .cb-calc { display: grid; grid-template-columns: 1fr auto; gap: 6px 14px; padding: 8px 10px; border-radius: 8px; background: var(--surface-alt); font-variant-numeric: tabular-nums; margin-bottom: 8px; }
+  .cb-calc-3 { grid-template-columns: 1fr auto auto; }
+  .cb-calc strong, .cb-calc em { text-align: right; font-weight: 600; }
+  .cb-calc em { font-style: normal; font-size: 11px; color: var(--text-soft); text-transform: uppercase; }
+  .cb-calc .cb-calc-total { padding-top: 3px; border-top: 1px solid var(--border); font-weight: 700; }
+  .cb-calc-result { font-variant-numeric: tabular-nums; }
+  .cb-edit-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin-bottom: 8px; }
+  .cb-edit-form label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--text-soft); }
+  .cb-edit-form input { width: 120px; }
+  .cb-edit-form button { margin: 0; }
+  .cb-pop-table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .cb-pop-table th { font-size: 11px; color: var(--text-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
+  .cb-pop-table th, .cb-pop-table td { padding: 6px 6px; text-align: right; white-space: nowrap; }
+  .cb-pop-table th:first-child, .cb-pop-table td:first-child, .cb-pop-table th:nth-child(2), .cb-pop-table td:nth-child(2) { text-align: left; }
+
+  .cb-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; margin: 24px 0; }
+  .cb-tile { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 14px 16px; box-shadow: var(--shadow-sm); }
+  .cb-tile-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--accent); margin-bottom: 10px; }
+  .cb-lines { display: grid; grid-template-columns: 1fr auto; gap: 10px 12px; font-size: 13.5px; }
+  .cb-lines strong { text-align: right; }
+  .cb-lines-3 { grid-template-columns: 1fr auto auto; column-gap: 22px; }
+  .cb-lines-3 em { font-style: normal; font-size: 12px; font-weight: 600; color: var(--text-soft); text-align: right; }
+  .cb-lines-3 em.cb-col-center { text-align: center; }
+  .cb-total { padding-top: 9px; border-top: 1px solid var(--border); font-weight: 700; }
+  .cb-sub { display: block; font-size: 11.5px; color: var(--text-soft); text-align: right; }
+  .cb-foot { font-size: 12px; color: var(--text-soft); margin: 10px 0 0; line-height: 1.45; }
+  .cb-empty { font-size: 13px; margin: 0; }
+  .cb-subtitle { margin: 22px 0 4px; font-size: 15px; }
+  .cb-bad { color: var(--error); }
+  .cb-warn { color: var(--warning); }
+  .cb-link { background: none; border: 0; padding: 0; margin: 0; box-shadow: none; font: inherit; font-weight: inherit; color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
+  .cb-chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 700; }
+  .cb-chip-ok { background: var(--success-soft); color: var(--success); }
+  .cb-chip-pendiente { background: var(--surface-alt); color: var(--text-soft); border: 1px solid var(--border); }
+  .cb-chip-diferencia, .cb-chip-vencida { background: var(--error-soft); color: var(--error); }
+  .cb-tip { position: relative; text-decoration: underline dotted; text-underline-offset: 3px; outline: none; }
+  .cb-tip-box { display: none; position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 30; grid-template-columns: auto auto; gap: 4px 16px;
+    padding: 9px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,.14);
+    white-space: nowrap; font-size: 12.5px; font-weight: 400; color: var(--text); text-align: left; }
+  .cb-tip-box b { text-align: right; font-weight: 600; }
+  .cb-tip-box .cb-tip-total { padding-top: 4px; border-top: 1px solid var(--border); font-weight: 700; }
+  .cb-tip:hover .cb-tip-box, .cb-tip:focus .cb-tip-box { display: grid; }
+  .cb-real-sum { margin: 0 0 4px; font-size: 13px; color: var(--text); min-height: 1em; }
+</style>
+{% endblock %}
 {% block main_class %}main-full{% endblock %}
 {% block crumbs %}
 <nav class="crumbs"><span class="current">Combustible</span></nav>
@@ -247,111 +354,6 @@
 
 {% endif %}
 
-<style>
-  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
-  .historial-nav-btn { text-decoration: none; display: inline-block; }
-  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
-  .historial-table-wrap { overflow-x: auto; margin-top: 14px; border: 1px solid var(--border); border-radius: 10px; }
-  .historial-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
-  .historial-table th, .historial-table td { padding: 8px 14px; text-align: left; white-space: nowrap; vertical-align: top; }
-  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); vertical-align: bottom; }
-  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
-
-  /* Cuadro Físico (como la hoja del Cierre) y cuadros flotantes de las explicaciones (2026-11-03). */
-  .cb-sheet-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-  .cb-sheet-head h2 { margin: 0; }
-  .cb-ppp-chip { padding: 4px 12px; border-radius: 999px; background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 13px; font-variant-numeric: tabular-nums; }
-  .cb-sheet { font-size: 13.5px; }
-  .cb-sheet .cb-col-date { width: 70px; }
-  .cb-sheet .cb-col-num { width: 140px; }
-  .cb-sheet th:nth-child(n+4), .cb-sheet td:nth-child(n+4) { text-align: right; font-variant-numeric: tabular-nums; }
-  .cb-sheet tbody tr:nth-child(even) { background: none; }
-  .cb-sheet tbody td { border-bottom: 1px solid var(--border); padding-top: 12px; padding-bottom: 12px; }
-  .cb-sheet tbody tr:last-child td { border-bottom: 0; }
-  .cb-sheet tbody tr.cb-sheet-section th { padding: 12px 14px 10px; border-bottom: 1px solid var(--border); font-size: 12px; font-weight: 600; color: var(--text-soft); background: var(--surface-alt); white-space: nowrap; }
-  .cb-sheet tbody tr.cb-sheet-section th:first-child { font-size: 13px; font-weight: 700; color: var(--accent); }
-  .cb-sheet-next { margin-top: 22px; }
-  .cb-sheet { table-layout: fixed; min-width: 640px; }
-  .cb-sheet-total td { font-weight: 700; border-top: 2px solid var(--border); background: var(--accent-soft); }
-  .cb-sheet-sales td { color: var(--error); }
-  .cb-sheet-sales td:first-child { font-weight: 600; }
-  .cb-sheet-final td { font-weight: 700; background: var(--accent-soft); }
-  .cb-sheet-diff td:first-child { font-weight: 600; }
-  .cb-soft { color: var(--text-soft); }
-  .cb-pct { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; font-weight: 700; }
-  .cb-pct-ok { background: var(--success-soft); color: var(--success); }
-  .cb-pct-bad { background: var(--error-soft); color: var(--error); }
-  .cb-note { font-size: 11.5px; font-weight: 400; color: var(--text-soft); margin-left: 4px; }
-
-  .cb-edit-links { display: flex; flex-wrap: wrap; gap: 4px 18px; margin-top: 10px; }
-  button.cb-edit-link { display: inline-block; font-size: 12.5px; font-weight: 400; }
-  .cb-bottom { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 24px; align-items: start; }
-  .cb-bottom > .card { margin-bottom: 0; }
-  @media (max-width: 1100px) { .cb-bottom { grid-template-columns: minmax(0, 1fr); } }
-  .cb-photos h2 { margin: 0 0 12px; }
-  .cb-photo-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 12px; }
-  .cb-photo { display: flex; flex-direction: column; align-items: center; gap: 4px; }
-  .cb-photo form { margin: 0; }
-  button.cb-photo-thumb { display: block; width: 100%; padding: 0; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface-alt); }
-  .cb-photo-thumb img { display: block; width: 100%; height: 190px; object-fit: cover; object-position: top; }
-  /* Todas las fotos se abren en el mismo marco y al mismo ancho (pedido del
-     usuario, 2026-11-11): los dos reportes del ticket tienen distinto largo, y
-     a la misma altura uno se veía más ancho y con la letra más grande. */
-  .cb-pop-photo { padding: 6px; box-sizing: border-box; width: min(calc(100vw - 16px), calc(40vh + 12px)); height: calc(86vh + 12px); overflow: hidden; }
-  .cb-pop-photo img { display: block; width: 100%; height: auto; max-height: 100%; object-fit: contain; object-position: top; }
-  button.cb-photo-del { font-size: 12px; font-weight: 400; }
-  .cb-photo-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 16px; }
-  .cb-photo-form input[type=file] { max-width: 100%; font-size: 12.5px; }
-  .cb-photo-form button { margin: 0; }
-  .cb-pop { width: 340px; max-width: calc(100vw - 16px); padding: 12px 14px; font-size: 12.5px; line-height: 1.5; }
-  .cb-pop-wide { width: 460px; }
-  .cb-pop p { margin: 0 0 8px; }
-  .cb-pop-title { font-weight: 700; font-size: 13.5px; margin-bottom: 6px; color: var(--accent); }
-  .cb-calc { display: grid; grid-template-columns: 1fr auto; gap: 6px 14px; padding: 8px 10px; border-radius: 8px; background: var(--surface-alt); font-variant-numeric: tabular-nums; margin-bottom: 8px; }
-  .cb-calc-3 { grid-template-columns: 1fr auto auto; }
-  .cb-calc strong, .cb-calc em { text-align: right; font-weight: 600; }
-  .cb-calc em { font-style: normal; font-size: 11px; color: var(--text-soft); text-transform: uppercase; }
-  .cb-calc .cb-calc-total { padding-top: 3px; border-top: 1px solid var(--border); font-weight: 700; }
-  .cb-calc-result { font-variant-numeric: tabular-nums; }
-  .cb-edit-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; margin-bottom: 8px; }
-  .cb-edit-form label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; color: var(--text-soft); }
-  .cb-edit-form input { width: 120px; }
-  .cb-edit-form button { margin: 0; }
-  .cb-pop-table { width: 100%; border-collapse: collapse; font-size: 12px; font-variant-numeric: tabular-nums; }
-  .cb-pop-table th { font-size: 11px; color: var(--text-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
-  .cb-pop-table th, .cb-pop-table td { padding: 6px 6px; text-align: right; white-space: nowrap; }
-  .cb-pop-table th:first-child, .cb-pop-table td:first-child, .cb-pop-table th:nth-child(2), .cb-pop-table td:nth-child(2) { text-align: left; }
-
-  .cb-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 24px; margin: 24px 0; }
-  .cb-tile { border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); padding: 14px 16px; box-shadow: var(--shadow-sm); }
-  .cb-tile-label { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; color: var(--accent); margin-bottom: 10px; }
-  .cb-lines { display: grid; grid-template-columns: 1fr auto; gap: 10px 12px; font-size: 13.5px; }
-  .cb-lines strong { text-align: right; }
-  .cb-lines-3 { grid-template-columns: 1fr auto auto; column-gap: 22px; }
-  .cb-lines-3 em { font-style: normal; font-size: 12px; font-weight: 600; color: var(--text-soft); text-align: right; }
-  .cb-lines-3 em.cb-col-center { text-align: center; }
-  .cb-total { padding-top: 9px; border-top: 1px solid var(--border); font-weight: 700; }
-  .cb-sub { display: block; font-size: 11.5px; color: var(--text-soft); text-align: right; }
-  .cb-foot { font-size: 12px; color: var(--text-soft); margin: 10px 0 0; line-height: 1.45; }
-  .cb-empty { font-size: 13px; margin: 0; }
-  .cb-subtitle { margin: 22px 0 4px; font-size: 15px; }
-  .cb-bad { color: var(--error); }
-  .cb-warn { color: var(--warning); }
-  .cb-link { background: none; border: 0; padding: 0; margin: 0; box-shadow: none; font: inherit; font-weight: inherit; color: var(--accent); text-decoration: underline; text-underline-offset: 3px; }
-  .cb-chip { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11.5px; font-weight: 700; }
-  .cb-chip-ok { background: var(--success-soft); color: var(--success); }
-  .cb-chip-pendiente { background: var(--surface-alt); color: var(--text-soft); border: 1px solid var(--border); }
-  .cb-chip-diferencia, .cb-chip-vencida { background: var(--error-soft); color: var(--error); }
-  .cb-tip { position: relative; text-decoration: underline dotted; text-underline-offset: 3px; outline: none; }
-  .cb-tip-box { display: none; position: absolute; right: 0; bottom: calc(100% + 6px); z-index: 30; grid-template-columns: auto auto; gap: 4px 16px;
-    padding: 9px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 18px rgba(0,0,0,.14);
-    white-space: nowrap; font-size: 12.5px; font-weight: 400; color: var(--text); text-align: left; }
-  .cb-tip-box b { text-align: right; font-weight: 600; }
-  .cb-tip-box .cb-tip-total { padding-top: 4px; border-top: 1px solid var(--border); font-weight: 700; }
-  .cb-tip:hover .cb-tip-box, .cb-tip:focus .cb-tip-box { display: grid; }
-  .cb-real-sum { margin: 0 0 4px; font-size: 13px; color: var(--text); min-height: 1em; }
-</style>
 <script>
   // La suma de los dos tanques mientras se edita (pedido del usuario, 2026-11-05).
   document.addEventListener('DOMContentLoaded', function () {

@@ -6,6 +6,27 @@
 {% from "_table_filters_macros.html" import filter_styles, filter_config_button %}
 {% block head_extra %}
 {{ filter_styles() }}
+<style>
+  .historial-table-wrap { overflow-x: auto; margin-top: 10px; border: 1px solid var(--border); border-radius: 10px; }
+  .historial-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .historial-table th, .historial-table td { padding: 8px 14px; text-align: left; }
+  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
+  .cmp-table { min-width: 720px; }
+  .cmp-table th.num, .cmp-table td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .cmp-table .nowrap { white-space: nowrap; }
+  .cmp-form { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 16px; }
+  .cmp-form label { display: flex; flex-direction: column; gap: 4px; }
+  .cmp-form select { margin: 0; }
+  .cmp-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
+  .cmp-stat { border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; display: flex; flex-direction: column; gap: 2px; background: var(--surface-alt); }
+  .cmp-stat-value { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .cmp-stat-label { font-size: 12.5px; color: var(--text-soft); }
+  .cmp-toolbar { display: flex; justify-content: flex-end; }
+  .cmp-section { margin-top: 24px; }
+  .cmp-up { color: var(--error); font-weight: 600; }
+  .cmp-down { color: var(--success); font-weight: 600; }
+</style>
 {% endblock %}
 {% macro money(value) %}{% if value is not none %}${{ "{:,.2f}".format(value) }}{% else %}—{% endif %}{% endmacro %}
 {# good_up: una suba es buena (precio) -- en verde; para el costo, una suba va en rojo. #}
@@ -99,25 +120,4 @@
 
 {% if diff and diff.changed %}{% include "_table_filters.html" %}{% endif %}
 
-<style>
-  .historial-table-wrap { overflow-x: auto; margin-top: 10px; border: 1px solid var(--border); border-radius: 10px; }
-  .historial-table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
-  .historial-table th, .historial-table td { padding: 8px 14px; text-align: left; }
-  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
-  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
-  .cmp-table { min-width: 720px; }
-  .cmp-table th.num, .cmp-table td.num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
-  .cmp-table .nowrap { white-space: nowrap; }
-  .cmp-form { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-end; margin-bottom: 16px; }
-  .cmp-form label { display: flex; flex-direction: column; gap: 4px; }
-  .cmp-form select { margin: 0; }
-  .cmp-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 20px; }
-  .cmp-stat { border: 1px solid var(--border); border-radius: 12px; padding: 12px 16px; display: flex; flex-direction: column; gap: 2px; background: var(--surface-alt); }
-  .cmp-stat-value { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; }
-  .cmp-stat-label { font-size: 12.5px; color: var(--text-soft); }
-  .cmp-toolbar { display: flex; justify-content: flex-end; }
-  .cmp-section { margin-top: 24px; }
-  .cmp-up { color: var(--error); font-weight: 600; }
-  .cmp-down { color: var(--success); font-weight: 600; }
-</style>
 {% endblock %}

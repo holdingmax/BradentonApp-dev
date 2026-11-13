@@ -2954,3 +2954,7 @@ Pedido de Alfonso: que todo lo de Controles tenga la tonalidad de Controles, y l
 - Quedan con color propio: las 6 categorías del día de Ventas por Departamento (`reporte_dia.html`, son datos) y los estados (rojo, verde, amarillo).
 - Manual: `--c` de cada sección con el color de su sección y las 36 capturas rehechas. Edge headless dejó de devolver la página (salía en 0.2 s sin nada, con decenas de `msedge.exe` colgados): `shot.py` acepta `SHOT_BROWSER=<chrome.exe>` y mide solo la diferencia de ancho (Edge 26 px, Chrome 18). Las capturas viejas se rehicieron cambiando el color en `snap/*.html`, sin volver a pedir las páginas.
 - Probado: las 60 páginas GET sin parámetros con el color esperado; `python -m pytest`.
+
+### Parpadeo sin estilos al cambiar de mes (13/11, mismo chat)
+
+Alfonso lo vio en el cuadro de Lottery: al cambiar de mes con las flechas, un instante todo sin CSS. Causa: 31 plantillas tenían su `<style>` al final del bloque `content`, después de la tabla, y el navegador pintaba la tabla antes de leerlo. Se movieron todos a `{% block head_extra %}` (mismo orden, sin tocar las reglas). Verificado: ninguna de las 66 páginas GET deja un `<style>` en el cuerpo.

@@ -1,4 +1,10 @@
 {% extends "base.html" %}
+{% block head_extra %}
+<style>
+  .lottery-dia-group { margin: 18px 0 10px; font-size: 14px; }
+  .lottery-dia-group:first-of-type { margin-top: 0; }
+</style>
+{% endblock %}
 {% block main_class %}main-full{% endblock %}
 {% block crumbs %}
 <nav class="crumbs"><a href="{{ url_for('carga_datos_index') }}">Lottery</a><a href="{{ url_for('carga_datos_lottery_historial') }}">Reportes guardados</a><span class="current">{{ report_date.strftime('%d/%m/%Y') }}</span></nav>
@@ -53,8 +59,4 @@
   </form>
 </div>
 
-<style>
-  .lottery-dia-group { margin: 18px 0 10px; font-size: 14px; }
-  .lottery-dia-group:first-of-type { margin-top: 0; }
-</style>
 {% endblock %}

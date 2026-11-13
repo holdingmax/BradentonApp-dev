@@ -1,4 +1,40 @@
 {% extends "base.html" %}
+{% block head_extra %}
+<style>
+  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .historial-nav-btn { text-decoration: none; display: inline-block; }
+  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
+  .doc-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+  .doc-list-item {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-alt);
+    flex-wrap: wrap;
+  }
+  .doc-list-info { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .doc-list-label {
+    font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px;
+    background: var(--accent-soft); color: var(--accent);
+  }
+  .doc-list-date { font-size: 12px; }
+
+  .doc-folders { display: flex; flex-direction: column; gap: 8px; }
+  .doc-folder {
+    border: 1px solid var(--border); border-radius: 10px; background: var(--surface-alt);
+    overflow: hidden;
+  }
+  .doc-folder .doc-list { padding: 4px 14px 12px; }
+  .doc-folder-summary {
+    cursor: default; list-style: none; display: flex; align-items: center; gap: 10px;
+    padding: 12px 14px; font-weight: 700; font-size: 13.5px;
+  }
+  .doc-folder-summary::-webkit-details-marker { display: none; }
+  .doc-folder-icon { font-size: 15px; }
+  .doc-folder-name { flex: 1 1 auto; }
+  .doc-folder-count { font-weight: 500; font-size: 12px; }
+  .doc-folder .doc-list-item { background: var(--surface); }
+</style>
+{% endblock %}
 {% block crumbs %}
 <nav class="crumbs"><a href="{{ url_for('documentos_index') }}">Documentos</a><span class="current">{{ module_title }}</span></nav>
 {% endblock %}
@@ -85,38 +121,4 @@
   {% endif %}
 </div>
 
-<style>
-  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
-  .historial-nav-btn { text-decoration: none; display: inline-block; }
-  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
-  .doc-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-  .doc-list-item {
-    display: flex; align-items: center; justify-content: space-between; gap: 12px;
-    padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface-alt);
-    flex-wrap: wrap;
-  }
-  .doc-list-info { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .doc-list-label {
-    font-size: 11px; font-weight: 700; padding: 2px 8px; border-radius: 999px;
-    background: var(--accent-soft); color: var(--accent);
-  }
-  .doc-list-date { font-size: 12px; }
-
-  .doc-folders { display: flex; flex-direction: column; gap: 8px; }
-  .doc-folder {
-    border: 1px solid var(--border); border-radius: 10px; background: var(--surface-alt);
-    overflow: hidden;
-  }
-  .doc-folder .doc-list { padding: 4px 14px 12px; }
-  .doc-folder-summary {
-    cursor: default; list-style: none; display: flex; align-items: center; gap: 10px;
-    padding: 12px 14px; font-weight: 700; font-size: 13.5px;
-  }
-  .doc-folder-summary::-webkit-details-marker { display: none; }
-  .doc-folder-icon { font-size: 15px; }
-  .doc-folder-name { flex: 1 1 auto; }
-  .doc-folder-count { font-weight: 500; font-size: 12px; }
-  .doc-folder .doc-list-item { background: var(--surface); }
-</style>
 {% endblock %}

@@ -1,4 +1,88 @@
 {% extends "base.html" %}
+{% block head_extra %}
+<style>
+  .historial-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .historial-nav-btn { text-decoration: none; display: inline-block; }
+  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
+  .historial-table-wrap {
+    overflow-x: auto;
+    margin-top: 18px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+  }
+  .historial-table { width: 100%; min-width: 480px; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .historial-table th, .historial-table td { padding: 9px 14px; text-align: left; }
+  /* Muchas más columnas que la tabla de Ventas -- letra más chica y menos
+     padding para que entren sin scroll horizontal en una pantalla de
+     escritorio común -- pedido explícito del usuario (2026-09-19): "no me
+     gusta tener que desplazar a la derecha para ver el cuadro completo".
+     Sin min-width (obligaba a un ancho mínimo más grande de lo necesario,
+     el mismo bug ya corregido antes en Caja) y con los encabezados
+     pudiendo partirse en 2 líneas -- eran ellos, no los datos (números
+     cortos), los que empujaban cada columna mucho más ancha de lo que
+     hacía falta. */
+  .storeinfo-table { font-size: 11px; }
+  .storeinfo-table td { white-space: nowrap; }
+  .storeinfo-table th, .storeinfo-table td { padding: 5px 5px; }
+  .storeinfo-table thead th { white-space: normal; line-height: 1.2; }
+  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr { border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
+  .historial-row-today { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .historial-col-day { font-weight: 700; width: 40px; }
+  .historial-col-action { text-align: right; white-space: nowrap; }
+  .reporte-totals-row td { font-weight: 700; background: var(--surface-alt); border-top: 2px solid var(--border); }
+  /* Reporte mensual del POS (2026-10-06): debajo del total, para comparar. */
+  .monthly-row td { font-weight: 600; background: var(--accent-soft); }
+  .monthly-diff-row td { font-weight: 400; }
+  .monthly-ok { color: var(--success); }
+  .monthly-rounding { color: var(--text-soft); }
+  .monthly-bad { color: var(--error); font-weight: 700 !important; }
+  .historial-badge {
+    display: inline-block;
+    padding: 3px 9px;
+    border-radius: 999px;
+    font-size: 11.5px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  .historial-badge-ocr { background: var(--success-soft); color: var(--success); }
+  .historial-badge-manual { background: var(--warning-soft); color: var(--warning); }
+
+  /* Horario que no encadena con el día vecino -- pedido explícito del
+     usuario (2026-09-14): si un día no arranca justo donde terminó el
+     anterior, es señal de que algo quedó mal cargado. */
+  .time-warn {
+    background: var(--warning-soft); color: var(--warning);
+    padding: 1px 4px; border-radius: 4px; font-weight: 700;
+  }
+
+  /* Tarjeta/Crédito -- se ve el total, un clic muestra el desglose uno por
+     uno en un cuadro flotante (.popover-trigger/.popover-panel, mecanismo
+     genérico de base.html) -- pedido explícito del usuario (2026-09-16):
+     antes un <details> "movía todo" al abrirse dentro de la celda; el
+     cuadro flotante no empuja nada, solo se superpone. */
+  .credit-terms-popover div { padding: 2px 0; }
+
+  /* Cuadros flotantes de verificación -- pedido explícito del usuario
+     (2026-09-16): "todas esas celdas de los totales puedas hacerles click
+     y ver... que valores usaron para llegar a ese resultado" (Total Fuel,
+     Total Sales, Total Rev). */
+  .totals-breakdown-popover { min-width: 220px; }
+  .totals-breakdown-title { font-weight: 700; font-size: 11.5px; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
+  .totals-breakdown-row { display: flex; justify-content: space-between; gap: 16px; padding: 2px 0; }
+  .totals-breakdown-row span:first-child { color: var(--text-soft); }
+  .totals-breakdown-total { margin-top: 4px; padding-top: 6px !important; border-top: 1px solid var(--border); font-weight: 700; }
+  .totals-breakdown-total span:first-child { color: inherit; }
+</style>
+{% endblock %}
 {% block main_class %}main-full{% endblock %}
 {% block crumbs %}
 <nav class="crumbs"><a href="{{ url_for('carga_datos_index') }}">Reporte Diario</a><span class="current">Store Info</span></nav>
@@ -138,86 +222,4 @@
   {% endif %}
 </div>
 
-<style>
-  .historial-nav {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: 12px;
-  }
-  .historial-nav-btn { text-decoration: none; display: inline-block; }
-  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
-  .historial-table-wrap {
-    overflow-x: auto;
-    margin-top: 18px;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-  }
-  .historial-table { width: 100%; min-width: 480px; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
-  .historial-table th, .historial-table td { padding: 9px 14px; text-align: left; }
-  /* Muchas más columnas que la tabla de Ventas -- letra más chica y menos
-     padding para que entren sin scroll horizontal en una pantalla de
-     escritorio común -- pedido explícito del usuario (2026-09-19): "no me
-     gusta tener que desplazar a la derecha para ver el cuadro completo".
-     Sin min-width (obligaba a un ancho mínimo más grande de lo necesario,
-     el mismo bug ya corregido antes en Caja) y con los encabezados
-     pudiendo partirse en 2 líneas -- eran ellos, no los datos (números
-     cortos), los que empujaban cada columna mucho más ancha de lo que
-     hacía falta. */
-  .storeinfo-table { font-size: 11px; }
-  .storeinfo-table td { white-space: nowrap; }
-  .storeinfo-table th, .storeinfo-table td { padding: 5px 5px; }
-  .storeinfo-table thead th { white-space: normal; line-height: 1.2; }
-  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
-  .historial-table tbody tr { border-bottom: 1px solid var(--border); }
-  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
-  .historial-row-today { outline: 2px solid var(--accent); outline-offset: -2px; }
-  .historial-col-day { font-weight: 700; width: 40px; }
-  .historial-col-action { text-align: right; white-space: nowrap; }
-  .reporte-totals-row td { font-weight: 700; background: var(--surface-alt); border-top: 2px solid var(--border); }
-  /* Reporte mensual del POS (2026-10-06): debajo del total, para comparar. */
-  .monthly-row td { font-weight: 600; background: var(--accent-soft); }
-  .monthly-diff-row td { font-weight: 400; }
-  .monthly-ok { color: var(--success); }
-  .monthly-rounding { color: var(--text-soft); }
-  .monthly-bad { color: var(--error); font-weight: 700 !important; }
-  .historial-badge {
-    display: inline-block;
-    padding: 3px 9px;
-    border-radius: 999px;
-    font-size: 11.5px;
-    font-weight: 600;
-    white-space: nowrap;
-  }
-  .historial-badge-ocr { background: var(--success-soft); color: var(--success); }
-  .historial-badge-manual { background: var(--warning-soft); color: var(--warning); }
-
-  /* Horario que no encadena con el día vecino -- pedido explícito del
-     usuario (2026-09-14): si un día no arranca justo donde terminó el
-     anterior, es señal de que algo quedó mal cargado. */
-  .time-warn {
-    background: var(--warning-soft); color: var(--warning);
-    padding: 1px 4px; border-radius: 4px; font-weight: 700;
-  }
-
-  /* Tarjeta/Crédito -- se ve el total, un clic muestra el desglose uno por
-     uno en un cuadro flotante (.popover-trigger/.popover-panel, mecanismo
-     genérico de base.html) -- pedido explícito del usuario (2026-09-16):
-     antes un <details> "movía todo" al abrirse dentro de la celda; el
-     cuadro flotante no empuja nada, solo se superpone. */
-  .credit-terms-popover div { padding: 2px 0; }
-
-  /* Cuadros flotantes de verificación -- pedido explícito del usuario
-     (2026-09-16): "todas esas celdas de los totales puedas hacerles click
-     y ver... que valores usaron para llegar a ese resultado" (Total Fuel,
-     Total Sales, Total Rev). */
-  .totals-breakdown-popover { min-width: 220px; }
-  .totals-breakdown-title { font-weight: 700; font-size: 11.5px; margin-bottom: 6px; padding-bottom: 6px; border-bottom: 1px solid var(--border); }
-  .totals-breakdown-row { display: flex; justify-content: space-between; gap: 16px; padding: 2px 0; }
-  .totals-breakdown-row span:first-child { color: var(--text-soft); }
-  .totals-breakdown-total { margin-top: 4px; padding-top: 6px !important; border-top: 1px solid var(--border); font-weight: 700; }
-  .totals-breakdown-total span:first-child { color: inherit; }
-</style>
 {% endblock %}

@@ -1,4 +1,49 @@
 {% extends "base.html" %}
+{% block head_extra %}
+<style>
+  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  .historial-nav-btn { text-decoration: none; display: inline-block; }
+  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
+  .historial-table-wrap { overflow-x: auto; margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; }
+  .historial-table { width: 100%; min-width: 480px; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
+  .historial-table th, .historial-table td { padding: 9px 14px; text-align: left; }
+  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr { border-bottom: 1px solid var(--border); }
+  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
+  .historial-col-action { text-align: right; white-space: nowrap; }
+  .historial-col-action button { margin-top: 0; padding: 5px 10px; font-size: 12px; }
+
+  .horas-week { padding: 16px 0; border-top: 1px solid var(--border); }
+  .horas-week:first-of-type { border-top: none; padding-top: 0; }
+  .horas-week-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+  .horas-week-title { font-weight: 700; font-size: 14.5px; }
+  .horas-week-pdf > a:first-child { font-size: 12.5px; text-decoration: none; color: var(--accent); }
+  .horas-week-total { margin-left: auto; font-size: 12.5px; }
+  .horas-week-head form { margin: 0; }
+  .horas-week-head form button { margin-top: 0; padding: 5px 10px; font-size: 12px; }
+
+  .horas-totals-row td { font-weight: 700; background: var(--accent-soft); color: var(--accent); border-top: 2px solid var(--accent); }
+
+  .horas-edit-row td { background: var(--accent-soft); padding: 12px 14px; }
+  .horas-edit-form { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
+  .horas-edit-form label { display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; flex: 1 1 130px; }
+  .horas-edit-form input { padding: 6px 8px; font-size: 12.5px; width: 100%; box-sizing: border-box; }
+  .horas-edit-actions { display: flex; gap: 8px; flex: 0 0 auto; }
+  .horas-edit-actions button { margin-top: 0; padding: 7px 14px; font-size: 12.5px; }
+  .horas-edit-delete { margin-top: 10px; }
+  .horas-edit-delete button { margin-top: 0; padding: 6px 12px; font-size: 12px; }
+
+  .horas-add-form { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .horas-add-form input { padding: 6px 8px; font-size: 12.5px; }
+  .horas-add-form input[name="employee_name"] { flex: 1 1 160px; }
+  .horas-add-form input[type="number"] { flex: 0 1 120px; }
+  .horas-add-form button { margin-top: 0; }
+
+  .horas-pago-form { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .horas-pago-form button { margin-top: 0; }
+</style>
+{% endblock %}
 {% block main_class %}main-full{% endblock %}
 {% block crumbs %}
 <nav class="crumbs"><a href="{{ url_for('carga_datos_horas_trabajo') }}">Horas de Trabajo</a><span class="current">Reportes guardados</span></nav>
@@ -131,49 +176,6 @@
 </div>
 {% endif %}
 
-<style>
-  .historial-nav { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
-  .historial-nav-btn { text-decoration: none; display: inline-block; }
-  .historial-nav-title { display: flex; flex-direction: column; align-items: center; gap: 2px; }
-  .historial-nav-title a { font-size: 12.5px; text-decoration: none; }
-  .historial-table-wrap { overflow-x: auto; margin-top: 12px; border: 1px solid var(--border); border-radius: 10px; }
-  .historial-table { width: 100%; min-width: 480px; border-collapse: separate; border-spacing: 0; font-size: 13.5px; }
-  .historial-table th, .historial-table td { padding: 9px 14px; text-align: left; }
-  .historial-table thead th { background: var(--accent-soft); font-weight: 700; border-bottom: 1px solid var(--border); }
-  .historial-table tbody tr { border-bottom: 1px solid var(--border); }
-  .historial-table tbody tr:nth-child(even) { background: var(--surface-alt); }
-  .historial-col-action { text-align: right; white-space: nowrap; }
-  .historial-col-action button { margin-top: 0; padding: 5px 10px; font-size: 12px; }
-
-  .horas-week { padding: 16px 0; border-top: 1px solid var(--border); }
-  .horas-week:first-of-type { border-top: none; padding-top: 0; }
-  .horas-week-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
-  .horas-week-title { font-weight: 700; font-size: 14.5px; }
-  .horas-week-pdf > a:first-child { font-size: 12.5px; text-decoration: none; color: var(--accent); }
-  .horas-week-total { margin-left: auto; font-size: 12.5px; }
-  .horas-week-head form { margin: 0; }
-  .horas-week-head form button { margin-top: 0; padding: 5px 10px; font-size: 12px; }
-
-  .horas-totals-row td { font-weight: 700; background: var(--accent-soft); color: var(--accent); border-top: 2px solid var(--accent); }
-
-  .horas-edit-row td { background: var(--accent-soft); padding: 12px 14px; }
-  .horas-edit-form { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; }
-  .horas-edit-form label { display: flex; flex-direction: column; gap: 3px; font-size: 10.5px; flex: 1 1 130px; }
-  .horas-edit-form input { padding: 6px 8px; font-size: 12.5px; width: 100%; box-sizing: border-box; }
-  .horas-edit-actions { display: flex; gap: 8px; flex: 0 0 auto; }
-  .horas-edit-actions button { margin-top: 0; padding: 7px 14px; font-size: 12.5px; }
-  .horas-edit-delete { margin-top: 10px; }
-  .horas-edit-delete button { margin-top: 0; padding: 6px 12px; font-size: 12px; }
-
-  .horas-add-form { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-  .horas-add-form input { padding: 6px 8px; font-size: 12.5px; }
-  .horas-add-form input[name="employee_name"] { flex: 1 1 160px; }
-  .horas-add-form input[type="number"] { flex: 0 1 120px; }
-  .horas-add-form button { margin-top: 0; }
-
-  .horas-pago-form { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-  .horas-pago-form button { margin-top: 0; }
-</style>
 
 <script>
   // Editar un empleado -- mismo patrón ya validado en EFT (2026-09-16): la
