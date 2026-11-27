@@ -9,7 +9,7 @@ Este archivo se carga solo en cada chat: tiene únicamente lo necesario para tra
 - Proyecto: app web Flask que reemplaza la carga manual en Excel de la contabilidad del negocio. Hoy **se usa casi solo "Carga de Datos"**: los datos quedan guardados en bases SQLite y se ven en la propia página, sin Excel de por medio.
 - Working directory: `C:\BradentonApp`. Windows 11. Debe correr también en Linux (Render/Docker).
 
-## Estado actual (2026-11-24)
+## Estado actual (2026-11-26)
 Solo lo vigente. El Estado actual largo de los chats 19 a 34 (con todos los pendientes de cada uno) está archivado al final de `HISTORIAL.md`, en **"Estado actual de CLAUDE.md archivado (2026-10-19)"**. Buscar ahí con Grep antes de retomar un tema viejo. Ratio, el grupo de WhatsApp y la bajada de facturas de los portales **no son del proyecto**: son skills personales de Alfonso (`~/.claude/skills/ratio-facturas` y `whatsapp-documentos`, con su `ESTADO.md`), que solo usan los lectores de esta app.
 
 - **Copias a Render hechas el 22/10** (memoria `project_render_data_migration`; detalle en HISTORIAL, "2026-10-22"): testing (`bradenton-dev-db`) y producción (`bradenton-db`, servicio `bradenton`), cada una con 52 tablas y 35.983 filas idénticas; salidas en `Claude outputs/Copia a Render ... 2026-10-22.txt`. La URL ya se sacó del `.env`.
@@ -18,7 +18,7 @@ Solo lo vigente. El Estado actual largo de los chats 19 a 34 (con todos los pend
   - Los datos se copian una sola vez y **nunca se reprocesan desde el Drive**: se perderían correcciones a mano, asignaciones de Kia/Toyota, marcas de Sale Tax, reglas editadas y pagos históricos.
 - **Entorno**: la PC se reseteó el 20/10 (usuario `Usuario`); rearmado el 21/10 con las mismas rutas (HISTORIAL, "2026-10-21"). Docker Desktop anda desde el 12/11 (WSL2 instalado) y `bradenton-pg` está recreado con los datos al 22/10 (arranca solo con Docker).
 - **Git**: todo pusheado a dev y a producción (24/11, `9d916d7`: Cierre sin nota de Lottery ni Tarjetas contra J.H., Sale Tax sin recargar, tarjetas del Menú, combustible en Proyecciones, márgenes por mes y Lottery con % teórico). Después, la revisión de Proyecciones en tres bloques (`23c5185`, `7107b33`, `a055a8a`) y Chase con lista de cuentas, EFT con su RCV y botones alineados, también en producción (HISTORIAL, "2026-11-24 (noche)" y "(más tarde)").
-  - Sin commitear: `.claude/settings.json`.
+  - Sin commitear (26/11, HISTORIAL "2026-11-26" y "2026-11-26 (tarde)"): reglas de Chase con SUELDO único y las del repo que falten (arreglo al arrancar), botón "Notas de crédito" por proveedor; H.T. con la factura de reparto nueva y reconocimiento por membrete (Colonial, CEC, Bimbo, Flori-Gas); Proyecciones → Control contra el Balance por rubro, solo números finales, con botón para borrar el Balance. Más `.claude/settings.json`.
   - `Claude outputs/` queda sin versionar: tiene PDFs con datos del negocio, borradores y los respaldos de Excel.
   - Alfonso pide cada commit y cada push (`git push origin main`).
 - **En dev, falta validar y pasar a producción** (detalle en HISTORIAL, "2026-10-23 a 26", "2026-10-26 a 29", "2026-11-02 a 03", "2026-11-03: chat Bradenton5", "2026-11-05: chat Bradenton6", "2026-11-05: chat Bradenton7", "2026-11-11 a 12: chat Bradenton8" y "2026-11-12: chat Bradenton9"). Antes de avisarle a Leti: `engineering:deploy-checklist`, `security-review` y `code-review` sobre `3402645..HEAD`.
@@ -41,7 +41,9 @@ Solo lo vigente. El Estado actual largo de los chats 19 a 34 (con todos los pend
   - **REBATE GETTEL de septiembre**: la app da $636.32 (3% menos el rebate por galón) y Ratio (11747) $755.16 (solo el 3%). Decidir cuál vale; lo marca Controles → Asientos de Ratio.
   - ¿Ratio exporta el Libro Diario a Excel? Hoy los asientos se controlan con los mayores de cada cuenta.
   - Físico todavía compara la medición contra el fin de mes (ajuste chico ofrecido).
-- **Lo próximo: fallas de la carga en producción** (informe del chat 27, 11/11; detalle en HISTORIAL, "2026-11-11 a 12: chat Bradenton8"). Proveedores está frenado, con ~60 facturas de julio a noviembre sin cargar.
+- **Proveedores** (análisis del 26/11 en `Claude outputs/Analisis de proveedores 2026-11-26.md`): hechos H.T. formato nuevo y el reconocimiento. Falta `tests/regenerar_esperados.py` y re-pasar la auditoría (de a pocos procesos: carga la CPU). Después, en orden: lector de Colonial (12 de 19 fallan), formatos nuevos de King's, Midtown, J.J. Taylor y CEC (oct-nov), sueltas (Red Bull, Coca-Cola, Kooler, Sam's, AZ), CMM de H.T.; Global Wholesale Vapor sin productos. Alfonso iba a pasar los PDF o el aviso de producción.
+- **Desglose de la utilidad neta**: el total de gastos del Bce suma "Otros" (un ingreso de +6,535.51 en sep) como gasto; el Control contra el Balance ya lo separa.
+- **Fallas de la carga en producción** (informe del chat 27, 11/11; detalle en HISTORIAL, "2026-11-11 a 12: chat Bradenton8"). Proveedores está frenado, con ~60 facturas de julio a noviembre sin cargar.
   - Render se reinicia (502) con el OCR de Proveedores: Coca-Cola 53252357026 y 53447041007, y un lote de 4 facturas chicas. Probable falta de memoria: medir el pico en la PC y ver `BRADENTON_OCR_PROCESOS` (decisión de Leti).
   - Close Store 05/07 se guarda sin departamentos; 20/07: Tabacco $990 contra $1,464 del Excel. Reproducir con los PDF del Drive.
   - No se cargan: Bimbo 51643990006757 y 51643990007976 ("proveedor no reconocido"), Colonial 2088231 y CEC 1906438.
