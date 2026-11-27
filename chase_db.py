@@ -519,6 +519,21 @@ def list_known_details(since=None):
     return sorted({"EFT RCV-" if d.upper().startswith("EFT RCV-") else d for d in details})
 
 
+def rename_detalles(old_names, new_name):
+    """Pasa a `new_name` todo movimiento con alguno de esos Detalle (también los puestos a mano). Devuelve cuántos."""
+    conn = _connect()
+    try:
+        marks = ", ".join("?" for _ in old_names)
+        cur = conn.execute(
+            f"UPDATE chase_transactions SET detalle = ?, updated_at = ? WHERE detalle IN ({marks})",
+            [new_name, datetime.utcnow().isoformat(), *old_names],
+        )
+        conn.commit()
+        return cur.rowcount or 0
+    finally:
+        conn.close()
+
+
 def eft_rows(prefix):
     """Los movimientos cuyo Detalle empieza con `prefix` ("EFT RCV-"), sin los corregidos a mano."""
     conn = _connect()

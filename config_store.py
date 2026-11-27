@@ -43,18 +43,20 @@ GETTEL_CUENTA = "gettel_cuenta.json"
 CIERRE_DIFERENCIAS = "control_cierre_diferencias.json"
 # Proyecciones: los % teóricos de cada rubro desde el mes en que se cambiaron.
 PROYECCIONES_MARGENES = "proyecciones_margenes.json"
+# Qué arreglos de una sola vez ya se aplicaron a las reglas de Chase (chase_rules.sync_repo_rules).
+CHASE_REGLAS_SYNC = "chase_reglas_sync.json"
 
 # Las que tienen semilla en el repo (las reglas) y las que vivían en la
 # carpeta de datos en vez de la del código.
 _SEEDED = {CHASE_RULES, CHASE_MASTER_RULES, PAGO_RULES, DYNAMIC_SUPPLIERS}
 _IN_DATA_DIR = {CONTROLES_RAPIDOS, SALE_TAX, PROYECCIONES_BALANCE, GETTEL_CUENTA, CIERRE_DIFERENCIAS,
-                PROYECCIONES_MARGENES}
+                PROYECCIONES_MARGENES, CHASE_REGLAS_SYNC}
 NAMES = (USERS, CHASE_RULES, CHASE_MASTER_RULES, PAGO_RULES, DYNAMIC_SUPPLIERS, CONTROLES_RAPIDOS, SALE_TAX,
-         PROYECCIONES_BALANCE, GETTEL_CUENTA, CIERRE_DIFERENCIAS, PROYECCIONES_MARGENES)
+         PROYECCIONES_BALANCE, GETTEL_CUENTA, CIERRE_DIFERENCIAS, PROYECCIONES_MARGENES, CHASE_REGLAS_SYNC)
 # Las que en Postgres son un JSON entero en la tabla ajustes (sin tabla propia).
 _AJUSTES_KEY = {CONTROLES_RAPIDOS: "controles_rapidos", PROYECCIONES_BALANCE: "proyecciones_balance",
                 GETTEL_CUENTA: "gettel_cuenta", CIERRE_DIFERENCIAS: "cierre_diferencias",
-                PROYECCIONES_MARGENES: "proyecciones_margenes"}
+                PROYECCIONES_MARGENES: "proyecciones_margenes", CHASE_REGLAS_SYNC: "chase_reglas_sync"}
 
 _CHASE_KIND = {CHASE_MASTER_RULES: "maestra", CHASE_RULES: "personalizada"}
 

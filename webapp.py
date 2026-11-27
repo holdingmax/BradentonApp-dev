@@ -88,6 +88,7 @@ from chase_rules import (
     normalize_rule_text as normalize_chase_rule_text,
 )
 import chase_eft
+import chase_rules
 import caja_db
 import gastos_caja
 from caja import (
@@ -10692,6 +10693,32 @@ def _defer_reload_while_jobs_run():
     for loop in loops:
         if "trigger_reload" in vars(loop):
             loop.trigger_reload = waiting(vars(loop)["trigger_reload"])
+
+
+def _chase_startup_fixes():
+    """
+    Al arrancar (pedido del usuario, 2026-11-26): las reglas de Chase del
+    repo que falten en la base se agregan una sola vez, y los Detalle
+    escritos de otra forma (SUELDOS, SUELD) pasan a su nombre único (SUELDO),
+    en las reglas y en lo ya guardado. Si se agregaron reglas, se
+    recategoriza lo ya cargado (sin tocar lo corregido a mano).
+    """
+    try:
+        added = chase_rules.sync_repo_rules()
+        renamed = 0
+        for canonical in set(chase_rules.CANONICAL_DETAILS.values()):
+            olds = [old for old, new in chase_rules.CANONICAL_DETAILS.items() if new == canonical]
+            renamed += chase_db.rename_detalles(olds, canonical)
+        if added:
+            with config_store.batch_reads():
+                chase_db.recategorize_all(categorize_chase_description, _resolve_supplier_key_for_chase)
+        if added or renamed:
+            print(f"Chase: {added or 0} regla(s) agregada(s) del repo, {renamed} movimiento(s) pasados a su Detalle único.")
+    except Exception as exc:  # que un arreglo de datos nunca frene el arranque
+        print(f"Chase: no se pudieron revisar las reglas al arrancar: {exc}")
+
+
+_chase_startup_fixes()
 
 
 if __name__ == "__main__":

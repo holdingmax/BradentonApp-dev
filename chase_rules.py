@@ -28,9 +28,20 @@ def normalize_rule_text(value):
     return re.sub(r"\s+", " ", text).strip()
 
 
+# Un mismo Detalle escrito de varias formas (pedido del usuario, 2026-11-26:
+# "quedaron como SUELD o SUELDOS, cuando la regla es solo SUELDO").
+CANONICAL_DETAILS = {"SUELDOS": "SUELDO", "SUELD": "SUELDO"}
+
+
+def canonical_detail(detail):
+    """El Detalle con su nombre único (SUELDOS y SUELD son SUELDO)."""
+    text = " ".join(str(detail or "").split())
+    return CANONICAL_DETAILS.get(text.upper(), text)
+
+
 def _normalize_rule_entry(keyword, detail):
     keyword_text = str(keyword).strip()
-    detail_text = str(detail).strip()
+    detail_text = canonical_detail(detail)
     if not keyword_text or not detail_text:
         raise ValueError("La palabra clave y el detalle son obligatorios.")
     return {"keyword": keyword_text, "detail": detail_text}
@@ -67,7 +78,7 @@ def _load_rules_file(filename, seed=None):
         if not isinstance(item, dict):
             continue
         keyword = str(item.get("keyword", "")).strip()
-        detail = str(item.get("detail", "")).strip()
+        detail = canonical_detail(item.get("detail", ""))
         if keyword and detail:
             cleaned.append({"keyword": keyword, "detail": detail})
     return cleaned
@@ -143,6 +154,43 @@ def _delete_rule_by_index(filename, index, seed=None, expected_keyword=None, exp
     removed = rules.pop(idx)
     _save_rules_file(filename, rules)
     return removed
+
+
+# Sube cuando hay que repetir el arreglo en las bases ya cargadas (producción).
+RULES_SYNC_VERSION = "2026-11-26"
+
+
+def sync_repo_rules():
+    """
+    Una sola vez por versión (RULES_SYNC_VERSION): agrega a las reglas
+    guardadas las del repo que falten (Maestras y Personalizadas, por palabra
+    clave), sin borrar ni cambiar las que ya están, y guarda los Detalle con
+    su nombre único (pedido del usuario, 2026-11-26). Devuelve cuántas reglas
+    agregó, o None si ya estaba hecho.
+    """
+    done = config_store.read(config_store.CHASE_REGLAS_SYNC) or {}
+    if done.get("version") == RULES_SYNC_VERSION:
+        return None
+    added = 0
+    stored_master = _load_rules_file(MASTER_RULES_FILENAME, seed=_DEFAULT_MASTER_RULES)
+    stored_custom = _load_rules_file(RULES_FILENAME)
+    known = {r["keyword"].lower() for r in stored_master + stored_custom}
+    for filename, stored in ((MASTER_RULES_FILENAME, stored_master), (RULES_FILENAME, stored_custom)):
+        seed = config_store.load_json_file(os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)) or {}
+        seed_rules = seed.get("rules", []) if isinstance(seed, dict) else (seed if isinstance(seed, list) else [])
+        for item in seed_rules:
+            if not isinstance(item, dict):
+                continue
+            keyword = str(item.get("keyword", "")).strip()
+            detail = canonical_detail(item.get("detail", ""))
+            if keyword and detail and keyword.lower() not in known:
+                stored.append({"keyword": keyword, "detail": detail})
+                known.add(keyword.lower())
+                added += 1
+        # Se guardan siempre: así los Detalle quedan con su nombre único también en la base.
+        _save_rules_file(filename, stored)
+    config_store.write(config_store.CHASE_REGLAS_SYNC, {"version": RULES_SYNC_VERSION, "added": added})
+    return added
 
 
 def load_dynamic_rules():
@@ -370,8 +418,8 @@ _DEFAULT_MASTER_RULES = (
     {"keyword": "orig co name:mvnt", "detail": "REBATE"},
     {"keyword": "orig co name:fla lottery", "detail": "LOTTERY"},
     {"keyword": "orig co name:cantaloupe", "detail": "VENTA ICE"},
-    {"keyword": "online realtime vendor payment", "detail": "SUELDOS"},
-    {"keyword": "online realtime payroll payment", "detail": "SUELDOS"},
+    {"keyword": "online realtime vendor payment", "detail": "SUELDO"},
+    {"keyword": "online realtime payroll payment", "detail": "SUELDO"},
     {"keyword": "deposit  id number", "detail": "DEPOSITO"},
     {"keyword": "spectrum", "detail": "INTERNET"},
     {"keyword": "jeffrey's lawn", "detail": "REPARACION Y MANTENIMIENTO"},
