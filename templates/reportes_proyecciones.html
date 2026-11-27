@@ -78,6 +78,9 @@
   .proy-upload { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--border); }
   .proy-upload .muted { font-size: 12.5px; }
   .proy-upload button { margin-top: 0; }
+  .proy-upload + .proy-upload { margin-top: 8px; padding-top: 0; border-top: 0; }
+  .proy-bce-head td { font-weight: 700; color: var(--accent); padding-top: 14px; border-bottom: 1px solid var(--border); }
+  .proy-bce-total td { font-weight: 700; border-top: 1px solid var(--border); }
   .proy-pending-list { margin-top: 8px; }
   .proy-pending-list summary { font-weight: 600; }
   .proy-pending-list table { margin-top: 8px; border-collapse: collapse; font-size: 12.5px; font-variant-numeric: tabular-nums; }
@@ -401,57 +404,61 @@
 {% endif %}
 
 {# ---------------- Control contra el Balance ---------------- #}
+{# Solo los números finales, rubro por rubro (pedido del usuario, 2026-11-26: los dueños
+   comparan la proyección de fin de mes con el Bce). Los cortes de los días 7, 15 y 22 se sacaron. #}
 <div class="card">
   <h2>Control contra el Balance</h2>
-  {% set b = p.balance %}
+  {% set b = balance_cmp %}
   {% if b %}
   <p class="muted proy-note" style="margin-top: 0;">
-    Lo que proyectaba la app con los días cargados hasta el 7, el 15 y el 22, y a fin de mes, contra lo real del Balance
-    ({{ b.source }}). Debajo de cada número, cuánto se desvió de lo real.
+    La proyección de fin de mes contra el Balance ({{ b.source }}), con los mismos rubros del Estado de Resultado.
+    La diferencia es proyección − Balance.
   </p>
   <div class="historial-table-wrap">
-    <table class="historial-table proy-num-table">
+    <table class="historial-table proy-num-table proy-bce-table">
       <thead>
-        <tr>
-          <th></th><th>Real (Balance)</th>
-          {% for c in b.checkpoints %}<th>{{ c.label }}<span class="proy-th-sub">{{ c.days_loaded }} día{{ '' if c.days_loaded == 1 else 's' }}</span></th>{% endfor %}
-        </tr>
+        <tr><th></th><th>Proyección</th><th>Balance</th><th>Diferencia</th><th>%</th></tr>
       </thead>
       <tbody>
-        {% for key, label, kind in b.rows %}
-        <tr>
-          <td>{{ label }}</td>
-          <td><strong>{% if kind == "gal" %}{{ num(b.real[key]) }}{% else %}{{ money(b.real[key]) }}{% endif %}</strong></td>
-          {% for c in b.checkpoints %}
-          {% set dev = c.deviation[key] %}
+        {% for r in b.rows %}
+        {% if r.level == "head" %}
+        <tr class="proy-bce-head"><td colspan="5">{{ r.label }}</td></tr>
+        {% else %}
+        <tr class="{{ 'proy-bce-total' if r.level == 'total' }}">
+          <td>{{ r.label }}</td>
+          {% for v in (r.proj, r.bce, r.diff) %}
+          <td>{% if v is none %}<span class="muted">—</span>{% elif r.kind == "gal" %}{{ num(v) }}{% else %}{{ money(v) }}{% endif %}</td>
+          {% endfor %}
           <td>
-            {% if kind == "gal" %}{{ num(c.proj[key]) }}{% else %}{{ money(c.proj[key]) }}{% endif %}
-            {% if dev is not none %}
-            <span class="proy-dev {{ 'proy-dev-ok' if dev|abs <= 0.02 else ('proy-dev-warn' if dev|abs <= 0.05 else 'proy-dev-bad') }}">{{ '+' if dev > 0 }}{{ "{:.1f}".format(dev * 100) }} %</span>
+            {% if r.pct is not none %}
+            <span class="proy-dev {{ 'proy-dev-ok' if r.pct|abs <= 0.02 else ('proy-dev-warn' if r.pct|abs <= 0.05 else 'proy-dev-bad') }}">{{ '+' if r.pct > 0 }}{{ "{:.1f}".format(r.pct * 100) }} %</span>
             {% endif %}
           </td>
-          {% endfor %}
         </tr>
+        {% endif %}
         {% endfor %}
       </tbody>
     </table>
   </div>
-  {% if b.cstore_margin_real is not none or b.fuel_margin_gal_real is not none %}
-  <p class="muted proy-note">
-    Margen real del C-Store: {{ pct(b.cstore_margin_real) }} · Utilidad real por galón: {{ money(b.fuel_margin_gal_real, 4) }}.
-  </p>
-  {% endif %}
   {% else %}
   <p class="muted" style="margin-top: 0;">Todavía no hay Balance de {{ month_name|lower }} {{ year }}: se sube cuando el mes está cerrado en el Bce.</p>
   {% endif %}
-  {% if is_admin %}
+{% if is_admin %}
   <form class="proy-upload" method="post" enctype="multipart/form-data" action="{{ url_for('reportes_proyecciones_balance') }}">
     <input type="hidden" name="year" value="{{ year }}">
     <input type="hidden" name="month" value="{{ month }}">
     <input type="file" name="balance_file" accept=".xlsx,.xlsm" required>
     <button type="submit">Subir Balance</button>
-    <span class="muted">El Excel del Bce, con la hoja "BALANCE HISTORICO". Carga todos los meses que trae.</span>
+    <span class="muted">El Excel del Bce, con la hoja "BALANCE HISTORICO".</span>
   </form>
+  {% if b %}
+  <form class="proy-upload" method="post" action="{{ url_for('reportes_proyecciones_balance_borrar') }}"
+        onsubmit="return confirm('¿Borrar el Balance de {{ month_name|lower }} {{ year }}? Después se puede volver a subir.');">
+    <input type="hidden" name="year" value="{{ year }}">
+    <input type="hidden" name="month" value="{{ month }}">
+    <button type="submit" class="btn-secondary">Borrar el Balance de {{ month_name|lower }} {{ year }}</button>
+  </form>
+  {% endif %}
   {% endif %}
 </div>
 

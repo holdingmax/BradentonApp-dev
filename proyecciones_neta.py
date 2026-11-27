@@ -421,3 +421,76 @@ def build_net(year, month, projection=None, with_previous=False):
     if with_previous:
         _attach_previous(result, build_net(prev_year, prev_month))
     return result
+
+
+def balance_comparison(projection, net):
+    """
+    La proyección de fin de mes contra el Bce, rubro por rubro (pedido del
+    usuario, 2026-11-26: los dueños comparan solo los números finales). Usa
+    los mismos números que el desglose de la utilidad neta, así las dos
+    páginas coinciden. Cada renglón: {"label", "proj", "bce", "diff", "pct",
+    "kind" ("$" o "gal"), "level" ("head", "line" o "total")}; diff es
+    proyección − Bce y pct, diff sobre el Bce. None si el mes no tiene Bce.
+    """
+    real = proyecciones.balance_for_month(projection["year"], projection["month"])
+    if not real:
+        return None
+    groups = {g["title"]: g for g in net["gross_groups"]}
+    fuel, cstore, lottery = groups["Combustible"], groups["C-Store"], groups["Lottery"]
+    others, cards = groups["Otros ingresos"], groups["Gastos de tarjeta"]
+    fuel_proj = projection["fuel_proj"]
+    cs = projection["cstore"]["balance"]
+
+    def minus(a, b):
+        return (a - b) if (a is not None and b is not None) else None
+
+    rows = []
+
+    def row(label, proj, bce, level="line", kind="$"):
+        diff = minus(proj, bce)
+        # Al centavo y + 0.0: que una coincidencia no salga "−$0.00".
+        diff = round(diff, 2) + 0.0 if diff is not None else None
+        pct = (round(diff / abs(bce), 4) + 0.0) if (diff is not None and bce) else None
+        rows.append({"label": label, "proj": proj, "bce": bce, "diff": diff, "pct": pct, "kind": kind, "level": level})
+
+    def head(label):
+        rows.append({"label": label, "level": "head"})
+
+    head("Combustible")
+    row("Galones vendidos", fuel_proj["gallons"], real.get("galones"), kind="gal")
+    row("Venta de combustible (4.01)", fuel_proj["sales"], real.get("ventas_combustible"))
+    row("Costo de venta (5.02)", minus(fuel_proj["sales"], fuel_proj["utilidad"]), real.get("costo_combustible"))
+    row("Rebate de combustible (4.07)", fuel["lines"][1]["proj"], real.get("otros_ingresos_combustible"))
+    row("Utilidad de combustible", fuel["proj"], fuel["bce"], "total")
+
+    head("C-Store (sin Lotto ni Kia/Toyota)")
+    row("Venta C-Store (4.09)", cs["proj"], real.get("ventas_cstore"))
+    row("Costo de venta (5.15)", minus(cs["proj"], cs["utilidad_proj"]), real.get("costo_cstore"))
+    row("Rebates", cstore["lines"][-1]["proj"], None)
+    row("Utilidad C-Store", cstore["proj"], cstore["bce"], "total")
+
+    head("Otros ingresos")
+    row("Comisiones Lottery (4.10)", lottery["proj"], lottery["bce"])
+    for line, field in zip(others["lines"], ("ventas_ice", "alquiler_food_truck", "ventas_vaccum")):
+        row(line["label"], line["proj"], real.get(field))
+    row("Otros ingresos y descuentos (4.03)", None, real.get("otros_ingresos"))
+    row("Fees de tarjeta (5.04)", cards["proj"], cards["bce"])
+
+    row("Utilidad bruta", net["gross"]["proj"], net["gross"]["bce"], "total")
+
+    # Como el Estado de Resultado del Bce: gastos directos, resultado
+    # operativo, expensas y "Otros" (en el Bce es un ingreso: +6,535.51 en
+    # septiembre 2026, no los viáticos de la app), y el resultado neto. La app
+    # no proyecta expensas ni esos otros: van solo con el número del Bce.
+    other_expense = next(label for field, label, _ in EXPENSES if field == "otros_gastos")
+    head("Gastos")
+    for line in net["expenses"]["lines"]:
+        row(line["label"], line["proj"], None if line["label"] == other_expense else line["bce"])
+    directos = real.get("gastos_directos")
+    row("Total de gastos directos", net["expenses"]["proj"], -directos + 0.0 if directos is not None else None, "total")
+
+    row("Resultado operativo", net["net"]["proj"], real.get("resultado_operativo"), "total")
+    row("Expensas", None, real.get("expensas"))
+    row("Otros (ingresos)", None, real.get("otros_gastos"))
+    row("Utilidad neta", net["net"]["proj"], net["net"]["bce"], "total")
+    return {"rows": rows, "source": real.get("archivo"), "loaded_at": real.get("cargado")}

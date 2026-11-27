@@ -12,8 +12,9 @@ Utilidad / Proyecciones) y el "PROYECTADO BRADENTON" del Drive:
   - C-Store: venta de cada rubro * su % teórico (editables, los del Excel).
 
 Control contra el Balance (hoja "BALANCE HISTORICO" del Bce): para un mes
-cerrado se compara lo que proyectaba la app los días 7, 15 y 22 y a fin de mes
-con lo real. Medido contra agosto 2026: "4.01 Ventas de combustible" es
+cerrado se compara la proyección de fin de mes con lo real, rubro por rubro
+(proyecciones_neta.balance_comparison; los cortes de los días 7, 15 y 22 se
+sacaron el 2026-11-26). Medido contra agosto 2026: "4.01 Ventas de combustible" es
 Sales Fuel + Desc. Comb y "4.09 Ventas C-Store" son Tabacco + Soda + Beer/Wine
 + Resto (Lotto y Kia/Toyota van por otras cuentas), al centavo.
 """
@@ -51,7 +52,6 @@ CATEGORY_DISPLAY_LABELS = {
 
 # Los rubros que el Balance cuenta como "Ventas C-Store".
 BALANCE_CSTORE = ("TABACCO", "SODA", "BEER/WINE", "RESTO")
-CHECKPOINT_DAYS = (7, 15, 22)
 
 
 # Los % que no se editan en la página: Kia / Toyota no es ganancia.
@@ -307,9 +307,8 @@ def build_projection(year, month):
     _add_lottery(year, month, result, margins)
     result["split"] = gross_split(result)
 
-    real = balance_for_month(year, month)
-    if real:
-        result["balance"] = _balance_control(year, month, days, margins, real)
+    # El control contra el Bce se arma en proyecciones_neta.balance_comparison
+    # (solo los números finales, rubro por rubro; 2026-11-26).
     result["charts"] = _chart_data(year, month, result)
     prev = previous_month(year, month)
     # La variación de lo proyectado contra el mes anterior, por renglón.
@@ -580,6 +579,11 @@ _RESULTADO_ROWS = {
     "administration fees": "adm_fees",
     "otros gastos varios": "otros_gastos_varios",
     "gastos directos": "gastos_directos",
+    # Abajo de los gastos directos (2026-11-26): Resultado Operativo, Expensas
+    # (en negativo) y "Otros", que viene en positivo (un ingreso, no un gasto):
+    # operativo + expensas + otros = resultado neto.
+    "resultado operativo": "resultado_operativo",
+    "expensas": "expensas",
     "otros": "otros_gastos",
     "resultado neto": "resultado_neto",
 }
@@ -678,55 +682,10 @@ def balance_for_month(year, month):
     return stored.get(f"{year:04d}-{month:02d}")
 
 
-def _balance_control(year, month, days, margins, real):
-    """Lo real del Balance contra la proyección de los días 7, 15, 22 y fin de mes."""
-    def utilidad(sales, cost):
-        return (sales - cost) if (sales is not None and cost is not None) else None
-
-    real_rows = {
-        "galones": real.get("galones"),
-        "ventas_combustible": real.get("ventas_combustible"),
-        "utilidad_combustible": utilidad(real.get("ventas_combustible"), real.get("costo_combustible")),
-        "ventas_cstore": real.get("ventas_cstore"),
-        "utilidad_cstore": utilidad(real.get("ventas_cstore"), real.get("costo_cstore")),
-    }
-    days_in_month = calendar.monthrange(year, month)[1]
-    cuts = [(f"Día {d}", dt.date(year, month, d)) for d in CHECKPOINT_DAYS if d < days_in_month]
-    cuts.append(("Fin de mes", dt.date(year, month, days_in_month)))
-    checkpoints = []
-    for label, cut in cuts:
-        summary = _summary(year, month, days, margins, upto=cut)
-        if not summary["days_loaded"]:
-            continue
-        proj = {
-            "galones": summary["fuel_proj"]["gallons"],
-            "ventas_combustible": summary["fuel_proj"]["sales"],
-            "utilidad_combustible": summary["fuel_proj"]["utilidad"],
-            "ventas_cstore": summary["cstore"]["balance"]["proj"],
-            "utilidad_cstore": summary["cstore"]["balance"]["utilidad_proj"],
-        }
-        checkpoints.append({
-            "label": label,
-            "days_loaded": summary["days_loaded"],
-            "proj": proj,
-            # Redondeado y + 0.0: que una coincidencia exacta no salga "-0.0 %".
-            "deviation": {k: round(_ratio(proj[k] - real_rows[k], real_rows[k]), 4) + 0.0
-                          if (proj[k] is not None and real_rows[k]) else None
-                          for k in proj},
-        })
-    rows = [
-        ("galones", "Galones vendidos", "gal"),
-        ("ventas_combustible", "Venta de combustible", "$"),
-        ("utilidad_combustible", "Utilidad de combustible", "$"),
-        ("ventas_cstore", "Venta C-Store (sin Lotto ni Kia/Toyota)", "$"),
-        ("utilidad_cstore", "Utilidad C-Store", "$"),
-    ]
-    return {
-        "real": real_rows,
-        "source": real.get("archivo"),
-        "loaded_at": real.get("cargado"),
-        "rows": rows,
-        "checkpoints": checkpoints,
-        "cstore_margin_real": _ratio(real_rows["utilidad_cstore"], real_rows["ventas_cstore"]),
-        "fuel_margin_gal_real": _ratio(real_rows["utilidad_combustible"], real_rows["galones"]),
-    }
+def delete_balance(year, month):
+    """Borra el Balance guardado de un mes (pedido del usuario, 2026-11-26). True si había."""
+    stored = config_store.read(config_store.PROYECCIONES_BALANCE) or {}
+    if stored.pop(f"{year:04d}-{month:02d}", None) is None:
+        return False
+    config_store.write(config_store.PROYECCIONES_BALANCE, stored)
+    return True

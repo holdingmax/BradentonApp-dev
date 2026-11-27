@@ -1964,10 +1964,12 @@ def _proyecciones_month():
 def reportes_proyecciones():
     year, month = _proyecciones_month()
     projection = proyecciones.build_projection(year, month)
+    net = proyecciones_neta.build_net(year, month, projection)
     return render_template(
         "reportes_proyecciones.html",
         projection=projection,
-        net=proyecciones_neta.build_net(year, month, projection),
+        net=net,
+        balance_cmp=proyecciones_neta.balance_comparison(projection, net),
         formulas=proyecciones.formulas(projection),
         accent="#7A6BB0",
         accent_soft="#F1EFF8",
@@ -2060,14 +2062,43 @@ def reportes_proyecciones_balance():
         year, month = key.split("-")
         return f"{_MONTH_NAMES_ES[int(month) - 1].lower()} {year}"
 
-    if saved:
-        message = (f"Se cargó el Balance de {', '.join(month_label(k) for k in saved)}." if len(saved) <= 3
-                   else f"Se cargó el Balance de {len(saved)} meses, de {month_label(saved[0])} a {month_label(saved[-1])}.")
+    # El Bce trae todo el histórico (hoja BALANCE HISTORICO): el aviso habla
+    # del mes que se está mirando (2026-11-26; antes decía "47 meses").
+    year = request.form.get("year", type=int) or date.today().year
+    month = request.form.get("month", type=int) or date.today().month
+    current = f"{year:04d}-{month:02d}"
+    if current in saved:
+        message = f"Se cargó el Balance de {month_label(current)}."
+    elif current in skipped:
+        message = (f"El Balance de {month_label(current)} ya estaba cargado más completo y no se tocó: "
+                   "si querés reemplazarlo, borralo y volvé a subirlo.")
+    elif current in months:
+        message = f"El Balance de {month_label(current)} no cambió."
     else:
-        message = "El Balance no traía nada nuevo."
-    if skipped:
-        message += f" Ya estaba más completo y no se tocó: {', '.join(month_label(k) for k in skipped)}."
-    flash(message, "warning" if skipped else "success")
+        message = (f"El archivo no trae {month_label(current)}: su último mes es "
+                   f"{month_label(max(months))}.")
+    others = [k for k in saved if k != current]
+    if others:
+        message += f" También se actualizaron {len(others)} meses del histórico que trae el Bce."
+    flash(message, "success" if current in saved else "warning")
+    return _proyecciones_back()
+
+
+@app.route("/proyecciones/balance/borrar", methods=["POST"])
+def reportes_proyecciones_balance_borrar():
+    """Borra el Balance guardado del mes que se está mirando (pedido del usuario, 2026-11-26)."""
+    if not _require_admin("Solo un administrador puede borrar el Balance."):
+        return _proyecciones_back()
+    year = request.form.get("year", type=int)
+    month = request.form.get("month", type=int)
+    if not (year and month and 1 <= month <= 12):
+        flash("No se pudo saber de qué mes es el Balance.", "error")
+        return _proyecciones_back()
+    label = f"{_MONTH_NAMES_ES[month - 1].lower()} {year}"
+    if proyecciones.delete_balance(year, month):
+        flash(f"Se borró el Balance de {label}.", "success")
+    else:
+        flash(f"No había Balance de {label}.", "warning")
     return _proyecciones_back()
 
 

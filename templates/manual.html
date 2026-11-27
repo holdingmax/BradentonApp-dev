@@ -769,11 +769,16 @@
       <ol class="manual-steps" start="5">
         <li><span class="n">5</span><p>Combustible: lo de los días cargados, lo que da por día y lo proyectado (por día × los días del mes). El costo es galones × PPP y la utilidad, venta − costo. A la derecha, el mes anterior completo y la variación de lo proyectado contra él (verde si mejora, rojo si empeora).</p></li>
       </ol>
-      {{ shot('proyecciones-rubro', 'C-Store por rubro y Control contra el Balance') }}
+      {{ shot('proyecciones-rubro', 'C-Store por rubro y Subir Balance') }}
       <ol class="manual-steps" start="6">
         <li><span class="n">6</span><p>C-Store por rubro: lo vendido (bruto de descuentos, como el Excel; los descuentos van en su renglón, abajo), el % teórico de utilidad y lo proyectado. Los % en azul son supuestos: se pueden cambiar, Lottery incluido (al lado, su comisión real como referencia). A la derecha, lo vendido el mes anterior y la variación.</p></li>
         <li><span class="n">7</span><p><b>Guardar %</b> después de cambiarlo. Vale para el mes que estás mirando y los siguientes; los meses anteriores no cambian.</p></li>
-        <li><span class="n">8</span><p><b>Control contra el Balance</b>: con el mes cerrado, subí el Excel del Bce (hoja BALANCE HISTORICO). Se ve lo real al lado de lo proyectado.</p></li>
+        <li><span class="n">8</span><p><b>Subir Balance</b>: con el mes cerrado, subí el Excel del Bce (hoja BALANCE HISTORICO). El aviso dice si se cargó el mes que estás mirando; el Bce trae también los meses anteriores del histórico, que quedan para comparar esos meses.</p></li>
+      </ol>
+      {{ shot('proyecciones-balance', 'Control contra el Balance') }}
+      <ol class="manual-steps" start="9">
+        <li><span class="n">9</span><p><b>Control contra el Balance</b>: la proyección de fin de mes al lado de lo real del Bce, con los rubros del Estado de Resultado (combustible, C-Store, otros ingresos, gastos, resultado operativo, expensas y utilidad neta), y la diferencia en $ y en % (proyección − Balance). Verde hasta 2 %, amarillo hasta 5 %, rojo más. Un "—" es un renglón que solo tiene una de las dos partes.</p></li>
+        <li><span class="n">10</span><p><b>Borrar el Balance</b> del mes, por ejemplo para volver a subirlo corregido (si el guardado está más completo, la app no lo reemplaza con uno más incompleto).</p></li>
       </ol>
       <div class="manual-tip"><b>Tené en cuenta:</b>
         <ul>
