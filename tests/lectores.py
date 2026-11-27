@@ -65,6 +65,13 @@ def _proveedores(path):
     return proveedores.extract_invoices_from_pdf(path)
 
 
+def _productos(path, proveedor):
+    """Renglones de producto de una factura (lo que guarda Controles → Productos)."""
+    import proveedores_productos
+
+    return proveedores_productos.extract_lines(proveedor, path)
+
+
 def _eft(path):
     import eft_cta_cte
 
@@ -108,6 +115,7 @@ LECTORES = {
     "depositos": _depositos,
     "cheques": _cheques,
     "proveedores": _proveedores,
+    "productos": _productos,
     "eft": _eft,
     "combustible": _combustible,
     "jh_factura": _jh_factura,

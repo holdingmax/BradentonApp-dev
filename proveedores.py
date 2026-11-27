@@ -157,6 +157,9 @@ def _extract_ht_hackney_invoice(pdf_path):
     date_match = re.search(r"Invoice Date:\s*(\d{1,2}/\d{1,2}/\d{2,4})", first_text)
     totals = re.findall(r"Total:\s*([\d,]+\.\d{2})", last_text)
 
+    if not invoice_match and _HT_DELIVERY_INVOICE_RE.search(first_text):
+        return _extract_ht_delivery_invoice(pdf_path)
+
     if not (invoice_match and date_match and totals):
         raise ValueError(
             f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total "
@@ -167,6 +170,48 @@ def _extract_ht_hackney_invoice(pdf_path):
     invoice_date = _parse_mmdd_year_flexible(date_match.group(1))
     amount = float(totals[-1].replace(",", ""))
     return {"invoice_no": invoice_no, "date": invoice_date, "amount": amount}
+
+
+# Formato nuevo de H.T. Hackney (desde el 23/10/2026): la factura de reparto
+# impresa, con capa de texto pero sin "H.T. Hackney" escrito. Se reconoce por
+# la dirección del depósito de Tampa o su licencia de tabaco.
+_HT_DELIVERY_INVOICE_RE = re.compile(r"^.*WHS#:\s*\d+\s+INVOICE:\s*(\d+)", re.MULTILINE)
+
+
+def _detect_ht_hackney(text):
+    low = text.lower()
+    return "h.t. hackney" in low or "9330 adamo drive" in low or "wde3900330" in low
+
+
+def _extract_ht_delivery_invoice(pdf_path):
+    """
+    N°, fecha y total de una factura de reparto de H.T. (formato nuevo). La
+    fecha es la segunda de la fila "TO: ... <order date> <invoice date> <página>".
+    El total impreso se acepta solo si es el INVOICE SUBTOTAL más el fuel
+    surcharge, el delivery charge y el sales tax (como el Total del formato viejo).
+    """
+    _ensure_pdfplumber()
+    with pdfplumber.open(pdf_path) as pdf:
+        texts = [page.extract_text() or "" for page in pdf.pages]
+    first_text = texts[0]
+    invoice_match = _HT_DELIVERY_INVOICE_RE.search(first_text)
+    date_match = re.search(r"^TO:.*?\d{1,2}/\d{1,2}/\d{2}\s+(\d{1,2}/\d{1,2}/\d{2})\s+\d+\s*$", first_text, re.MULTILINE)
+    subtotal, charges, total = proveedores_productos.ht_delivery_totals("\n".join(texts))
+    if not (invoice_match and date_match and subtotal is not None and total is not None):
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: no se pudo leer invoice/fecha/total "
+            "del PDF de H.T. Hackney."
+        )
+    if abs(subtotal + sum(charges.values()) - total) >= 0.01:
+        raise ValueError(
+            f"{os.path.basename(pdf_path)}: el INVOICE SUBTOTAL más los cargos de H.T. "
+            f"no da el total impreso (${total:,.2f}); cargue esta factura manualmente."
+        )
+    return {
+        "invoice_no": int(invoice_match.group(1)),
+        "date": _parse_mmdd_year_flexible(date_match.group(1)),
+        "amount": total,
+    }
 
 
 def _extract_cec_invoice(pdf_path):
@@ -2494,13 +2539,39 @@ def _extract_manatee_invoice(pdf_path):
     return _service_period_invoice(start, end, amount)
 
 
+# Reconocimiento por datos fijos del membrete (2026-11-26): en los escaneos el
+# OCR suele perder el nombre ("Colonial Whole", "<EC Distributing",
+# "TWKERIES"), pero lee la dirección, el teléfono o la licencia.
+def _detect_cec(text):
+    low = text.lower()
+    return "cec distributing" in low or "chinook enterprises" in low
+
+
+def _detect_colonial(text):
+    low = text.lower()
+    return (any(key in low for key in ("colonial wholesale", "colonial distribut", "10889 crossroads",
+                                       "813-621-8880", "813-621-8890", "wde3900803", "wde3900805"))
+            or ("convenience distributors" in low and "tampa" in low))
+
+
+def _detect_bimbo(text):
+    low = text.lower()
+    return ("bimbo bakeries" in low or "bakeries usa" in low
+            or re.search(r"\b5164399\d{7}\b|\b51-6439\b", text) is not None)
+
+
+def _detect_flori_gas(text):
+    low = text.lower()
+    return "305-637-9262" in text or "2990 nw 24th" in low or ("flori" in low and "tank exchange" in low)
+
+
 SUPPLIER_REGISTRY = {
     "ht_hackney": {
         "label": "H.T. Hackney",
         "sheet_name": "HT Hackney",
         "resumen_label": "HT HACKNEY",
         "logo": "supplier_logos/ht_hackney.png",
-        "detect": lambda text: "h.t. hackney" in text.lower(),
+        "detect": _detect_ht_hackney,
         "extract": _extract_ht_hackney_invoice,
     },
     "cec": {
@@ -2508,7 +2579,7 @@ SUPPLIER_REGISTRY = {
         "sheet_name": "Chinook CEC",
         "resumen_label": "CEC",
         "logo": "supplier_logos/cec.png",
-        "detect": lambda text: "cec distributing" in text.lower(),
+        "detect": _detect_cec,
         "extract": _extract_cec_invoice,
     },
     "colonial": {
@@ -2516,7 +2587,7 @@ SUPPLIER_REGISTRY = {
         "sheet_name": "Colonial",
         "resumen_label": "COLONIAL",
         "logo": "supplier_logos/colonial.png",
-        "detect": lambda text: "colonial wholesale" in text.lower(),
+        "detect": _detect_colonial,
         "extract": _extract_colonial_invoice,
     },
     "gce": {
@@ -2564,7 +2635,7 @@ SUPPLIER_REGISTRY = {
         "sheet_name": "BIMBO",
         "resumen_label": "BIMBO",
         "logo": "supplier_logos/bimbo.png",
-        "detect": lambda text: "bimbo bakeries" in text.lower(),
+        "detect": _detect_bimbo,
         "extract": _extract_bimbo_invoice,
     },
     "midtown": {
@@ -2588,7 +2659,7 @@ SUPPLIER_REGISTRY = {
         "sheet_name": "FLORI-GAS",
         "resumen_label": "FLORI GAS",
         "logo": "supplier_logos/flori_gas.png",
-        "detect": lambda text: "305-637-9262" in text,
+        "detect": _detect_flori_gas,
         "extract": _extract_flori_gas_invoice,
     },
     "airgas": {

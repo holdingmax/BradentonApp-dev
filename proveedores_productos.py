@@ -151,6 +151,11 @@ def extract_ht_hackney_lines(pdf_path, invoices=None):
     producto (SRP%, Alw, Tax, y a veces el UPC) y leer el texto corrido las
     correría de lugar.
     """
+    with pdfplumber.open(pdf_path) as pdf:
+        delivery_format = is_ht_delivery_invoice(pdf.pages[0].extract_text() or "")
+    if delivery_format:
+        return extract_ht_delivery_lines(pdf_path)
+
     invoice_no = None
     lines = []
     charges = {}
@@ -233,6 +238,170 @@ def extract_ht_hackney_lines(pdf_path, invoices=None):
         raise ValueError("el subtotal más los cargos (fuel, delivery, tax) no da el Total de la factura.")
     if invoice_no is None:
         raise ValueError("no se encontró el N° de invoice en la factura de H.T.")
+    return {"invoice_no": invoice_no, "lines": lines, "subtotal": subtotal, "total": total}
+
+
+# --- H.T. Hackney, factura de reparto (formato nuevo, desde el 23/10/2026) ---
+# Capa de texto, un renglón por producto y sin grilla de guiones:
+#   F 1 035751114270 8 4 OZ BON APPETIT CHEESECAKE SLICE 5959309 .350 2.69 21.52 13.98 13.98 13.98
+#   código (una letra, "*", "<" o "0" = refrigerado; siempre está), QTY, [UPC], PACK, SIZE + DESCRIPCIÓN, ITEM (7 dígitos), [SRP%], [n/] SRP, SRP EXT,
+#   PRICE, [ALW], [TAX], NET, EXT PRICE.
+# Los números de la derecha se ubican por la cuenta: PRICE − ALW + TAX = NET y
+# QTY x NET = EXT; la suma de los EXT tiene que dar el INVOICE SUBTOTAL, y el
+# subtotal más los cargos, el total impreso (misma regla de oro que el viejo).
+
+_HTD_ROW_RE = re.compile(
+    r"^\S\s+(\d+)\s+(?:(\d{11,13})\s+)?\*?(\d+)\s+(.+?)\s+(\d{7})"
+    r"((?:\s+(?:[\d,]*\.\d{2,3}-?\*?|\d+/|U/CST))+)\s*$"
+)
+_HTD_SIZE_RE = re.compile(
+    r"^((?:[\d./]+\s?(?:OZ|ML|CT|PK|LB|QT|GAL|STK|FT|IN|EA|RL|CS|PC|G|L)(?=\s|[A-Z]))"
+    r"|CTN|CAN|CT|RL|ONLY|EA|PK|BX|BOX|PC|QT|GAL|LB|DZ|BAG|BTL|JAR|[\d./]+)(?=\s)\s*(.*)$"
+)
+_HTD_HEADER = "QTY PKG UPC/ITEM"
+_HTD_REGION_END = ("TOTAL SALES TOTAL", "*** CATEGORY TOTALS", "*** OUTS", "** OUT OF STOCK",
+                   "** ITEM DISCONTINUED", "CUSTOMER CHECK IN")
+
+
+def is_ht_delivery_invoice(first_page_text):
+    return re.search(r"WHS#:\s*\d+\s+INVOICE:\s*\d+", first_page_text or "") is not None
+
+
+def ht_delivery_totals(full_text):
+    """
+    (subtotal, cargos, total impreso) de una factura de reparto de H.T.:
+    el último número de "*** INVOICE SUBTOTAL ***", el FUEL SURCHARGE y el
+    DELIVERY CHARGE, y el TOTAL AMOUNT DUE del pie. Ese rótulo del pie sale
+    con las letras desparramadas ("84 T I O T T E ... 928.75 D T U O E ...
+    5117.53"): el total es el último número de esa fila, y si hay tres, el
+    primero es el sales tax (923676: 2.46).
+    """
+    subtotal = None
+    charges = {}
+    total = None
+    for line in full_text.splitlines():
+        line = line.strip()
+        match = re.search(r"\*\*\* INVOICE SUBTOTAL \*\*\*.*?([\d,]*\.\d{2}-?)$", line)
+        if match:
+            subtotal = _num(match.group(1))
+            continue
+        match = re.match(r"^(FUEL SURCHARGE|DELIVERY CHARGE)\s+([\d,]*\.\d{2}-?)$", line)
+        if match:
+            charges[match.group(1)] = _num(match.group(2))
+            continue
+        # Fila del pie: TOTAL ITEMS, [SALES TAX], TOTAL SRP, TOTAL AMOUNT DUE.
+        if re.match(r"^\d+\s+(?:[A-Z]\s+){8,}.*[A-Z]\s+[\d,]*\.\d{2}-?$", line):
+            amounts = re.findall(r"(?<!\S)([\d,]*\.\d{2}-?)(?!\S)", line)
+            if len(amounts) in (2, 3):
+                total = _num(amounts[-1])
+                if len(amounts) == 3:
+                    charges["SALES TAX"] = _num(amounts[0])
+    return subtotal, charges, total
+
+
+def _htd_prices(tokens, qty):
+    """
+    (srp, price, allowance, tax, net, ext) de los números a la derecha del ITEM,
+    o None si ninguna ubicación cierra. Se prueba el PRICE de derecha a
+    izquierda con 0, 1 o 2 números entre PRICE y NET.
+    """
+    # Un "*" pegado al final del importe es una marca de la factura, no parte del número.
+    nums = [_num(t.rstrip("*")) for t in tokens if re.fullmatch(r"[\d,]*\.\d{2}-?\*?", t)]
+    if len(nums) < 2:
+        return None
+    net, ext = nums[-2], nums[-1]
+    if abs(qty * net - ext) > 0.011:
+        return None
+    for index in range(len(nums) - 3, -1, -1):
+        price, extras = nums[index], nums[index + 1:-2]
+        allowance = tax = None
+        if not extras:
+            ok = abs(price - net) < 0.005
+        elif len(extras) == 1:
+            if abs(price + extras[0] - net) < 0.005:
+                tax, ok = extras[0], True
+            else:
+                allowance, ok = extras[0], abs(price - extras[0] - net) < 0.005
+        elif len(extras) == 2:
+            allowance, tax = extras
+            ok = abs(price - allowance + tax - net) < 0.005
+        else:
+            break
+        if ok:
+            before = nums[:index]
+            srp = before[0] if len(before) == 2 else None
+            return srp, price, allowance, tax, net, ext
+    return None
+
+
+def extract_ht_delivery_lines(pdf_path):
+    """Renglones de una factura de reparto de H.T. (formato nuevo); ver arriba."""
+    with pdfplumber.open(pdf_path) as pdf:
+        texts = [page.extract_text() or "" for page in pdf.pages]
+    full_text = "\n".join(texts)
+    match = re.search(r"WHS#:\s*\d+\s+INVOICE:\s*(\d+)", full_text)
+    if not match:
+        raise ValueError("no se encontró el N° de invoice en la factura de H.T.")
+    invoice_no = match.group(1)
+
+    lines = []
+    category = None
+    for text in texts:
+        in_grid = False
+        for raw in text.splitlines():
+            line = raw.strip()
+            if line.startswith(_HTD_HEADER):
+                in_grid = True
+                continue
+            if not in_grid:
+                continue
+            if any(line.startswith(end) for end in _HTD_REGION_END):
+                in_grid = False
+                continue
+            row = _HTD_ROW_RE.match(line)
+            if row:
+                qty = float(row.group(1))
+                prices = _htd_prices(row.group(6).split(), qty)
+                if prices is None:
+                    raise ValueError(f"el renglón \"{line[:60]}\" de H.T. no cierra (precio, bonificación, impuesto y neto).")
+                srp, price, allowance, tax, net, ext = prices
+                size_match = _HTD_SIZE_RE.match(row.group(4))
+                size, description = (size_match.group(1), size_match.group(2)) if size_match else ("", row.group(4))
+                pack = int(row.group(3)) or 1
+                units = pack * (_UNITS_PER_CARTON if size.upper() == "CTN" else 1)
+                lines.append({
+                    "line_no": len(lines) + 1,
+                    "upc": normalize_upc(row.group(2) or ""),
+                    "item_no": row.group(5),
+                    "description": description.strip(),
+                    "category": category,
+                    "qty": qty,
+                    "pack": pack,
+                    "size": size,
+                    "units": units,
+                    "price": price,
+                    "allowance": allowance,
+                    "tax": tax,
+                    "net": net,
+                    "ext": ext,
+                    "unit_cost": net / units,
+                    "srp": srp,
+                })
+                continue
+            if line.isupper() and not re.search(r"\d", line) and "ABOVE" not in line and "*" not in line:
+                category = line
+
+    if not lines:
+        raise ValueError("no se encontró ningún renglón de producto en la factura de H.T.")
+    subtotal, charges, total = ht_delivery_totals(full_text)
+    lines_total = round(sum(line["ext"] for line in lines), 2)
+    if subtotal is None or abs(lines_total - subtotal) >= 0.01:
+        raise ValueError(
+            f"los renglones suman ${lines_total:,.2f} y el INVOICE SUBTOTAL de la factura es "
+            f"{'$' + format(subtotal, ',.2f') if subtotal is not None else 'ilegible'}."
+        )
+    if total is None or abs(subtotal + sum(charges.values()) - total) >= 0.01:
+        raise ValueError("el subtotal más los cargos (fuel, delivery, tax) no da el Total de la factura.")
     return {"invoice_no": invoice_no, "lines": lines, "subtotal": subtotal, "total": total}
 
 
