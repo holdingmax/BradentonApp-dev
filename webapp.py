@@ -125,6 +125,7 @@ from monthly_sales import _resolve_sheet_name, parse_monthly_sales_file, process
 from proveedores import append_supplier_invoices, append_supplier_payments, extract_invoices_from_pdf
 from proveedores import _PDF_EXTRACTION_EXCEPTIONS, invoice_errors, split_attached_invoices
 from proveedores import list_supplier_registry_entries, match_supplier_for_chase_description
+import proveedores as proveedores_mod  # "proveedores" es también una ruta
 import proveedores_pago_rules
 from proveedores_dynamic_extractors import (
     FIELD_LABELS as DYNAMIC_FIELD_LABELS,
@@ -9428,6 +9429,20 @@ def _save_supplier_read(read, path, filename, tally):
     saved, duplicates, failed = tally["saved"], tally["duplicates"], tally["failed"]
     lines_failed = tally["lines_failed"]
     supplier_key, supplier_label = read["supplier_key"], read["supplier_label"]
+    credit_memo = read.get("credit_memo")
+    if credit_memo:
+        # Nota de crédito: va al Haber del proveedor, como las que se cargan a mano.
+        if proveedores_db.credit_memo_exists(supplier_key, credit_memo["credit_no"]):
+            duplicates.append({"filename": filename, "supplier": supplier_label,
+                               "invoice_no": f"credit memo {credit_memo['credit_no']}"})
+        else:
+            proveedores_db.save_credit_memo(supplier_key, supplier_label, credit_memo["date"],
+                                            str(credit_memo["credit_no"]), credit_memo["amount"],
+                                            note=f"Leída de {filename}")
+            tally.setdefault("credit_memos", []).append(
+                {"filename": filename, "supplier": supplier_label, "date": credit_memo["date"],
+                 "invoice_no": credit_memo["credit_no"], "amount": credit_memo["amount"]})
+        return
     invoices, unreadable, valid_invoices = read["invoices"], read["unreadable"], read["valid_invoices"]
     for bad in unreadable:
         print(f"[carga-datos/proveedores] {filename}, factura {bad.get('invoice_no')}: {bad['error']}")
@@ -9549,7 +9564,11 @@ def _run_carga_datos_proveedores_job(job_id, paths):
             jobs.update_job(job_id, done=index, total=len(paths))
 
         saved, duplicates, lines_saved = tally["saved"], tally["duplicates"], tally["lines_saved"]
+        credit_memos = tally.get("credit_memos", [])
         parts = []
+        if credit_memos:
+            parts.append(f"{len(credit_memos)} nota(s) de crédito guardada(s): "
+                         + ", ".join(f"{c['supplier']} {c['invoice_no']} (${c['amount']:,.2f})" for c in credit_memos) + ".")
         if saved:
             parts.append(f"{len(saved)} factura(s) guardada(s)"
                          + (f", {lines_saved} con detalle de productos." if lines_saved else "."))
@@ -9562,7 +9581,8 @@ def _run_carga_datos_proveedores_job(job_id, paths):
             parts.append("No se guardó ninguna factura de este lote.")
         problems = (duplicates or tally["failed"] or tally["date_mismatches"] or tally["lines_failed"]
                     or tally["without_invoice"])
-        level = "success" if (saved and not problems) else ("error" if not saved and not lines_saved else "warning")
+        level = ("success" if ((saved or credit_memos) and not problems)
+                 else ("error" if not saved and not lines_saved and not credit_memos else "warning"))
 
         if saved:
             d = saved[0]["date"]
@@ -9586,6 +9606,21 @@ def _read_supplier_pdf(path):
     "detail_error" para avisarlo igual que antes.
     """
     filename = os.path.basename(path)
+    # Nota de crédito (pedido del usuario, 2026-11-26): se lee solo si el
+    # proveedor la tiene habilitada en Configurar ("Recibe credit memos");
+    # si no, la carga sigue leyendo solo facturas, como siempre.
+    credit_memo = proveedores_mod.read_credit_memo(path)
+    if credit_memo is not None:
+        supplier_key = proveedores_mod._detect_supplier(path)
+        supplier_label = proveedores_mod._effective_supplier_registry()[supplier_key]["label"]
+        if not proveedores_db.get_supplier_settings(supplier_key)["allow_credit_memos"]:
+            exc = ValueError(f"{filename}: es una nota de crédito y {supplier_label} no tiene habilitadas "
+                             "las notas de crédito (en su ficha, tocá «Notas de crédito: No»).")
+            exc.supplier_label = supplier_label
+            raise exc
+        return {"supplier_key": supplier_key, "supplier_label": supplier_label, "credit_memo": credit_memo,
+                "invoices": [], "unreadable": [], "valid_invoices": [], "mismatched_invoices": [],
+                "detail": None, "detail_error": None}
     supplier_key, supplier_label, invoices = extract_invoices_from_pdf(path)
     # Gold Coast y Red Bull devuelven aparte cada factura del PDF que no
     # se pudo leer con seguridad (proveedores._ticket_invoices).
@@ -10269,6 +10304,14 @@ def carga_datos_proveedores_configuracion(supplier_key):
     criterio que ocultar/mostrar. Dos checkboxes; sin marcar = apagado.
     """
     if not _require_admin("Solo un administrador puede cambiar la configuración de un proveedor."):
+        return redirect(url_for("carga_datos_proveedores_guardado_detalle", supplier_key=supplier_key))
+    if request.form.get("toggle_credit_memos"):
+        # El botón "Notas de crédito" de la ficha (2026-11-26): prende o apaga
+        # solo eso; con él prendido, las notas de crédito que se suben en la
+        # carga de Proveedores se leen y van al Haber, como las de H.T.
+        current = proveedores_db.get_supplier_settings(supplier_key)
+        proveedores_db.set_supplier_settings(supplier_key, current["allow_manual_payments"],
+                                             not current["allow_credit_memos"])
         return redirect(url_for("carga_datos_proveedores_guardado_detalle", supplier_key=supplier_key))
     allow_manual_payments = request.form.get("allow_manual_payments") == "on"
     allow_credit_memos = request.form.get("allow_credit_memos") == "on"

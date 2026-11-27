@@ -58,6 +58,9 @@
     background: var(--surface-alt); border: 1px solid var(--border); color: var(--text);
   }
   .supplier-config-btn:hover { background: var(--border); }
+  .supplier-header-actions { display: flex; align-items: center; gap: 10px; }
+  .supplier-nc-btn { margin: 0; font-family: inherit; }
+  .supplier-nc-btn.is-on { background: #DCFCE7; border-color: #86EFAC; color: #166534; }
   .supplier-config-btn svg { width: 15px; height: 15px; flex-shrink: 0; }
   .supplier-config-panel {
     position: absolute; right: 0; top: calc(100% + 8px); z-index: 30;
@@ -86,6 +89,15 @@
       <h1 style="margin:0;">{{ supplier_label }}</h1>
     </div>
     {% if current_user.is_admin %}
+    <div class="supplier-header-actions">
+    {# Notas de crédito (2026-11-26): prendido, las que se suben se leen y van al Haber, como las de H.T. #}
+    <form method="post" action="{{ url_for('carga_datos_proveedores_configuracion', supplier_key=supplier_key) }}" style="margin:0;">
+      <input type="hidden" name="toggle_credit_memos" value="1">
+      <button type="submit" class="supplier-config-btn supplier-nc-btn{{ ' is-on' if supplier_settings.allow_credit_memos else '' }}"
+              data-formula="{{ 'Prendido: al subir una nota de crédito de este proveedor se lee y va al Haber. Tocalo para apagarlo.' if supplier_settings.allow_credit_memos else 'Apagado: la carga lee solo facturas. Tocalo si este proveedor manda notas de crédito (como H.T.).' }}">
+        Notas de crédito: {{ 'Sí' if supplier_settings.allow_credit_memos else 'No' }}
+      </button>
+    </form>
     <details class="supplier-config">
       <summary class="supplier-config-btn">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
@@ -100,7 +112,7 @@
           </label>
           <label class="supplier-config-check">
             <input type="checkbox" name="allow_credit_memos" {% if supplier_settings.allow_credit_memos %}checked{% endif %}>
-            Recibe credit memos
+            Recibe notas de crédito (credit memos)
           </label>
           <button type="submit">Guardar</button>
         </form>
@@ -114,6 +126,7 @@
         {% endif %}
       </div>
     </details>
+    </div>
     {% endif %}
   </div>
 </div>

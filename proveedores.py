@@ -2957,6 +2957,44 @@ def split_attached_invoices(pdf_path, dest_dir, first_page=CLOSE_STORE_PAGES, wo
     return groups
 
 
+_CREDIT_MEMO_NO_RE = re.compile(r"credit\s*memo\s*(?:#|no\.?|number)?\s*:?\s*([A-Z0-9-]*\d[A-Z0-9-]*)", re.I)
+_CREDIT_MEMO_DATE_RE = re.compile(r"(?:invoice\s*date|credit\s*date|date)\s*:?\s*(\d{1,2}/\d{1,2}/\d{2,4})", re.I)
+_CREDIT_MEMO_TOTAL_RE = re.compile(r"(?<![A-Z])total\s*:?\s*\$?\s*(-?[\d,]+\.\d{2})", re.I)
+
+
+def read_credit_memo(pdf_path):
+    """
+    Si el PDF es una nota de crédito (pedido del usuario, 2026-11-26: "en caso
+    de que funcionen con notas de crédito, así como H.T."), devuelve
+    {"credit_no", "date", "amount"} (amount en positivo); si no lo es, None.
+    Solo PDFs con texto, como los de H.T. ("Credit Memo #: 334730",
+    "Invoice Date: 6/11/24", el último "Total: 537.56"). Uno que dice ser una
+    nota de crédito pero no se puede leer da ValueError.
+    """
+    _ensure_pdfplumber()
+    with pdfplumber.open(pdf_path) as pdf:
+        pages = [page.extract_text() or "" for page in pdf.pages]
+    first = pages[0] if pages else ""
+    match = _CREDIT_MEMO_NO_RE.search(first)
+    if not match:
+        return None
+    text = "\n".join(pages)
+    date_match = _CREDIT_MEMO_DATE_RE.search(text[match.start():]) or _CREDIT_MEMO_DATE_RE.search(text)
+    totals = _CREDIT_MEMO_TOTAL_RE.findall(text)
+    credit_date = None
+    if date_match:
+        for fmt in ("%m/%d/%y", "%m/%d/%Y"):
+            try:
+                credit_date = datetime.strptime(date_match.group(1), fmt)
+                break
+            except ValueError:
+                continue
+    if credit_date is None or not totals:
+        raise ValueError(f"{os.path.basename(pdf_path)}: es una nota de crédito, pero no se pudo leer su fecha o su total.")
+    amount = abs(float(totals[-1].replace(",", "")))
+    return {"credit_no": match.group(1), "date": credit_date, "amount": amount}
+
+
 def extract_invoices_from_pdf(pdf_path):
     """
     Detecta el proveedor y extrae la(s) factura(s) de un PDF -- SIN tocar

@@ -457,6 +457,19 @@ def save_credit_memo(supplier_key, supplier_label, credit_date, credit_no, amoun
         conn.close()
 
 
+def credit_memo_exists(supplier_key, credit_no):
+    """True si ese proveedor ya tiene una nota de crédito con ese número (para no duplicarla al volver a subirla)."""
+    conn = _connect()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM supplier_credit_memos WHERE supplier_key = ? AND credit_no = ?",
+            (supplier_key, str(credit_no)),
+        ).fetchone()
+        return row is not None
+    finally:
+        conn.close()
+
+
 def get_supplier_credit_memos(supplier_key):
     conn = _connect()
     try:
